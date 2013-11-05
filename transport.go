@@ -67,9 +67,9 @@ func (r *RPC) Respond(resp interface{}, err error) {
 // Transport provides an interface for network transports
 // to allow Raft to communicate with other nodes
 type Transport interface {
-	// Consume returns a channel that can be used to
+	// Consumer returns a channel that can be used to
 	// consume and respond to RPC requests.
-	Consume() <-chan RPC
+	Consumer() <-chan RPC
 
 	// AppendEntries sends the appropriate RPC to the target node
 	AppendEntries(target net.Addr, args *AppendEntriesRequest, resp *AppendEntriesResponse) error

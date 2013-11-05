@@ -7,12 +7,16 @@ import (
 // Config provides any necessary configuraiton to
 // the Raft server
 type Config struct {
-	// Time without a leader before we attempt an election
+	// Time in follower state without a leader before we attempt an election
+	HeartbeatTimeout time.Duration
+
+	// Time in candidate state without a leader before we attempt an election
 	ElectionTimeout time.Duration
 }
 
 func DefaultConfig() *Config {
 	return &Config{
-		ElectionTimeout: 150 * time.Millisecond,
+		HeartbeatTimeout: 100 * time.Millisecond,
+		ElectionTimeout:  150 * time.Millisecond,
 	}
 }

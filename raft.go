@@ -1,6 +1,8 @@
 package raft
 
 import (
+	"fmt"
+	"log"
 	"sync"
 )
 
@@ -87,8 +89,27 @@ func (r *Raft) run() {
 
 // runFollower runs the FSM for a follower
 func (r *Raft) runFollower() {
+	ch := r.trans.Consumer()
 	for {
 		select {
+		case rpc := <-ch:
+			// Handle the command
+			switch cmd := rpc.Command.(type) {
+			case *AppendEntriesRequest:
+				r.followerAppendEntries(rpc, cmd)
+			case *RequestVoteRequest:
+				r.followerRequestVote(rpc, cmd)
+			default:
+				log.Printf("[ERR] In Follower state, got unexpected command: %#v",
+					rpc.Command)
+				rpc.Respond(nil, fmt.Errorf("Unexpected command"))
+			}
+
+		case <-randomTimeout(r.conf.HeartbeatTimeout):
+			// Heartbeat failed! Go to the candidate state
+			r.state = Candidate
+			return
+
 		case <-r.shutdownCh:
 			return
 		}
