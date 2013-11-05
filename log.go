@@ -1,10 +1,17 @@
 package raft
 
+type LogType uint8
+
+const (
+	LogCommand LogType = iota
+)
+
 // Log entries are replicated to all members of the Raft cluster
 // and form the heart of the replicated state machine.
 type Log struct {
 	Index uint64
 	Term  uint64
+	Type  LogType
 	Data  []byte
 }
 
