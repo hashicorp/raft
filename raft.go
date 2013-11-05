@@ -100,7 +100,7 @@ func (r *Raft) runFollower() {
 			case *RequestVoteRequest:
 				r.followerRequestVote(rpc, cmd)
 			default:
-				log.Printf("[ERR] In Follower state, got unexpected command: %#v",
+				log.Printf("[ERR] Follower state, got unexpected command: %#v",
 					rpc.Command)
 				rpc.Respond(nil, fmt.Errorf("Unexpected command"))
 			}
@@ -118,8 +118,23 @@ func (r *Raft) runFollower() {
 
 // runCandidate runs the FSM for a candidate
 func (r *Raft) runCandidate() {
+	ch := r.trans.Consumer()
 	for {
 		select {
+		case rpc := <-ch:
+			// Handle the command
+			switch rpc.Command.(type) {
+			default:
+				log.Printf("[ERR] Candidate state, got unexpected command: %#v",
+					rpc.Command)
+				rpc.Respond(nil, fmt.Errorf("Unexpected command"))
+			}
+
+		case <-randomTimeout(r.conf.ElectionTimeout):
+			// Election failed! Restart the elction. We simply return,
+			// which will kick us back into runCandidate
+			return
+
 		case <-r.shutdownCh:
 			return
 		}
