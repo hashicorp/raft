@@ -201,8 +201,8 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) (transition bool)
 		Term:    r.currentTerm,
 		Success: false,
 	}
-	var err error
-	defer rpc.Respond(resp, err)
+	var rpcErr error
+	defer rpc.Respond(resp, rpcErr)
 
 	// Ignore an older term
 	if a.Term < r.currentTerm {
@@ -274,8 +274,8 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) (transition bool) {
 		Term:    r.currentTerm,
 		Granted: false,
 	}
-	var err error
-	defer rpc.Respond(resp, err)
+	var rpcErr error
+	defer rpc.Respond(resp, rpcErr)
 
 	// Ignore an older term
 	if req.Term < r.currentTerm {
