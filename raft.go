@@ -66,6 +66,12 @@ type Raft struct {
 
 // NewRaft is used to construct a new Raft node
 func NewRaft(conf *Config, stable StableStore, logs LogStore, fsm FSM, trans Transport) (*Raft, error) {
+	// Try to restore the current term
+	currentTerm, err := stable.GetUint64(keyCurrentTerm)
+	if err != nil && err.Error() != "not found" {
+		return nil, fmt.Errorf("Failed to load current term: %v", err)
+	}
+
 	// Read the last log value
 	lastLog, err := logs.LastIndex()
 	if err != nil {
@@ -77,6 +83,7 @@ func NewRaft(conf *Config, stable StableStore, logs LogStore, fsm FSM, trans Tra
 		conf:        conf,
 		state:       Follower,
 		stable:      stable,
+		currentTerm: currentTerm,
 		logs:        logs,
 		lastLog:     lastLog,
 		commitIndex: 0,
@@ -480,7 +487,11 @@ func (r *Raft) CandidateId() string {
 
 // setCurrentTerm is used to set the current term in a durable manner
 func (r *Raft) setCurrentTerm(t uint64) error {
+	// Persist to disk first
+	if err := r.stable.SetUint64(keyCurrentTerm, t); err != nil {
+		log.Printf("[ERR] Failed to save current term: %v", err)
+		return err
+	}
 	r.currentTerm = t
-	// TODO stable store
 	return nil
 }
