@@ -19,3 +19,15 @@ func TestRandomTimeout(t *testing.T) {
 		t.Fatalf("timeout")
 	}
 }
+
+func TestMin(t *testing.T) {
+	if min(1, 1) != 1 {
+		t.Fatalf("bad min")
+	}
+	if min(2, 1) != 1 {
+		t.Fatalf("bad min")
+	}
+	if min(1, 2) != 1 {
+		t.Fatalf("bad min")
+	}
+}
