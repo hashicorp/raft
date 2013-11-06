@@ -3,7 +3,11 @@ package raft
 type LogType uint8
 
 const (
+	// Commands are applied to a user FSM
 	LogCommand LogType = iota
+
+	// Nop is used to assert leadership
+	LogNop
 )
 
 // Log entries are replicated to all members of the Raft cluster
