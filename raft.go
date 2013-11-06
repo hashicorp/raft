@@ -3,6 +3,7 @@ package raft
 import (
 	"fmt"
 	"log"
+	"net"
 	"sync"
 )
 
@@ -52,6 +53,9 @@ type Raft struct {
 	// The transport layer we use
 	trans Transport
 
+	// Track our known peers
+	peers []net.Addr
+
 	// If we are the leader, we have extra state
 	leader *LeaderState
 
@@ -79,6 +83,7 @@ func NewRaft(conf *Config, stable StableStore, logs LogStore, fsm FSM, trans Tra
 		lastApplied: 0,
 		fsm:         fsm,
 		trans:       trans,
+		peers:       make([]net.Addr, 0, 5),
 		shutdownCh:  make(chan struct{}),
 	}
 
@@ -89,6 +94,7 @@ func NewRaft(conf *Config, stable StableStore, logs LogStore, fsm FSM, trans Tra
 
 // run is a long running goroutine that runs the Raft FSM
 func (r *Raft) run() {
+	ch := r.trans.Consumer()
 	for {
 		// Check if we are doing a shutdown
 		select {
@@ -100,19 +106,18 @@ func (r *Raft) run() {
 		// Enter into a sub-FSM
 		switch r.state {
 		case Follower:
-			r.runFollower()
+			r.runFollower(ch)
 		case Candidate:
-			r.runCandidate()
+			r.runCandidate(ch)
 		case Leader:
-			r.runLeader()
+			r.runLeader(ch)
 		}
 	}
 }
 
 // runFollower runs the FSM for a follower
-func (r *Raft) runFollower() {
+func (r *Raft) runFollower(ch <-chan RPC) {
 	log.Printf("[INFO] Entering Follower state")
-	ch := r.trans.Consumer()
 	for {
 		select {
 		case rpc := <-ch:
@@ -140,9 +145,19 @@ func (r *Raft) runFollower() {
 }
 
 // runCandidate runs the FSM for a candidate
-func (r *Raft) runCandidate() {
+func (r *Raft) runCandidate(ch <-chan RPC) {
 	log.Printf("[INFO] Entering Candidate state")
-	ch := r.trans.Consumer()
+
+	// Start vote for us, and set a timeout
+	voteCh := r.electSelf()
+	electionTimer := randomTimeout(r.conf.ElectionTimeout)
+
+	// Tally the votes, need a simple majority
+	grantedVotes := 0
+	clusterSize := len(r.peers) + 1
+	votesNeeded := (clusterSize >> 1) + 1
+	log.Printf("[DEBUG] Cluster size: %d, votes needed: %d", clusterSize, votesNeeded)
+
 	transition := false
 	for !transition {
 		select {
@@ -158,7 +173,31 @@ func (r *Raft) runCandidate() {
 				rpc.Respond(nil, fmt.Errorf("Unexpected command"))
 			}
 
-		case <-randomTimeout(r.conf.ElectionTimeout):
+		case vote := <-voteCh:
+			// Check if the term is greater than ours, bail
+			if vote.Term > r.currentTerm {
+				log.Printf("[DEBUG] Newer term discovered")
+				r.state = Follower
+				if err := r.setCurrentTerm(vote.Term); err != nil {
+					log.Printf("[ERR] Failed to update current term: %v", err)
+				}
+				return
+			}
+
+			// Check if the vote is granted
+			if vote.Granted {
+				grantedVotes++
+				log.Printf("[DEBUG] Vote granted. Tally: %d", grantedVotes)
+			}
+
+			// Check if we've become the leader
+			if grantedVotes >= votesNeeded {
+				log.Printf("[INFO] Election won. Tally: %d", grantedVotes)
+				r.state = Leader
+				return
+			}
+
+		case <-electionTimer:
 			// Election failed! Restart the elction. We simply return,
 			// which will kick us back into runCandidate
 			log.Printf("[WARN] Election timeout reached, restarting election")
@@ -171,7 +210,7 @@ func (r *Raft) runCandidate() {
 }
 
 // runLeader runs the FSM for a leader
-func (r *Raft) runLeader() {
+func (r *Raft) runLeader(ch <-chan RPC) {
 	log.Printf("[INFO] Entering Leader state")
 	for {
 		select {
@@ -212,7 +251,10 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) (transition bool)
 	// Increase the term if we see a newer one, also transition to follower
 	// if we ever get an appendEntries call
 	if a.Term > r.currentTerm || r.state != Follower {
-		r.currentTerm = a.Term
+		if err := r.setCurrentTerm(a.Term); err != nil {
+			log.Printf("[ERR] Failed to update current term: %v", err)
+			return
+		}
 		resp.Term = a.Term
 
 		// Ensure transition to follower
@@ -284,7 +326,10 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) (transition bool) {
 
 	// Increase the term if we see a newer one
 	if req.Term > r.currentTerm {
-		r.currentTerm = req.Term
+		if err := r.setCurrentTerm(req.Term); err != nil {
+			log.Printf("[ERR] Failed to update current term: %v", err)
+			return
+		}
 		resp.Term = req.Term
 
 		// Ensure transition to follower
@@ -345,4 +390,71 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) (transition bool) {
 
 	resp.Granted = true
 	return
+}
+
+// electSelf is used to send a RequestVote RPC to all peers,
+// and vote for ourself. This has the side affecting of incrementing
+// the current term. The response channel returned is used to wait
+// for all the responses (including a vote for ourself).
+func (r *Raft) electSelf() <-chan *RequestVoteResponse {
+	// Create a response channel
+	respCh := make(chan *RequestVoteResponse, len(r.peers)+1)
+
+	// Get the last log
+	var lastLog Log
+	if r.lastLog > 0 {
+		if err := r.logs.GetLog(r.lastLog, &lastLog); err != nil {
+			log.Printf("[ERR] Failed to get last log: %d %v",
+				r.lastLog, err)
+			return nil
+		}
+	}
+
+	// Increment the term
+	if err := r.setCurrentTerm(r.currentTerm + 1); err != nil {
+		log.Printf("[ERR] Failed to update current term: %v", err)
+		return nil
+	}
+
+	// Construct the request
+	req := &RequestVoteRequest{
+		Term:         r.currentTerm,
+		CandidateId:  r.CandidateId(),
+		LastLogIndex: lastLog.Index,
+		LastLogTerm:  lastLog.Term,
+	}
+
+	// Construct a function to ask for a vote
+	askPeer := func(peer net.Addr) {
+		resp := new(RequestVoteResponse)
+		err := r.trans.RequestVote(peer, req, resp)
+		if err != nil {
+			log.Printf("[ERR] Failed to make RequestVote RPC to %v: %v", peer, err)
+			resp.Term = req.Term
+			resp.Granted = false
+		}
+		respCh <- resp
+	}
+
+	// For each peer, request a vote
+	for _, peer := range r.peers {
+		go askPeer(peer)
+	}
+
+	// Vote for ourself by default
+	respCh <- &RequestVoteResponse{Term: req.Term, Granted: true}
+	return respCh
+}
+
+// CandidateId is used to return a stable and unique candidate ID
+func (r *Raft) CandidateId() string {
+	// TODO: UUID
+	return "foo"
+}
+
+// setCurrentTerm is used to set the current term in a durable manner
+func (r *Raft) setCurrentTerm(t uint64) error {
+	r.currentTerm = t
+	// TODO stable store
+	return nil
 }
