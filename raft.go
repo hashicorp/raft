@@ -115,7 +115,6 @@ func (r *Raft) runFollower() {
 	for {
 		select {
 		case rpc := <-ch:
-			// Handle the command
 			switch cmd := rpc.Command.(type) {
 			case *AppendEntriesRequest:
 				r.appendEntries(rpc, cmd)
@@ -141,11 +140,10 @@ func (r *Raft) runFollower() {
 // runCandidate runs the FSM for a candidate
 func (r *Raft) runCandidate() {
 	ch := r.trans.Consumer()
-	for {
+	transition := false
+	for !transition {
 		select {
 		case rpc := <-ch:
-			// Handle the command
-			transition := false
 			switch cmd := rpc.Command.(type) {
 			case *AppendEntriesRequest:
 				transition = r.appendEntries(rpc, cmd)
@@ -155,9 +153,6 @@ func (r *Raft) runCandidate() {
 				log.Printf("[ERR] Candidate state, got unexpected command: %#v",
 					rpc.Command)
 				rpc.Respond(nil, fmt.Errorf("Unexpected command"))
-			}
-			if transition {
-				return
 			}
 
 		case <-randomTimeout(r.conf.ElectionTimeout):
@@ -209,8 +204,9 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) (transition bool)
 		return
 	}
 
-	// Increase the term if we see a newer one
-	if a.Term > r.currentTerm {
+	// Increase the term if we see a newer one, also transition to follower
+	// if we ever get an appendEntries call
+	if a.Term > r.currentTerm || r.state != Follower {
 		r.currentTerm = a.Term
 		resp.Term = a.Term
 
