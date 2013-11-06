@@ -111,6 +111,7 @@ func (r *Raft) run() {
 
 // runFollower runs the FSM for a follower
 func (r *Raft) runFollower() {
+	log.Printf("[INFO] Entering Follower state")
 	ch := r.trans.Consumer()
 	for {
 		select {
@@ -128,6 +129,7 @@ func (r *Raft) runFollower() {
 
 		case <-randomTimeout(r.conf.HeartbeatTimeout):
 			// Heartbeat failed! Go to the candidate state
+			log.Printf("[WARN] Heartbeat timeout reached, starting election")
 			r.state = Candidate
 			return
 
@@ -139,6 +141,7 @@ func (r *Raft) runFollower() {
 
 // runCandidate runs the FSM for a candidate
 func (r *Raft) runCandidate() {
+	log.Printf("[INFO] Entering Candidate state")
 	ch := r.trans.Consumer()
 	transition := false
 	for !transition {
@@ -158,6 +161,7 @@ func (r *Raft) runCandidate() {
 		case <-randomTimeout(r.conf.ElectionTimeout):
 			// Election failed! Restart the elction. We simply return,
 			// which will kick us back into runCandidate
+			log.Printf("[WARN] Election timeout reached, restarting election")
 			return
 
 		case <-r.shutdownCh:
@@ -168,6 +172,7 @@ func (r *Raft) runCandidate() {
 
 // runLeader runs the FSM for a leader
 func (r *Raft) runLeader() {
+	log.Printf("[INFO] Entering Leader state")
 	for {
 		select {
 		case <-r.shutdownCh:
