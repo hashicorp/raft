@@ -14,6 +14,13 @@ const (
 	Leader
 )
 
+var (
+	keyCurrentTerm  = []byte("CurrentTerm")
+	keyLastVoteTerm = []byte("LastVoteTerm")
+	keyLastVoteCand = []byte("LastVoteCand")
+	keyCandidateId  = []byte("CandidateId")
+)
+
 type Raft struct {
 	// Configuration
 	conf *Config
@@ -24,8 +31,14 @@ type Raft struct {
 	// stable is a StableStore implementation for durable state
 	stable StableStore
 
+	// Cache the current term, write through to StableStore
+	currentTerm uint64
+
 	// logs is a LogStore implementation to keep our logs
 	logs LogStore
+
+	// Cache the latest log, though we can get from LogStore
+	lastLog uint64
 
 	// Highest commited log entry
 	commitIndex uint64
@@ -49,11 +62,19 @@ type Raft struct {
 
 // NewRaft is used to construct a new Raft node
 func NewRaft(conf *Config, stable StableStore, logs LogStore, fsm FSM, trans Transport) (*Raft, error) {
+	// Read the last log value
+	lastLog, err := logs.LastIndex()
+	if err != nil {
+		return nil, fmt.Errorf("Failed to find last log: %v", err)
+	}
+
+	// Create Raft struct
 	r := &Raft{
 		conf:        conf,
 		state:       Follower,
 		stable:      stable,
 		logs:        logs,
+		lastLog:     lastLog,
 		commitIndex: 0,
 		lastApplied: 0,
 		fsm:         fsm,
@@ -61,6 +82,7 @@ func NewRaft(conf *Config, stable StableStore, logs LogStore, fsm FSM, trans Tra
 		shutdownCh:  make(chan struct{}),
 	}
 
+	// Start the background work
 	go r.run()
 	return r, nil
 }
