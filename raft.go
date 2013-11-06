@@ -21,6 +21,7 @@ var (
 	keyLastVoteTerm = []byte("LastVoteTerm")
 	keyLastVoteCand = []byte("LastVoteCand")
 	keyCandidateId  = []byte("CandidateId")
+	NotLeader       = fmt.Errorf("node is not the leader")
 )
 
 type Raft struct {
@@ -191,6 +192,10 @@ func (r *Raft) runFollower(ch <-chan RPC) {
 				rpc.Respond(nil, fmt.Errorf("Unexpected command"))
 			}
 
+		case a := <-r.applyCh:
+			// Reject any operations since we are not the leader
+			a.respond(NotLeader)
+
 		case <-randomTimeout(r.conf.HeartbeatTimeout):
 			// Heartbeat failed! Go to the candidate state
 			log.Printf("[WARN] Heartbeat timeout reached, starting election")
@@ -256,6 +261,10 @@ func (r *Raft) runCandidate(ch <-chan RPC) {
 				return
 			}
 
+		case a := <-r.applyCh:
+			// Reject any operations since we are not the leader
+			a.respond(NotLeader)
+
 		case <-electionTimer:
 			// Election failed! Restart the elction. We simply return,
 			// which will kick us back into runCandidate
@@ -275,6 +284,8 @@ func (r *Raft) runLeader(ch <-chan RPC) {
 	transition := false
 	for !transition {
 		select {
+		case <-r.applyCh:
+
 		case rpc := <-ch:
 			switch cmd := rpc.Command.(type) {
 			case *AppendEntriesRequest:
