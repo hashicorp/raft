@@ -41,6 +41,13 @@ type Raft struct {
 	// Cache the latest log, though we can get from LogStore
 	lastLog uint64
 
+	// Commit chan is used to provide the newest commit index
+	// so that changes can be applied to the FSM. This is used
+	// so the main goroutine can use commitIndex without locking,
+	// and the FSM manager goroutine can read from this and manipulate
+	// lastApplied without a lock.
+	commitCh chan uint64
+
 	// Highest commited log entry
 	commitIndex uint64
 
@@ -86,6 +93,7 @@ func NewRaft(conf *Config, stable StableStore, logs LogStore, fsm FSM, trans Tra
 		currentTerm: currentTerm,
 		logs:        logs,
 		lastLog:     lastLog,
+		commitCh:    make(chan uint64, 128),
 		commitIndex: 0,
 		lastApplied: 0,
 		fsm:         fsm,
@@ -307,7 +315,8 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) (transition bool)
 	if a.LeaderCommitIndex > r.commitIndex {
 		r.commitIndex = min(a.LeaderCommitIndex, r.lastLog)
 
-		// TODO: Trigger applying logs locally!
+		// Trigger applying logs locally
+		r.commitCh <- r.commitIndex
 	}
 
 	// Everything went well, set success
