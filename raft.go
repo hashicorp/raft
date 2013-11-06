@@ -227,8 +227,22 @@ func (r *Raft) runCandidate(ch <-chan RPC) {
 // runLeader runs the FSM for a leader
 func (r *Raft) runLeader(ch <-chan RPC) {
 	log.Printf("[INFO] Entering Leader state")
-	for {
+
+	transition := false
+	for !transition {
 		select {
+		case rpc := <-ch:
+			switch cmd := rpc.Command.(type) {
+			case *AppendEntriesRequest:
+				transition = r.appendEntries(rpc, cmd)
+			case *RequestVoteRequest:
+				transition = r.requestVote(rpc, cmd)
+			default:
+				log.Printf("[ERR] Leaderstate, got unexpected command: %#v",
+					rpc.Command)
+				rpc.Respond(nil, fmt.Errorf("Unexpected command"))
+			}
+
 		case <-r.shutdownCh:
 			return
 		}
