@@ -461,8 +461,21 @@ func (r *Raft) persistVote(term uint64, candidate string) error {
 
 // CandidateId is used to return a stable and unique candidate ID
 func (r *Raft) CandidateId() string {
-	// TODO: UUID
-	return "foo"
+	// Get the persistent id
+	raw, err := r.stable.Get(keyCandidateId)
+	if err == nil {
+		return string(raw)
+	}
+
+	// Generate a UUID on the first call
+	if err != nil && err.Error() != "not found" {
+		id := generateUUID()
+		if err := r.stable.Set(keyCandidateId, []byte(id)); err != nil {
+			panic(fmt.Errorf("Failed to write CandidateId: %v", err))
+		}
+		return id
+	}
+	panic(fmt.Errorf("Failed to read CandidateId: %v", err))
 }
 
 // setCurrentTerm is used to set the current term in a durable manner
