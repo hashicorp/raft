@@ -162,7 +162,7 @@ func (r *Raft) runCandidate(ch <-chan RPC) {
 	// Tally the votes, need a simple majority
 	grantedVotes := 0
 	clusterSize := len(r.peers) + 1
-	votesNeeded := (clusterSize >> 1) + 1
+	votesNeeded := (clusterSize / 2) + 1
 	log.Printf("[DEBUG] Cluster size: %d, votes needed: %d", clusterSize, votesNeeded)
 
 	transition := false
