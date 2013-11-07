@@ -68,9 +68,6 @@ type Raft struct {
 	// Track our known peers
 	peers []net.Addr
 
-	// If we are the leader, we have extra state
-	leader *LeaderState
-
 	// Shutdown channel to exit
 	shutdownCh   chan struct{}
 	shutdownLock sync.Mutex
