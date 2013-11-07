@@ -278,6 +278,23 @@ func (r *Raft) runCandidate(ch <-chan RPC) {
 func (r *Raft) runLeader(ch <-chan RPC) {
 	log.Printf("[INFO] Entering Leader state")
 
+	// Make a channel that lasts while we are leader, and
+	// is closed as soon as we step down. Used to stop extra
+	// goroutines.
+	stopCh := make(chan struct{})
+	defer close(stopCh)
+
+	// Create the trigger channels
+	triggers := make([]chan struct{}, 0, len(r.peers))
+	for i := 0; i < len(r.peers); i++ {
+		triggers = append(triggers, make(chan struct{}))
+	}
+
+	// Start a replication routine for each peer
+	for i, peer := range r.peers {
+		go r.replicate(triggers[i], stopCh, peer)
+	}
+
 	transition := false
 	for !transition {
 		select {
@@ -557,4 +574,42 @@ func (r *Raft) setCurrentTerm(t uint64) error {
 	}
 	r.currentTerm = t
 	return nil
+}
+
+// replicate is a long running routine that is used to manage
+// the process of replicating logs to our followers
+func (r *Raft) replicate(triggerCh, stopCh chan struct{}, peer net.Addr) {
+	// Initialize timer to fire immediately since
+	// we just established leadership.
+	timeout := time.After(time.Microsecond)
+	for {
+		select {
+
+		case <-timeout:
+			timeout = randomTimeout(r.conf.CommitTimeout)
+			r.heartbeat(peer)
+
+		case <-stopCh:
+			return
+		}
+	}
+}
+
+func (r *Raft) heartbeat(peer net.Addr) {
+	// TODO: Cache prevLogEntry, prevLogTerm!
+	var prevLogEntry, prevLogTerm uint64
+	prevLogEntry = 0
+	prevLogTerm = 0
+	req := AppendEntriesRequest{
+		Term:              r.currentTerm,
+		LeaderId:          r.candidateId(),
+		PrevLogEntry:      prevLogEntry,
+		PrevLogTerm:       prevLogTerm,
+		LeaderCommitIndex: r.commitIndex,
+	}
+	var resp AppendEntriesResponse
+	if err := r.trans.AppendEntries(peer, &req, &resp); err != nil {
+		log.Printf("[ERR] Failed to heartbeat with %v: %v",
+			peer, err)
+	}
 }
