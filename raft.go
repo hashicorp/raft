@@ -8,14 +8,6 @@ import (
 	"time"
 )
 
-type RaftState uint8
-
-const (
-	Follower RaftState = iota
-	Candidate
-	Leader
-)
-
 var (
 	keyCurrentTerm  = []byte("CurrentTerm")
 	keyLastVoteTerm = []byte("LastVoteTerm")
@@ -33,52 +25,39 @@ type commitTuple struct {
 }
 
 type Raft struct {
-	// applyCh is used to manage commands to be applyed
+	raftState
+
+	// applyCh is used to async send logs to the main thread to
+	// be committed and applied to the FSM.
 	applyCh chan *logFuture
 
-	// Configuration
-	conf *Config
-
-	// Current state
-	state RaftState
-
-	// stable is a StableStore implementation for durable state
-	stable StableStore
-
-	// Cache the current term, write through to StableStore
-	currentTerm uint64
-
-	// logs is a LogStore implementation to keep our logs
-	logs LogStore
-
-	// Cache the latest log, though we can get from LogStore
-	lastLog uint64
-
 	// Commit chan is used to provide the newest commit index
-	// so that changes can be applied to the FSM. This is used
-	// so the main goroutine can use commitIndex without locking,
-	// and the FSM manager goroutine can read from this and manipulate
-	// lastApplied without a lock.
+	// and potentially a future to the FSM manager routine.
+	// The FSM should apply up to the index and notify the future.
 	commitCh chan commitTuple
 
-	// Highest commited log entry
-	commitIndex uint64
+	// Configuration provided at Raft initialization
+	conf *Config
 
-	// Last applied log to the FSM
-	lastApplied uint64
-
-	// FSM is the state machine that can handle the logs
+	// FSM is the client state machine to apply commands to
 	fsm FSM
 
-	// The transport layer we use
-	trans Transport
+	// LogStore provides durable storage for logs
+	logs LogStore
 
 	// Track our known peers
 	peers []net.Addr
 
-	// Shutdown channel to exit
+	// Shutdown channel to exit, protected to prevent concurrent exits
 	shutdownCh   chan struct{}
 	shutdownLock sync.Mutex
+
+	// stable is a StableStore implementation for durable state
+	// It provides stable storage for many fields in raftState
+	stable StableStore
+
+	// The transport layer we use
+	trans Transport
 }
 
 // NewRaft is used to construct a new Raft node
@@ -97,21 +76,23 @@ func NewRaft(conf *Config, stable StableStore, logs LogStore, fsm FSM, trans Tra
 
 	// Create Raft struct
 	r := &Raft{
-		applyCh:     make(chan *logFuture),
-		conf:        conf,
-		state:       Follower,
-		stable:      stable,
-		currentTerm: currentTerm,
-		logs:        logs,
-		lastLog:     lastLog,
-		commitCh:    make(chan commitTuple, 128),
-		commitIndex: 0,
-		lastApplied: 0,
-		fsm:         fsm,
-		trans:       trans,
-		peers:       make([]net.Addr, 0, 5),
-		shutdownCh:  make(chan struct{}),
+		applyCh:    make(chan *logFuture),
+		commitCh:   make(chan commitTuple, 128),
+		conf:       conf,
+		fsm:        fsm,
+		logs:       logs,
+		peers:      make([]net.Addr, 0, 5),
+		shutdownCh: make(chan struct{}),
+		stable:     stable,
+		trans:      trans,
 	}
+
+	// Initialize as a follower
+	r.setState(Follower)
+
+	// Restore the current term and the last log
+	r.setCurrentTerm(currentTerm)
+	r.setLastLog(lastLog)
 
 	// Start the background work
 	go r.run()
