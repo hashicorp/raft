@@ -31,6 +31,9 @@ func (l *logFuture) Error() error {
 }
 
 func (l *logFuture) respond(err error) {
+	if l.errCh == nil {
+		return
+	}
 	l.errCh <- err
 	close(l.errCh)
 }
