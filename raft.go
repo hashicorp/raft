@@ -22,6 +22,7 @@ var (
 	keyLastVoteCand = []byte("LastVoteCand")
 	keyCandidateId  = []byte("CandidateId")
 	NotLeader       = fmt.Errorf("node is not the leader")
+	LeadershipLost  = fmt.Errorf("leadership lost while committing log")
 )
 
 // commitTupel is used to send an index that was committed,
@@ -213,14 +214,6 @@ func (r *Raft) runFollower(ch <-chan RPC) {
 	}
 }
 
-// quorumSize returns the number of votes required to
-// consider a log committed
-func (r *Raft) quorumSize() int {
-	clusterSize := len(r.peers) + 1
-	votesNeeded := (clusterSize / 2) + 1
-	return votesNeeded
-}
-
 // runCandidate runs the FSM for a candidate
 func (r *Raft) runCandidate(ch <-chan RPC) {
 	log.Printf("[INFO] Entering Candidate state")
@@ -297,7 +290,7 @@ func (r *Raft) runLeader(rpcCh <-chan RPC) {
 	// of all inflight processes when we step down
 	commitCh := make(chan *logFuture)
 	inflight := NewInflight(commitCh)
-	defer inflight.Cancel(NotLeader)
+	defer inflight.Cancel(LeadershipLost)
 
 	// Make a channel that lasts while we are leader, and
 	// is closed as soon as we step down. Used to stop extra
@@ -377,6 +370,13 @@ func (r *Raft) runFSM() {
 	for {
 		select {
 		case commitTuple := <-r.commitCh:
+			// Reject logs we've applied already
+			if commitTuple.index <= r.lastApplied {
+				log.Printf("[WARN] Skipping application of old log: %d",
+					commitTuple.index)
+				continue
+			}
+
 			// Get the log, either from the future or from our log store
 			var l *Log
 			if commitTuple.future != nil {
@@ -398,6 +398,9 @@ func (r *Raft) runFSM() {
 			if commitTuple.future != nil {
 				commitTuple.future.respond(nil)
 			}
+
+			// Update the lastApplied
+			r.lastApplied = l.Index
 
 		case <-r.shutdownCh:
 			return
@@ -620,6 +623,14 @@ func (r *Raft) electSelf() <-chan *RequestVoteResponse {
 	// Include our own vote
 	respCh <- &RequestVoteResponse{Term: req.Term, Granted: true}
 	return respCh
+}
+
+// quorumSize returns the number of votes required to
+// consider a log committed
+func (r *Raft) quorumSize() int {
+	clusterSize := len(r.peers) + 1
+	votesNeeded := (clusterSize / 2) + 1
+	return votesNeeded
 }
 
 // persistVote is used to persist our vote for safety
