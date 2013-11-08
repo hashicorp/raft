@@ -16,6 +16,7 @@ type inflightLog struct {
 	future      *logFuture
 	commitCount int
 	quorum      int
+	committed   bool
 }
 
 // NewInflight returns an inflight struct that notifies
@@ -36,6 +37,7 @@ func (i *inflight) Start(l *logFuture, quorum int) {
 		future:      l,
 		commitCount: 0,
 		quorum:      quorum,
+		committed:   false,
 	}
 	i.operations[l.log.Index] = op
 }
@@ -76,9 +78,34 @@ func (i *inflight) Commit(index uint64) {
 		return
 	}
 
-	// Stop tracking since it is committed
-	delete(i.operations, index)
+	// Notify of commit if not done yet
+	if !op.committed {
+		i.commitCh <- op.future
+		op.committed = true
+	}
+}
 
-	// Notify of commit
-	i.commitCh <- op.future
+// Apply is used by the FSM manager to indicate that a
+// log has been applied to the fsm, and we should
+// respond to the future
+func (i *inflight) Apply(index uint64) {
+	i.Lock()
+	defer i.Unlock()
+
+	op, ok := i.operations[index]
+	if !ok {
+		// Ignore if not in the map, as it may be applied already
+		return
+	}
+
+	// Sanity check that the index is committed
+	if !op.committed {
+		panic("applying an operation that is not yet committed")
+	}
+
+	// Respond with nil error
+	op.future.respond(nil)
+
+	// Stop tracking
+	delete(i.operations, index)
 }
