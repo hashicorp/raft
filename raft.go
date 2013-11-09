@@ -48,6 +48,9 @@ type Raft struct {
 	// Track our known peers
 	peers []net.Addr
 
+	// RPC chan comes from the transport layer
+	rpcCh <-chan RPC
+
 	// Shutdown channel to exit, protected to prevent concurrent exits
 	shutdownCh   chan struct{}
 	shutdownLock sync.Mutex
@@ -82,6 +85,7 @@ func NewRaft(conf *Config, stable StableStore, logs LogStore, fsm FSM, trans Tra
 		fsm:        fsm,
 		logs:       logs,
 		peers:      make([]net.Addr, 0, 5),
+		rpcCh:      trans.Consumer(),
 		shutdownCh: make(chan struct{}),
 		stable:     stable,
 		trans:      trans,
@@ -141,7 +145,6 @@ func (r *Raft) Shutdown() {
 
 // run is a long running goroutine that runs the Raft FSM
 func (r *Raft) run() {
-	ch := r.trans.Consumer()
 	for {
 		// Check if we are doing a shutdown
 		select {
@@ -151,23 +154,23 @@ func (r *Raft) run() {
 		}
 
 		// Enter into a sub-FSM
-		switch r.state {
+		switch r.getState() {
 		case Follower:
-			r.runFollower(ch)
+			r.runFollower()
 		case Candidate:
-			r.runCandidate(ch)
+			r.runCandidate()
 		case Leader:
-			r.runLeader(ch)
+			r.runLeader()
 		}
 	}
 }
 
 // runFollower runs the FSM for a follower
-func (r *Raft) runFollower(ch <-chan RPC) {
+func (r *Raft) runFollower() {
 	log.Printf("[INFO] Entering Follower state")
 	for {
 		select {
-		case rpc := <-ch:
+		case rpc := <-r.rpcCh:
 			switch cmd := rpc.Command.(type) {
 			case *AppendEntriesRequest:
 				r.appendEntries(rpc, cmd)
@@ -186,7 +189,7 @@ func (r *Raft) runFollower(ch <-chan RPC) {
 		case <-randomTimeout(r.conf.HeartbeatTimeout):
 			// Heartbeat failed! Transition to the candidate state
 			log.Printf("[WARN] Heartbeat timeout reached, starting election")
-			r.state = Candidate
+			r.setState(Candidate)
 			return
 
 		case <-r.shutdownCh:
@@ -196,7 +199,7 @@ func (r *Raft) runFollower(ch <-chan RPC) {
 }
 
 // runCandidate runs the FSM for a candidate
-func (r *Raft) runCandidate(ch <-chan RPC) {
+func (r *Raft) runCandidate() {
 	log.Printf("[INFO] Entering Candidate state")
 
 	// Start vote for us, and set a timeout
@@ -211,7 +214,7 @@ func (r *Raft) runCandidate(ch <-chan RPC) {
 	transition := false
 	for !transition {
 		select {
-		case rpc := <-ch:
+		case rpc := <-r.rpcCh:
 			switch cmd := rpc.Command.(type) {
 			case *AppendEntriesRequest:
 				transition = r.appendEntries(rpc, cmd)
@@ -225,9 +228,9 @@ func (r *Raft) runCandidate(ch <-chan RPC) {
 
 		case vote := <-voteCh:
 			// Check if the term is greater than ours, bail
-			if vote.Term > r.currentTerm {
+			if vote.Term > r.getCurrentTerm() {
 				log.Printf("[DEBUG] Newer term discovered")
-				r.state = Follower
+				r.setState(Follower)
 				if err := r.setCurrentTerm(vote.Term); err != nil {
 					log.Printf("[ERR] Failed to update current term: %v", err)
 				}
@@ -243,7 +246,7 @@ func (r *Raft) runCandidate(ch <-chan RPC) {
 			// Check if we've become the leader
 			if grantedVotes >= votesNeeded {
 				log.Printf("[INFO] Election won. Tally: %d", grantedVotes)
-				r.state = Leader
+				r.setState(Leader)
 				return
 			}
 
@@ -263,8 +266,9 @@ func (r *Raft) runCandidate(ch <-chan RPC) {
 	}
 }
 
-// runLeader runs the FSM for a leader
-func (r *Raft) runLeader(rpcCh <-chan RPC) {
+// runLeader runs the FSM for a leader. Do the setup here and drop into
+// the leaderLoop for the hot loop
+func (r *Raft) runLeader() {
 	log.Printf("[INFO] Entering Leader state")
 
 	// Make a channel to processes commits, defer cancelation
@@ -291,44 +295,47 @@ func (r *Raft) runLeader(rpcCh <-chan RPC) {
 	}
 
 	// Sit in the leader loop until we step down
-	r.leaderLoop(inflight, commitCh, rpcCh, triggers)
+	r.leaderLoop(inflight, commitCh, triggers)
 }
 
 // leaderLoop is the hot loop for a leader, it is invoked
 // after all the various leader setup is done
 func (r *Raft) leaderLoop(inflight *inflight, commitCh <-chan *logFuture,
-	rpcCh <-chan RPC, triggers []chan struct{}) {
+	triggers []chan struct{}) {
 	transition := false
 	for !transition {
 		select {
 		case applyLog := <-r.applyCh:
 			// Prepare log
-			applyLog.log.Index = r.lastLog + 1
-			applyLog.log.Term = r.currentTerm
+			applyLog.log.Index = r.getLastLog() + 1
+			applyLog.log.Term = r.getCurrentTerm()
 
 			// Write the log entry locally
 			if err := r.logs.StoreLog(&applyLog.log); err != nil {
 				log.Printf("[ERR] Failed to commit log: %v", err)
 				applyLog.respond(err)
-				r.state = Follower
+				r.setState(Follower)
 				return
 			}
-			r.lastLog++
 
 			// Add this to the inflight logs
 			inflight.Start(applyLog, r.quorumSize())
+
+			// Update the last log since it's on disk now
+			r.setLastLog(applyLog.log.Index)
 
 			// Notify the replicators of the new log
 			asyncNotify(triggers)
 
 		case commitLog := <-commitCh:
 			// Increment the commit index
-			r.commitIndex = commitLog.log.Index
+			idx := commitLog.log.Index
+			r.setCommitIndex(idx)
 
 			// Trigger applying logs locally
-			r.commitCh <- commitTuple{commitLog.log.Index, commitLog}
+			r.commitCh <- commitTuple{idx, commitLog}
 
-		case rpc := <-rpcCh:
+		case rpc := <-r.rpcCh:
 			switch cmd := rpc.Command.(type) {
 			case *AppendEntriesRequest:
 				transition = r.appendEntries(rpc, cmd)
@@ -352,11 +359,13 @@ func (r *Raft) runFSM() {
 		select {
 		case commitTuple := <-r.commitCh:
 			// Reject logs we've applied already
-			if commitTuple.index <= r.lastApplied {
+			if commitTuple.index <= r.getLastApplied() {
 				log.Printf("[WARN] Skipping application of old log: %d",
 					commitTuple.index)
 				continue
 			}
+
+			// TODO: Restore old logs!
 
 			// Get the log, either from the future or from our log store
 			var l *Log
@@ -381,7 +390,7 @@ func (r *Raft) runFSM() {
 			}
 
 			// Update the lastApplied
-			r.lastApplied = l.Index
+			r.setLastApplied(l.Index)
 
 		case <-r.shutdownCh:
 			return
@@ -394,20 +403,20 @@ func (r *Raft) runFSM() {
 func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) (transition bool) {
 	// Setup a response
 	resp := &AppendEntriesResponse{
-		Term:    r.currentTerm,
+		Term:    r.getCurrentTerm(),
 		Success: false,
 	}
 	var rpcErr error
 	defer rpc.Respond(resp, rpcErr)
 
 	// Ignore an older term
-	if a.Term < r.currentTerm {
+	if a.Term < r.getCurrentTerm() {
 		return
 	}
 
 	// Increase the term if we see a newer one, also transition to follower
 	// if we ever get an appendEntries call
-	if a.Term > r.currentTerm || r.state != Follower {
+	if a.Term > r.getCurrentTerm() || r.getState() != Follower {
 		if err := r.setCurrentTerm(a.Term); err != nil {
 			log.Printf("[ERR] Failed to update current term: %v", err)
 			return
@@ -416,7 +425,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) (transition bool)
 
 		// Ensure transition to follower
 		transition = true
-		r.state = Follower
+		r.setState(Follower)
 	}
 
 	// Verify the last log entry
@@ -435,9 +444,9 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) (transition bool)
 	// Add all the entries
 	for _, entry := range a.Entries {
 		// Delete any conflicting entries
-		if entry.Index <= r.lastLog {
-			log.Printf("[WARN] Clearing log suffix from %d to %d", entry.Index, r.lastLog)
-			if err := r.logs.DeleteRange(entry.Index, r.lastLog); err != nil {
+		if entry.Index <= r.getLastLog() {
+			log.Printf("[WARN] Clearing log suffix from %d to %d", entry.Index, r.getLastLog())
+			if err := r.logs.DeleteRange(entry.Index, r.getLastLog()); err != nil {
 				log.Printf("[ERR] Failed to clear log suffix: %v", err)
 				return
 			}
@@ -450,15 +459,16 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) (transition bool)
 		}
 
 		// Update the lastLog
-		r.lastLog = entry.Index
+		r.setLastLog(entry.Index)
 	}
 
 	// Update the commit index
-	if a.LeaderCommitIndex > r.commitIndex {
-		r.commitIndex = min(a.LeaderCommitIndex, r.lastLog)
+	if a.LeaderCommitIndex > r.getCommitIndex() {
+		idx := min(a.LeaderCommitIndex, r.getLastLog())
+		r.setCommitIndex(idx)
 
 		// Trigger applying logs locally
-		r.commitCh <- commitTuple{r.commitIndex, nil}
+		r.commitCh <- commitTuple{idx, nil}
 	}
 
 	// Everything went well, set success
@@ -471,19 +481,19 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) (transition bool)
 func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) (transition bool) {
 	// Setup a response
 	resp := &RequestVoteResponse{
-		Term:    r.currentTerm,
+		Term:    r.getCurrentTerm(),
 		Granted: false,
 	}
 	var rpcErr error
 	defer rpc.Respond(resp, rpcErr)
 
 	// Ignore an older term
-	if req.Term < r.currentTerm {
+	if req.Term < r.getCurrentTerm() {
 		return
 	}
 
 	// Increase the term if we see a newer one
-	if req.Term > r.currentTerm {
+	if req.Term > r.getCurrentTerm() {
 		if err := r.setCurrentTerm(req.Term); err != nil {
 			log.Printf("[ERR] Failed to update current term: %v", err)
 			return
@@ -492,7 +502,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) (transition bool) {
 
 		// Ensure transition to follower
 		transition = true
-		r.state = Follower
+		r.setState(Follower)
 	}
 
 	// Check if we have voted yet
@@ -518,11 +528,11 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) (transition bool) {
 	}
 
 	// Reject if their term is older
-	if r.lastLog > 0 {
+	if r.getLastLog() > 0 {
 		var lastLog Log
-		if err := r.logs.GetLog(r.lastLog, &lastLog); err != nil {
+		if err := r.logs.GetLog(r.getLastLog(), &lastLog); err != nil {
 			log.Printf("[ERR] Failed to get last log: %d %v",
-				r.lastLog, err)
+				r.getLastLog(), err)
 			return
 		}
 		if lastLog.Term > req.LastLogTerm {
@@ -556,23 +566,23 @@ func (r *Raft) electSelf() <-chan *RequestVoteResponse {
 
 	// Get the last log
 	var lastLog Log
-	if r.lastLog > 0 {
-		if err := r.logs.GetLog(r.lastLog, &lastLog); err != nil {
+	if r.getLastLog() > 0 {
+		if err := r.logs.GetLog(r.getLastLog(), &lastLog); err != nil {
 			log.Printf("[ERR] Failed to get last log: %d %v",
-				r.lastLog, err)
+				r.getLastLog(), err)
 			return nil
 		}
 	}
 
 	// Increment the term
-	if err := r.setCurrentTerm(r.currentTerm + 1); err != nil {
+	if err := r.setCurrentTerm(r.getCurrentTerm() + 1); err != nil {
 		log.Printf("[ERR] Failed to update current term: %v", err)
 		return nil
 	}
 
 	// Construct the request
 	req := &RequestVoteRequest{
-		Term:         r.currentTerm,
+		Term:         r.getCurrentTerm(),
 		CandidateId:  r.candidateId(),
 		LastLogIndex: lastLog.Index,
 		LastLogTerm:  lastLog.Term,
@@ -651,7 +661,7 @@ func (r *Raft) setCurrentTerm(t uint64) error {
 		log.Printf("[ERR] Failed to save current term: %v", err)
 		return err
 	}
-	r.currentTerm = t
+	r.raftState.setCurrentTerm(t)
 	return nil
 }
 
@@ -680,11 +690,11 @@ func (r *Raft) heartbeat(peer net.Addr) {
 	prevLogEntry = 0
 	prevLogTerm = 0
 	req := AppendEntriesRequest{
-		Term:              r.currentTerm,
+		Term:              r.getCurrentTerm(),
 		LeaderId:          r.candidateId(),
 		PrevLogEntry:      prevLogEntry,
 		PrevLogTerm:       prevLogTerm,
-		LeaderCommitIndex: r.commitIndex,
+		LeaderCommitIndex: r.getCommitIndex(),
 	}
 	var resp AppendEntriesResponse
 	if err := r.trans.AppendEntries(peer, &req, &resp); err != nil {
