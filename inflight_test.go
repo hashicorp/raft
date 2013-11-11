@@ -34,6 +34,9 @@ func TestInflight_StartCommit(t *testing.T) {
 	default:
 		t.Fatalf("should be commited")
 	}
+
+	// Already commited but should work anyways
+	in.Commit(1)
 }
 
 func TestInflight_Cancel(t *testing.T) {
