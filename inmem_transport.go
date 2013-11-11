@@ -50,6 +50,10 @@ func (i *InmemTransport) Consumer() <-chan RPC {
 	return i.consumerCh
 }
 
+func (i *InmemTransport) LocalAddr() net.Addr {
+	return i.localAddr
+}
+
 func (i *InmemTransport) AppendEntries(target net.Addr, args *AppendEntriesRequest, resp *AppendEntriesResponse) error {
 	i.RLock()
 	peer, ok := i.peers[target.String()]

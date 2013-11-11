@@ -64,7 +64,7 @@ type Raft struct {
 }
 
 // NewRaft is used to construct a new Raft node
-func NewRaft(conf *Config, stable StableStore, logs LogStore, fsm FSM, trans Transport) (*Raft, error) {
+func NewRaft(conf *Config, fsm FSM, logs LogStore, peers []net.Addr, stable StableStore, trans Transport) (*Raft, error) {
 	// Try to restore the current term
 	currentTerm, err := stable.GetUint64(keyCurrentTerm)
 	if err != nil && err.Error() != "not found" {
@@ -77,6 +77,15 @@ func NewRaft(conf *Config, stable StableStore, logs LogStore, fsm FSM, trans Tra
 		return nil, fmt.Errorf("Failed to find last log: %v", err)
 	}
 
+	// Construct the list of peers that excludes us
+	localAddr := trans.LocalAddr()
+	otherPeers := make([]net.Addr, 0, len(peers))
+	for _, p := range peers {
+		if p.String() != localAddr.String() {
+			otherPeers = append(otherPeers, p)
+		}
+	}
+
 	// Create Raft struct
 	r := &Raft{
 		applyCh:    make(chan *logFuture),
@@ -84,7 +93,7 @@ func NewRaft(conf *Config, stable StableStore, logs LogStore, fsm FSM, trans Tra
 		conf:       conf,
 		fsm:        fsm,
 		logs:       logs,
-		peers:      make([]net.Addr, 0, 5),
+		peers:      otherPeers,
 		rpcCh:      trans.Consumer(),
 		shutdownCh: make(chan struct{}),
 		stable:     stable,
