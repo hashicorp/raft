@@ -21,6 +21,14 @@ func min(a, b uint64) uint64 {
 	return b
 }
 
+// max returns the maximum
+func max(a, b uint64) uint64 {
+	if a >= b {
+		return a
+	}
+	return b
+}
+
 // generateUUID is used to generate a random UUID
 func generateUUID() string {
 	buf := make([]byte, 16)

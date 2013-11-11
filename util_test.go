@@ -33,6 +33,18 @@ func TestMin(t *testing.T) {
 	}
 }
 
+func TestMax(t *testing.T) {
+	if max(1, 1) != 1 {
+		t.Fatalf("bad max")
+	}
+	if max(2, 1) != 2 {
+		t.Fatalf("bad max")
+	}
+	if max(1, 2) != 2 {
+		t.Fatalf("bad max")
+	}
+}
+
 func TestGenerateUUID(t *testing.T) {
 	prev := generateUUID()
 	for i := 0; i < 100; i++ {
