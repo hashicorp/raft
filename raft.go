@@ -52,6 +52,7 @@ type Raft struct {
 	rpcCh <-chan RPC
 
 	// Shutdown channel to exit, protected to prevent concurrent exits
+	shutdown     bool
 	shutdownCh   chan struct{}
 	shutdownLock sync.Mutex
 
@@ -64,7 +65,7 @@ type Raft struct {
 }
 
 // NewRaft is used to construct a new Raft node
-func NewRaft(conf *Config, fsm FSM, logs LogStore, peers []net.Addr, stable StableStore, trans Transport) (*Raft, error) {
+func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, peers []net.Addr, trans Transport) (*Raft, error) {
 	// Try to restore the current term
 	currentTerm, err := stable.GetUint64(keyCurrentTerm)
 	if err != nil && err.Error() != "not found" {
@@ -144,11 +145,11 @@ func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
 // This is not a graceful operation.
 func (r *Raft) Shutdown() {
 	r.shutdownLock.Lock()
-	defer r.shutdownLock.Lock()
+	defer r.shutdownLock.Unlock()
 
-	if r.shutdownCh != nil {
+	if !r.shutdown {
 		close(r.shutdownCh)
-		r.shutdownCh = nil
+		r.shutdown = true
 	}
 }
 
@@ -657,7 +658,7 @@ func (r *Raft) candidateId() string {
 	}
 
 	// Generate a UUID on the first call
-	if err != nil && err.Error() != "not found" {
+	if err != nil && err.Error() == "not found" {
 		id := generateUUID()
 		if err := r.stable.Set(keyCandidateId, []byte(id)); err != nil {
 			panic(fmt.Errorf("Failed to write CandidateId: %v", err))
