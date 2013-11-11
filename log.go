@@ -6,8 +6,8 @@ const (
 	// Commands are applied to a user FSM
 	LogCommand LogType = iota
 
-	// Nop is used to assert leadership
-	LogNop
+	// Noop is used to assert leadership
+	LogNoop
 )
 
 // Log entries are replicated to all members of the Raft cluster

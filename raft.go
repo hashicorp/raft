@@ -294,7 +294,8 @@ func (r *Raft) runLeader() {
 		go r.replicate(inflight, triggers[i], stopCh, peer)
 	}
 
-	// TODO: Append no-op command
+	// Append no-op command to seal leadership
+	go r.applyNoop()
 
 	// Sit in the leader loop until we step down
 	r.leaderLoop(inflight, commitCh, triggers)
@@ -665,6 +666,17 @@ func (r *Raft) setCurrentTerm(t uint64) error {
 	}
 	r.raftState.setCurrentTerm(t)
 	return nil
+}
+
+// applyNoop is a blocking command that appends a no-op log
+// entry. It is used to seal leadership.
+func (r *Raft) applyNoop() {
+	logFuture := &logFuture{
+		log: Log{
+			Type: LogNoop,
+		},
+	}
+	r.applyCh <- logFuture
 }
 
 type followerReplication struct {
