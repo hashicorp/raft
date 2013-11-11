@@ -361,7 +361,7 @@ func (r *Raft) leaderLoop(inflight *inflight, commitCh <-chan *logFuture,
 			case *RequestVoteRequest:
 				transition = r.requestVote(rpc, cmd)
 			default:
-				log.Printf("[ERR] Leaderstate, got unexpected command: %#v",
+				log.Printf("[ERR] Leader state, got unexpected command: %#v",
 					rpc.Command)
 				rpc.Respond(nil, fmt.Errorf("Unexpected command"))
 			}
@@ -450,15 +450,17 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) (transition bool)
 
 	// Verify the last log entry
 	var prevLog Log
-	if err := r.logs.GetLog(a.PrevLogEntry, &prevLog); err != nil {
-		log.Printf("[WARN] Failed to get previous log: %d %v",
-			a.PrevLogEntry, err)
-		return
-	}
-	if a.PrevLogTerm != prevLog.Term {
-		log.Printf("[WARN] Previous log term mis-match: ours: %d remote: %d",
-			prevLog.Term, a.PrevLogTerm)
-		return
+	if a.PrevLogEntry > 0 {
+		if err := r.logs.GetLog(a.PrevLogEntry, &prevLog); err != nil {
+			log.Printf("[WARN] Failed to get previous log: %d %v",
+				a.PrevLogEntry, err)
+			return
+		}
+		if a.PrevLogTerm != prevLog.Term {
+			log.Printf("[WARN] Previous log term mis-match: ours: %d remote: %d",
+				prevLog.Term, a.PrevLogTerm)
+			return
+		}
 	}
 
 	// Add all the entries
