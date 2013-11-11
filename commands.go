@@ -20,6 +20,9 @@ type AppendEntriesResponse struct {
 	// Newer term if leader is out of date
 	Term uint64
 
+	// Last Log is a hint to help accelerate rebuilding slow nodes
+	LastLog uint64
+
 	// We may not succeed if we have a conflicting entry
 	Success bool
 }

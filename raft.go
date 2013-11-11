@@ -432,6 +432,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) (transition bool)
 	// Setup a response
 	resp := &AppendEntriesResponse{
 		Term:    r.getCurrentTerm(),
+		LastLog: r.getLastLog(),
 		Success: false,
 	}
 	var rpcErr error
@@ -757,11 +758,14 @@ START:
 				indexes.nextIndex-1, err)
 			return
 		}
-	}
 
-	// Set the previous index and term (0 if nextIndex is 1)
-	req.PrevLogEntry = l.Index
-	req.PrevLogTerm = l.Term
+		// Set the previous index and term (0 if nextIndex is 1)
+		req.PrevLogEntry = l.Index
+		req.PrevLogTerm = l.Term
+	} else {
+		req.PrevLogEntry = 0
+		req.PrevLogTerm = 0
+	}
 
 	// Append up to MaxAppendEntries or up to the lastIndex
 	req.Entries = make([]*Log, 0, 16)
@@ -797,7 +801,7 @@ START:
 		indexes.nextIndex = maxIndex + 1
 	} else {
 		log.Printf("[WARN] AppendEntries to %v rejected, sending older logs", peer)
-		indexes.nextIndex--
+		indexes.nextIndex = max(min(indexes.nextIndex-1, resp.LastLog+1), 1)
 		indexes.matchIndex = indexes.nextIndex - 1
 	}
 
