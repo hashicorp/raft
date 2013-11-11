@@ -153,6 +153,11 @@ func (r *Raft) Shutdown() {
 	}
 }
 
+// State is used to return the state raft is currently in
+func (r *Raft) State() RaftState {
+	return r.getState()
+}
+
 // run is a long running goroutine that runs the Raft FSM
 func (r *Raft) run() {
 	for {
@@ -331,8 +336,9 @@ func (r *Raft) leaderLoop(inflight *inflight, commitCh <-chan *logFuture,
 				return
 			}
 
-			// Add this to the inflight logs
+			// Add this to the inflight logs, commit
 			inflight.Start(applyLog, r.quorumSize())
+			inflight.Commit(applyLog.log.Index)
 
 			// Update the last log since it's on disk now
 			r.setLastLog(applyLog.log.Index)
