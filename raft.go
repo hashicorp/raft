@@ -273,7 +273,7 @@ func (r *Raft) runLeader() {
 
 	// Make a channel to processes commits, defer cancelation
 	// of all inflight processes when we step down
-	commitCh := make(chan *logFuture)
+	commitCh := make(chan *logFuture, 128)
 	inflight := NewInflight(commitCh)
 	defer inflight.Cancel(LeadershipLost)
 
@@ -286,13 +286,15 @@ func (r *Raft) runLeader() {
 	// Create the trigger channels
 	triggers := make([]chan struct{}, 0, len(r.peers))
 	for i := 0; i < len(r.peers); i++ {
-		triggers = append(triggers, make(chan struct{}))
+		triggers = append(triggers, make(chan struct{}, 1))
 	}
 
 	// Start a replication routine for each peer
 	for i, peer := range r.peers {
-		go r.replicate(triggers[i], stopCh, peer)
+		go r.replicate(inflight, triggers[i], stopCh, peer)
 	}
+
+	// TODO: Append no-op command
 
 	// Sit in the leader loop until we step down
 	r.leaderLoop(inflight, commitCh, triggers)
@@ -665,40 +667,104 @@ func (r *Raft) setCurrentTerm(t uint64) error {
 	return nil
 }
 
+type followerReplication struct {
+	matchIndex uint64
+	nextIndex  uint64
+}
+
 // replicate is a long running routine that is used to manage
 // the process of replicating logs to our followers
-func (r *Raft) replicate(triggerCh, stopCh chan struct{}, peer net.Addr) {
-	// Initialize timer to fire immediately since
-	// we just established leadership.
-	timeout := time.After(time.Microsecond)
-	for {
+func (r *Raft) replicate(inflight *inflight, triggerCh, stopCh chan struct{}, peer net.Addr) {
+	// Initialize the indexes
+	last := r.getLastLog()
+	indexes := followerReplication{
+		matchIndex: last,
+		nextIndex:  last + 1,
+	}
+
+	// Replicate when a new log arrives or if we timeout
+	shouldStop := false
+	for !shouldStop {
 		select {
-
-		case <-timeout:
-			timeout = randomTimeout(r.conf.CommitTimeout)
-			r.heartbeat(peer)
-
+		case <-triggerCh:
+			shouldStop = r.replicateTo(inflight, &indexes, r.getLastLog(), peer)
+		case <-randomTimeout(r.conf.CommitTimeout):
+			shouldStop = r.replicateTo(inflight, &indexes, r.getLastLog(), peer)
 		case <-stopCh:
 			return
 		}
 	}
 }
 
-func (r *Raft) heartbeat(peer net.Addr) {
-	// TODO: Cache prevLogEntry, prevLogTerm!
-	var prevLogEntry, prevLogTerm uint64
-	prevLogEntry = 0
-	prevLogTerm = 0
-	req := AppendEntriesRequest{
+// replicateTo is used to replicate the logs up to a given last index.
+// If the follower log is behind, we take care to bring them up to date
+func (r *Raft) replicateTo(inflight *inflight, indexes *followerReplication, lastIndex uint64, peer net.Addr) (shouldStop bool) {
+	// Create the base request
+	var l Log
+	var req AppendEntriesRequest
+	var resp AppendEntriesResponse
+START:
+	req = AppendEntriesRequest{
 		Term:              r.getCurrentTerm(),
 		LeaderId:          r.candidateId(),
-		PrevLogEntry:      prevLogEntry,
-		PrevLogTerm:       prevLogTerm,
 		LeaderCommitIndex: r.getCommitIndex(),
 	}
-	var resp AppendEntriesResponse
-	if err := r.trans.AppendEntries(peer, &req, &resp); err != nil {
-		log.Printf("[ERR] Failed to heartbeat with %v: %v",
-			peer, err)
+
+	// Get the previous log entry based on the nextIndex.
+	// Guard for the first index, since there is no 0 log entry
+	if indexes.nextIndex > 1 {
+		if err := r.logs.GetLog(indexes.nextIndex-1, &l); err != nil {
+			log.Printf("[ERR] Failed to get log at index %d: %v",
+				indexes.nextIndex-1, err)
+			return
+		}
 	}
+
+	// Set the previous index and term (0 if nextIndex is 1)
+	req.PrevLogEntry = l.Index
+	req.PrevLogTerm = l.Term
+
+	// Append up to MaxAppendEntries or up to the lastIndex
+	req.Entries = make([]*Log, 0, 16)
+	maxIndex := min(indexes.nextIndex+uint64(r.conf.MaxAppendEntries)-1, lastIndex)
+	for i := indexes.nextIndex; i <= maxIndex; i++ {
+		oldLog := new(Log)
+		if err := r.logs.GetLog(i, oldLog); err != nil {
+			log.Printf("[ERR] Failed to get log at index %d: %v", i, err)
+			return
+		}
+		req.Entries = append(req.Entries, oldLog)
+	}
+
+	// Make the RPC call
+	if err := r.trans.AppendEntries(peer, &req, &resp); err != nil {
+		log.Printf("[ERR] Failed to AppendEntries to %v: %v", peer, err)
+		return
+	}
+
+	// Check for a newer term, stop running
+	if resp.Term > req.Term {
+		return true
+	}
+
+	// Update the indexes based on success
+	if resp.Success {
+		// Mark any inflight logs as committed
+		for i := indexes.matchIndex; i <= maxIndex; i++ {
+			inflight.Commit(i)
+		}
+
+		indexes.matchIndex = maxIndex
+		indexes.nextIndex = maxIndex + 1
+	} else {
+		log.Printf("[WARN] AppendEntries to %v rejected, sending older logs", peer)
+		indexes.nextIndex--
+		indexes.matchIndex = indexes.nextIndex - 1
+	}
+
+	// Check if there are more logs to replicate
+	if indexes.nextIndex <= lastIndex {
+		goto START
+	}
+	return
 }
