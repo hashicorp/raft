@@ -2,6 +2,8 @@ package raft
 
 import (
 	"bytes"
+	"fmt"
+	"log"
 	"net"
 	"os"
 	"testing"
@@ -108,6 +110,17 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 	return in
 }
 
+func (c *cluster) Leader() *Raft {
+	for len(c.GetInState(Leader)) < 1 {
+		time.Sleep(time.Millisecond)
+	}
+	leaders := c.GetInState(Leader)
+	if len(leaders) != 1 {
+		panic(fmt.Errorf("expected one leader: %v", leaders))
+	}
+	return leaders[0]
+}
+
 func (c *cluster) FullyConnect() {
 	for i, t1 := range c.trans {
 		for j, t2 := range c.trans {
@@ -125,6 +138,26 @@ func (c *cluster) Disconnect(a net.Addr) {
 			t.DisconnectAll()
 		} else {
 			t.Disconnect(a)
+		}
+	}
+}
+
+func (c *cluster) EnsureSame(t *testing.T) {
+	first := c.fsms[0]
+	for i, fsm := range c.fsms {
+		if i == 0 {
+			continue
+		}
+
+		if len(first.logs) != len(fsm.logs) {
+			t.Fatalf("length mismatch: %d %d",
+				len(first.logs), len(fsm.logs))
+		}
+
+		for idx := 0; idx < len(first.logs); idx++ {
+			if bytes.Compare(first.logs[idx], fsm.logs[idx]) != 0 {
+				t.Fatalf("log mismatch at index %d", idx)
+			}
 		}
 	}
 }
@@ -223,7 +256,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 	c.Disconnect(leader.localAddr)
 
 	// Wait for new leader
-	time.Sleep(15 * time.Millisecond)
+	time.Sleep(30 * time.Millisecond)
 
 	// Should be two leaders!
 	leaders = c.GetInState(Leader)
@@ -275,4 +308,37 @@ func TestRaft_LeaderFail(t *testing.T) {
 			t.Fatalf("second entry should be 'apply'")
 		}
 	}
+}
+
+func TestRaft_BehindFollower(t *testing.T) {
+	log.Printf("[DEBUG] BEHIND START")
+	// Make the cluster
+	c := MakeCluster(3, t)
+	defer c.Close()
+
+	// Disconnect one follower
+	followers := c.GetInState(Follower)
+	behind := followers[0]
+	c.Disconnect(behind.localAddr)
+
+	// Commit a lot of things
+	leader := c.Leader()
+	var future ApplyFuture
+	for i := 0; i < 100; i++ {
+		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	// Wait for the last future to apply
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Reconnect the behind node
+	c.FullyConnect()
+
+	// Wait for replication
+	time.Sleep(50 * time.Millisecond)
+
+	// Ensure all the logs are the same
+	c.EnsureSame(t)
 }
