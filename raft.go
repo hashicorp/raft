@@ -42,6 +42,9 @@ type Raft struct {
 	// FSM is the client state machine to apply commands to
 	fsm FSM
 
+	// Stores our local addr
+	localAddr net.Addr
+
 	// LogStore provides durable storage for logs
 	logs LogStore
 
@@ -93,6 +96,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, peers []n
 		commitCh:   make(chan commitTuple, 128),
 		conf:       conf,
 		fsm:        fsm,
+		localAddr:  localAddr,
 		logs:       logs,
 		peers:      otherPeers,
 		rpcCh:      trans.Consumer(),
@@ -158,6 +162,10 @@ func (r *Raft) State() RaftState {
 	return r.getState()
 }
 
+func (r *Raft) String() string {
+	return fmt.Sprintf("Node %s at %s", r.candidateId(), r.localAddr.String())
+}
+
 // run is a long running goroutine that runs the Raft FSM
 func (r *Raft) run() {
 	for {
@@ -182,7 +190,7 @@ func (r *Raft) run() {
 
 // runFollower runs the FSM for a follower
 func (r *Raft) runFollower() {
-	log.Printf("[INFO] Entering Follower state")
+	log.Printf("[INFO] %v entering Follower state", r)
 	for {
 		select {
 		case rpc := <-r.rpcCh:
@@ -215,7 +223,7 @@ func (r *Raft) runFollower() {
 
 // runCandidate runs the FSM for a candidate
 func (r *Raft) runCandidate() {
-	log.Printf("[INFO] Entering Candidate state")
+	log.Printf("[INFO] %v entering Candidate state", r)
 
 	// Start vote for us, and set a timeout
 	voteCh := r.electSelf()
@@ -284,7 +292,7 @@ func (r *Raft) runCandidate() {
 // runLeader runs the FSM for a leader. Do the setup here and drop into
 // the leaderLoop for the hot loop
 func (r *Raft) runLeader() {
-	log.Printf("[INFO] Entering Leader state")
+	log.Printf("[INFO] %v entering Leader state", r)
 
 	// Make a channel to processes commits, defer cancelation
 	// of all inflight processes when we step down

@@ -124,3 +124,10 @@ func (i *InmemTransport) Disconnect(peer net.Addr) {
 	defer i.Unlock()
 	delete(i.peers, peer.String())
 }
+
+// DisconnectAll is used to remove all routes to peers
+func (i *InmemTransport) DisconnectAll() {
+	i.Lock()
+	defer i.Unlock()
+	i.peers = make(map[string]*InmemTransport)
+}

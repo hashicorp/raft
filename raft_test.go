@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"bytes"
 	"net"
 	"os"
 	"testing"
@@ -107,6 +108,27 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 	return in
 }
 
+func (c *cluster) FullyConnect() {
+	for i, t1 := range c.trans {
+		for j, t2 := range c.trans {
+			if i != j {
+				t1.Connect(t2.LocalAddr(), t2)
+				t2.Connect(t1.LocalAddr(), t1)
+			}
+		}
+	}
+}
+
+func (c *cluster) Disconnect(a net.Addr) {
+	for _, t := range c.trans {
+		if t.localAddr == a {
+			t.DisconnectAll()
+		} else {
+			t.Disconnect(a)
+		}
+	}
+}
+
 func MakeCluster(n int, t *testing.T) *cluster {
 	c := &cluster{}
 	peers := make([]net.Addr, 0, n)
@@ -124,14 +146,7 @@ func MakeCluster(n int, t *testing.T) *cluster {
 	}
 
 	// Wire the transports together
-	for i, t1 := range c.trans {
-		for j, t2 := range c.trans {
-			if i != j {
-				t1.Connect(t2.LocalAddr(), t2)
-				t2.Connect(t1.LocalAddr(), t1)
-			}
-		}
-	}
+	c.FullyConnect()
 
 	// Create all the rafts
 	for i := 0; i < n; i++ {
@@ -176,6 +191,88 @@ func TestRaft_TripleNode(t *testing.T) {
 	for _, fsm := range c.fsms {
 		if len(fsm.logs) != 1 {
 			t.Fatalf("did not apply to FSM!")
+		}
+	}
+}
+
+func TestRaft_LeaderFail(t *testing.T) {
+	// Make the cluster
+	c := MakeCluster(3, t)
+	defer c.Close()
+
+	// Wait for elections
+	time.Sleep(15 * time.Millisecond)
+
+	// Should be one leader
+	leaders := c.GetInState(Leader)
+	if len(leaders) != 1 {
+		t.Fatalf("expected one leader: %v", leaders)
+	}
+	leader := leaders[0]
+
+	// Should be able to apply
+	future := leader.Apply([]byte("test"), time.Millisecond)
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Wait for replication
+	time.Sleep(3 * time.Millisecond)
+
+	// Disconnect the leader now
+	c.Disconnect(leader.localAddr)
+
+	// Wait for new leader
+	time.Sleep(15 * time.Millisecond)
+
+	// Should be two leaders!
+	leaders = c.GetInState(Leader)
+	if len(leaders) != 2 {
+		t.Fatalf("expected two leader: %v", leaders)
+	}
+
+	// Get the 'new' leader
+	var newLead *Raft
+	if leaders[0] == leader {
+		newLead = leaders[1]
+	} else {
+		newLead = leaders[0]
+	}
+
+	// Ensure the term is greater
+	if newLead.getCurrentTerm() <= leader.getCurrentTerm() {
+		t.Fatalf("expected newer term!")
+	}
+
+	// Apply should work not work on old leader
+	future1 := leader.Apply([]byte("fail"), time.Millisecond)
+
+	// Apply should work on newer leader
+	future2 := newLead.Apply([]byte("apply"), time.Millisecond)
+
+	// Future2 should work
+	if err := future2.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Reconnect the networks
+	c.FullyConnect()
+
+	// Future1 should fail
+	if err := future1.Error(); err != LeadershipLost {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Check two entries are applied to the FSM
+	for _, fsm := range c.fsms {
+		if len(fsm.logs) != 2 {
+			t.Fatalf("did not apply both to FSM!")
+		}
+		if bytes.Compare(fsm.logs[0], []byte("test")) != 0 {
+			t.Fatalf("first entry should be 'test'")
+		}
+		if bytes.Compare(fsm.logs[1], []byte("apply")) != 0 {
+			t.Fatalf("second entry should be 'apply'")
 		}
 	}
 }
