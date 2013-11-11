@@ -368,32 +368,33 @@ func (r *Raft) runFSM() {
 				continue
 			}
 
-			// TODO: Restore old logs!
-
-			// Get the log, either from the future or from our log store
-			var l *Log
-			if commitTuple.future != nil {
-				l = &commitTuple.future.log
-			} else {
-				l = new(Log)
-				if err := r.logs.GetLog(commitTuple.index, l); err != nil {
-					log.Printf("[ERR] Failed to get log: %v", err)
-					panic(err)
+			// Apply all the preceeding logs
+			for idx := r.getLastApplied() + 1; idx <= commitTuple.index; idx++ {
+				// Get the log, either from the future or from our log store
+				var l *Log
+				if commitTuple.future != nil && commitTuple.future.log.Index == idx {
+					l = &commitTuple.future.log
+				} else {
+					l = new(Log)
+					if err := r.logs.GetLog(idx, l); err != nil {
+						log.Printf("[ERR] Failed to get log at %d: %v", idx, err)
+						panic(err)
+					}
 				}
-			}
 
-			// Only apply commands, ignore other logs
-			if l.Type == LogCommand {
-				r.fsm.Apply(l.Data)
+				// Only apply commands, ignore other logs
+				if l.Type == LogCommand {
+					r.fsm.Apply(l.Data)
+				}
+
+				// Update the lastApplied
+				r.setLastApplied(l.Index)
 			}
 
 			// Invoke the future if given
 			if commitTuple.future != nil {
 				commitTuple.future.respond(nil)
 			}
-
-			// Update the lastApplied
-			r.setLastApplied(l.Index)
 
 		case <-r.shutdownCh:
 			return
