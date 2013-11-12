@@ -292,6 +292,9 @@ func TestRaft_LeaderFail(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 
+	// Wait for log replication
+	time.Sleep(10 * time.Millisecond)
+
 	// Check two entries are applied to the FSM
 	for _, fsm := range c.fsms {
 		if len(fsm.logs) != 2 {

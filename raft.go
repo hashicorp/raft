@@ -328,41 +328,39 @@ func (r *Raft) runCandidate() {
 	}
 }
 
+type leaderState struct {
+	commitCh  chan *logFuture
+	inflight  *inflight
+	replState map[string]*followerReplication
+}
+
+func (l *leaderState) Release() {
+	// Stop replication
+	for _, p := range l.replState {
+		close(p.stopCh)
+	}
+
+	// Cancel inflight requests
+	l.inflight.Cancel(LeadershipLost)
+}
+
 // runLeader runs the FSM for a leader. Do the setup here and drop into
 // the leaderLoop for the hot loop
 func (r *Raft) runLeader() {
 	log.Printf("[INFO] %v entering Leader state", r)
+	state := leaderState{
+		commitCh:  make(chan *logFuture, 128),
+		replState: make(map[string]*followerReplication),
+	}
+	defer state.Release()
 
-	// Make a channel to processes commits, defer cancelation
-	// of all inflight processes when we step down
-	commitCh := make(chan *logFuture, 128)
-	inflight := NewInflight(commitCh)
-	defer inflight.Cancel(LeadershipLost)
-
-	// Track the replication state of our peers
-	replicateState := make(map[string]*followerReplication)
-
-	// Defer closing all replicators
-	defer func() {
-		for _, p := range replicateState {
-			close(p.stopCh)
-		}
-	}()
+	// Initialize inflight tracker
+	state.inflight = NewInflight(state.commitCh)
 
 	// Start a replication routine for each peer
-	last := r.getLastLog()
 	r.peerLock.Lock()
 	for _, peer := range r.peers {
-		state := &followerReplication{
-			peer:       peer,
-			inflight:   inflight,
-			stopCh:     make(chan struct{}),
-			triggerCh:  make(chan struct{}, 1),
-			matchIndex: last,
-			nextIndex:  last + 1,
-		}
-		replicateState[peer.String()] = state
-		go r.replicate(state)
+		r.startReplication(&state, peer)
 	}
 	r.peerLock.Unlock()
 
@@ -370,13 +368,26 @@ func (r *Raft) runLeader() {
 	go r.applyNoop()
 
 	// Sit in the leader loop until we step down
-	r.leaderLoop(inflight, commitCh, replicateState)
+	r.leaderLoop(&state)
+}
+
+// startReplication is a helper to setup state and start async replication to a peer
+func (r *Raft) startReplication(state *leaderState, peer net.Addr) {
+	s := &followerReplication{
+		peer:       peer,
+		inflight:   state.inflight,
+		stopCh:     make(chan struct{}),
+		triggerCh:  make(chan struct{}, 1),
+		matchIndex: r.getLastLog(),
+		nextIndex:  r.getLastLog() + 1,
+	}
+	state.replState[peer.String()] = s
+	go r.replicate(s)
 }
 
 // leaderLoop is the hot loop for a leader, it is invoked
 // after all the various leader setup is done
-func (r *Raft) leaderLoop(inflight *inflight, commitCh <-chan *logFuture,
-	replState map[string]*followerReplication) {
+func (r *Raft) leaderLoop(s *leaderState) {
 	transition := false
 	for !transition {
 		select {
@@ -392,10 +403,13 @@ func (r *Raft) leaderLoop(inflight *inflight, commitCh <-chan *logFuture,
 				rpc.Respond(nil, fmt.Errorf("Unexpected command"))
 			}
 
-		case commitLog := <-commitCh:
+		case commitLog := <-s.commitCh:
 			// Increment the commit index
 			idx := commitLog.log.Index
 			r.setCommitIndex(idx)
+
+			// Perform leader-specific processing
+			transition = r.leaderProcessLog(s, &commitLog.log)
 
 			// Trigger applying logs locally
 			r.commitCh <- commitTuple{idx, commitLog}
@@ -414,14 +428,14 @@ func (r *Raft) leaderLoop(inflight *inflight, commitCh <-chan *logFuture,
 			}
 
 			// Add this to the inflight logs, commit
-			inflight.Start(applyLog, r.quorumSize())
-			inflight.Commit(applyLog.log.Index)
+			s.inflight.Start(applyLog, r.quorumSize())
+			s.inflight.Commit(applyLog.log.Index)
 
 			// Update the last log since it's on disk now
 			r.setLastLog(applyLog.log.Index)
 
 			// Notify the replicators of the new log
-			for _, f := range replState {
+			for _, f := range s.replState {
 				asyncNotifyCh(f.triggerCh)
 			}
 
@@ -429,6 +443,45 @@ func (r *Raft) leaderLoop(inflight *inflight, commitCh <-chan *logFuture,
 			return
 		}
 	}
+}
+
+// leaderProcessLog is used for leader-specific log handling before we
+// hand off to the generic runPostCommit handler. Returns true if there
+// should be a state transition.
+func (r *Raft) leaderProcessLog(s *leaderState, l *Log) bool {
+	// Only handle LogAddPeer and LogRemove Peer
+	if l.Type != LogAddPeer && l.Type != LogRemovePeer {
+		return false
+	}
+
+	// Process the log immediately to update the peer list
+	r.processLog(l)
+
+	// Decode the peer
+	peer := r.trans.DecodePeer(l.Data)
+	isSelf := peer.String() == r.localAddr.String()
+
+	// Get the replication state
+	repl, ok := s.replState[peer.String()]
+
+	// Start replicattion for new nodes
+	if l.Type == LogAddPeer && !ok && !isSelf {
+		r.startReplication(s, peer)
+	}
+
+	// Stop replication for old nodes
+	if l.Type == LogRemovePeer && ok {
+		close(repl.stopCh)
+		delete(s.replState, peer.String())
+	}
+
+	// Step down if we are being removed
+	if l.Type == LogRemovePeer && isSelf {
+		r.setState(Follower)
+		return true
+	}
+
+	return false
 }
 
 // runPostCommit is a long running goroutine responsible for the handling
