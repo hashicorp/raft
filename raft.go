@@ -339,22 +339,30 @@ func (r *Raft) runLeader() {
 	inflight := NewInflight(commitCh)
 	defer inflight.Cancel(LeadershipLost)
 
-	// Make a channel that lasts while we are leader, and
-	// is closed as soon as we step down. Used to stop extra
-	// goroutines.
-	stopCh := make(chan struct{})
-	defer close(stopCh)
+	// Track the replication state of our peers
+	replicateState := make(map[string]*followerReplication)
 
-	// Create the trigger channels
-	r.peerLock.Lock()
-	triggers := make([]chan struct{}, 0, len(r.peers))
-	for i := 0; i < len(r.peers); i++ {
-		triggers = append(triggers, make(chan struct{}, 1))
-	}
+	// Defer closing all replicators
+	defer func() {
+		for _, p := range replicateState {
+			close(p.stopCh)
+		}
+	}()
 
 	// Start a replication routine for each peer
-	for i, peer := range r.peers {
-		go r.replicate(inflight, triggers[i], stopCh, peer)
+	last := r.getLastLog()
+	r.peerLock.Lock()
+	for _, peer := range r.peers {
+		state := &followerReplication{
+			peer:       peer,
+			inflight:   inflight,
+			stopCh:     make(chan struct{}),
+			triggerCh:  make(chan struct{}, 1),
+			matchIndex: last,
+			nextIndex:  last + 1,
+		}
+		replicateState[peer.String()] = state
+		go r.replicate(state)
 	}
 	r.peerLock.Unlock()
 
@@ -362,13 +370,13 @@ func (r *Raft) runLeader() {
 	go r.applyNoop()
 
 	// Sit in the leader loop until we step down
-	r.leaderLoop(inflight, commitCh, triggers)
+	r.leaderLoop(inflight, commitCh, replicateState)
 }
 
 // leaderLoop is the hot loop for a leader, it is invoked
 // after all the various leader setup is done
 func (r *Raft) leaderLoop(inflight *inflight, commitCh <-chan *logFuture,
-	triggers []chan struct{}) {
+	replState map[string]*followerReplication) {
 	transition := false
 	for !transition {
 		select {
@@ -413,7 +421,9 @@ func (r *Raft) leaderLoop(inflight *inflight, commitCh <-chan *logFuture,
 			r.setLastLog(applyLog.log.Index)
 
 			// Notify the replicators of the new log
-			asyncNotify(triggers)
+			for _, f := range replState {
+				asyncNotifyCh(f.triggerCh)
+			}
 
 		case <-r.shutdownCh:
 			return
@@ -790,109 +800,4 @@ func (r *Raft) applyNoop() {
 		},
 	}
 	r.applyCh <- logFuture
-}
-
-type followerReplication struct {
-	matchIndex uint64
-	nextIndex  uint64
-}
-
-// replicate is a long running routine that is used to manage
-// the process of replicating logs to our followers
-func (r *Raft) replicate(inflight *inflight, triggerCh, stopCh chan struct{}, peer net.Addr) {
-	// Initialize the indexes
-	last := r.getLastLog()
-	indexes := followerReplication{
-		matchIndex: last,
-		nextIndex:  last + 1,
-	}
-
-	// Replicate when a new log arrives or if we timeout
-	shouldStop := false
-	for !shouldStop {
-		select {
-		case <-triggerCh:
-			shouldStop = r.replicateTo(inflight, &indexes, r.getLastLog(), peer)
-		case <-randomTimeout(r.conf.CommitTimeout):
-			shouldStop = r.replicateTo(inflight, &indexes, r.getLastLog(), peer)
-		case <-stopCh:
-			return
-		}
-	}
-}
-
-// replicateTo is used to replicate the logs up to a given last index.
-// If the follower log is behind, we take care to bring them up to date
-func (r *Raft) replicateTo(inflight *inflight, indexes *followerReplication, lastIndex uint64, peer net.Addr) (shouldStop bool) {
-	// Create the base request
-	var l Log
-	var req AppendEntriesRequest
-	var resp AppendEntriesResponse
-START:
-	req = AppendEntriesRequest{
-		Term:              r.getCurrentTerm(),
-		LeaderId:          r.candidateId(),
-		LeaderCommitIndex: r.getCommitIndex(),
-	}
-
-	// Get the previous log entry based on the nextIndex.
-	// Guard for the first index, since there is no 0 log entry
-	if indexes.nextIndex > 1 {
-		if err := r.logs.GetLog(indexes.nextIndex-1, &l); err != nil {
-			log.Printf("[ERR] Failed to get log at index %d: %v",
-				indexes.nextIndex-1, err)
-			return
-		}
-
-		// Set the previous index and term (0 if nextIndex is 1)
-		req.PrevLogEntry = l.Index
-		req.PrevLogTerm = l.Term
-	} else {
-		req.PrevLogEntry = 0
-		req.PrevLogTerm = 0
-	}
-
-	// Append up to MaxAppendEntries or up to the lastIndex
-	req.Entries = make([]*Log, 0, 16)
-	maxIndex := min(indexes.nextIndex+uint64(r.conf.MaxAppendEntries)-1, lastIndex)
-	for i := indexes.nextIndex; i <= maxIndex; i++ {
-		oldLog := new(Log)
-		if err := r.logs.GetLog(i, oldLog); err != nil {
-			log.Printf("[ERR] Failed to get log at index %d: %v", i, err)
-			return
-		}
-		req.Entries = append(req.Entries, oldLog)
-	}
-
-	// Make the RPC call
-	if err := r.trans.AppendEntries(peer, &req, &resp); err != nil {
-		log.Printf("[ERR] Failed to AppendEntries to %v: %v", peer, err)
-		return
-	}
-
-	// Check for a newer term, stop running
-	if resp.Term > req.Term {
-		return true
-	}
-
-	// Update the indexes based on success
-	if resp.Success {
-		// Mark any inflight logs as committed
-		for i := indexes.matchIndex; i <= maxIndex; i++ {
-			inflight.Commit(i)
-		}
-
-		indexes.matchIndex = maxIndex
-		indexes.nextIndex = maxIndex + 1
-	} else {
-		log.Printf("[WARN] AppendEntries to %v rejected, sending older logs", peer)
-		indexes.nextIndex = max(min(indexes.nextIndex-1, resp.LastLog+1), 1)
-		indexes.matchIndex = indexes.nextIndex - 1
-	}
-
-	// Check if there are more logs to replicate
-	if indexes.nextIndex <= lastIndex {
-		goto START
-	}
-	return
 }
