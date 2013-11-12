@@ -119,9 +119,8 @@ func (r *Raft) heartbeat(s *followerReplication) {
 		select {
 		case <-randomTimeout(r.conf.HeartbeatTimeout / 4):
 			req := AppendEntriesRequest{
-				Term:              r.getCurrentTerm(),
-				LeaderId:          r.candidateId(),
-				LeaderCommitIndex: r.getCommitIndex(),
+				Term:     r.getCurrentTerm(),
+				LeaderId: r.candidateId(),
 			}
 			var resp AppendEntriesResponse
 			if err := r.trans.AppendEntries(s.peer, &req, &resp); err != nil {

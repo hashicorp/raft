@@ -637,7 +637,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) (transition bool)
 	}
 
 	// Update the commit index
-	if a.LeaderCommitIndex > r.getCommitIndex() {
+	if a.LeaderCommitIndex > 0 && a.LeaderCommitIndex > r.getCommitIndex() {
 		idx := min(a.LeaderCommitIndex, r.getLastLog())
 		r.setCommitIndex(idx)
 
