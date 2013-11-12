@@ -466,17 +466,20 @@ func (r *Raft) leaderProcessLog(s *leaderState, l *Log) bool {
 
 	// Start replicattion for new nodes
 	if l.Type == LogAddPeer && !ok && !isSelf {
+		log.Printf("[INFO] Added peer %v, starting replication", peer)
 		r.startReplication(s, peer)
 	}
 
 	// Stop replication for old nodes
 	if l.Type == LogRemovePeer && ok {
+		log.Printf("[INFO] Removed peer %v, stopping replication", peer)
 		close(repl.stopCh)
 		delete(s.replState, peer.String())
 	}
 
 	// Step down if we are being removed
 	if l.Type == LogRemovePeer && isSelf {
+		log.Printf("[INFO] Removed ourself, stepping down as leader", peer)
 		r.setState(Follower)
 		return true
 	}
