@@ -37,4 +37,10 @@ type Transport interface {
 
 	// RequestVote sends the appropriate RPC to the target node
 	RequestVote(target net.Addr, args *RequestVoteRequest, resp *RequestVoteResponse) error
+
+	// EncodePeer is used to serialize a peer name
+	EncodePeer(net.Addr) []byte
+
+	// DecodePeer is used to deserialize a peer name
+	DecodePeer([]byte) net.Addr
 }

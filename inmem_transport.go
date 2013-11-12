@@ -110,6 +110,16 @@ func (i *InmemTransport) RequestVote(target net.Addr, args *RequestVoteRequest, 
 	return nil
 }
 
+// Use the UUID as the address directly
+func (i *InmemTransport) EncodePeer(p net.Addr) []byte {
+	return []byte(p.String())
+}
+
+// Wrap the UUID in an InmemAddr
+func (i *InmemTransport) DecodePeer(buf []byte) net.Addr {
+	return &InmemAddr{string(buf)}
+}
+
 // Connect is used to connect this transport to another transport for
 // a given peer name. This allows for local routing.
 func (i *InmemTransport) Connect(peer net.Addr, trans *InmemTransport) {
