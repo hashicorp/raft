@@ -1,6 +1,8 @@
 package raft
 
 import (
+	"net"
+	"reflect"
 	"regexp"
 	"testing"
 	"time"
@@ -93,5 +95,41 @@ func TestAsyncNotify(t *testing.T) {
 	case <-chs[2]:
 	default:
 		t.Fatalf("should have message!")
+	}
+}
+
+func TestExcludePeer(t *testing.T) {
+	peers := []net.Addr{NewInmemAddr(), NewInmemAddr(), NewInmemAddr()}
+	peer := peers[2]
+
+	after := excludePeer(peers, peer)
+	if len(after) != 2 {
+		t.Fatalf("Bad length")
+	}
+	if after[0] == peer || after[1] == peer {
+		t.Fatalf("should not contain peer")
+	}
+}
+
+func TestPeerContained(t *testing.T) {
+	peers := []net.Addr{NewInmemAddr(), NewInmemAddr(), NewInmemAddr()}
+
+	if !peerContained(peers, peers[2]) {
+		t.Fatalf("Expect contained")
+	}
+	if peerContained(peers, NewInmemAddr()) {
+		t.Fatalf("unexpected contained")
+	}
+}
+
+func TestAddUniquePeer(t *testing.T) {
+	peers := []net.Addr{NewInmemAddr(), NewInmemAddr(), NewInmemAddr()}
+	after := addUniquePeer(peers, peers[2])
+	if !reflect.DeepEqual(after, peers) {
+		t.Fatalf("unexpected append")
+	}
+	after = addUniquePeer(peers, NewInmemAddr())
+	if len(after) != 4 {
+		t.Fatalf("expected append")
 	}
 }

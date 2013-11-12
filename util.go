@@ -4,6 +4,7 @@ import (
 	crand "crypto/rand"
 	"fmt"
 	"math/rand"
+	"net"
 	"time"
 )
 
@@ -48,9 +49,46 @@ func generateUUID() string {
 // a list of channels. This will not block.
 func asyncNotify(chans []chan struct{}) {
 	for _, ch := range chans {
-		select {
-		case ch <- struct{}{}:
-		default:
+		asyncNotifyCh(ch)
+	}
+}
+
+// asyncNotifyCh is used to do an async channel send
+// to a singel channel without blocking.
+func asyncNotifyCh(ch chan struct{}) {
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
+}
+
+// excludePeer is used to exclude a single peer from a list of peers
+func excludePeer(peers []net.Addr, peer net.Addr) []net.Addr {
+	otherPeers := make([]net.Addr, 0, len(peers))
+	for _, p := range peers {
+		if p.String() != peer.String() {
+			otherPeers = append(otherPeers, p)
 		}
+	}
+	return otherPeers
+}
+
+// peerContained checks if a given peer is contained in a list
+func peerContained(peers []net.Addr, peer net.Addr) bool {
+	for _, p := range peers {
+		if p.String() == peer.String() {
+			return true
+		}
+	}
+	return false
+}
+
+// addUniquePeer is used to add a peer to a list of existing
+// peers only if it is not already contained
+func addUniquePeer(peers []net.Addr, peer net.Addr) []net.Addr {
+	if peerContained(peers, peer) {
+		return peers
+	} else {
+		return append(peers, peer)
 	}
 }
