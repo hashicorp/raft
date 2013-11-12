@@ -110,7 +110,7 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 }
 
 func (c *cluster) Leader() *Raft {
-	timeout := time.AfterFunc(100*time.Millisecond, func() {
+	timeout := time.AfterFunc(250*time.Millisecond, func() {
 		panic("timeout waiting for leader")
 	})
 	defer timeout.Stop()
@@ -166,7 +166,7 @@ func (c *cluster) EnsureSame(t *testing.T) {
 	}
 }
 
-func MakeCluster(n int, t *testing.T) *cluster {
+func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 	c := &cluster{}
 	peers := make([]net.Addr, 0, n)
 
@@ -187,7 +187,9 @@ func MakeCluster(n int, t *testing.T) *cluster {
 
 	// Create all the rafts
 	for i := 0; i < n; i++ {
-		conf := inmemConfig()
+		if conf == nil {
+			conf = inmemConfig()
+		}
 		store := c.stores[i]
 		trans := c.trans[i]
 		raft, err := NewRaft(conf, c.fsms[i], store, store, peers, trans)
@@ -202,7 +204,7 @@ func MakeCluster(n int, t *testing.T) *cluster {
 
 func TestRaft_TripleNode(t *testing.T) {
 	// Make the cluster
-	c := MakeCluster(3, t)
+	c := MakeCluster(3, t, nil)
 	defer c.Close()
 
 	// Should be one leader
@@ -227,7 +229,7 @@ func TestRaft_TripleNode(t *testing.T) {
 
 func TestRaft_LeaderFail(t *testing.T) {
 	// Make the cluster
-	c := MakeCluster(3, t)
+	c := MakeCluster(3, t, nil)
 	defer c.Close()
 
 	// Should be one leader
@@ -302,7 +304,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 
 func TestRaft_BehindFollower(t *testing.T) {
 	// Make the cluster
-	c := MakeCluster(3, t)
+	c := MakeCluster(3, t, nil)
 	defer c.Close()
 
 	// Disconnect one follower
@@ -334,11 +336,12 @@ func TestRaft_BehindFollower(t *testing.T) {
 
 func TestRaft_ApplyNonLeader(t *testing.T) {
 	// Make the cluster
-	c := MakeCluster(5, t)
+	c := MakeCluster(5, t, nil)
 	defer c.Close()
 
 	// Wait for a leader
 	c.Leader()
+	time.Sleep(10 * time.Millisecond)
 
 	// Try to apply to them
 	followers := c.GetInState(Follower)
@@ -358,4 +361,29 @@ func TestRaft_ApplyNonLeader(t *testing.T) {
 	if future.Error() != NotLeader {
 		t.Fatalf("should not apply on follower")
 	}
+}
+
+func TestRaft_ApplyConcurrent(t *testing.T) {
+	// Make the cluster
+	conf := inmemConfig()
+	conf.HeartbeatTimeout = 100 * time.Millisecond
+	c := MakeCluster(3, t, conf)
+	defer c.Close()
+
+	// Wait for a leader
+	leader := c.Leader()
+	for i := 0; i < 100; i++ {
+		go func() {
+			future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+			if err := future.Error(); err != nil {
+				t.Fatalf("err: %v", err)
+			}
+		}()
+	}
+
+	// Wait for replication
+	time.Sleep(50 * time.Millisecond)
+
+	// Check the FSMs
+	c.EnsureSame(t)
 }
