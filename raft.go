@@ -542,6 +542,9 @@ func (r *Raft) processLog(l *Log) {
 		if peer.String() != r.localAddr.String() {
 			r.peers = addUniquePeer(r.peers, peer)
 		}
+
+		// Update the PeerStore
+		r.peerStore.SetPeers(r.peers)
 		r.peerLock.Unlock()
 
 	case LogRemovePeer:
@@ -554,6 +557,9 @@ func (r *Raft) processLog(l *Log) {
 		} else {
 			r.peers = excludePeer(r.peers, peer)
 		}
+
+		// Update the PeerStore
+		r.peerStore.SetPeers(r.peers)
 		r.peerLock.Unlock()
 
 	case LogNoop:
