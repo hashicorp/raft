@@ -31,6 +31,10 @@ type Raft struct {
 	// be committed and applied to the FSM.
 	applyCh chan *logFuture
 
+	// This is used to cache our ID to prevent excessive leveldb
+	// lookups
+	candidateIdCache string
+
 	// Commit chan is used to provide the newest commit index
 	// and potentially a future to the FSM manager routine.
 	// The FSM should apply up to the index and notify the future.
@@ -111,6 +115,9 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, peers []n
 	// Restore the current term and the last log
 	r.setCurrentTerm(currentTerm)
 	r.setLastLog(lastLog)
+
+	// Touch candidate id to ensure it is generated
+	r.candidateId()
 
 	// Start the background work
 	go r.run()
@@ -668,10 +675,16 @@ func (r *Raft) persistVote(term uint64, candidate string) error {
 
 // CandidateId is used to return a stable and unique candidate ID
 func (r *Raft) candidateId() string {
+	// Check the cache
+	if r.candidateIdCache != "" {
+		return r.candidateIdCache
+	}
+
 	// Get the persistent id
 	raw, err := r.stable.Get(keyCandidateId)
 	if err == nil {
-		return string(raw)
+		r.candidateIdCache = string(raw)
+		return r.candidateIdCache
 	}
 
 	// Generate a UUID on the first call
@@ -680,6 +693,7 @@ func (r *Raft) candidateId() string {
 		if err := r.stable.Set(keyCandidateId, []byte(id)); err != nil {
 			panic(fmt.Errorf("Failed to write CandidateId: %v", err))
 		}
+		r.candidateIdCache = id
 		return id
 	}
 	panic(fmt.Errorf("Failed to read CandidateId: %v", err))
