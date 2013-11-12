@@ -55,25 +55,9 @@ func (i *InmemTransport) LocalAddr() net.Addr {
 }
 
 func (i *InmemTransport) AppendEntries(target net.Addr, args *AppendEntriesRequest, resp *AppendEntriesResponse) error {
-	i.RLock()
-	peer, ok := i.peers[target.String()]
-	i.RUnlock()
-
-	if !ok {
-		return fmt.Errorf("Failed to connect to peer: %v", target)
-	}
-
-	// Send the RPC over
-	respCh := make(chan RPCResponse)
-	peer.consumerCh <- RPC{
-		Command:  args,
-		RespChan: respCh,
-	}
-
-	// Wait for a response
-	rpcResp := <-respCh
-	if rpcResp.Error != nil {
-		return rpcResp.Error
+	rpcResp, err := i.makeRPC(target, args)
+	if err != nil {
+		return err
 	}
 
 	// Copy the result back
@@ -83,31 +67,41 @@ func (i *InmemTransport) AppendEntries(target net.Addr, args *AppendEntriesReque
 }
 
 func (i *InmemTransport) RequestVote(target net.Addr, args *RequestVoteRequest, resp *RequestVoteResponse) error {
-	i.RLock()
-	peer, ok := i.peers[target.String()]
-	i.RUnlock()
-
-	if !ok {
-		return fmt.Errorf("Failed to connect to peer: %v", target)
-	}
-
-	// Send the RPC over
-	respCh := make(chan RPCResponse)
-	peer.consumerCh <- RPC{
-		Command:  args,
-		RespChan: respCh,
-	}
-
-	// Wait for a response
-	rpcResp := <-respCh
-	if rpcResp.Error != nil {
-		return rpcResp.Error
+	rpcResp, err := i.makeRPC(target, args)
+	if err != nil {
+		return err
 	}
 
 	// Copy the result back
 	out := rpcResp.Response.(*RequestVoteResponse)
 	*resp = *out
 	return nil
+}
+
+func (i *InmemTransport) makeRPC(target net.Addr, args interface{}) (rpcResp RPCResponse, err error) {
+	i.RLock()
+	peer, ok := i.peers[target.String()]
+	i.RUnlock()
+
+	if !ok {
+		err = fmt.Errorf("Failed to connect to peer: %v", target)
+		return
+	}
+
+	// Send the RPC over
+	respCh := make(chan RPCResponse)
+	peer.consumerCh <- RPC{
+		Peer:     i.localAddr,
+		Command:  args,
+		RespChan: respCh,
+	}
+
+	// Wait for a response
+	rpcResp = <-respCh
+	if rpcResp.Error != nil {
+		err = rpcResp.Error
+	}
+	return
 }
 
 // Use the UUID as the address directly
