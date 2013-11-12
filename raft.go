@@ -149,6 +149,35 @@ func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
 	}
 }
 
+// AddPeer is used to add a new peer into the cluster. This must be
+// run on the leader or it will fail.
+func (r *Raft) AddPeer(peer net.Addr) ApplyFuture {
+	logFuture := &logFuture{
+		log: Log{
+			Type: LogAddPeer,
+			Data: r.trans.EncodePeer(peer),
+		},
+		errCh: make(chan error, 1),
+	}
+	r.applyCh <- logFuture
+	return logFuture
+}
+
+// RemovePeer is used to remove a peer from the cluster. If the
+// current leader is being removed, it will cause a new election
+// to occur. This must be run on the leader or it will fail.
+func (r *Raft) RemovePeer(peer net.Addr) ApplyFuture {
+	logFuture := &logFuture{
+		log: Log{
+			Type: LogRemovePeer,
+			Data: r.trans.EncodePeer(peer),
+		},
+		errCh: make(chan error, 1),
+	}
+	r.applyCh <- logFuture
+	return logFuture
+}
+
 // Shutdown is used to stop the Raft background routines.
 // This is not a graceful operation.
 func (r *Raft) Shutdown() {
@@ -413,15 +442,11 @@ func (r *Raft) runPostCommit() {
 						panic(err)
 					}
 				}
-
-				// Only apply commands, ignore other logs
-				if l.Type == LogCommand {
-					r.fsm.Apply(l.Data)
-				}
-
-				// Update the lastApplied
-				r.setLastApplied(l.Index)
+				r.processLog(l)
 			}
+
+			// Update the lastApplied
+			r.setLastApplied(commitTuple.index)
 
 			// Invoke the future if given
 			if commitTuple.future != nil {
@@ -431,6 +456,41 @@ func (r *Raft) runPostCommit() {
 		case <-r.shutdownCh:
 			return
 		}
+	}
+}
+
+// processLog is invoked to process the application of a single committed log
+func (r *Raft) processLog(l *Log) {
+	switch l.Type {
+	case LogCommand:
+		r.fsm.Apply(l.Data)
+
+	case LogAddPeer:
+		peer := r.trans.DecodePeer(l.Data)
+
+		// Avoid adding ourself as a peer
+		r.peerLock.Lock()
+		if peer.String() != r.localAddr.String() {
+			r.peers = addUniquePeer(r.peers, peer)
+		}
+		r.peerLock.Unlock()
+
+	case LogRemovePeer:
+		peer := r.trans.DecodePeer(l.Data)
+
+		// Removing ourself acts like removing all other peers
+		r.peerLock.Lock()
+		if peer.String() == r.localAddr.String() {
+			r.peers = nil
+		} else {
+			r.peers = excludePeer(r.peers, peer)
+		}
+		r.peerLock.Unlock()
+
+	case LogNoop:
+		// Ignore the no-op
+	default:
+		log.Printf("[ERR] Got unrecognized log type: %#v", l)
 	}
 }
 
