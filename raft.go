@@ -12,7 +12,6 @@ var (
 	keyCurrentTerm  = []byte("CurrentTerm")
 	keyLastVoteTerm = []byte("LastVoteTerm")
 	keyLastVoteCand = []byte("LastVoteCand")
-	keyCandidateId  = []byte("CandidateId")
 	NotLeader       = fmt.Errorf("node is not the leader")
 	LeadershipLost  = fmt.Errorf("leadership lost while committing log")
 )
@@ -30,10 +29,6 @@ type Raft struct {
 	// applyCh is used to async send logs to the main thread to
 	// be committed and applied to the FSM.
 	applyCh chan *logFuture
-
-	// This is used to cache our ID to prevent excessive leveldb
-	// lookups
-	candidateIdCache string
 
 	// Commit chan is used to provide the newest commit index
 	// and potentially a future to the FSM manager routine.
@@ -118,9 +113,6 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, peerStore
 	r.setCurrentTerm(currentTerm)
 	r.setLastLog(lastLog)
 
-	// Touch candidate id to ensure it is generated
-	r.candidateId()
-
 	// Start the background work
 	go r.run()
 	go r.runPostCommit()
@@ -202,7 +194,7 @@ func (r *Raft) State() RaftState {
 }
 
 func (r *Raft) String() string {
-	return fmt.Sprintf("Node %s at %s", r.candidateId(), r.localAddr.String())
+	return fmt.Sprintf("Node at %s", r.localAddr.String())
 }
 
 // run is a long running goroutine that runs the Raft FSM
@@ -697,8 +689,8 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) (transition bool) {
 	// Check if we've voted in this election before
 	if lastVoteTerm == req.Term && lastVoteCandBytes != nil {
 		log.Printf("[INFO] Duplicate RequestVote for same term: %d", req.Term)
-		if string(lastVoteCandBytes) == req.CandidateId {
-			log.Printf("[WARN] Duplicate RequestVote from candidate: %s", req.CandidateId)
+		if string(lastVoteCandBytes) == req.Candidate.String() {
+			log.Printf("[WARN] Duplicate RequestVote from candidate: %s", req.Candidate)
 			resp.Granted = true
 		}
 		return
@@ -724,7 +716,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) (transition bool) {
 	}
 
 	// Persist a vote for safety
-	if err := r.persistVote(req.Term, req.CandidateId); err != nil {
+	if err := r.persistVote(req.Term, req.Candidate.String()); err != nil {
 		log.Printf("[ERR] Failed to persist vote: %v", err)
 		return
 	}
@@ -764,7 +756,7 @@ func (r *Raft) electSelf() <-chan *RequestVoteResponse {
 	// Construct the request
 	req := &RequestVoteRequest{
 		Term:         r.getCurrentTerm(),
-		CandidateId:  r.candidateId(),
+		Candidate:    r.localAddr,
 		LastLogIndex: lastLog.Index,
 		LastLogTerm:  lastLog.Term,
 	}
@@ -787,7 +779,7 @@ func (r *Raft) electSelf() <-chan *RequestVoteResponse {
 	}
 
 	// Persist a vote for ourselves
-	if err := r.persistVote(req.Term, req.CandidateId); err != nil {
+	if err := r.persistVote(req.Term, req.Candidate.String()); err != nil {
 		log.Printf("[ERR] Failed to persist vote : %v", err)
 		return nil
 	}
@@ -814,32 +806,6 @@ func (r *Raft) persistVote(term uint64, candidate string) error {
 		return err
 	}
 	return nil
-}
-
-// CandidateId is used to return a stable and unique candidate ID
-func (r *Raft) candidateId() string {
-	// Check the cache
-	if r.candidateIdCache != "" {
-		return r.candidateIdCache
-	}
-
-	// Get the persistent id
-	raw, err := r.stable.Get(keyCandidateId)
-	if err == nil {
-		r.candidateIdCache = string(raw)
-		return r.candidateIdCache
-	}
-
-	// Generate a UUID on the first call
-	if err != nil && err.Error() == "not found" {
-		id := generateUUID()
-		if err := r.stable.Set(keyCandidateId, []byte(id)); err != nil {
-			panic(fmt.Errorf("Failed to write CandidateId: %v", err))
-		}
-		r.candidateIdCache = id
-		return id
-	}
-	panic(fmt.Errorf("Failed to read CandidateId: %v", err))
 }
 
 // setCurrentTerm is used to set the current term in a durable manner

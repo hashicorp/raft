@@ -1,9 +1,13 @@
 package raft
 
+import (
+	"net"
+)
+
 type AppendEntriesRequest struct {
 	// Provide the current term and leader
-	Term     uint64
-	LeaderId string
+	Term   uint64
+	Leader net.Addr
 
 	// Provide the previous entries for integrity checking
 	PrevLogEntry uint64
@@ -29,8 +33,8 @@ type AppendEntriesResponse struct {
 
 type RequestVoteRequest struct {
 	// Provide the term and our id
-	Term        uint64
-	CandidateId string
+	Term      uint64
+	Candidate net.Addr
 
 	// Used to ensure safety
 	LastLogIndex uint64

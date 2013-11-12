@@ -45,7 +45,7 @@ func (r *Raft) replicateTo(s *followerReplication, lastIndex uint64) (shouldStop
 START:
 	req = AppendEntriesRequest{
 		Term:              r.getCurrentTerm(),
-		LeaderId:          r.candidateId(),
+		Leader:            r.localAddr,
 		LeaderCommitIndex: r.getCommitIndex(),
 	}
 
@@ -119,8 +119,8 @@ func (r *Raft) heartbeat(s *followerReplication) {
 		select {
 		case <-randomTimeout(r.conf.HeartbeatTimeout / 4):
 			req := AppendEntriesRequest{
-				Term:     r.getCurrentTerm(),
-				LeaderId: r.candidateId(),
+				Term:   r.getCurrentTerm(),
+				Leader: r.localAddr,
 			}
 			var resp AppendEntriesResponse
 			if err := r.trans.AppendEntries(s.peer, &req, &resp); err != nil {
