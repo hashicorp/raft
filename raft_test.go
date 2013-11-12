@@ -3,7 +3,6 @@ package raft
 import (
 	"bytes"
 	"fmt"
-	"log"
 	"net"
 	"os"
 	"testing"
@@ -111,6 +110,11 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 }
 
 func (c *cluster) Leader() *Raft {
+	timeout := time.AfterFunc(100*time.Millisecond, func() {
+		panic("timeout waiting for leader")
+	})
+	defer timeout.Stop()
+
 	for len(c.GetInState(Leader)) < 1 {
 		time.Sleep(time.Millisecond)
 	}
@@ -201,15 +205,8 @@ func TestRaft_TripleNode(t *testing.T) {
 	c := MakeCluster(3, t)
 	defer c.Close()
 
-	// Wait for elections
-	time.Sleep(15 * time.Millisecond)
-
 	// Should be one leader
-	leaders := c.GetInState(Leader)
-	if len(leaders) != 1 {
-		t.Fatalf("expected one leader: %v", leaders)
-	}
-	leader := leaders[0]
+	leader := c.Leader()
 
 	// Should be able to apply
 	future := leader.Apply([]byte("test"), time.Millisecond)
@@ -233,15 +230,8 @@ func TestRaft_LeaderFail(t *testing.T) {
 	c := MakeCluster(3, t)
 	defer c.Close()
 
-	// Wait for elections
-	time.Sleep(15 * time.Millisecond)
-
 	// Should be one leader
-	leaders := c.GetInState(Leader)
-	if len(leaders) != 1 {
-		t.Fatalf("expected one leader: %v", leaders)
-	}
-	leader := leaders[0]
+	leader := c.Leader()
 
 	// Should be able to apply
 	future := leader.Apply([]byte("test"), time.Millisecond)
@@ -259,7 +249,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 	time.Sleep(30 * time.Millisecond)
 
 	// Should be two leaders!
-	leaders = c.GetInState(Leader)
+	leaders := c.GetInState(Leader)
 	if len(leaders) != 2 {
 		t.Fatalf("expected two leader: %v", leaders)
 	}
@@ -311,7 +301,6 @@ func TestRaft_LeaderFail(t *testing.T) {
 }
 
 func TestRaft_BehindFollower(t *testing.T) {
-	log.Printf("[DEBUG] BEHIND START")
 	// Make the cluster
 	c := MakeCluster(3, t)
 	defer c.Close()
@@ -337,8 +326,36 @@ func TestRaft_BehindFollower(t *testing.T) {
 	c.FullyConnect()
 
 	// Wait for replication
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 
 	// Ensure all the logs are the same
 	c.EnsureSame(t)
+}
+
+func TestRaft_ApplyNonLeader(t *testing.T) {
+	// Make the cluster
+	c := MakeCluster(5, t)
+	defer c.Close()
+
+	// Wait for a leader
+	c.Leader()
+
+	// Try to apply to them
+	followers := c.GetInState(Follower)
+	if len(followers) != 4 {
+		t.Fatalf("Expected 4 followers")
+	}
+	follower := followers[0]
+
+	// Try to apply
+	future := follower.Apply([]byte("test"), time.Millisecond)
+
+	if future.Error() != NotLeader {
+		t.Fatalf("should not apply on follower")
+	}
+
+	// Should be cached
+	if future.Error() != NotLeader {
+		t.Fatalf("should not apply on follower")
+	}
 }
