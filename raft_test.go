@@ -253,11 +253,13 @@ func TestRaft_LeaderFail(t *testing.T) {
 	log.Printf("[INFO] Disconnecting %v", leader)
 	c.Disconnect(leader.localAddr)
 
-	// Wait for new leader
-	time.Sleep(30 * time.Millisecond)
-
-	// Should be two leaders!
-	leaders := c.GetInState(Leader)
+	// Wait for two leaders
+	limit := time.Now().Add(100 * time.Millisecond)
+	var leaders []*Raft
+	for time.Now().Before(limit) && len(leaders) != 2 {
+		time.Sleep(10 * time.Millisecond)
+		leaders = c.GetInState(Leader)
+	}
 	if len(leaders) != 2 {
 		t.Fatalf("expected two leader: %v", leaders)
 	}
