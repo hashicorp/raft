@@ -3,6 +3,7 @@ package raft
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"testing"
@@ -249,6 +250,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 	time.Sleep(3 * time.Millisecond)
 
 	// Disconnect the leader now
+	log.Printf("[INFO] Disconnecting %v", leader)
 	c.Disconnect(leader.localAddr)
 
 	// Wait for new leader
@@ -285,6 +287,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 	}
 
 	// Reconnect the networks
+	log.Printf("[INFO] Reconnecting %v", leader)
 	c.FullyConnect()
 
 	// Future1 should fail
@@ -298,7 +301,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 	// Check two entries are applied to the FSM
 	for _, fsm := range c.fsms {
 		if len(fsm.logs) != 2 {
-			t.Fatalf("did not apply both to FSM!")
+			t.Fatalf("did not apply both to FSM! %v", fsm.logs)
 		}
 		if bytes.Compare(fsm.logs[0], []byte("test")) != 0 {
 			t.Fatalf("first entry should be 'test'")
@@ -380,12 +383,12 @@ func TestRaft_ApplyConcurrent(t *testing.T) {
 	// Wait for a leader
 	leader := c.Leader()
 	for i := 0; i < 100; i++ {
-		go func() {
+		go func(i int) {
 			future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
 			if err := future.Error(); err != nil {
 				t.Fatalf("err: %v", err)
 			}
-		}()
+		}(i)
 	}
 
 	// Wait for replication
