@@ -53,8 +53,9 @@ type Raft struct {
 	logs LogStore
 
 	// Track our known peers
-	peers    []net.Addr
-	peerLock sync.Mutex
+	peers     []net.Addr
+	peerLock  sync.Mutex
+	peerStore PeerStore
 
 	// RPC chan comes from the transport layer
 	rpcCh <-chan RPC
@@ -73,7 +74,7 @@ type Raft struct {
 }
 
 // NewRaft is used to construct a new Raft node
-func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, peers []net.Addr, trans Transport) (*Raft, error) {
+func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, peerStore PeerStore, trans Transport) (*Raft, error) {
 	// Try to restore the current term
 	currentTerm, err := stable.GetUint64(keyCurrentTerm)
 	if err != nil && err.Error() != "not found" {
@@ -88,6 +89,10 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, peers []n
 
 	// Construct the list of peers that excludes us
 	localAddr := trans.LocalAddr()
+	peers, err := peerStore.Peers()
+	if err != nil {
+		return nil, fmt.Errorf("Failed to get list of peers: %v", err)
+	}
 	peers = excludePeer(peers, localAddr)
 
 	// Create Raft struct
@@ -99,6 +104,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, peers []n
 		localAddr:  localAddr,
 		logs:       logs,
 		peers:      peers,
+		peerStore:  peerStore,
 		rpcCh:      trans.Consumer(),
 		shutdownCh: make(chan struct{}),
 		stable:     stable,

@@ -37,8 +37,9 @@ func TestRaft_StartStop(t *testing.T) {
 	_, trans := NewInmemTransport()
 	fsm := &MockFSM{}
 	conf := DefaultConfig()
+	peers := &StaticPeers{}
 
-	raft, err := NewRaft(conf, fsm, store, store, nil, trans)
+	raft, err := NewRaft(conf, fsm, store, store, peers, trans)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -53,8 +54,9 @@ func TestRaft_SingleNode(t *testing.T) {
 	_, trans := NewInmemTransport()
 	fsm := &MockFSM{}
 	conf := inmemConfig()
+	peers := &StaticPeers{}
 
-	raft, err := NewRaft(conf, fsm, store, store, nil, trans)
+	raft, err := NewRaft(conf, fsm, store, store, peers, trans)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -192,7 +194,9 @@ func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 		}
 		store := c.stores[i]
 		trans := c.trans[i]
-		raft, err := NewRaft(conf, c.fsms[i], store, store, peers, trans)
+		peerStore := &StaticPeers{peers}
+
+		raft, err := NewRaft(conf, c.fsms[i], store, store, peerStore, trans)
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
