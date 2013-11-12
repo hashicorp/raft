@@ -338,6 +338,26 @@ func (r *Raft) leaderLoop(inflight *inflight, commitCh <-chan *logFuture,
 	transition := false
 	for !transition {
 		select {
+		case rpc := <-r.rpcCh:
+			switch cmd := rpc.Command.(type) {
+			case *AppendEntriesRequest:
+				transition = r.appendEntries(rpc, cmd)
+			case *RequestVoteRequest:
+				transition = r.requestVote(rpc, cmd)
+			default:
+				log.Printf("[ERR] Leader state, got unexpected command: %#v",
+					rpc.Command)
+				rpc.Respond(nil, fmt.Errorf("Unexpected command"))
+			}
+
+		case commitLog := <-commitCh:
+			// Increment the commit index
+			idx := commitLog.log.Index
+			r.setCommitIndex(idx)
+
+			// Trigger applying logs locally
+			r.commitCh <- commitTuple{idx, commitLog}
+
 		case applyLog := <-r.applyCh:
 			// Prepare log
 			applyLog.log.Index = r.getLastLog() + 1
@@ -361,25 +381,6 @@ func (r *Raft) leaderLoop(inflight *inflight, commitCh <-chan *logFuture,
 			// Notify the replicators of the new log
 			asyncNotify(triggers)
 
-		case commitLog := <-commitCh:
-			// Increment the commit index
-			idx := commitLog.log.Index
-			r.setCommitIndex(idx)
-
-			// Trigger applying logs locally
-			r.commitCh <- commitTuple{idx, commitLog}
-
-		case rpc := <-r.rpcCh:
-			switch cmd := rpc.Command.(type) {
-			case *AppendEntriesRequest:
-				transition = r.appendEntries(rpc, cmd)
-			case *RequestVoteRequest:
-				transition = r.requestVote(rpc, cmd)
-			default:
-				log.Printf("[ERR] Leader state, got unexpected command: %#v",
-					rpc.Command)
-				rpc.Respond(nil, fmt.Errorf("Unexpected command"))
-			}
 		case <-r.shutdownCh:
 			return
 		}
