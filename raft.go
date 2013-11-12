@@ -53,7 +53,8 @@ type Raft struct {
 	logs LogStore
 
 	// Track our known peers
-	peers []net.Addr
+	peers    []net.Addr
+	peerLock sync.Mutex
 
 	// RPC chan comes from the transport layer
 	rpcCh <-chan RPC
@@ -87,12 +88,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, peers []n
 
 	// Construct the list of peers that excludes us
 	localAddr := trans.LocalAddr()
-	otherPeers := make([]net.Addr, 0, len(peers))
-	for _, p := range peers {
-		if p.String() != localAddr.String() {
-			otherPeers = append(otherPeers, p)
-		}
-	}
+	peers = excludePeer(peers, localAddr)
 
 	// Create Raft struct
 	r := &Raft{
@@ -102,7 +98,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, peers []n
 		fsm:        fsm,
 		localAddr:  localAddr,
 		logs:       logs,
-		peers:      otherPeers,
+		peers:      peers,
 		rpcCh:      trans.Consumer(),
 		shutdownCh: make(chan struct{}),
 		stable:     stable,
@@ -121,14 +117,15 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, peers []n
 
 	// Start the background work
 	go r.run()
-	go r.runFSM()
+	go r.runPostCommit()
 	return r, nil
 }
 
 // Apply is used to apply a command to the FSM in a highly consistent
 // manner. This returns a future that can be used to wait on the application.
 // An optional timeout can be provided to limit the amount of time we wait
-// for the command to be started.
+// for the command to be started. This must be run on the leader or it
+// will fail.
 func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
 	var timer <-chan time.Time
 	if timeout > 0 {
@@ -314,6 +311,7 @@ func (r *Raft) runLeader() {
 	defer close(stopCh)
 
 	// Create the trigger channels
+	r.peerLock.Lock()
 	triggers := make([]chan struct{}, 0, len(r.peers))
 	for i := 0; i < len(r.peers); i++ {
 		triggers = append(triggers, make(chan struct{}, 1))
@@ -323,6 +321,7 @@ func (r *Raft) runLeader() {
 	for i, peer := range r.peers {
 		go r.replicate(inflight, triggers[i], stopCh, peer)
 	}
+	r.peerLock.Unlock()
 
 	// Append no-op command to seal leadership
 	go r.applyNoop()
@@ -387,9 +386,10 @@ func (r *Raft) leaderLoop(inflight *inflight, commitCh <-chan *logFuture,
 	}
 }
 
-// runFSM is a long running goroutine responsible for the management
-// of the local FSM.
-func (r *Raft) runFSM() {
+// runPostCommit is a long running goroutine responsible for the handling
+// of a log entry after it has been committed. This involves managing the
+// local FSM, configuration changes, etc.
+func (r *Raft) runPostCommit() {
 	for {
 		select {
 		case commitTuple := <-r.commitCh:
@@ -600,6 +600,10 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) (transition bool) {
 // the current term. The response channel returned is used to wait
 // for all the responses (including a vote for ourself).
 func (r *Raft) electSelf() <-chan *RequestVoteResponse {
+	// Ensure a protected view of the peers
+	r.peerLock.Lock()
+	defer r.peerLock.Unlock()
+
 	// Create a response channel
 	respCh := make(chan *RequestVoteResponse, len(r.peers)+1)
 
