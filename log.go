@@ -8,6 +8,12 @@ const (
 
 	// Noop is used to assert leadership
 	LogNoop
+
+	// Used to add a new peer
+	LogAddPeer
+
+	// Used to remove an existing peer
+	LogRemovePeer
 )
 
 // Log entries are replicated to all members of the Raft cluster
