@@ -10,6 +10,7 @@ const (
 	Follower RaftState = iota
 	Candidate
 	Leader
+	Shutdown
 )
 
 // raftState is used to maintain various state variables

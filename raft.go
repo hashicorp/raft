@@ -14,6 +14,7 @@ var (
 	keyLastVoteCand = []byte("LastVoteCand")
 	NotLeader       = fmt.Errorf("node is not the leader")
 	LeadershipLost  = fmt.Errorf("leadership lost while committing log")
+	RaftShutdown    = fmt.Errorf("raft is already shutdown")
 )
 
 // commitTupel is used to send an index that was committed,
@@ -142,6 +143,8 @@ func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
 	select {
 	case <-timer:
 		return errorFuture{fmt.Errorf("timed out enqueuing operation")}
+	case <-r.shutdownCh:
+		return errorFuture{RaftShutdown}
 	case r.applyCh <- logFuture:
 		return logFuture
 	}
@@ -157,8 +160,12 @@ func (r *Raft) AddPeer(peer net.Addr) ApplyFuture {
 		},
 		errCh: make(chan error, 1),
 	}
-	r.applyCh <- logFuture
-	return logFuture
+	select {
+	case r.applyCh <- logFuture:
+		return logFuture
+	case <-r.shutdownCh:
+		return errorFuture{RaftShutdown}
+	}
 }
 
 // RemovePeer is used to remove a peer from the cluster. If the
@@ -172,8 +179,12 @@ func (r *Raft) RemovePeer(peer net.Addr) ApplyFuture {
 		},
 		errCh: make(chan error, 1),
 	}
-	r.applyCh <- logFuture
-	return logFuture
+	select {
+	case r.applyCh <- logFuture:
+		return logFuture
+	case <-r.shutdownCh:
+		return errorFuture{RaftShutdown}
+	}
 }
 
 // Shutdown is used to stop the Raft background routines.
