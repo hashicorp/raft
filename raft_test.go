@@ -589,6 +589,9 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	// Should have a new leader
 	newLeader := c.Leader()
 
+	// Wait a bit for log application
+	time.Sleep(20 * time.Millisecond)
+
 	// Other nodes should have fewer peers
 	if len(newLeader.peers) != 1 {
 		t.Fatalf("too many peers")
