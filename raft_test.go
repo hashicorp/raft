@@ -441,14 +441,21 @@ func TestRaft_ApplyConcurrent(t *testing.T) {
 
 	// Wait for a leader
 	leader := c.Leader()
-	for i := 0; i < 100; i++ {
-		go func(i int) {
-			future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
-			if err := future.Error(); err != nil {
-				t.Fatalf("err: %v", err)
-			}
-		}(i)
+
+	applyF := func(i int) {
+		future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+		if err := future.Error(); err != nil {
+			t.Fatalf("err: %v", err)
+		}
 	}
+
+	// Concurrently apply
+	for i := 0; i < 100; i++ {
+		go applyF(i)
+	}
+
+	// Block on the last one
+	applyF(100)
 
 	// Check the FSMs
 	c.EnsureSame(t)
