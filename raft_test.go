@@ -440,6 +440,36 @@ func TestRaft_ApplyConcurrent(t *testing.T) {
 	c.EnsureSame(t)
 }
 
+func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
+	// Make the cluster
+	conf := inmemConfig()
+	conf.HeartbeatTimeout = 100 * time.Millisecond
+	c := MakeCluster(1, t, conf)
+	defer c.Close()
+
+	// Wait for a leader
+	leader := c.Leader()
+
+	// Enough enqueues should cause at least one timeout...
+	didTimeout := false
+	for i := 0; i < 200; i++ {
+		go func(i int) {
+			future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), time.Microsecond)
+			if future.Error() == EnqueueTimeout {
+				didTimeout = true
+			}
+		}(i)
+	}
+
+	// Wait
+	time.Sleep(20 * time.Millisecond)
+
+	// Some should have failed
+	if !didTimeout {
+		t.Fatalf("expected a timeout")
+	}
+}
+
 func TestRaft_JoinNode(t *testing.T) {
 	// Make a cluster
 	c := MakeCluster(2, t, nil)
