@@ -68,7 +68,7 @@ START:
 	}
 
 	// Append up to MaxAppendEntries or up to the lastIndex
-	req.Entries = make([]*Log, 0, 16)
+	req.Entries = make([]*Log, 0, r.conf.MaxAppendEntries)
 	maxIndex := min(s.nextIndex+uint64(r.conf.MaxAppendEntries)-1, lastIndex)
 	for i := s.nextIndex; i <= maxIndex; i++ {
 		oldLog := new(Log)
