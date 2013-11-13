@@ -11,24 +11,25 @@ func TestInflight_StartCommit(t *testing.T) {
 
 	// Commit a transaction as being in flight
 	l := &logFuture{log: Log{Index: 1}}
-	in.Start(l, 3)
+	l.policy = NewMajorityQuorum(5)
+	in.Start(l)
 
 	// Commit 3 times
-	in.Commit(1)
+	in.Commit(1, nil)
 	select {
 	case <-commitCh:
 		t.Fatalf("should not be commited")
 	default:
 	}
 
-	in.Commit(1)
+	in.Commit(1, nil)
 	select {
 	case <-commitCh:
 		t.Fatalf("should not be commited")
 	default:
 	}
 
-	in.Commit(1)
+	in.Commit(1, nil)
 	select {
 	case <-commitCh:
 	default:
@@ -36,7 +37,7 @@ func TestInflight_StartCommit(t *testing.T) {
 	}
 
 	// Already commited but should work anyways
-	in.Commit(1)
+	in.Commit(1, nil)
 }
 
 func TestInflight_Cancel(t *testing.T) {
@@ -48,7 +49,8 @@ func TestInflight_Cancel(t *testing.T) {
 		log:   Log{Index: 1},
 		errCh: make(chan error, 1),
 	}
-	in.Start(l, 3)
+	l.policy = NewMajorityQuorum(3)
+	in.Start(l)
 
 	// Cancel with an error
 	err := fmt.Errorf("error 1")

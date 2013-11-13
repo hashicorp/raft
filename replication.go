@@ -93,7 +93,7 @@ START:
 	if resp.Success {
 		// Mark any inflight logs as committed
 		for i := s.matchIndex; i <= maxIndex; i++ {
-			s.inflight.Commit(i)
+			s.inflight.Commit(i, s.peer)
 		}
 
 		s.matchIndex = maxIndex

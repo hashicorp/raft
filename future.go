@@ -17,9 +17,10 @@ func (e errorFuture) Error() error {
 // logFuture is used to apply a log entry and waits until
 // the log is considered committed
 type logFuture struct {
-	log   Log
-	err   error
-	errCh chan error
+	log    Log
+	policy QuorumPolicy
+	err    error
+	errCh  chan error
 }
 
 func (l *logFuture) Error() error {

@@ -1,21 +1,41 @@
 package raft
 
 import (
+	"net"
 	"sync"
 )
+
+// QuorumPolicy allows individual logFutures to have different
+// commitment rules while still using the inflight mechanism
+type QuorumPolicy interface {
+	// Checks if a commit from a given peer is enough to
+	// satisfy the commitment rules
+	Commit(net.Addr) bool
+}
+
+// MajorityQuorum is used by Apply transactions and requires
+// a simple majority of nodes
+type MajorityQuorum struct {
+	count       int
+	votesNeeded int
+}
+
+// Creates a new MajorityQuorum
+func NewMajorityQuorum(clusterSize int) *MajorityQuorum {
+	votesNeeded := (clusterSize / 2) + 1
+	return &MajorityQuorum{count: 0, votesNeeded: votesNeeded}
+}
+
+func (m *MajorityQuorum) Commit(p net.Addr) bool {
+	m.count++
+	return m.count >= m.votesNeeded
+}
 
 // Inflight is used to track operations that are still in-flight
 type inflight struct {
 	sync.Mutex
 	commitCh   chan *logFuture
-	operations map[uint64]*inflightLog
-}
-
-// inflightLog represents a single log entry that is in-flight
-type inflightLog struct {
-	future      *logFuture
-	commitCount int
-	quorum      int
+	operations map[uint64]*logFuture
 }
 
 // NewInflight returns an inflight struct that notifies
@@ -23,21 +43,15 @@ type inflightLog struct {
 func NewInflight(commitCh chan *logFuture) *inflight {
 	return &inflight{
 		commitCh:   commitCh,
-		operations: make(map[uint64]*inflightLog),
+		operations: make(map[uint64]*logFuture),
 	}
 }
 
 // Start is used to mark a logFuture as being inflight
-func (i *inflight) Start(l *logFuture, quorum int) {
+func (i *inflight) Start(l *logFuture) {
 	i.Lock()
 	defer i.Unlock()
-
-	op := &inflightLog{
-		future:      l,
-		commitCount: 0,
-		quorum:      quorum,
-	}
-	i.operations[l.log.Index] = op
+	i.operations[l.log.Index] = l
 }
 
 // Cancel is used to cancel all in-flight operations.
@@ -49,16 +63,16 @@ func (i *inflight) Cancel(err error) {
 
 	// Respond to all inflight operations
 	for _, op := range i.operations {
-		op.future.respond(err)
+		op.respond(err)
 	}
 
 	// Clear the map
-	i.operations = make(map[uint64]*inflightLog)
+	i.operations = make(map[uint64]*logFuture)
 }
 
 // Commit is used by leader replication routines to indicate that
 // a follower was finished commiting a log to disk.
-func (i *inflight) Commit(index uint64) {
+func (i *inflight) Commit(index uint64, peer net.Addr) {
 	i.Lock()
 	defer i.Unlock()
 
@@ -68,17 +82,12 @@ func (i *inflight) Commit(index uint64) {
 		return
 	}
 
-	// Increment the commit count
-	op.commitCount++
+	// Check if we've satisfied the commit
+	if op.policy.Commit(peer) {
+		// Stop tracking since it is committed
+		delete(i.operations, index)
 
-	// Check if we have commited this
-	if op.commitCount < op.quorum {
-		return
+		// Notify of commit
+		i.commitCh <- op
 	}
-
-	// Stop tracking since it is committed
-	delete(i.operations, index)
-
-	// Notify of commit
-	i.commitCh <- op.future
 }

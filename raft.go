@@ -439,9 +439,14 @@ func (r *Raft) leaderLoop(s *leaderState) {
 				return
 			}
 
+			// Add a quorum policy if none
+			if applyLog.policy == nil {
+				applyLog.policy = NewMajorityQuorum(len(r.peers) + 1)
+			}
+
 			// Add this to the inflight logs, commit
-			s.inflight.Start(applyLog, r.quorumSize())
-			s.inflight.Commit(applyLog.log.Index)
+			s.inflight.Start(applyLog)
+			s.inflight.Commit(applyLog.log.Index, r.localAddr)
 
 			// Update the last log since it's on disk now
 			r.setLastLog(applyLog.log.Index)
