@@ -499,3 +499,42 @@ func TestRaft_RemoveFollower(t *testing.T) {
 		t.Fatalf("too many peers")
 	}
 }
+
+func TestRaft_RemoveLeader(t *testing.T) {
+	// Make a cluster
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	// Get the leader
+	leader := c.Leader()
+
+	// Wait until we have 2 followers
+	limit := time.Now().Add(100 * time.Millisecond)
+	var followers []*Raft
+	for time.Now().Before(limit) && len(followers) != 2 {
+		time.Sleep(10 * time.Millisecond)
+		followers = c.GetInState(Follower)
+	}
+	if len(followers) != 2 {
+		t.Fatalf("expected two followers: %v", followers)
+	}
+
+	// Remove the leader
+	leader.RemovePeer(leader.localAddr)
+
+	// Wait a while
+	time.Sleep(20 * time.Millisecond)
+
+	// Should have a new leader
+	newLeader := c.Leader()
+
+	// Other nodes should have fewer peers
+	if len(newLeader.peers) != 1 {
+		t.Fatalf("too many peers")
+	}
+
+	// Old leader should be shutdown
+	if leader.State() != Shutdown {
+		t.Fatalf("leader should be shutdown")
+	}
+}
