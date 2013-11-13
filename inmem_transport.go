@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 )
 
 // Implements the net.Addr interface
@@ -32,6 +33,7 @@ type InmemTransport struct {
 	consumerCh chan RPC
 	localAddr  *InmemAddr
 	peers      map[string]*InmemTransport
+	timeout    time.Duration
 }
 
 // NewInmemTransport is used to initialize a new transport
@@ -42,6 +44,7 @@ func NewInmemTransport() (*InmemAddr, *InmemTransport) {
 		consumerCh: make(chan RPC, 16),
 		localAddr:  addr,
 		peers:      make(map[string]*InmemTransport),
+		timeout:    50 * time.Millisecond,
 	}
 	return addr, trans
 }
@@ -96,9 +99,13 @@ func (i *InmemTransport) makeRPC(target net.Addr, args interface{}) (rpcResp RPC
 	}
 
 	// Wait for a response
-	rpcResp = <-respCh
-	if rpcResp.Error != nil {
-		err = rpcResp.Error
+	select {
+	case rpcResp = <-respCh:
+		if rpcResp.Error != nil {
+			err = rpcResp.Error
+		}
+	case <-time.After(i.timeout):
+		err = fmt.Errorf("command timed out")
 	}
 	return
 }
