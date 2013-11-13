@@ -196,6 +196,7 @@ func (r *Raft) Shutdown() {
 	if !r.shutdown {
 		close(r.shutdownCh)
 		r.shutdown = true
+		r.setState(Shutdown)
 	}
 }
 
@@ -482,8 +483,7 @@ func (r *Raft) leaderProcessLog(s *leaderState, l *Log) bool {
 
 	// Step down if we are being removed
 	if l.Type == LogRemovePeer && isSelf {
-		log.Printf("[INFO] Removed ourself, stepping down as leader", peer)
-		r.setState(Follower)
+		log.Printf("[INFO] Removed ourself, stepping down as leader")
 		return true
 	}
 
@@ -560,6 +560,12 @@ func (r *Raft) processLog(l *Log) {
 		r.peerLock.Lock()
 		if peer.String() == r.localAddr.String() {
 			r.peers = nil
+			if r.conf.ShutdownOnRemove {
+				log.Printf("[INFO] Removed ourself, shutting down")
+				r.Shutdown()
+			} else {
+				r.setState(Follower)
+			}
 		} else {
 			r.peers = excludePeer(r.peers, peer)
 		}
@@ -838,5 +844,8 @@ func (r *Raft) applyNoop() {
 			Type: LogNoop,
 		},
 	}
-	r.applyCh <- logFuture
+	select {
+	case r.applyCh <- logFuture:
+	case <-r.shutdownCh:
+	}
 }

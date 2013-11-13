@@ -23,6 +23,12 @@ type Config struct {
 	// and avoiding waste if the follower is going to reject because of
 	// an inconsistent log
 	MaxAppendEntries int
+
+	// If we are a member of a cluster, and RemovePeer is invoked for the
+	// local node, then we forget all peers and transition into the follower state.
+	// If ShutdownOnRemove is is set, we additional shutdown Raft. Otherwise,
+	// we can become a leader of a cluster containing only this node.
+	ShutdownOnRemove bool
 }
 
 func DefaultConfig() *Config {
@@ -31,5 +37,6 @@ func DefaultConfig() *Config {
 		ElectionTimeout:  250 * time.Millisecond,
 		CommitTimeout:    10 * time.Millisecond,
 		MaxAppendEntries: 16,
+		ShutdownOnRemove: true,
 	}
 }
