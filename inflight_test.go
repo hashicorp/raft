@@ -11,7 +11,7 @@ func TestInflight_StartCommit(t *testing.T) {
 
 	// Commit a transaction as being in flight
 	l := &logFuture{log: Log{Index: 1}}
-	l.policy = NewMajorityQuorum(5)
+	l.policy = newMajorityQuorum(5)
 	in.Start(l)
 
 	// Commit 3 times
@@ -49,7 +49,7 @@ func TestInflight_Cancel(t *testing.T) {
 		log:   Log{Index: 1},
 		errCh: make(chan error, 1),
 	}
-	l.policy = NewMajorityQuorum(3)
+	l.policy = newMajorityQuorum(3)
 	in.Start(l)
 
 	// Cancel with an error

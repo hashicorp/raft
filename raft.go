@@ -178,7 +178,8 @@ func (r *Raft) RemovePeer(peer net.Addr) ApplyFuture {
 			Type: LogRemovePeer,
 			Data: r.trans.EncodePeer(peer),
 		},
-		errCh: make(chan error, 1),
+		policy: newExcludeNodeQuorum(len(r.peers)+1, peer),
+		errCh:  make(chan error, 1),
 	}
 	select {
 	case r.applyCh <- logFuture:
@@ -441,7 +442,7 @@ func (r *Raft) leaderLoop(s *leaderState) {
 
 			// Add a quorum policy if none
 			if applyLog.policy == nil {
-				applyLog.policy = NewMajorityQuorum(len(r.peers) + 1)
+				applyLog.policy = newMajorityQuorum(len(r.peers) + 1)
 			}
 
 			// Add this to the inflight logs, commit

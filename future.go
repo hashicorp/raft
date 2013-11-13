@@ -18,7 +18,7 @@ func (e errorFuture) Error() error {
 // the log is considered committed
 type logFuture struct {
 	log    Log
-	policy QuorumPolicy
+	policy quorumPolicy
 	err    error
 	errCh  chan error
 }

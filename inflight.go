@@ -1,13 +1,14 @@
 package raft
 
 import (
+	"log"
 	"net"
 	"sync"
 )
 
 // QuorumPolicy allows individual logFutures to have different
 // commitment rules while still using the inflight mechanism
-type QuorumPolicy interface {
+type quorumPolicy interface {
 	// Checks if a commit from a given peer is enough to
 	// satisfy the commitment rules
 	Commit(net.Addr) bool
@@ -15,20 +16,41 @@ type QuorumPolicy interface {
 
 // MajorityQuorum is used by Apply transactions and requires
 // a simple majority of nodes
-type MajorityQuorum struct {
+type majorityQuorum struct {
 	count       int
 	votesNeeded int
 }
 
-// Creates a new MajorityQuorum
-func NewMajorityQuorum(clusterSize int) *MajorityQuorum {
+func newMajorityQuorum(clusterSize int) *majorityQuorum {
 	votesNeeded := (clusterSize / 2) + 1
-	return &MajorityQuorum{count: 0, votesNeeded: votesNeeded}
+	return &majorityQuorum{count: 0, votesNeeded: votesNeeded}
 }
 
-func (m *MajorityQuorum) Commit(p net.Addr) bool {
+func (m *majorityQuorum) Commit(p net.Addr) bool {
 	m.count++
 	return m.count >= m.votesNeeded
+}
+
+// ExcludeNodeQuorum requires a majority of nodes excluding
+// a particular node to agree
+type excludeNodeQuorum struct {
+	exclude     net.Addr
+	count       int
+	votesNeeded int
+}
+
+func newExcludeNodeQuorum(clusterSize int, exclude net.Addr) *excludeNodeQuorum {
+	votesNeeded := ((clusterSize - 1) / 2) + 1
+	return &excludeNodeQuorum{exclude: exclude, count: 0, votesNeeded: votesNeeded}
+}
+
+func (e *excludeNodeQuorum) Commit(p net.Addr) bool {
+	if p.String() == e.exclude.String() {
+		log.Printf("[WARN] Excluded vote from %v", p)
+		return false
+	}
+	e.count++
+	return e.count >= e.votesNeeded
 }
 
 // Inflight is used to track operations that are still in-flight
