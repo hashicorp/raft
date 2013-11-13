@@ -331,13 +331,6 @@ func (r *Raft) runCandidate() {
 				return
 			}
 
-			// If we are not a peer, we could have been removed but failed
-			// to receive the log message. OR it could mean an improperly configured
-			// cluster. Either way, bail now.
-			if !peerContained(vote.Peers, r.localAddr) {
-				log.Printf("[WARN] Remote peer does not have local node listed as a peer")
-			}
-
 			// Check if the vote is granted
 			if vote.Granted {
 				grantedVotes++
@@ -787,6 +780,14 @@ func (r *Raft) electSelf() <-chan *RequestVoteResponse {
 			log.Printf("[ERR] Failed to make RequestVote RPC to %v: %v", peer, err)
 			resp.Term = req.Term
 			resp.Granted = false
+
+			// If we are not a peer, we could have been removed but failed
+			// to receive the log message. OR it could mean an improperly configured
+			// cluster. Either way, we should warn
+			if !peerContained(resp.Peers, r.localAddr) {
+				log.Printf("[WARN] Remote peer %v does not have local node %v as a peer",
+					peer, r.localAddr)
+			}
 		}
 		respCh <- resp
 	}

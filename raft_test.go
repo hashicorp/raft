@@ -519,6 +519,9 @@ func TestRaft_JoinNode(t *testing.T) {
 		t.Fatalf("expected two followers: %v", followers)
 	}
 
+	// Allow time for replication
+	time.Sleep(20 * time.Millisecond)
+
 	// Check the FSMs
 	c.EnsureSame(t)
 }
