@@ -303,6 +303,15 @@ func (r *Raft) runCandidate() {
 				return
 			}
 
+			// If we are not a peer, we could have been removed but failed
+			// to receive the log message. OR it could mean an improperly configured
+			// cluster. Either way, bail now.
+			if !peerContained(vote.Peers, r.localAddr) {
+				log.Printf("[WARN] Remote peer does not have local node listed as a peer")
+				r.setState(Follower)
+				return
+			}
+
 			// Check if the vote is granted
 			if vote.Granted {
 				grantedVotes++
@@ -665,9 +674,14 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) (transition bool)
 // requestVote is invoked when we get an request vote RPC call
 // Returns true if we transition to a Follower
 func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) (transition bool) {
+	// Ensure a protected view of the peers
+	r.peerLock.Lock()
+	defer r.peerLock.Unlock()
+
 	// Setup a response
 	resp := &RequestVoteResponse{
 		Term:    r.getCurrentTerm(),
+		Peers:   r.peers,
 		Granted: false,
 	}
 	var rpcErr error

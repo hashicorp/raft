@@ -45,6 +45,9 @@ type RequestVoteResponse struct {
 	// Newer term if leader is out of date
 	Term uint64
 
+	// Return the peers, so that a node can shutdown on removal
+	Peers []net.Addr
+
 	// Is the vote granted
 	Granted bool
 }
