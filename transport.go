@@ -12,7 +12,6 @@ type RPCResponse struct {
 
 // RPC has a command, and provides a Reponse mechanism
 type RPC struct {
-	Peer     net.Addr
 	Command  interface{}
 	RespChan chan<- RPCResponse
 }

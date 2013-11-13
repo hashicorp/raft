@@ -91,7 +91,6 @@ func (i *InmemTransport) makeRPC(target net.Addr, args interface{}) (rpcResp RPC
 	// Send the RPC over
 	respCh := make(chan RPCResponse)
 	peer.consumerCh <- RPC{
-		Peer:     i.localAddr,
 		Command:  args,
 		RespChan: respCh,
 	}
