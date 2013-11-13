@@ -522,6 +522,7 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 	case LogAddPeer:
 		peer := r.trans.DecodePeer(l.Data)
 		isSelf := peer.String() == r.localAddr.String()
+		log.Printf("[DEBUG] Node %v added peer %v", r.localAddr, peer)
 
 		// Avoid adding ourself as a peer
 		if !isSelf {
@@ -566,12 +567,14 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 		}
 
 		// Handle removing ourself
-		if isSelf && r.conf.ShutdownOnRemove {
-			log.Printf("[INFO] Removed ourself, shutting down")
-			r.Shutdown()
-		} else {
-			log.Printf("[INFO] Removed ourself, transitioning to follower")
-			r.setState(Follower)
+		if isSelf {
+			if r.conf.ShutdownOnRemove {
+				log.Printf("[INFO] Removed ourself, shutting down")
+				r.Shutdown()
+			} else {
+				log.Printf("[INFO] Removed ourself, transitioning to follower")
+				r.setState(Follower)
+			}
 		}
 
 	case LogNoop:
