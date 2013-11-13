@@ -36,7 +36,7 @@ func DefaultConfig() *Config {
 		HeartbeatTimeout: 200 * time.Millisecond,
 		ElectionTimeout:  250 * time.Millisecond,
 		CommitTimeout:    10 * time.Millisecond,
-		MaxAppendEntries: 16,
+		MaxAppendEntries: 32,
 		ShutdownOnRemove: true,
 	}
 }
