@@ -401,12 +401,13 @@ func (r *Raft) runLeader() {
 // startReplication is a helper to setup state and start async replication to a peer
 func (r *Raft) startReplication(peer net.Addr) {
 	s := &followerReplication{
-		peer:       peer,
-		inflight:   r.leaderState.inflight,
-		stopCh:     make(chan struct{}),
-		triggerCh:  make(chan struct{}, 1),
-		matchIndex: r.getLastLog(),
-		nextIndex:  r.getLastLog() + 1,
+		peer:        peer,
+		inflight:    r.leaderState.inflight,
+		stopCh:      make(chan struct{}),
+		triggerCh:   make(chan struct{}, 1),
+		currentTerm: r.getCurrentTerm(),
+		matchIndex:  r.getLastLog(),
+		nextIndex:   r.getLastLog() + 1,
 	}
 	r.leaderState.replState[peer.String()] = s
 	go r.replicate(s)
@@ -602,14 +603,13 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	// Increase the term if we see a newer one, also transition to follower
 	// if we ever get an appendEntries call
 	if a.Term > r.getCurrentTerm() || r.getState() != Follower {
+		// Ensure transition to follower
+		r.setState(Follower)
 		if err := r.setCurrentTerm(a.Term); err != nil {
 			log.Printf("[ERR] Failed to update current term: %v", err)
 			return
 		}
 		resp.Term = a.Term
-
-		// Ensure transition to follower
-		r.setState(Follower)
 	}
 
 	// Verify the last log entry
@@ -679,14 +679,13 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 
 	// Increase the term if we see a newer one
 	if req.Term > r.getCurrentTerm() {
+		// Ensure transition to follower
+		r.setState(Follower)
 		if err := r.setCurrentTerm(req.Term); err != nil {
 			log.Printf("[ERR] Failed to update current term: %v", err)
 			return
 		}
 		resp.Term = req.Term
-
-		// Ensure transition to follower
-		r.setState(Follower)
 	}
 
 	// Check if we have voted yet

@@ -12,8 +12,9 @@ type followerReplication struct {
 	stopCh    chan struct{}
 	triggerCh chan struct{}
 
-	matchIndex uint64
-	nextIndex  uint64
+	currentTerm uint64
+	matchIndex  uint64
+	nextIndex   uint64
 }
 
 // replicate is a long running routine that is used to manage
@@ -44,7 +45,7 @@ func (r *Raft) replicateTo(s *followerReplication, lastIndex uint64) (shouldStop
 	var resp AppendEntriesResponse
 START:
 	req = AppendEntriesRequest{
-		Term:              r.getCurrentTerm(),
+		Term:              s.currentTerm,
 		Leader:            r.localAddr,
 		LeaderCommitIndex: r.getCommitIndex(),
 	}
@@ -115,14 +116,14 @@ START:
 // to ensure they don't time out. This is done async of replicate(),
 // since that routine could potentially be blocked on disk IO
 func (r *Raft) heartbeat(s *followerReplication) {
+	req := AppendEntriesRequest{
+		Term:   s.currentTerm,
+		Leader: r.localAddr,
+	}
+	var resp AppendEntriesResponse
 	for {
 		select {
 		case <-randomTimeout(r.conf.HeartbeatTimeout / 4):
-			req := AppendEntriesRequest{
-				Term:   r.getCurrentTerm(),
-				Leader: r.localAddr,
-			}
-			var resp AppendEntriesResponse
 			if err := r.trans.AppendEntries(s.peer, &req, &resp); err != nil {
 				log.Printf("[ERR] Failed to heartbeat to %v: %v", s.peer, err)
 			}
