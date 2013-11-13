@@ -48,6 +48,37 @@ func TestRaft_StartStop(t *testing.T) {
 	defer raft.Shutdown()
 }
 
+func TestRaft_AfterShutdown(t *testing.T) {
+	dir, store := LevelDBTestStore(t)
+	defer os.RemoveAll(dir)
+	defer store.Close()
+
+	_, trans := NewInmemTransport()
+	fsm := &MockFSM{}
+	conf := DefaultConfig()
+	peers := &StaticPeers{}
+
+	raft, err := NewRaft(conf, fsm, store, store, peers, trans)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	raft.Shutdown()
+
+	// Everything should fail now
+	if f := raft.Apply(nil, 0); f.Error() != RaftShutdown {
+		t.Fatalf("should be shutdown: %v", f.Error())
+	}
+	if f := raft.AddPeer(NewInmemAddr()); f.Error() != RaftShutdown {
+		t.Fatalf("should be shutdown: %v", f.Error())
+	}
+	if f := raft.RemovePeer(NewInmemAddr()); f.Error() != RaftShutdown {
+		t.Fatalf("should be shutdown: %v", f.Error())
+	}
+
+	// Should be idempotent
+	raft.Shutdown()
+}
+
 func TestRaft_SingleNode(t *testing.T) {
 	dir, store := LevelDBTestStore(t)
 	defer os.RemoveAll(dir)
