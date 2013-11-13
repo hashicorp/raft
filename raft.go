@@ -21,8 +21,15 @@ var (
 // commitTupel is used to send an index that was committed,
 // with an optional associated future that should be invoked
 type commitTuple struct {
-	index  uint64
+	log    *Log
 	future *logFuture
+}
+
+// leaderState is state that is used while we are a leader
+type leaderState struct {
+	commitCh  chan *logFuture
+	inflight  *inflight
+	replState map[string]*followerReplication
 }
 
 type Raft struct {
@@ -32,16 +39,17 @@ type Raft struct {
 	// be committed and applied to the FSM.
 	applyCh chan *logFuture
 
-	// Commit chan is used to provide the newest commit index
-	// and potentially a future to the FSM manager routine.
-	// The FSM should apply up to the index and notify the future.
-	commitCh chan commitTuple
-
 	// Configuration provided at Raft initialization
 	conf *Config
 
 	// FSM is the client state machine to apply commands to
 	fsm FSM
+
+	// fsmCh is used to trigger async application of logs to the fsm
+	fsmCh chan commitTuple
+
+	// leaderState used only while state is leader
+	leaderState leaderState
 
 	// Stores our local addr
 	localAddr net.Addr
@@ -51,7 +59,6 @@ type Raft struct {
 
 	// Track our known peers
 	peers     []net.Addr
-	peerLock  sync.Mutex
 	peerStore PeerStore
 
 	// RPC chan comes from the transport layer
@@ -95,9 +102,9 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, peerStore
 	// Create Raft struct
 	r := &Raft{
 		applyCh:    make(chan *logFuture),
-		commitCh:   make(chan commitTuple, 128),
 		conf:       conf,
 		fsm:        fsm,
+		fsmCh:      make(chan commitTuple, 128),
 		localAddr:  localAddr,
 		logs:       logs,
 		peers:      peers,
@@ -117,7 +124,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, peerStore
 
 	// Start the background work
 	go r.run()
-	go r.runPostCommit()
+	go r.runFSM()
 	return r, nil
 }
 
@@ -211,6 +218,26 @@ func (r *Raft) String() string {
 	return fmt.Sprintf("Node at %s", r.localAddr.String())
 }
 
+// runFSM is a long running goroutine responsible for applying logs
+// to the FSM. This is done async of other logs since we don't want
+// the FSM to block our internal operations.
+func (r *Raft) runFSM() {
+	for {
+		select {
+		case commitTuple := <-r.fsmCh:
+			// Apply the log
+			r.fsm.Apply(commitTuple.log.Data)
+
+			// Invoke the future if given
+			if commitTuple.future != nil {
+				commitTuple.future.respond(nil)
+			}
+		case <-r.shutdownCh:
+			return
+		}
+	}
+}
+
 // run is a long running goroutine that runs the Raft FSM
 func (r *Raft) run() {
 	for {
@@ -279,15 +306,14 @@ func (r *Raft) runCandidate() {
 	votesNeeded := r.quorumSize()
 	log.Printf("[DEBUG] Votes needed: %d", votesNeeded)
 
-	transition := false
-	for !transition {
+	for r.getState() == Candidate {
 		select {
 		case rpc := <-r.rpcCh:
 			switch cmd := rpc.Command.(type) {
 			case *AppendEntriesRequest:
-				transition = r.appendEntries(rpc, cmd)
+				r.appendEntries(rpc, cmd)
 			case *RequestVoteRequest:
-				transition = r.requestVote(rpc, cmd)
+				r.requestVote(rpc, cmd)
 			default:
 				log.Printf("[ERR] Candidate state, got unexpected command: %#v",
 					rpc.Command)
@@ -341,91 +367,80 @@ func (r *Raft) runCandidate() {
 	}
 }
 
-type leaderState struct {
-	commitCh  chan *logFuture
-	inflight  *inflight
-	replState map[string]*followerReplication
-}
-
-func (l *leaderState) Release() {
-	// Stop replication
-	for _, p := range l.replState {
-		close(p.stopCh)
-	}
-
-	// Cancel inflight requests
-	l.inflight.Cancel(LeadershipLost)
-}
-
 // runLeader runs the FSM for a leader. Do the setup here and drop into
 // the leaderLoop for the hot loop
 func (r *Raft) runLeader() {
 	log.Printf("[INFO] %v entering Leader state", r)
-	state := leaderState{
-		commitCh:  make(chan *logFuture, 128),
-		replState: make(map[string]*followerReplication),
-	}
-	defer state.Release()
 
-	// Initialize inflight tracker
-	state.inflight = NewInflight(state.commitCh)
+	// Setup leader state
+	r.leaderState.commitCh = make(chan *logFuture, 128)
+	r.leaderState.inflight = NewInflight(r.leaderState.commitCh)
+	r.leaderState.replState = make(map[string]*followerReplication)
+
+	// Cleanup state on step down
+	defer func() {
+		// Stop replication
+		for _, p := range r.leaderState.replState {
+			close(p.stopCh)
+		}
+
+		// Cancel inflight requests
+		r.leaderState.inflight.Cancel(LeadershipLost)
+
+		// Clear all the staet
+		r.leaderState.commitCh = nil
+		r.leaderState.inflight = nil
+		r.leaderState.replState = nil
+	}()
 
 	// Start a replication routine for each peer
-	r.peerLock.Lock()
 	for _, peer := range r.peers {
-		r.startReplication(&state, peer)
+		r.startReplication(peer)
 	}
-	r.peerLock.Unlock()
 
 	// Append no-op command to seal leadership
 	go r.applyNoop()
 
 	// Sit in the leader loop until we step down
-	r.leaderLoop(&state)
+	r.leaderLoop()
 }
 
 // startReplication is a helper to setup state and start async replication to a peer
-func (r *Raft) startReplication(state *leaderState, peer net.Addr) {
+func (r *Raft) startReplication(peer net.Addr) {
 	s := &followerReplication{
 		peer:       peer,
-		inflight:   state.inflight,
+		inflight:   r.leaderState.inflight,
 		stopCh:     make(chan struct{}),
 		triggerCh:  make(chan struct{}, 1),
 		matchIndex: r.getLastLog(),
 		nextIndex:  r.getLastLog() + 1,
 	}
-	state.replState[peer.String()] = s
+	r.leaderState.replState[peer.String()] = s
 	go r.replicate(s)
 }
 
 // leaderLoop is the hot loop for a leader, it is invoked
 // after all the various leader setup is done
-func (r *Raft) leaderLoop(s *leaderState) {
-	transition := false
-	for !transition {
+func (r *Raft) leaderLoop() {
+	for r.getState() == Leader {
 		select {
 		case rpc := <-r.rpcCh:
 			switch cmd := rpc.Command.(type) {
 			case *AppendEntriesRequest:
-				transition = r.appendEntries(rpc, cmd)
+				r.appendEntries(rpc, cmd)
 			case *RequestVoteRequest:
-				transition = r.requestVote(rpc, cmd)
+				r.requestVote(rpc, cmd)
 			default:
 				log.Printf("[ERR] Leader state, got unexpected command: %#v",
 					rpc.Command)
 				rpc.Respond(nil, fmt.Errorf("Unexpected command"))
 			}
 
-		case commitLog := <-s.commitCh:
+		case commitLog := <-r.leaderState.commitCh:
 			// Increment the commit index
 			idx := commitLog.log.Index
 			r.setCommitIndex(idx)
-
-			// Perform leader-specific processing
-			transition = r.leaderProcessLog(s, &commitLog.log)
-
-			// Trigger applying logs locally
-			r.commitCh <- commitTuple{idx, commitLog}
+			r.processLogs(idx, commitLog)
 
 		case applyLog := <-r.applyCh:
 			// Prepare log
@@ -446,14 +461,14 @@ func (r *Raft) leaderLoop(s *leaderState) {
 			}
 
 			// Add this to the inflight logs, commit
-			s.inflight.Start(applyLog)
-			s.inflight.Commit(applyLog.log.Index, r.localAddr)
+			r.leaderState.inflight.Start(applyLog)
+			r.leaderState.inflight.Commit(applyLog.log.Index, r.localAddr)
 
 			// Update the last log since it's on disk now
 			r.setLastLog(applyLog.log.Index)
 
 			// Notify the replicators of the new log
-			for _, f := range s.replState {
+			for _, f := range r.leaderState.replState {
 				asyncNotifyCh(f.triggerCh)
 			}
 
@@ -463,141 +478,117 @@ func (r *Raft) leaderLoop(s *leaderState) {
 	}
 }
 
-// leaderProcessLog is used for leader-specific log handling before we
-// hand off to the generic runPostCommit handler. Returns true if there
-// should be a state transition.
-func (r *Raft) leaderProcessLog(s *leaderState, l *Log) bool {
-	// Only handle LogAddPeer and LogRemove Peer
-	if l.Type != LogAddPeer && l.Type != LogRemovePeer {
-		return false
+// processLogs is used to process all the logs from the lastApplied
+// up to the given index
+func (r *Raft) processLogs(index uint64, future *logFuture) {
+	// Reject logs we've applied already
+	if index <= r.getLastApplied() {
+		log.Printf("[WARN] Skipping application of old log: %d",
+			index)
+		return
 	}
 
-	// Process the log immediately to update the peer list
-	r.processLog(l)
+	// Apply all the preceeding logs
+	for idx := r.getLastApplied() + 1; idx <= index; idx++ {
+		// Get the log, either from the future or from our log store
+		if future != nil && future.log.Index == idx {
+			r.processLog(&future.log, future)
 
-	// Decode the peer
-	peer := r.trans.DecodePeer(l.Data)
-	isSelf := peer.String() == r.localAddr.String()
-
-	// Get the replication state
-	repl, ok := s.replState[peer.String()]
-
-	// Start replicattion for new nodes
-	if l.Type == LogAddPeer && !ok && !isSelf {
-		log.Printf("[INFO] Added peer %v, starting replication", peer)
-		r.startReplication(s, peer)
-	}
-
-	// Stop replication for old nodes
-	if l.Type == LogRemovePeer && ok {
-		log.Printf("[INFO] Removed peer %v, stopping replication", peer)
-		close(repl.stopCh)
-		delete(s.replState, peer.String())
-	}
-
-	// Step down if we are being removed
-	if l.Type == LogRemovePeer && isSelf {
-		log.Printf("[INFO] Removed ourself, stepping down as leader")
-		return true
-	}
-
-	return false
-}
-
-// runPostCommit is a long running goroutine responsible for the handling
-// of a log entry after it has been committed. This involves managing the
-// local FSM, configuration changes, etc.
-func (r *Raft) runPostCommit() {
-	for {
-		select {
-		case commitTuple := <-r.commitCh:
-			// Reject logs we've applied already
-			if commitTuple.index <= r.getLastApplied() {
-				log.Printf("[WARN] Skipping application of old log: %d",
-					commitTuple.index)
-				continue
+		} else {
+			l := new(Log)
+			if err := r.logs.GetLog(idx, l); err != nil {
+				log.Printf("[ERR] Failed to get log at %d: %v", idx, err)
+				panic(err)
 			}
-
-			// Apply all the preceeding logs
-			for idx := r.getLastApplied() + 1; idx <= commitTuple.index; idx++ {
-				// Get the log, either from the future or from our log store
-				var l *Log
-				if commitTuple.future != nil && commitTuple.future.log.Index == idx {
-					l = &commitTuple.future.log
-				} else {
-					l = new(Log)
-					if err := r.logs.GetLog(idx, l); err != nil {
-						log.Printf("[ERR] Failed to get log at %d: %v", idx, err)
-						panic(err)
-					}
-				}
-				r.processLog(l)
-			}
-
-			// Update the lastApplied
-			r.setLastApplied(commitTuple.index)
-
-			// Invoke the future if given
-			if commitTuple.future != nil {
-				commitTuple.future.respond(nil)
-			}
-
-		case <-r.shutdownCh:
-			return
+			r.processLog(l, nil)
 		}
 	}
+
+	// Update the lastApplied
+	r.setLastApplied(index)
 }
 
 // processLog is invoked to process the application of a single committed log
-func (r *Raft) processLog(l *Log) {
+func (r *Raft) processLog(l *Log, future *logFuture) {
 	switch l.Type {
 	case LogCommand:
-		r.fsm.Apply(l.Data)
+		// Forward to the fsm handler
+		r.fsmCh <- commitTuple{l, future}
+
+		// Return so that the future is only responded to
+		// by the FSM handler when the application is done
+		return
 
 	case LogAddPeer:
 		peer := r.trans.DecodePeer(l.Data)
+		isSelf := peer.String() == r.localAddr.String()
 
 		// Avoid adding ourself as a peer
-		r.peerLock.Lock()
-		if peer.String() != r.localAddr.String() {
+		if !isSelf {
 			r.peers = addUniquePeer(r.peers, peer)
 		}
 
 		// Update the PeerStore
 		r.peerStore.SetPeers(append([]net.Addr{r.localAddr}, r.peers...))
-		r.peerLock.Unlock()
+
+		// Handle replication if we are the leader
+		if r.getState() == Leader {
+			_, ok := r.leaderState.replState[peer.String()]
+			if !ok && !isSelf {
+				log.Printf("[INFO] Added peer %v, starting replication", peer)
+				r.startReplication(peer)
+			}
+		}
 
 	case LogRemovePeer:
 		peer := r.trans.DecodePeer(l.Data)
+		isSelf := peer.String() == r.localAddr.String()
+		log.Printf("[DEBUG] Node %v removed peer %v", r.localAddr, peer)
 
 		// Removing ourself acts like removing all other peers
-		r.peerLock.Lock()
-		if peer.String() == r.localAddr.String() {
+		if isSelf {
 			r.peers = nil
-			if r.conf.ShutdownOnRemove {
-				log.Printf("[INFO] Removed ourself, shutting down")
-				r.Shutdown()
-			} else {
-				r.setState(Follower)
-			}
 		} else {
 			r.peers = excludePeer(r.peers, peer)
 		}
 
 		// Update the PeerStore
 		r.peerStore.SetPeers(append([]net.Addr{r.localAddr}, r.peers...))
-		r.peerLock.Unlock()
+
+		// Stop replication for old nodes
+		if r.getState() == Leader {
+			repl, ok := r.leaderState.replState[peer.String()]
+			if ok {
+				log.Printf("[INFO] Removed peer %v, stopping replication", peer)
+				close(repl.stopCh)
+				delete(r.leaderState.replState, peer.String())
+			}
+		}
+
+		// Handle removing ourself
+		if isSelf && r.conf.ShutdownOnRemove {
+			log.Printf("[INFO] Removed ourself, shutting down")
+			r.Shutdown()
+		} else {
+			log.Printf("[INFO] Removed ourself, transitioning to follower")
+			r.setState(Follower)
+		}
 
 	case LogNoop:
 		// Ignore the no-op
 	default:
 		log.Printf("[ERR] Got unrecognized log type: %#v", l)
 	}
+
+	// Invoke the future if given
+	if future != nil {
+		future.respond(nil)
+	}
 }
 
 // appendEntries is invoked when we get an append entries RPC call
 // Returns true if we transition to a Follower
-func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) (transition bool) {
+func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	// Setup a response
 	resp := &AppendEntriesResponse{
 		Term:    r.getCurrentTerm(),
@@ -622,7 +613,6 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) (transition bool)
 		resp.Term = a.Term
 
 		// Ensure transition to follower
-		transition = true
 		r.setState(Follower)
 	}
 
@@ -666,9 +656,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) (transition bool)
 	if a.LeaderCommitIndex > 0 && a.LeaderCommitIndex > r.getCommitIndex() {
 		idx := min(a.LeaderCommitIndex, r.getLastLog())
 		r.setCommitIndex(idx)
-
-		// Trigger applying logs locally
-		r.commitCh <- commitTuple{idx, nil}
+		r.processLogs(idx, nil)
 	}
 
 	// Everything went well, set success
@@ -678,11 +666,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) (transition bool)
 
 // requestVote is invoked when we get an request vote RPC call
 // Returns true if we transition to a Follower
-func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) (transition bool) {
-	// Ensure a protected view of the peers
-	r.peerLock.Lock()
-	defer r.peerLock.Unlock()
-
+func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// Setup a response
 	resp := &RequestVoteResponse{
 		Term:    r.getCurrentTerm(),
@@ -706,7 +690,6 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) (transition bool) {
 		resp.Term = req.Term
 
 		// Ensure transition to follower
-		transition = true
 		r.setState(Follower)
 	}
 
@@ -766,10 +749,6 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) (transition bool) {
 // the current term. The response channel returned is used to wait
 // for all the responses (including a vote for ourself).
 func (r *Raft) electSelf() <-chan *RequestVoteResponse {
-	// Ensure a protected view of the peers
-	r.peerLock.Lock()
-	defer r.peerLock.Unlock()
-
 	// Create a response channel
 	respCh := make(chan *RequestVoteResponse, len(r.peers)+1)
 
