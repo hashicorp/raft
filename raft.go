@@ -15,6 +15,7 @@ var (
 	NotLeader       = fmt.Errorf("node is not the leader")
 	LeadershipLost  = fmt.Errorf("leadership lost while committing log")
 	RaftShutdown    = fmt.Errorf("raft is already shutdown")
+	EnqueueTimeout  = fmt.Errorf("timed out enqueuing operation")
 )
 
 // commitTupel is used to send an index that was committed,
@@ -142,7 +143,7 @@ func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
 
 	select {
 	case <-timer:
-		return errorFuture{fmt.Errorf("timed out enqueuing operation")}
+		return errorFuture{EnqueueTimeout}
 	case <-r.shutdownCh:
 		return errorFuture{RaftShutdown}
 	case r.applyCh <- logFuture:
@@ -557,7 +558,7 @@ func (r *Raft) processLog(l *Log) {
 		}
 
 		// Update the PeerStore
-		r.peerStore.SetPeers(r.peers)
+		r.peerStore.SetPeers(append([]net.Addr{r.localAddr}, r.peers...))
 		r.peerLock.Unlock()
 
 	case LogRemovePeer:
@@ -578,7 +579,7 @@ func (r *Raft) processLog(l *Log) {
 		}
 
 		// Update the PeerStore
-		r.peerStore.SetPeers(r.peers)
+		r.peerStore.SetPeers(append([]net.Addr{r.localAddr}, r.peers...))
 		r.peerLock.Unlock()
 
 	case LogNoop:
@@ -814,7 +815,11 @@ func (r *Raft) electSelf() <-chan *RequestVoteResponse {
 	}
 
 	// Include our own vote
-	respCh <- &RequestVoteResponse{Term: req.Term, Granted: true}
+	respCh <- &RequestVoteResponse{
+		Term:    req.Term,
+		Peers:   []net.Addr{r.localAddr},
+		Granted: true,
+	}
 	return respCh
 }
 
