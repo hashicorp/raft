@@ -391,8 +391,9 @@ func (r *Raft) runLeader() {
 		r.startReplication(peer)
 	}
 
-	// Append no-op command to seal leadership
-	go r.applyNoop()
+	// Dispatch a no-op log first
+	noop := &logFuture{log: Log{Type: LogNoop}}
+	r.dispatchLog(noop)
 
 	// Sit in the leader loop until we step down
 	r.leaderLoop()
@@ -436,39 +437,45 @@ func (r *Raft) leaderLoop() {
 			r.setCommitIndex(idx)
 			r.processLogs(idx, commitLog)
 
-		case applyLog := <-r.applyCh:
-			// Prepare log
-			applyLog.log.Index = r.getLastLog() + 1
-			applyLog.log.Term = r.getCurrentTerm()
-
-			// Write the log entry locally
-			if err := r.logs.StoreLog(&applyLog.log); err != nil {
-				log.Printf("[ERR] Failed to commit log: %v", err)
-				applyLog.respond(err)
-				r.setState(Follower)
-				return
-			}
-
-			// Add a quorum policy if none
-			if applyLog.policy == nil {
-				applyLog.policy = newMajorityQuorum(len(r.peers) + 1)
-			}
-
-			// Add this to the inflight logs, commit
-			r.leaderState.inflight.Start(applyLog)
-			r.leaderState.inflight.Commit(applyLog.log.Index, r.localAddr)
-
-			// Update the last log since it's on disk now
-			r.setLastLog(applyLog.log.Index)
-
-			// Notify the replicators of the new log
-			for _, f := range r.leaderState.replState {
-				asyncNotifyCh(f.triggerCh)
-			}
+		case newLog := <-r.applyCh:
+			r.dispatchLog(newLog)
 
 		case <-r.shutdownCh:
 			return
 		}
+	}
+}
+
+// dispatchLog is called to push a log to disk, mark it
+// as inflight and begin replication of it
+func (r *Raft) dispatchLog(applyLog *logFuture) {
+	// Prepare log
+	applyLog.log.Index = r.getLastLog() + 1
+	applyLog.log.Term = r.getCurrentTerm()
+
+	// Write the log entry locally
+	if err := r.logs.StoreLog(&applyLog.log); err != nil {
+		log.Printf("[ERR] Failed to commit log: %v", err)
+		applyLog.respond(err)
+		r.setState(Follower)
+		return
+	}
+
+	// Add a quorum policy if none
+	if applyLog.policy == nil {
+		applyLog.policy = newMajorityQuorum(len(r.peers) + 1)
+	}
+
+	// Add this to the inflight logs, commit
+	r.leaderState.inflight.Start(applyLog)
+	r.leaderState.inflight.Commit(applyLog.log.Index, r.localAddr)
+
+	// Update the last log since it's on disk now
+	r.setLastLog(applyLog.log.Index)
+
+	// Notify the replicators of the new log
+	for _, f := range r.leaderState.replState {
+		asyncNotifyCh(f.triggerCh)
 	}
 }
 
@@ -840,18 +847,4 @@ func (r *Raft) setCurrentTerm(t uint64) error {
 	}
 	r.raftState.setCurrentTerm(t)
 	return nil
-}
-
-// applyNoop is a blocking command that appends a no-op log
-// entry. It is used to seal leadership.
-func (r *Raft) applyNoop() {
-	logFuture := &logFuture{
-		log: Log{
-			Type: LogNoop,
-		},
-	}
-	select {
-	case r.applyCh <- logFuture:
-	case <-r.shutdownCh:
-	}
 }
