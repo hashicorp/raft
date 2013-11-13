@@ -26,7 +26,7 @@ func inmemConfig() *Config {
 		HeartbeatTimeout: 10 * time.Millisecond,
 		ElectionTimeout:  10 * time.Millisecond,
 		CommitTimeout:    time.Millisecond,
-		MaxAppendEntries: 16,
+		MaxAppendEntries: 32,
 		ShutdownOnRemove: true,
 	}
 }
@@ -169,6 +169,7 @@ func (c *cluster) Leader() *Raft {
 }
 
 func (c *cluster) FullyConnect() {
+	log.Printf("[WARN] Fully Connecting")
 	for i, t1 := range c.trans {
 		for j, t2 := range c.trans {
 			if i != j {
@@ -180,6 +181,7 @@ func (c *cluster) FullyConnect() {
 }
 
 func (c *cluster) Disconnect(a net.Addr) {
+	log.Printf("[WARN] Disconnecting %v", a)
 	for _, t := range c.trans {
 		if t.localAddr == a {
 			t.DisconnectAll()
@@ -190,23 +192,39 @@ func (c *cluster) Disconnect(a net.Addr) {
 }
 
 func (c *cluster) EnsureSame(t *testing.T) {
+	limit := time.Now().Add(200 * time.Millisecond)
 	first := c.fsms[0]
+
+CHECK:
 	for i, fsm := range c.fsms {
 		if i == 0 {
 			continue
 		}
 
 		if len(first.logs) != len(fsm.logs) {
-			t.Fatalf("length mismatch: %d %d",
-				len(first.logs), len(fsm.logs))
+			if time.Now().After(limit) {
+				t.Fatalf("length mismatch: %d %d",
+					len(first.logs), len(fsm.logs))
+			} else {
+				goto WAIT
+			}
 		}
 
 		for idx := 0; idx < len(first.logs); idx++ {
 			if bytes.Compare(first.logs[idx], fsm.logs[idx]) != 0 {
-				t.Fatalf("log mismatch at index %d", idx)
+				if time.Now().After(limit) {
+					t.Fatalf("log mismatch at index %d", idx)
+				} else {
+					goto WAIT
+				}
 			}
 		}
 	}
+	return
+
+WAIT:
+	time.Sleep(20 * time.Millisecond)
+	goto CHECK
 }
 
 func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
@@ -374,13 +392,12 @@ func TestRaft_BehindFollower(t *testing.T) {
 	// Wait for the last future to apply
 	if err := future.Error(); err != nil {
 		t.Fatalf("err: %v", err)
+	} else {
+		log.Printf("[INFO] Finished apply without behind follower")
 	}
 
 	// Reconnect the behind node
 	c.FullyConnect()
-
-	// Wait for replication
-	time.Sleep(100 * time.Millisecond)
 
 	// Ensure all the logs are the same
 	c.EnsureSame(t)
@@ -432,9 +449,6 @@ func TestRaft_ApplyConcurrent(t *testing.T) {
 			}
 		}(i)
 	}
-
-	// Wait for replication
-	time.Sleep(50 * time.Millisecond)
 
 	// Check the FSMs
 	c.EnsureSame(t)
@@ -518,9 +532,6 @@ func TestRaft_JoinNode(t *testing.T) {
 	if len(followers) != 2 {
 		t.Fatalf("expected two followers: %v", followers)
 	}
-
-	// Allow time for replication
-	time.Sleep(20 * time.Millisecond)
 
 	// Check the FSMs
 	c.EnsureSame(t)
