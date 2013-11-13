@@ -308,8 +308,6 @@ func (r *Raft) runCandidate() {
 			// cluster. Either way, bail now.
 			if !peerContained(vote.Peers, r.localAddr) {
 				log.Printf("[WARN] Remote peer does not have local node listed as a peer")
-				r.setState(Follower)
-				return
 			}
 
 			// Check if the vote is granted
