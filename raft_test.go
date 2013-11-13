@@ -599,3 +599,30 @@ func TestRaft_RemoveLeader(t *testing.T) {
 		t.Fatalf("leader should be shutdown")
 	}
 }
+
+func TestRaft_RemoveLeader_SplitCluster(t *testing.T) {
+	// Enable operation after a remove
+	conf := inmemConfig()
+	conf.ShutdownOnRemove = false
+
+	// Make a cluster
+	c := MakeCluster(3, t, conf)
+	defer c.Close()
+
+	// Get the leader
+	leader := c.Leader()
+
+	// Remove the leader
+	leader.RemovePeer(leader.localAddr)
+
+	// Wait until we have 2 leaders
+	limit := time.Now().Add(100 * time.Millisecond)
+	var leaders []*Raft
+	for time.Now().Before(limit) && len(leaders) != 2 {
+		time.Sleep(10 * time.Millisecond)
+		leaders = c.GetInState(Leader)
+	}
+	if len(leaders) != 2 {
+		t.Fatalf("expected two leader: %v", leaders)
+	}
+}
