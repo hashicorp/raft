@@ -675,6 +675,11 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	if leader.State() != Shutdown {
 		t.Fatalf("leader should be shutdown")
 	}
+
+	// Old leader should have no peers
+	if len(leader.peers) != 0 {
+		t.Fatalf("leader should have no peers")
+	}
 }
 
 func TestRaft_RemoveLeader_SplitCluster(t *testing.T) {
@@ -701,6 +706,11 @@ func TestRaft_RemoveLeader_SplitCluster(t *testing.T) {
 	}
 	if len(leaders) != 2 {
 		t.Fatalf("expected two leader: %v", leaders)
+	}
+
+	// Old leader should have no peers
+	if len(leader.peers) != 0 {
+		t.Fatalf("leader should have no peers")
 	}
 }
 
