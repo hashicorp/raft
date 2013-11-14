@@ -370,7 +370,7 @@ func (r *Raft) runLeader() {
 
 	// Setup leader state
 	r.leaderState.commitCh = make(chan *logFuture, 128)
-	r.leaderState.inflight = NewInflight(r.leaderState.commitCh)
+	r.leaderState.inflight = newInflight(r.leaderState.commitCh)
 	r.leaderState.replState = make(map[string]*followerReplication)
 
 	// Cleanup state on step down

@@ -7,7 +7,7 @@ import (
 
 func TestInflight_StartCommit(t *testing.T) {
 	commitCh := make(chan *logFuture, 1)
-	in := NewInflight(commitCh)
+	in := newInflight(commitCh)
 
 	// Commit a transaction as being in flight
 	l := &logFuture{log: Log{Index: 1}}
@@ -42,7 +42,7 @@ func TestInflight_StartCommit(t *testing.T) {
 
 func TestInflight_Cancel(t *testing.T) {
 	commitCh := make(chan *logFuture, 1)
-	in := NewInflight(commitCh)
+	in := newInflight(commitCh)
 
 	// Commit a transaction as being in flight
 	l := &logFuture{

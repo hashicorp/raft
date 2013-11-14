@@ -62,7 +62,7 @@ type inflight struct {
 
 // NewInflight returns an inflight struct that notifies
 // the provided channel when logs are finished commiting.
-func NewInflight(commitCh chan *logFuture) *inflight {
+func newInflight(commitCh chan *logFuture) *inflight {
 	return &inflight{
 		commitCh:   commitCh,
 		operations: make(map[uint64]*logFuture),
