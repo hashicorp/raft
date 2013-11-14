@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func LevelDBTestStore(t *testing.T) (string, *LevelDBStore) {
+func LevelDBTestStore(t *testing.T) (string, *LevelDBLogStore, *LevelDBStableStore) {
 	// Create a test dir
 	dir, err := ioutil.TempDir("", "raft")
 	if err != nil {
@@ -15,19 +15,25 @@ func LevelDBTestStore(t *testing.T) (string, *LevelDBStore) {
 	}
 
 	// New level
-	l, err := NewLevelDBStore(dir)
+	logs, err := NewLevelDBLogStore(dir)
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
 
-	return dir, l
+	// New level
+	stable, err := NewLevelDBStableStore(dir)
+	if err != nil {
+		t.Fatalf("err: %v ", err)
+	}
+
+	return dir, logs, stable
 }
 
 func TestLevelDB_StableStore(t *testing.T) {
-	var l interface{} = &LevelDBStore{}
+	var l interface{} = &LevelDBStableStore{}
 	_, ok := l.(StableStore)
 	if !ok {
-		t.Fatalf("LevelDBStore is not StableStore")
+		t.Fatalf("LevelDBStableStore is not StableStore")
 	}
 }
 
@@ -40,7 +46,7 @@ func TestLevelDB_SetGet(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	// New level
-	l, err := NewLevelDBStore(dir)
+	l, err := NewLevelDBStableStore(dir)
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
@@ -77,7 +83,7 @@ func TestLevelDB_SetGetUint64(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	// New level
-	l, err := NewLevelDBStore(dir)
+	l, err := NewLevelDBStableStore(dir)
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
@@ -106,10 +112,10 @@ func TestLevelDB_SetGetUint64(t *testing.T) {
 }
 
 func TestLevelDB_LogStore(t *testing.T) {
-	var l interface{} = &LevelDBStore{}
+	var l interface{} = &LevelDBLogStore{}
 	_, ok := l.(LogStore)
 	if !ok {
-		t.Fatalf("LevelDBStore is not a LogStore")
+		t.Fatalf("LevelDBLogStore is not a LogStore")
 	}
 }
 
@@ -122,7 +128,7 @@ func TestLevelDB_Logs(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	// New level
-	l, err := NewLevelDBStore(dir)
+	l, err := NewLevelDBLogStore(dir)
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}

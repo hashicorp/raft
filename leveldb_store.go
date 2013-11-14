@@ -13,24 +13,26 @@ const logPath = "logs"
 const confPath = "conf"
 const maxOpenFiles = 128
 
-// LevelDBStore provides an implementation of LogStore
-// as well as StableStore, allowing it to be used as
-// the primary backing store
-type LevelDBStore struct {
-	logs *leveldb.DB
-	conf *leveldb.DB
+type levelDBStore struct {
+	db *leveldb.DB
 }
 
-// NewLevelDBStore returns a new LevelDBStore and potential
-// error. Requres a base directory from which to operate.
-func NewLevelDBStore(base string) (*LevelDBStore, error) {
-	// Get the paths
-	logLoc := filepath.Join(base, logPath)
-	confLoc := filepath.Join(base, confPath)
+func (l *levelDBStore) Close() error {
+	return l.db.Close()
+}
 
-	// Create the struct
-	ldb := &LevelDBStore{}
+// LevelDBLogStore provides an implementation of LogStore
+type LevelDBLogStore struct {
+	levelDBStore
+}
 
+// LevelDBStableStore provides an implementation of StableStore
+type LevelDBStableStore struct {
+	levelDBStore
+}
+
+// newLevelDBStore is used to initialize a levelDB store
+func newLevelDBStore(path string, store *levelDBStore) error {
 	// LevelDB options
 	opts := &opt.Options{
 		Compression:  opt.SnappyCompression,
@@ -39,42 +41,34 @@ func NewLevelDBStore(base string) (*LevelDBStore, error) {
 	}
 
 	// Open the DBs
-	db, err := leveldb.OpenFile(logLoc, opts)
+	db, err := leveldb.OpenFile(path, opts)
 	if err != nil {
-		log.Printf("[ERR] Failed to open logs leveldb: %v", err)
+		log.Printf("[ERR] Failed to open leveldb at %v: %v", path, err)
+		return err
+	}
+	store.db = db
+	return nil
+}
+
+// NewLevelDBLogStore returns a new LevelDBLogStore and potential
+// error. Requres a base directory from which to operate.
+func NewLevelDBLogStore(base string) (*LevelDBLogStore, error) {
+	// Get the paths
+	logLoc := filepath.Join(base, logPath)
+
+	// Create the struct
+	ldb := &LevelDBLogStore{}
+
+	// Initialize the db
+	if err := newLevelDBStore(logLoc, &ldb.levelDBStore); err != nil {
 		return nil, err
 	}
-	ldb.logs = db
-
-	// Open the conf DB
-	db, err = leveldb.OpenFile(confLoc, opts)
-	if err != nil {
-		log.Printf("[ERR] Failed to open conf leveldb: %v", err)
-		return nil, err
-	}
-	ldb.conf = db
-
 	return ldb, nil
 }
 
-func (l *LevelDBStore) Close() error {
-	err1 := l.logs.Close()
-	err2 := l.conf.Close()
-	if err1 == nil && err2 == nil {
-		return nil
-	} else if err1 == nil && err2 != nil {
-		return err2
-	} else if err1 != nil && err2 == nil {
-		return err1
-	} else {
-		return fmt.Errorf("Failed to close DB: Got: %v and %v",
-			err1, err2)
-	}
-}
-
-func (l *LevelDBStore) LastIndex() (uint64, error) {
+func (l *LevelDBLogStore) LastIndex() (uint64, error) {
 	// Get an iterator
-	it := l.logs.NewIterator(nil)
+	it := l.db.NewIterator(nil)
 	defer it.Release()
 
 	// Seek to the last value
@@ -92,11 +86,11 @@ func (l *LevelDBStore) LastIndex() (uint64, error) {
 }
 
 // Gets a log entry at a given index
-func (l *LevelDBStore) GetLog(index uint64, logOut *Log) error {
+func (l *LevelDBLogStore) GetLog(index uint64, logOut *Log) error {
 	key := uint64ToBytes(index)
 
 	// Get an iterator
-	snap, err := l.logs.GetSnapshot()
+	snap, err := l.db.GetSnapshot()
 	if err != nil {
 		return err
 	}
@@ -115,7 +109,7 @@ func (l *LevelDBStore) GetLog(index uint64, logOut *Log) error {
 }
 
 // Stores a log entry
-func (l *LevelDBStore) StoreLog(log *Log) error {
+func (l *LevelDBLogStore) StoreLog(log *Log) error {
 	// Convert to an on-disk format
 	key := uint64ToBytes(log.Index)
 	val, err := encodeMsgPack(log)
@@ -125,11 +119,11 @@ func (l *LevelDBStore) StoreLog(log *Log) error {
 
 	// Write it out
 	opts := &opt.WriteOptions{Sync: true}
-	return l.logs.Put(key, val.Bytes(), opts)
+	return l.db.Put(key, val.Bytes(), opts)
 }
 
 // Deletes a range of log entries. The range is inclusive.
-func (l *LevelDBStore) DeleteRange(min, max uint64) error {
+func (l *LevelDBLogStore) DeleteRange(min, max uint64) error {
 	// Create a batch operation
 	batch := &leveldb.Batch{}
 	for i := min; i <= max; i++ {
@@ -139,19 +133,35 @@ func (l *LevelDBStore) DeleteRange(min, max uint64) error {
 
 	// Apply the batch
 	opts := &opt.WriteOptions{Sync: true}
-	return l.logs.Write(batch, opts)
+	return l.db.Write(batch, opts)
+}
+
+// NewLevelDBStableStore returns a new LevelDBStableStore and potential
+// error. Requres a base directory from which to operate.
+func NewLevelDBStableStore(base string) (*LevelDBStableStore, error) {
+	// Get the paths
+	confLoc := filepath.Join(base, confPath)
+
+	// Create the struct
+	ldb := &LevelDBStableStore{}
+
+	// Initialize the db
+	if err := newLevelDBStore(confLoc, &ldb.levelDBStore); err != nil {
+		return nil, err
+	}
+	return ldb, nil
 }
 
 // Set a K/V pair
-func (l *LevelDBStore) Set(key []byte, val []byte) error {
+func (l *LevelDBStableStore) Set(key []byte, val []byte) error {
 	opts := &opt.WriteOptions{Sync: true}
-	return l.conf.Put(key, val, opts)
+	return l.db.Put(key, val, opts)
 }
 
 // Get a K/V pair
-func (l *LevelDBStore) Get(key []byte) ([]byte, error) {
+func (l *LevelDBStableStore) Get(key []byte) ([]byte, error) {
 	// Get a snapshot view
-	snap, err := l.conf.GetSnapshot()
+	snap, err := l.db.GetSnapshot()
 	if err != nil {
 		return nil, err
 	}
@@ -171,11 +181,11 @@ func (l *LevelDBStore) Get(key []byte) ([]byte, error) {
 	return buf, nil
 }
 
-func (l *LevelDBStore) SetUint64(key []byte, val uint64) error {
+func (l *LevelDBStableStore) SetUint64(key []byte, val uint64) error {
 	return l.Set(key, uint64ToBytes(val))
 }
 
-func (l *LevelDBStore) GetUint64(key []byte) (uint64, error) {
+func (l *LevelDBStableStore) GetUint64(key []byte) (uint64, error) {
 	buf, err := l.Get(key)
 	if err != nil {
 		return 0, err

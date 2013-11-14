@@ -33,8 +33,9 @@ func inmemConfig() *Config {
 }
 
 func TestRaft_StartStop(t *testing.T) {
-	dir, store := LevelDBTestStore(t)
+	dir, logs, store := LevelDBTestStore(t)
 	defer os.RemoveAll(dir)
+	defer logs.Close()
 	defer store.Close()
 
 	_, trans := NewInmemTransport()
@@ -42,7 +43,7 @@ func TestRaft_StartStop(t *testing.T) {
 	conf := DefaultConfig()
 	peers := &StaticPeers{}
 
-	raft, err := NewRaft(conf, fsm, store, store, peers, trans)
+	raft, err := NewRaft(conf, fsm, logs, store, peers, trans)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -50,8 +51,9 @@ func TestRaft_StartStop(t *testing.T) {
 }
 
 func TestRaft_AfterShutdown(t *testing.T) {
-	dir, store := LevelDBTestStore(t)
+	dir, logs, store := LevelDBTestStore(t)
 	defer os.RemoveAll(dir)
+	defer logs.Close()
 	defer store.Close()
 
 	_, trans := NewInmemTransport()
@@ -59,7 +61,7 @@ func TestRaft_AfterShutdown(t *testing.T) {
 	conf := DefaultConfig()
 	peers := &StaticPeers{}
 
-	raft, err := NewRaft(conf, fsm, store, store, peers, trans)
+	raft, err := NewRaft(conf, fsm, logs, store, peers, trans)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -81,8 +83,9 @@ func TestRaft_AfterShutdown(t *testing.T) {
 }
 
 func TestRaft_SingleNode(t *testing.T) {
-	dir, store := LevelDBTestStore(t)
+	dir, logs, store := LevelDBTestStore(t)
 	defer os.RemoveAll(dir)
+	defer logs.Close()
 	defer store.Close()
 
 	_, trans := NewInmemTransport()
@@ -90,7 +93,7 @@ func TestRaft_SingleNode(t *testing.T) {
 	conf := inmemConfig()
 	peers := &StaticPeers{}
 
-	raft, err := NewRaft(conf, fsm, store, store, peers, trans)
+	raft, err := NewRaft(conf, fsm, logs, store, peers, trans)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -117,7 +120,8 @@ func TestRaft_SingleNode(t *testing.T) {
 
 type cluster struct {
 	dirs   []string
-	stores []*LevelDBStore
+	logs   []*LevelDBLogStore
+	stores []*LevelDBStableStore
 	fsms   []*MockFSM
 	trans  []*InmemTransport
 	rafts  []*Raft
@@ -125,6 +129,7 @@ type cluster struct {
 
 func (c *cluster) Merge(other *cluster) {
 	c.dirs = append(c.dirs, other.dirs...)
+	c.logs = append(c.logs, other.logs...)
 	c.stores = append(c.stores, other.stores...)
 	c.fsms = append(c.fsms, other.fsms...)
 	c.trans = append(c.trans, other.trans...)
@@ -149,6 +154,9 @@ func (c *cluster) Close() {
 	}
 	timer.Stop()
 
+	for _, l := range c.logs {
+		l.Close()
+	}
 	for _, s := range c.stores {
 		s.Close()
 	}
@@ -283,8 +291,9 @@ func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 
 	// Setup the stores and transports
 	for i := 0; i < n; i++ {
-		dir, store := LevelDBTestStore(t)
+		dir, logs, store := LevelDBTestStore(t)
 		c.dirs = append(c.dirs, dir)
+		c.logs = append(c.logs, logs)
 		c.stores = append(c.stores, store)
 		c.fsms = append(c.fsms, &MockFSM{})
 
@@ -301,11 +310,12 @@ func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 		if conf == nil {
 			conf = inmemConfig()
 		}
+		logs := c.logs[i]
 		store := c.stores[i]
 		trans := c.trans[i]
 		peerStore := &StaticPeers{peers}
 
-		raft, err := NewRaft(conf, c.fsms[i], store, store, peerStore, trans)
+		raft, err := NewRaft(conf, c.fsms[i], logs, store, peerStore, trans)
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
