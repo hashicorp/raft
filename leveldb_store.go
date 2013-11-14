@@ -1,12 +1,10 @@
 package raft
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"
-	"github.com/ugorji/go/codec"
 	"log"
 	"path/filepath"
 )
@@ -113,14 +111,14 @@ func (l *LevelDBStore) GetLog(index uint64, logOut *Log) error {
 	}
 
 	// Convert the value to a log
-	return decode(val, logOut)
+	return decodeMsgPack(val, logOut)
 }
 
 // Stores a log entry
 func (l *LevelDBStore) StoreLog(log *Log) error {
 	// Convert to an on-disk format
 	key := uint64ToBytes(log.Index)
-	val, err := encode(log)
+	val, err := encodeMsgPack(log)
 	if err != nil {
 		return err
 	}
@@ -195,22 +193,4 @@ func uint64ToBytes(u uint64) []byte {
 	buf := make([]byte, 8)
 	binary.BigEndian.PutUint64(buf, u)
 	return buf
-
-}
-
-// Decode reverses the encode operation on a byte slice input
-func decode(buf []byte, out interface{}) error {
-	r := bytes.NewBuffer(buf)
-	hd := codec.MsgpackHandle{}
-	dec := codec.NewDecoder(r, &hd)
-	return dec.Decode(out)
-}
-
-// Encode writes an encoded object to a new bytes buffer
-func encode(in interface{}) (*bytes.Buffer, error) {
-	buf := bytes.NewBuffer(nil)
-	hd := codec.MsgpackHandle{}
-	enc := codec.NewEncoder(buf, &hd)
-	err := enc.Encode(in)
-	return buf, err
 }
