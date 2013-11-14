@@ -306,7 +306,7 @@ func (r *Raft) runCandidate() {
 
 	// Tally the votes, need a simple majority
 	grantedVotes := 0
-	votesNeeded := r.quorumSize()
+	votesNeeded := ((len(r.peers) + 1) / 2) + 1
 	log.Printf("[DEBUG] Votes needed: %d", votesNeeded)
 
 	for r.getState() == Candidate {
@@ -822,14 +822,6 @@ func (r *Raft) electSelf() <-chan *RequestVoteResponse {
 		Granted: true,
 	}
 	return respCh
-}
-
-// quorumSize returns the number of votes required to
-// consider a log committed
-func (r *Raft) quorumSize() int {
-	clusterSize := len(r.peers) + 1
-	votesNeeded := (clusterSize / 2) + 1
-	return votesNeeded
 }
 
 // persistVote is used to persist our vote for safety
