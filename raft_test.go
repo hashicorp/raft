@@ -3,6 +3,8 @@ package raft
 import (
 	"bytes"
 	"fmt"
+	"github.com/ugorji/go/codec"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -17,8 +19,32 @@ type MockFSM struct {
 	logs [][]byte
 }
 
+type MockSnapshot struct {
+	logs     [][]byte
+	maxIndex int
+}
+
 func (m *MockFSM) Apply(log []byte) {
 	m.logs = append(m.logs, log)
+}
+
+func (m *MockFSM) Snapshot() (FSMSnapshot, error) {
+	return &MockSnapshot{m.logs, len(m.logs)}, nil
+}
+
+func (m *MockFSM) Restore(inp io.ReadCloser) error {
+	defer inp.Close()
+	hd := codec.MsgpackHandle{}
+	dec := codec.NewDecoder(inp, &hd)
+
+	m.logs = nil
+	return dec.Decode(&m.logs)
+}
+
+func (m *MockSnapshot) Persist(sink SnapshotSink) error {
+	hd := codec.MsgpackHandle{}
+	enc := codec.NewEncoder(sink, &hd)
+	return enc.Encode(m.logs[:m.maxIndex])
 }
 
 // Return configurations optimized for in-memory
