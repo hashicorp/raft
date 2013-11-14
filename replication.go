@@ -21,7 +21,7 @@ type followerReplication struct {
 // the process of replicating logs to our followers
 func (r *Raft) replicate(s *followerReplication) {
 	// Start an async heartbeating routing
-	go r.heartbeat(s)
+	r.goFunc(func() { r.heartbeat(s) })
 
 	shouldStop := false
 	for !shouldStop {

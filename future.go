@@ -1,5 +1,9 @@
 package raft
 
+import (
+	"time"
+)
+
 // ApplyFuture is used to represent an application that may occur in the future
 type ApplyFuture interface {
 	Error() error
@@ -37,4 +41,15 @@ func (l *logFuture) respond(err error) {
 	}
 	l.errCh <- err
 	close(l.errCh)
+}
+
+type shutdownFuture struct {
+	raft *Raft
+}
+
+func (s *shutdownFuture) Error() error {
+	for s.raft.getRoutines() > 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	return nil
 }

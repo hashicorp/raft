@@ -123,8 +123,8 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, peerStore
 	r.setLastLog(lastLog)
 
 	// Start the background work
-	go r.run()
-	go r.runFSM()
+	r.goFunc(r.run)
+	r.goFunc(r.runFSM)
 	return r, nil
 }
 
@@ -197,8 +197,9 @@ func (r *Raft) RemovePeer(peer net.Addr) ApplyFuture {
 }
 
 // Shutdown is used to stop the Raft background routines.
-// This is not a graceful operation.
-func (r *Raft) Shutdown() {
+// This is not a graceful operation. Provides a future that
+// can be used to block until all background routines have exited.
+func (r *Raft) Shutdown() ApplyFuture {
 	r.shutdownLock.Lock()
 	defer r.shutdownLock.Unlock()
 
@@ -207,6 +208,8 @@ func (r *Raft) Shutdown() {
 		r.shutdown = true
 		r.setState(Shutdown)
 	}
+
+	return &shutdownFuture{r}
 }
 
 // State is used to return the state raft is currently in
@@ -411,7 +414,7 @@ func (r *Raft) startReplication(peer net.Addr) {
 		nextIndex:   r.getLastLog() + 1,
 	}
 	r.leaderState.replState[peer.String()] = s
-	go r.replicate(s)
+	r.goFunc(func() { r.replicate(s) })
 }
 
 // leaderLoop is the hot loop for a leader, it is invoked
@@ -780,28 +783,30 @@ func (r *Raft) electSelf() <-chan *RequestVoteResponse {
 
 	// Construct a function to ask for a vote
 	askPeer := func(peer net.Addr) {
-		resp := new(RequestVoteResponse)
-		err := r.trans.RequestVote(peer, req, resp)
-		if err != nil {
-			log.Printf("[ERR] Failed to make RequestVote RPC to %v: %v", peer, err)
-			resp.Term = req.Term
-			resp.Granted = false
-		}
+		r.goFunc(func() {
+			resp := new(RequestVoteResponse)
+			err := r.trans.RequestVote(peer, req, resp)
+			if err != nil {
+				log.Printf("[ERR] Failed to make RequestVote RPC to %v: %v", peer, err)
+				resp.Term = req.Term
+				resp.Granted = false
+			}
 
-		// If we are not a peer, we could have been removed but failed
-		// to receive the log message. OR it could mean an improperly configured
-		// cluster. Either way, we should warn
-		if err == nil && !peerContained(resp.Peers, r.localAddr) {
-			log.Printf("[WARN] Remote peer %v does not have local node %v as a peer",
-				peer, r.localAddr)
-		}
+			// If we are not a peer, we could have been removed but failed
+			// to receive the log message. OR it could mean an improperly configured
+			// cluster. Either way, we should warn
+			if err == nil && !peerContained(resp.Peers, r.localAddr) {
+				log.Printf("[WARN] Remote peer %v does not have local node %v as a peer",
+					peer, r.localAddr)
+			}
 
-		respCh <- resp
+			respCh <- resp
+		})
 	}
 
 	// For each peer, request a vote
 	for _, peer := range r.peers {
-		go askPeer(peer)
+		askPeer(peer)
 	}
 
 	// Persist a vote for ourselves

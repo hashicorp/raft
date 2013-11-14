@@ -31,6 +31,9 @@ type raftState struct {
 
 	// Last applied log to the FSM
 	lastApplied uint64
+
+	// Tracks the number of live routines
+	runningRoutines int32
 }
 
 func (r *raftState) getState() RaftState {
@@ -73,4 +76,26 @@ func (r *raftState) getLastApplied() uint64 {
 
 func (r *raftState) setLastApplied(term uint64) {
 	atomic.StoreUint64(&r.lastApplied, term)
+}
+
+func (r *raftState) incrRoutines() {
+	atomic.AddInt32(&r.runningRoutines, 1)
+}
+
+func (r *raftState) decrRoutines() {
+	atomic.AddInt32(&r.runningRoutines, -1)
+}
+
+func (r *raftState) getRoutines() int32 {
+	return atomic.LoadInt32(&r.runningRoutines)
+}
+
+// Start a goroutine and properly handle the race between a routine
+// starting and incrementing, and exiting and decrementing.
+func (r *raftState) goFunc(f func()) {
+	r.incrRoutines()
+	go func() {
+		defer r.decrRoutines()
+		f()
+	}()
 }
