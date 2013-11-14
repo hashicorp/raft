@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -231,6 +232,41 @@ CHECK:
 				} else {
 					goto WAIT
 				}
+			}
+		}
+	}
+	return
+
+WAIT:
+	time.Sleep(20 * time.Millisecond)
+	goto CHECK
+}
+
+func raftToPeerSet(r *Raft) map[string]struct{} {
+	peers := make(map[string]struct{})
+	peers[r.localAddr.String()] = struct{}{}
+	for _, p := range r.peers {
+		peers[p.String()] = struct{}{}
+	}
+	return peers
+}
+
+func (c *cluster) EnsureSamePeers(t *testing.T) {
+	limit := time.Now().Add(200 * time.Millisecond)
+	peerSet := raftToPeerSet(c.rafts[0])
+
+CHECK:
+	for i, raft := range c.rafts {
+		if i == 0 {
+			continue
+		}
+
+		otherSet := raftToPeerSet(raft)
+		if !reflect.DeepEqual(peerSet, otherSet) {
+			if time.Now().After(limit) {
+				t.Fatalf("peer mismatch: %v %v", peerSet, otherSet)
+			} else {
+				goto WAIT
 			}
 		}
 	}
@@ -556,6 +592,9 @@ func TestRaft_JoinNode(t *testing.T) {
 
 	// Check the FSMs
 	c.EnsureSame(t)
+
+	// Check the peers
+	c.EnsureSamePeers(t)
 }
 
 func TestRaft_RemoveFollower(t *testing.T) {
