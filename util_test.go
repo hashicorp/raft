@@ -133,3 +133,16 @@ func TestAddUniquePeer(t *testing.T) {
 		t.Fatalf("expected append")
 	}
 }
+
+func TestEncodeDecodePeers(t *testing.T) {
+	peers := []net.Addr{NewInmemAddr(), NewInmemAddr(), NewInmemAddr()}
+	_, trans := NewInmemTransport()
+
+	// Try to encode/decode
+	buf := encodePeers(peers, trans)
+	decoded := decodePeers(buf, trans)
+
+	if !reflect.DeepEqual(peers, decoded) {
+		t.Fatalf("mismatch %v %v", peers, decoded)
+	}
+}

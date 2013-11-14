@@ -95,6 +95,40 @@ func addUniquePeer(peers []net.Addr, peer net.Addr) []net.Addr {
 	}
 }
 
+// encodePeers is used to serialize a list of peers
+func encodePeers(peers []net.Addr, trans Transport) []byte {
+	// Encode each peer
+	var encPeers [][]byte
+	for _, p := range peers {
+		encPeers = append(encPeers, trans.EncodePeer(p))
+	}
+
+	// Encode the entire array
+	buf, err := encodeMsgPack(encPeers)
+	if err != nil {
+		panic(fmt.Errorf("Failed to encode peers: %v", err))
+	}
+
+	return buf.Bytes()
+}
+
+// decodePeers is used to deserialie a list of peers
+func decodePeers(buf []byte, trans Transport) []net.Addr {
+	// Decode the buffer first
+	var encPeers [][]byte
+	if err := decodeMsgPack(buf, &encPeers); err != nil {
+		panic(fmt.Errorf("Failed to decode peers: %v", err))
+	}
+
+	// Deserialize each peer
+	var peers []net.Addr
+	for _, enc := range encPeers {
+		peers = append(peers, trans.DecodePeer(enc))
+	}
+
+	return peers
+}
+
 // Decode reverses the encode operation on a byte slice input
 func decodeMsgPack(buf []byte, out interface{}) error {
 	r := bytes.NewBuffer(buf)
