@@ -1,5 +1,9 @@
 package raft
 
+import (
+	"net"
+)
+
 type LogType uint8
 
 const (
@@ -23,6 +27,10 @@ type Log struct {
 	Term  uint64
 	Type  LogType
 	Data  []byte
+
+	// Peer is not exported since it is not transmitted, only used
+	// internally to construct the Data field.
+	peer net.Addr
 }
 
 // LogStore is used to provide an interface for storing

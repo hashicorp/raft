@@ -664,3 +664,38 @@ func TestRaft_RemoveLeader_SplitCluster(t *testing.T) {
 		t.Fatalf("expected two leader: %v", leaders)
 	}
 }
+
+func TestRaft_AddKnownPeer(t *testing.T) {
+	// Make a cluster
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	// Get the leader
+	leader := c.Leader()
+	followers := c.GetInState(Follower)
+
+	// Add a follower
+	future := leader.AddPeer(followers[0].localAddr)
+
+	// Should be already added
+	if err := future.Error(); err != KnownPeer {
+		t.Fatalf("err: %v", err)
+	}
+}
+
+func TestRaft_RemoveUnknownPeer(t *testing.T) {
+	// Make a cluster
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	// Get the leader
+	leader := c.Leader()
+
+	// Remove unknown
+	future := leader.RemovePeer(NewInmemAddr())
+
+	// Should be already added
+	if err := future.Error(); err != UnknownPeer {
+		t.Fatalf("err: %v", err)
+	}
+}

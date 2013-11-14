@@ -16,6 +16,8 @@ var (
 	LeadershipLost  = fmt.Errorf("leadership lost while committing log")
 	RaftShutdown    = fmt.Errorf("raft is already shutdown")
 	EnqueueTimeout  = fmt.Errorf("timed out enqueuing operation")
+	KnownPeer       = fmt.Errorf("peer already known")
+	UnknownPeer     = fmt.Errorf("peer is unknown")
 )
 
 // commitTupel is used to send an index that was committed,
@@ -164,7 +166,7 @@ func (r *Raft) AddPeer(peer net.Addr) ApplyFuture {
 	logFuture := &logFuture{
 		log: Log{
 			Type: LogAddPeer,
-			Data: r.trans.EncodePeer(peer),
+			peer: peer,
 		},
 		errCh: make(chan error, 1),
 	}
@@ -183,7 +185,7 @@ func (r *Raft) RemovePeer(peer net.Addr) ApplyFuture {
 	logFuture := &logFuture{
 		log: Log{
 			Type: LogRemovePeer,
-			Data: r.trans.EncodePeer(peer),
+			peer: peer,
 		},
 		policy: newExcludeNodeQuorum(len(r.peers)+1, peer),
 		errCh:  make(chan error, 1),
@@ -441,12 +443,50 @@ func (r *Raft) leaderLoop() {
 			r.processLogs(idx, commitLog)
 
 		case newLog := <-r.applyCh:
+			// Prepare peer set changes
+			if newLog.log.Type == LogAddPeer || newLog.log.Type == LogRemovePeer {
+				if !r.preparePeerChange(newLog) {
+					continue
+				}
+			}
 			r.dispatchLog(newLog)
 
 		case <-r.shutdownCh:
 			return
 		}
 	}
+}
+
+// preparePeerChange checks if a LogAddPeer or LogRemovePeer should be performed,
+// and properly formats the data field on the log before dispatching it.
+func (r *Raft) preparePeerChange(l *logFuture) bool {
+	// Check if this is a known peer
+	p := l.log.peer
+	knownPeer := peerContained(r.peers, p) || r.localAddr.String() == p.String()
+
+	// Ignore known peers on add
+	if l.log.Type == LogAddPeer && knownPeer {
+		l.respond(KnownPeer)
+		return false
+	}
+
+	// Ignore unknown peers on remove
+	if l.log.Type == LogRemovePeer && !knownPeer {
+		l.respond(UnknownPeer)
+		return false
+	}
+
+	// Construct the peer set
+	var peerSet []net.Addr
+	if l.log.Type == LogAddPeer {
+		peerSet = append([]net.Addr{p, r.localAddr}, r.peers...)
+	} else {
+		peerSet = excludePeer(append([]net.Addr{r.localAddr}, r.peers...), p)
+	}
+
+	// Setup the log
+	l.log.Data = encodePeers(peerSet, r.trans)
+	return true
 }
 
 // dispatchLog is called to push a log to disk, mark it
@@ -524,54 +564,54 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 		return
 
 	case LogAddPeer:
-		peer := r.trans.DecodePeer(l.Data)
-		isSelf := peer.String() == r.localAddr.String()
-		log.Printf("[DEBUG] Node %v added peer %v", r.localAddr, peer)
+		peers := decodePeers(l.Data, r.trans)
+		log.Printf("[DEBUG] Node %v updated peer set (add): %v", r.localAddr, peers)
 
-		// Avoid adding ourself as a peer
-		if !isSelf {
-			r.peers = addUniquePeer(r.peers, peer)
-		}
-
-		// Update the PeerStore
-		r.peerStore.SetPeers(append([]net.Addr{r.localAddr}, r.peers...))
+		// Update our peer set
+		r.peers = excludePeer(peers, r.localAddr)
+		r.peerStore.SetPeers(peers)
 
 		// Handle replication if we are the leader
 		if r.getState() == Leader {
-			_, ok := r.leaderState.replState[peer.String()]
-			if !ok && !isSelf {
-				log.Printf("[INFO] Added peer %v, starting replication", peer)
-				r.startReplication(peer)
+			for _, p := range r.peers {
+				if _, ok := r.leaderState.replState[p.String()]; !ok {
+					log.Printf("[INFO] Added peer %v, starting replication", p)
+					r.startReplication(p)
+				}
 			}
 		}
 
 	case LogRemovePeer:
-		peer := r.trans.DecodePeer(l.Data)
-		isSelf := peer.String() == r.localAddr.String()
-		log.Printf("[DEBUG] Node %v removed peer %v", r.localAddr, peer)
+		peers := decodePeers(l.Data, r.trans)
+		log.Printf("[DEBUG] Node %v updated peer set (remove): %v", r.localAddr, peers)
 
-		// Removing ourself acts like removing all other peers
-		if isSelf {
+		// If the peer set does not include us, remove all other peers
+		removeSelf := !peerContained(peers, r.localAddr)
+		if removeSelf {
 			r.peers = nil
+			r.peerStore.SetPeers([]net.Addr{r.localAddr})
 		} else {
-			r.peers = excludePeer(r.peers, peer)
+			r.peers = excludePeer(peers, r.localAddr)
+			r.peerStore.SetPeers(peers)
 		}
-
-		// Update the PeerStore
-		r.peerStore.SetPeers(append([]net.Addr{r.localAddr}, r.peers...))
 
 		// Stop replication for old nodes
 		if r.getState() == Leader {
-			repl, ok := r.leaderState.replState[peer.String()]
-			if ok {
-				log.Printf("[INFO] Removed peer %v, stopping replication", peer)
-				close(repl.stopCh)
-				delete(r.leaderState.replState, peer.String())
+			var toDelete []string
+			for _, repl := range r.leaderState.replState {
+				if !peerContained(r.peers, repl.peer) {
+					log.Printf("[INFO] Removed peer %v, stopping replication", repl.peer)
+					close(repl.stopCh)
+					toDelete = append(toDelete, repl.peer.String())
+				}
+			}
+			for _, name := range toDelete {
+				delete(r.leaderState.replState, name)
 			}
 		}
 
 		// Handle removing ourself
-		if isSelf {
+		if removeSelf {
 			if r.conf.ShutdownOnRemove {
 				log.Printf("[INFO] Removed ourself, shutting down")
 				r.Shutdown()
