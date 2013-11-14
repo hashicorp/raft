@@ -131,9 +131,23 @@ func (c *cluster) Merge(other *cluster) {
 }
 
 func (c *cluster) Close() {
+	var futures []ApplyFuture
 	for _, r := range c.rafts {
-		r.Shutdown()
+		futures = append(futures, r.Shutdown())
 	}
+
+	// Wait for shutdown
+	timer := time.AfterFunc(100*time.Millisecond, func() {
+		panic("timed out waiting for shutdown")
+	})
+
+	for _, f := range futures {
+		if err := f.Error(); err != nil {
+			panic(fmt.Errorf("shutdown future err: %v", err))
+		}
+	}
+	timer.Stop()
+
 	for _, s := range c.stores {
 		s.Close()
 	}
