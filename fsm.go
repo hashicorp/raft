@@ -31,4 +31,7 @@ type FSMSnapshot interface {
 	// Persist should dump all necessary state to the WriteCloser,
 	// and invoke close when finished or call Cancel on error.
 	Persist(sink SnapshotSink) error
+
+	// Release is invoked when we are finished with the snapshot
+	Release()
 }

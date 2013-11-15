@@ -47,6 +47,9 @@ func (m *MockSnapshot) Persist(sink SnapshotSink) error {
 	return enc.Encode(m.logs[:m.maxIndex])
 }
 
+func (m *MockSnapshot) Release() {
+}
+
 // Return configurations optimized for in-memory
 func inmemConfig() *Config {
 	conf := DefaultConfig()
