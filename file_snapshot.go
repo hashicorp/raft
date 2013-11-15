@@ -7,6 +7,7 @@ import (
 	"hash"
 	"hash/crc64"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -112,8 +113,62 @@ func (f *FileSnapshotStore) Create(index, term uint64, peers []byte) (SnapshotSi
 	return sink, nil
 }
 
-func (f *FileSnapshotStore) List() []*SnapshotMeta {
-	return nil
+func (f *FileSnapshotStore) List() ([]*SnapshotMeta, error) {
+	// Get the eligible snapshots
+	snapshots, err := ioutil.ReadDir(f.path)
+	if err != nil {
+		log.Printf("[ERR] Failed to scan snapshot dir: %v", err)
+		return nil, err
+	}
+
+	// Populate the metadata, reverse order (newest first)
+	var snapMeta []*SnapshotMeta
+	for i := len(snapshots) - 1; i >= 0; i++ {
+		// Ignore any files
+		if !snapshots[i].IsDir() {
+			continue
+		}
+
+		// Ignore any temporary snapshots
+		dirName := snapshots[i].Name()
+		if strings.HasSuffix(dirName, tmpSuffix) {
+			log.Printf("[WARN] Found temporary snapshot: %v", dirName)
+			continue
+		}
+
+		// Try to read the meta data
+		meta, err := f.readMeta(dirName)
+		if err != nil {
+			log.Printf("[WARN] Failed to read metadata for %v: %v", dirName, err)
+			continue
+		}
+
+		snapMeta = append(snapMeta, meta)
+	}
+
+	return snapMeta, nil
+}
+
+// readMeta is used to read the meta data for a given named backup
+func (f *FileSnapshotStore) readMeta(name string) (*SnapshotMeta, error) {
+	// Open the meta file
+	metaPath := filepath.Join(f.path, name, metaFilePath)
+	fh, err := os.Open(metaPath)
+	if err != nil {
+		return nil, err
+	}
+	defer fh.Close()
+
+	// Buffer the file IO
+	buffered := bufio.NewReader(fh)
+
+	// Read in the JSON
+	meta := &SnapshotMeta{}
+	dec := json.NewDecoder(buffered)
+	if err := dec.Decode(meta); err != nil {
+		return nil, err
+	}
+	return meta, nil
 }
 
 func (f *FileSnapshotStore) Open(id string) (io.ReadCloser, error) {
@@ -146,6 +201,8 @@ func (s *FileSnapshotSink) Close() error {
 		log.Printf("[ERR] Failed to move snapshot into place: %v", err)
 		return err
 	}
+
+	// TODO: Retain count
 	return nil
 }
 
@@ -188,7 +245,7 @@ func (s *FileSnapshotSink) writeMeta() error {
 	defer buffered.Flush()
 
 	// Write out as JSON
-	enc := json.NewEncoder(fh)
+	enc := json.NewEncoder(buffered)
 	if err := enc.Encode(&s.meta); err != nil {
 		return err
 	}
