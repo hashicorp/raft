@@ -47,8 +47,11 @@ type Raft struct {
 	// FSM is the client state machine to apply commands to
 	fsm FSM
 
-	// fsmCh is used to trigger async application of logs to the fsm
-	fsmCh chan commitTuple
+	// fsmCommitCh is used to trigger async application of logs to the fsm
+	fsmCommitCh chan commitTuple
+
+	// fsmSnapshotCh is used to trigger a new snapshot being taken
+	fsmSnapshotCh chan *snapshotFuture
 
 	// leaderState used only while state is leader
 	leaderState leaderState
@@ -71,6 +74,12 @@ type Raft struct {
 	shutdownCh   chan struct{}
 	shutdownLock sync.Mutex
 
+	// snapshots is used to store and retrieve snapshots
+	snapshots SnapshotStore
+
+	// snapshotCh is used for user triggered snapshots
+	snapshotCh chan *snapshotFuture
+
 	// stable is a StableStore implementation for durable state
 	// It provides stable storage for many fields in raftState
 	stable StableStore
@@ -80,7 +89,8 @@ type Raft struct {
 }
 
 // NewRaft is used to construct a new Raft node
-func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, peerStore PeerStore, trans Transport) (*Raft, error) {
+func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps SnapshotStore,
+	peerStore PeerStore, trans Transport) (*Raft, error) {
 	// Try to restore the current term
 	currentTerm, err := stable.GetUint64(keyCurrentTerm)
 	if err != nil && err.Error() != "not found" {
@@ -103,18 +113,21 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, peerStore
 
 	// Create Raft struct
 	r := &Raft{
-		applyCh:    make(chan *logFuture),
-		conf:       conf,
-		fsm:        fsm,
-		fsmCh:      make(chan commitTuple, 128),
-		localAddr:  localAddr,
-		logs:       logs,
-		peers:      peers,
-		peerStore:  peerStore,
-		rpcCh:      trans.Consumer(),
-		shutdownCh: make(chan struct{}),
-		stable:     stable,
-		trans:      trans,
+		applyCh:       make(chan *logFuture),
+		conf:          conf,
+		fsm:           fsm,
+		fsmCommitCh:   make(chan commitTuple, 128),
+		fsmSnapshotCh: make(chan *snapshotFuture),
+		localAddr:     localAddr,
+		logs:          logs,
+		peers:         peers,
+		peerStore:     peerStore,
+		rpcCh:         trans.Consumer(),
+		snapshots:     snaps,
+		snapshotCh:    make(chan *snapshotFuture),
+		shutdownCh:    make(chan struct{}),
+		stable:        stable,
+		trans:         trans,
 	}
 
 	// Initialize as a follower
@@ -127,6 +140,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, peerStore
 	// Start the background work
 	r.goFunc(r.run)
 	r.goFunc(r.runFSM)
+	r.goFunc(r.runSnapshots)
 	return r, nil
 }
 
@@ -214,6 +228,21 @@ func (r *Raft) Shutdown() ApplyFuture {
 	return &shutdownFuture{r}
 }
 
+// Snapshot is used to manually force Raft to take a snapshot
+// Returns a future that can be used to block until complete.
+func (r *Raft) Snapshot() ApplyFuture {
+	snapFuture := &snapshotFuture{
+		errCh: make(chan error, 1),
+	}
+	select {
+	case r.snapshotCh <- snapFuture:
+		return snapFuture
+	case <-r.shutdownCh:
+		return errorFuture{RaftShutdown}
+	}
+
+}
+
 // State is used to return the state raft is currently in
 func (r *Raft) State() RaftState {
 	return r.getState()
@@ -229,7 +258,7 @@ func (r *Raft) String() string {
 func (r *Raft) runFSM() {
 	for {
 		select {
-		case commitTuple := <-r.fsmCh:
+		case commitTuple := <-r.fsmCommitCh:
 			// Apply the log
 			r.fsm.Apply(commitTuple.log.Data)
 
@@ -557,7 +586,7 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 	switch l.Type {
 	case LogCommand:
 		// Forward to the fsm handler
-		r.fsmCh <- commitTuple{l, future}
+		r.fsmCommitCh <- commitTuple{l, future}
 
 		// Return so that the future is only responded to
 		// by the FSM handler when the application is done
@@ -884,4 +913,47 @@ func (r *Raft) setCurrentTerm(t uint64) error {
 	}
 	r.raftState.setCurrentTerm(t)
 	return nil
+}
+
+// runSnapshots is a long running goroutine used to manage taking
+// new snapshots of the FSM. It runs in parallel to the FSM and
+// main goroutines, so that snapshots do not block normal operation.
+func (r *Raft) runSnapshots() {
+	for {
+		select {
+		case <-randomTimeout(r.conf.SnapshotInterval):
+			// Check if we should snapshot
+			if !r.shouldSnapshot() {
+				continue
+			}
+
+			// Trigger a snapshot
+			future := &snapshotFuture{}
+			r.takeSnapshot(future)
+
+			// Check for an error
+			if err := future.Error(); err != nil {
+				log.Printf("[ERR] Failed to take snapshot: %v", err)
+			}
+
+		case future := <-r.snapshotCh:
+			// User-triggered, run immediately
+			r.takeSnapshot(future)
+
+		case <-r.shutdownCh:
+			return
+		}
+	}
+}
+
+// shouldSnapshot checks if we meet the conditions to take
+// a new snapshot
+func (r *Raft) shouldSnapshot() bool {
+	// TODO
+	return false
+}
+
+// takeSnapshot is used to take a new snapshot
+func (r *Raft) takeSnapshot(future *snapshotFuture) {
+	// TODO
 }

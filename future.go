@@ -53,3 +53,25 @@ func (s *shutdownFuture) Error() error {
 	}
 	return nil
 }
+
+// snapshotFuture is used for an in-progress snapshot
+type snapshotFuture struct {
+	err   error
+	errCh chan error
+}
+
+func (s *snapshotFuture) Error() error {
+	if s.err != nil {
+		return s.err
+	}
+	s.err = <-s.errCh
+	return s.err
+}
+
+func (s *snapshotFuture) respond(err error) {
+	if s.errCh == nil {
+		return
+	}
+	s.errCh <- err
+	close(s.errCh)
+}
