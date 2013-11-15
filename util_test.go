@@ -23,6 +23,13 @@ func TestRandomTimeout(t *testing.T) {
 	}
 }
 
+func TestRandomTimeout_NoTime(t *testing.T) {
+	timeout := randomTimeout(0)
+	if timeout != nil {
+		t.Fatalf("expected nil channel")
+	}
+}
+
 func TestMin(t *testing.T) {
 	if min(1, 1) != 1 {
 		t.Fatalf("bad min")
