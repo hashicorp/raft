@@ -41,11 +41,15 @@ type FileSnapshotSink struct {
 	buffered  *bufio.Writer
 }
 
+// fileSnapshotMeta is stored on disk. We also put a CRC
+// on disk so that we can verify the snapshot
 type fileSnapshotMeta struct {
 	SnapshotMeta
 	CRC []byte
 }
 
+// bufferedFile is returned when we open a snapshot. This way
+// reads are buffered and the file still gets closed.
 type bufferedFile struct {
 	bh *bufio.Reader
 	fh *os.File
@@ -216,9 +220,9 @@ func (f *FileSnapshotStore) Open(id string) (io.ReadCloser, error) {
 
 	// Open the state file
 	statePath := filepath.Join(f.path, id, stateFilePath)
-	fh, err := os.Create(statePath)
+	fh, err := os.Open(statePath)
 	if err != nil {
-		log.Printf("[ERR] Failed to create state file: %v", err)
+		log.Printf("[ERR] Failed to open state file: %v", err)
 		return nil, err
 	}
 
