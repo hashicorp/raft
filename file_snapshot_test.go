@@ -120,3 +120,85 @@ func TestFileSS_CreateSnapshot(t *testing.T) {
 		t.Fatalf("content mismatch")
 	}
 }
+
+func TestFileSS_CancelSnapshot(t *testing.T) {
+	// Create a test dir
+	dir, err := ioutil.TempDir("", "raft")
+	if err != nil {
+		t.Fatalf("err: %v ", err)
+	}
+	defer os.RemoveAll(dir)
+
+	snap, err := NewFileSnapshotStore(dir, 3)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Create a new sink
+	peers := []byte("all my lovely friends")
+	sink, err := snap.Create(10, 3, peers)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Cancel the snapshot! Should delete
+	err = sink.Cancel()
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// The sink is canceled, should not be in a list!
+	snaps, err := snap.List()
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(snaps) != 0 {
+		t.Fatalf("did not expect any snapshots: %v", snaps)
+	}
+}
+
+func TestFileSS_Retention(t *testing.T) {
+	// Create a test dir
+	dir, err := ioutil.TempDir("", "raft")
+	if err != nil {
+		t.Fatalf("err: %v ", err)
+	}
+	defer os.RemoveAll(dir)
+
+	snap, err := NewFileSnapshotStore(dir, 2)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Create a new sink
+	peers := []byte("all my lovely friends")
+
+	// Create a few snapshots
+	for i := 10; i < 15; i++ {
+		sink, err := snap.Create(uint64(i), 3, peers)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		err = sink.Close()
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+	}
+
+	// Should only have 2 listed!
+	snaps, err := snap.List()
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(snaps) != 2 {
+		t.Fatalf("expect 2 snapshots: %v", snaps)
+	}
+
+	// Check they are the latest
+	if snaps[0].Index != 14 {
+		t.Fatalf("bad snap: %#v", *snaps[0])
+	}
+	if snaps[1].Index != 13 {
+		t.Fatalf("bad snap: %#v", *snaps[1])
+	}
+}
