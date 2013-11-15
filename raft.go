@@ -949,8 +949,21 @@ func (r *Raft) runSnapshots() {
 // shouldSnapshot checks if we meet the conditions to take
 // a new snapshot
 func (r *Raft) shouldSnapshot() bool {
-	// TODO
-	return false
+	// Check the spread of logs
+	firstIdx, err := r.logs.FirstIndex()
+	if err != nil {
+		log.Printf("[ERR] Failed to get first log index: %v", err)
+		return false
+	}
+	lastIdx, err := r.logs.LastIndex()
+	if err != nil {
+		log.Printf("[ERR] Failed to get last log index: %v", err)
+		return false
+	}
+
+	// Compare the delta to the threshold
+	delta := lastIdx - firstIdx
+	return delta >= r.conf.SnapshotThreshold
 }
 
 // takeSnapshot is used to take a new snapshot

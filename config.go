@@ -43,7 +43,7 @@ type Config struct {
 	// SnapshotThreshold controls how many outstanding logs there must be before
 	// we perform a snapshot. This is to prevent excessive snapshots when we can
 	// just replay a small set of logs.
-	SnapshotThreshold int
+	SnapshotThreshold uint64
 }
 
 func DefaultConfig() *Config {
