@@ -17,6 +17,7 @@ import (
 )
 
 const (
+	testPath      = "permTest"
 	snapPath      = "snapshots"
 	metaFilePath  = "meta.json"
 	stateFilePath = "state.bin"
@@ -76,7 +77,23 @@ func NewFileSnapshotStore(base string, retain int) (*FileSnapshotStore, error) {
 		path:   path,
 		retain: retain,
 	}
+
+	// Do a permissions test
+	if err := store.testPermissions(); err != nil {
+		return nil, fmt.Errorf("permissions test failed: %v", err)
+	}
 	return store, nil
+}
+
+// testPermissions tries to touch a file in our path to see if it works
+func (f *FileSnapshotStore) testPermissions() error {
+	path := filepath.Join(f.path, testPath)
+	fh, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	fh.Close()
+	return nil
 }
 
 // Create is used to start a new snapshot
