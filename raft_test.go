@@ -44,7 +44,12 @@ func (m *MockFSM) Restore(inp io.ReadCloser) error {
 func (m *MockSnapshot) Persist(sink SnapshotSink) error {
 	hd := codec.MsgpackHandle{}
 	enc := codec.NewEncoder(sink, &hd)
-	return enc.Encode(m.logs[:m.maxIndex])
+	if err := enc.Encode(m.logs[:m.maxIndex]); err != nil {
+		sink.Cancel()
+		return err
+	}
+	sink.Close()
+	return nil
 }
 
 func (m *MockSnapshot) Release() {
@@ -108,6 +113,9 @@ func TestRaft_AfterShutdown(t *testing.T) {
 		t.Fatalf("should be shutdown: %v", f.Error())
 	}
 	if f := raft.RemovePeer(NewInmemAddr()); f.Error() != RaftShutdown {
+		t.Fatalf("should be shutdown: %v", f.Error())
+	}
+	if f := raft.Snapshot(); f.Error() != RaftShutdown {
 		t.Fatalf("should be shutdown: %v", f.Error())
 	}
 
@@ -799,5 +807,61 @@ func TestRaft_RemoveUnknownPeer(t *testing.T) {
 	// Should be already added
 	if err := future.Error(); err != UnknownPeer {
 		t.Fatalf("err: %v", err)
+	}
+}
+
+func TestRaft_SnapshotRestore(t *testing.T) {
+	// Make the cluster
+	conf := inmemConfig()
+	conf.TrailingLogs = 10
+	c := MakeCluster(1, t, conf)
+	defer c.Close()
+
+	// Commit a lot of things
+	leader := c.Leader()
+	var future Future
+	for i := 0; i < 100; i++ {
+		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	// Wait for the last future to apply
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Take a snapshot
+	snapFuture := leader.Snapshot()
+	if err := snapFuture.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Check for snapshot
+	if snaps, _ := leader.snapshots.List(); len(snaps) != 1 {
+		t.Fatalf("should have a snapshot")
+	}
+
+	// Logs should be trimmed
+	if idx, _ := leader.logs.FirstIndex(); idx != 92 {
+		t.Fatalf("should trim logs to 92: %d", idx)
+	}
+
+	// Shutdown
+	shutdown := leader.Shutdown()
+	if err := shutdown.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Restart the Raft
+	r := leader
+	r, err := NewRaft(r.conf, r.fsm, r.logs, r.stable,
+		r.snapshots, r.peerStore, r.trans)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	c.rafts[0] = r
+
+	// We should have restored from the snapshot!
+	if last := r.getLastApplied(); last != 101 {
+		t.Fatalf("bad last: %v", last)
 	}
 }

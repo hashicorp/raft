@@ -40,6 +40,8 @@ type FileSnapshotSink struct {
 	stateFile *os.File
 	stateHash hash.Hash64
 	buffered  *bufio.Writer
+
+	closed bool
 }
 
 // fileSnapshotMeta is stored on disk. We also put a CRC
@@ -106,7 +108,7 @@ func (f *FileSnapshotStore) testPermissions() error {
 // Create is used to start a new snapshot
 func (f *FileSnapshotStore) Create(index, term uint64, peers []byte) (SnapshotSink, error) {
 	// Create a new path
-	name := fmt.Sprintf("%s-%s-%s", time.Now().Format(time.RFC3339), index, term)
+	name := fmt.Sprintf("%s-%d-%d", time.Now().Format(time.RFC3339), index, term)
 	path := filepath.Join(f.path, name+tmpSuffix)
 	log.Printf("[INFO] Creating new snapshot at %s", path)
 
@@ -313,6 +315,12 @@ func (s *FileSnapshotSink) Write(b []byte) (int, error) {
 
 // Close is used to indicate a successful end
 func (s *FileSnapshotSink) Close() error {
+	// Make sure close is idempotent
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+
 	// Close the open handles
 	if err := s.finalize(); err != nil {
 		log.Printf("[ERR] Failed to finalize snapshot: %v", err)
@@ -339,6 +347,12 @@ func (s *FileSnapshotSink) Close() error {
 
 // Cancel is used to indicate an unsuccessful end
 func (s *FileSnapshotSink) Cancel() error {
+	// Make sure close is idempotent
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+
 	// Close the open handles
 	if err := s.finalize(); err != nil {
 		log.Printf("[ERR] Failed to finalize snapshot: %v", err)

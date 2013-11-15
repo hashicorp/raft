@@ -137,6 +137,11 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	r.setCurrentTerm(currentTerm)
 	r.setLastLog(lastLog)
 
+	// Attempt to restore a snapshot if there are any
+	if err := r.restoreSnapshot(); err != nil {
+		return nil, err
+	}
+
 	// Start the background work
 	r.goFunc(r.run)
 	r.goFunc(r.runFSM)
@@ -1023,6 +1028,7 @@ func (r *Raft) takeSnapshot() error {
 		sink.Cancel()
 		return fmt.Errorf("Failed to persist snapshot: %v", err)
 	}
+	sink.Close()
 
 	// Determine log ranges to compact
 	minLog, err := r.logs.FirstIndex()
@@ -1046,5 +1052,47 @@ func (r *Raft) takeSnapshot() error {
 
 	// Log completion
 	log.Printf("[INFO] Snapshot to %d complete", req.index)
+	return nil
+}
+
+// restoreSnapshot attempts to restore the latest snapshots, and fails
+// if none of them can be restored. This is called at initialization time,
+// and is completely unsafe to call at any other time.
+func (r *Raft) restoreSnapshot() error {
+	snapshots, err := r.snapshots.List()
+	if err != nil {
+		log.Printf("[ERR] Failed to list snapshots: %v", err)
+		return err
+	}
+
+	// Try to load in order of newest to oldest
+	for _, snapshot := range snapshots {
+		source, err := r.snapshots.Open(snapshot.ID)
+		if err != nil {
+			log.Printf("[ERR] Failed to open snapshot %v: %v", snapshot.ID, err)
+			continue
+		}
+		defer source.Close()
+
+		if err := r.fsm.Restore(source); err != nil {
+			log.Printf("[ERR] Failed to restore snapshot %v: %v", snapshot.ID, err)
+			continue
+		}
+
+		// Update the lastApplied so we don't replay old logs
+		r.setLastApplied(snapshot.Index)
+
+		// Restore the peer set
+		peerSet := decodePeers(snapshot.Peers, r.trans)
+		r.peers = excludePeer(peerSet, r.localAddr)
+
+		// Success!
+		return nil
+	}
+
+	// If we had snapshots and failed to load them, its an error
+	if len(snapshots) > 0 {
+		return fmt.Errorf("Failed to load any existing snapshots!")
+	}
 	return nil
 }
