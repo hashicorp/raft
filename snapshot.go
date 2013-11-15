@@ -23,7 +23,7 @@ type SnapshotStore interface {
 
 	// List is used to list the available snapshots in the store
 	// It should return then in descending order, with the highest index first.
-	List() []*SnapshotMeta
+	List() ([]*SnapshotMeta, error)
 
 	// Open takes a snapshot ID and provides a ReadCloser. Once close is
 	// called it is assumed the snapshot is no longer needed.
