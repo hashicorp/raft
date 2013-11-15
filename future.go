@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"net"
 	"time"
 )
 
@@ -64,7 +65,19 @@ func (s *shutdownFuture) Error() error {
 	return nil
 }
 
-// snapshotFuture is used for an in-progress snapshot
+// snapshotFuture is used for waiting on a snapshot to complete
 type snapshotFuture struct {
 	deferError
+}
+
+// reqSnapshotFuture is used for requesting a snapshot start.
+// It is only used internally
+type reqSnapshotFuture struct {
+	deferError
+
+	// snapshot details provided by the FSM runner before responding
+	index    uint64
+	term     uint64
+	peers    []net.Addr
+	snapshot FSMSnapshot
 }

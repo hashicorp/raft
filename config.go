@@ -33,7 +33,7 @@ type Config struct {
 	// TrailingLogs controls how many logs we leave after a snapshot. This is
 	// used so that we can quickly replay logs on a follower instead of being
 	// forced to send an entire snapshot.
-	TrailingLogs int
+	TrailingLogs uint64
 
 	// SnapshotInterval controls how often we check if we should perform a snapshot.
 	// We randomly stagger between this value and 2x this value to avoid the entire
