@@ -72,7 +72,13 @@ func NewFileSnapshotStore(base string, retain int) (*FileSnapshotStore, error) {
 		return nil, fmt.Errorf("must retain at least one snapshot")
 	}
 
+	// Ensure our path exists
 	path := filepath.Join(base, snapPath)
+	if err := os.Mkdir(path, 0755); err != nil && !os.IsExist(err) {
+		return nil, fmt.Errorf("snapshot path not accessible: %v", err)
+	}
+
+	// Setup the store
 	store := &FileSnapshotStore{
 		path:   path,
 		retain: retain,
@@ -93,14 +99,15 @@ func (f *FileSnapshotStore) testPermissions() error {
 		return err
 	}
 	fh.Close()
+	os.Remove(path)
 	return nil
 }
 
 // Create is used to start a new snapshot
 func (f *FileSnapshotStore) Create(index, term uint64, peers []byte) (SnapshotSink, error) {
 	// Create a new path
-	name := time.Now().Format(time.RFC3339) + tmpSuffix
-	path := filepath.Join(f.path, name)
+	name := time.Now().Format(time.RFC3339)
+	path := filepath.Join(f.path, name+tmpSuffix)
 	log.Printf("[INFO] Creating new snapshot at %s", path)
 
 	// Make the directory
@@ -115,7 +122,7 @@ func (f *FileSnapshotStore) Create(index, term uint64, peers []byte) (SnapshotSi
 		dir:   path,
 		meta: fileSnapshotMeta{
 			SnapshotMeta: SnapshotMeta{
-				ID:    path,
+				ID:    name,
 				Index: index,
 				Term:  term,
 				Peers: peers,
@@ -179,14 +186,15 @@ func (f *FileSnapshotStore) getSnapshots() ([]*fileSnapshotMeta, error) {
 
 	// Populate the metadata, reverse order (newest first)
 	var snapMeta []*fileSnapshotMeta
-	for i := len(snapshots) - 1; i >= 0; i++ {
+	for i := len(snapshots); i > 0; i-- {
 		// Ignore any files
-		if !snapshots[i].IsDir() {
+		snap := snapshots[i-1]
+		if !snap.IsDir() {
 			continue
 		}
 
 		// Ignore any temporary snapshots
-		dirName := snapshots[i].Name()
+		dirName := snap.Name()
 		if strings.HasSuffix(dirName, tmpSuffix) {
 			log.Printf("[WARN] Found temporary snapshot: %v", dirName)
 			continue
