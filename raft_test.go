@@ -175,7 +175,7 @@ func (c *cluster) Merge(other *cluster) {
 }
 
 func (c *cluster) Close() {
-	var futures []ApplyFuture
+	var futures []Future
 	for _, r := range c.rafts {
 		futures = append(futures, r.Shutdown())
 	}
@@ -487,7 +487,7 @@ func TestRaft_BehindFollower(t *testing.T) {
 
 	// Commit a lot of things
 	leader := c.Leader()
-	var future ApplyFuture
+	var future Future
 	for i := 0; i < 100; i++ {
 		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
 	}

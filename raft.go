@@ -149,7 +149,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 // An optional timeout can be provided to limit the amount of time we wait
 // for the command to be started. This must be run on the leader or it
 // will fail.
-func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
+func (r *Raft) Apply(cmd []byte, timeout time.Duration) Future {
 	var timer <-chan time.Time
 	if timeout > 0 {
 		timer = time.After(timeout)
@@ -176,7 +176,7 @@ func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
 
 // AddPeer is used to add a new peer into the cluster. This must be
 // run on the leader or it will fail.
-func (r *Raft) AddPeer(peer net.Addr) ApplyFuture {
+func (r *Raft) AddPeer(peer net.Addr) Future {
 	logFuture := &logFuture{
 		log: Log{
 			Type: LogAddPeer,
@@ -195,7 +195,7 @@ func (r *Raft) AddPeer(peer net.Addr) ApplyFuture {
 // RemovePeer is used to remove a peer from the cluster. If the
 // current leader is being removed, it will cause a new election
 // to occur. This must be run on the leader or it will fail.
-func (r *Raft) RemovePeer(peer net.Addr) ApplyFuture {
+func (r *Raft) RemovePeer(peer net.Addr) Future {
 	logFuture := &logFuture{
 		log: Log{
 			Type: LogRemovePeer,
@@ -215,7 +215,7 @@ func (r *Raft) RemovePeer(peer net.Addr) ApplyFuture {
 // Shutdown is used to stop the Raft background routines.
 // This is not a graceful operation. Provides a future that
 // can be used to block until all background routines have exited.
-func (r *Raft) Shutdown() ApplyFuture {
+func (r *Raft) Shutdown() Future {
 	r.shutdownLock.Lock()
 	defer r.shutdownLock.Unlock()
 
@@ -230,7 +230,7 @@ func (r *Raft) Shutdown() ApplyFuture {
 
 // Snapshot is used to manually force Raft to take a snapshot
 // Returns a future that can be used to block until complete.
-func (r *Raft) Snapshot() ApplyFuture {
+func (r *Raft) Snapshot() Future {
 	snapFuture := &snapshotFuture{}
 	snapFuture.init()
 	select {

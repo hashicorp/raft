@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// ApplyFuture is used to represent an application that may occur in the future
-type ApplyFuture interface {
+// Future is used to represent an application that may occur in the future
+type Future interface {
 	Error() error
 }
 
