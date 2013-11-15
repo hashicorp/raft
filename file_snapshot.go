@@ -2,6 +2,7 @@ package raft
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"hash"
@@ -31,8 +32,9 @@ type FileSnapshotStore struct {
 
 // Implements the SnapshotSink
 type FileSnapshotSink struct {
-	dir  string
-	meta fileSnapshotMeta
+	store *FileSnapshotStore
+	dir   string
+	meta  fileSnapshotMeta
 
 	stateFile *os.File
 	stateHash hash.Hash64
@@ -42,6 +44,19 @@ type FileSnapshotSink struct {
 type fileSnapshotMeta struct {
 	SnapshotMeta
 	CRC []byte
+}
+
+type bufferedFile struct {
+	bh *bufio.Reader
+	fh *os.File
+}
+
+func (b *bufferedFile) Read(p []byte) (n int, err error) {
+	return b.bh.Read(p)
+}
+
+func (b *bufferedFile) Close() error {
+	return b.fh.Close()
 }
 
 // NewFileSnapshotStore creates a new FileSnapshotStore based
@@ -75,7 +90,8 @@ func (f *FileSnapshotStore) Create(index, term uint64, peers []byte) (SnapshotSi
 
 	// Create the sink
 	sink := &FileSnapshotSink{
-		dir: path,
+		store: f,
+		dir:   path,
 		meta: fileSnapshotMeta{
 			SnapshotMeta: SnapshotMeta{
 				ID:    path,
@@ -115,6 +131,25 @@ func (f *FileSnapshotStore) Create(index, term uint64, peers []byte) (SnapshotSi
 
 func (f *FileSnapshotStore) List() ([]*SnapshotMeta, error) {
 	// Get the eligible snapshots
+	snapshots, err := f.getSnapshots()
+	if err != nil {
+		log.Printf("[ERR] Failed to get snapshots: %v", err)
+		return nil, err
+	}
+
+	var snapMeta []*SnapshotMeta
+	for _, meta := range snapshots {
+		snapMeta = append(snapMeta, &meta.SnapshotMeta)
+		if len(snapMeta) == f.retain {
+			break
+		}
+	}
+	return snapMeta, nil
+}
+
+// getSnapshots returns all the known snapshots
+func (f *FileSnapshotStore) getSnapshots() ([]*fileSnapshotMeta, error) {
+	// Get the eligible snapshots
 	snapshots, err := ioutil.ReadDir(f.path)
 	if err != nil {
 		log.Printf("[ERR] Failed to scan snapshot dir: %v", err)
@@ -122,7 +157,7 @@ func (f *FileSnapshotStore) List() ([]*SnapshotMeta, error) {
 	}
 
 	// Populate the metadata, reverse order (newest first)
-	var snapMeta []*SnapshotMeta
+	var snapMeta []*fileSnapshotMeta
 	for i := len(snapshots) - 1; i >= 0; i++ {
 		// Ignore any files
 		if !snapshots[i].IsDir() {
@@ -143,14 +178,14 @@ func (f *FileSnapshotStore) List() ([]*SnapshotMeta, error) {
 			continue
 		}
 
+		// Append, but only return up to the retain count
 		snapMeta = append(snapMeta, meta)
 	}
-
 	return snapMeta, nil
 }
 
 // readMeta is used to read the meta data for a given named backup
-func (f *FileSnapshotStore) readMeta(name string) (*SnapshotMeta, error) {
+func (f *FileSnapshotStore) readMeta(name string) (*fileSnapshotMeta, error) {
 	// Open the meta file
 	metaPath := filepath.Join(f.path, name, metaFilePath)
 	fh, err := os.Open(metaPath)
@@ -163,7 +198,7 @@ func (f *FileSnapshotStore) readMeta(name string) (*SnapshotMeta, error) {
 	buffered := bufio.NewReader(fh)
 
 	// Read in the JSON
-	meta := &SnapshotMeta{}
+	meta := &fileSnapshotMeta{}
 	dec := json.NewDecoder(buffered)
 	if err := dec.Decode(meta); err != nil {
 		return nil, err
@@ -172,7 +207,73 @@ func (f *FileSnapshotStore) readMeta(name string) (*SnapshotMeta, error) {
 }
 
 func (f *FileSnapshotStore) Open(id string) (io.ReadCloser, error) {
-	return nil, nil
+	// Get the metadata
+	meta, err := f.readMeta(id)
+	if err != nil {
+		log.Printf("[ERR] Failed to get meta data to open snapshot: %v", err)
+		return nil, err
+	}
+
+	// Open the state file
+	statePath := filepath.Join(f.path, id, stateFilePath)
+	fh, err := os.Create(statePath)
+	if err != nil {
+		log.Printf("[ERR] Failed to create state file: %v", err)
+		return nil, err
+	}
+
+	// Create a CRC64 hash
+	stateHash := crc64.New(crc64.MakeTable(crc64.ECMA))
+
+	// Compute the hash
+	_, err = io.Copy(stateHash, fh)
+	if err != nil {
+		log.Printf("[ERR] Failed to read state file: %v", err)
+		fh.Close()
+		return nil, err
+	}
+
+	// Verify the hash
+	computed := stateHash.Sum(nil)
+	if bytes.Compare(meta.CRC, computed) != 0 {
+		log.Printf("[ERR] CRC checksum failed (stored: %v computed: %v)",
+			meta.CRC, computed)
+		fh.Close()
+		return nil, fmt.Errorf("CRC mismatch")
+	}
+
+	// Seek to the start
+	if _, err := fh.Seek(0, 0); err != nil {
+		log.Printf("[ERR] State file seek failed: %v", err)
+		fh.Close()
+		return nil, err
+	}
+
+	// Return a buffered file
+	buffered := &bufferedFile{
+		bh: bufio.NewReader(fh),
+		fh: fh,
+	}
+
+	return buffered, nil
+}
+
+// Used to reap any snapshots beyond the retain count
+func (f *FileSnapshotStore) ReapSnapshots() error {
+	snapshots, err := f.getSnapshots()
+	if err != nil {
+		log.Printf("[ERR] Failed to get snapshots: %v", err)
+		return err
+	}
+
+	for i := f.retain; i < len(snapshots); i++ {
+		path := filepath.Join(f.path, snapshots[i].ID)
+		if err := os.RemoveAll(path); err != nil {
+			log.Printf("[ERR] Failed to reap snapshot %v: %v", path, err)
+			return err
+		}
+	}
+	return nil
 }
 
 // Write is used to append to the state file. We write to the
@@ -202,7 +303,8 @@ func (s *FileSnapshotSink) Close() error {
 		return err
 	}
 
-	// TODO: Retain count
+	// Reap any old snapshots
+	s.store.ReapSnapshots()
 	return nil
 }
 
