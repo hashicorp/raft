@@ -161,8 +161,8 @@ func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
 			Type: LogCommand,
 			Data: cmd,
 		},
-		errCh: make(chan error, 1),
 	}
+	logFuture.init()
 
 	select {
 	case <-timer:
@@ -182,8 +182,8 @@ func (r *Raft) AddPeer(peer net.Addr) ApplyFuture {
 			Type: LogAddPeer,
 			peer: peer,
 		},
-		errCh: make(chan error, 1),
 	}
+	logFuture.init()
 	select {
 	case r.applyCh <- logFuture:
 		return logFuture
@@ -202,8 +202,8 @@ func (r *Raft) RemovePeer(peer net.Addr) ApplyFuture {
 			peer: peer,
 		},
 		policy: newExcludeNodeQuorum(len(r.peers)+1, peer),
-		errCh:  make(chan error, 1),
 	}
+	logFuture.init()
 	select {
 	case r.applyCh <- logFuture:
 		return logFuture
@@ -231,9 +231,8 @@ func (r *Raft) Shutdown() ApplyFuture {
 // Snapshot is used to manually force Raft to take a snapshot
 // Returns a future that can be used to block until complete.
 func (r *Raft) Snapshot() ApplyFuture {
-	snapFuture := &snapshotFuture{
-		errCh: make(chan error, 1),
-	}
+	snapFuture := &snapshotFuture{}
+	snapFuture.init()
 	select {
 	case r.snapshotCh <- snapFuture:
 		return snapFuture

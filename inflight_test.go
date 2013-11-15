@@ -46,9 +46,9 @@ func TestInflight_Cancel(t *testing.T) {
 
 	// Commit a transaction as being in flight
 	l := &logFuture{
-		log:   Log{Index: 1},
-		errCh: make(chan error, 1),
+		log: Log{Index: 1},
 	}
+	l.init()
 	l.policy = newMajorityQuorum(3)
 	in.Start(l)
 

@@ -18,29 +18,39 @@ func (e errorFuture) Error() error {
 	return e.err
 }
 
+// deferError can be embedded to allow a future
+// to provide an error in the future
+type deferError struct {
+	err   error
+	errCh chan error
+}
+
+func (d *deferError) init() {
+	d.errCh = make(chan error, 1)
+}
+
+func (d *deferError) Error() error {
+	if d.err != nil {
+		return d.err
+	}
+	d.err = <-d.errCh
+	return d.err
+}
+
+func (d *deferError) respond(err error) {
+	if d.errCh == nil {
+		return
+	}
+	d.errCh <- err
+	close(d.errCh)
+}
+
 // logFuture is used to apply a log entry and waits until
 // the log is considered committed
 type logFuture struct {
+	deferError
 	log    Log
 	policy quorumPolicy
-	err    error
-	errCh  chan error
-}
-
-func (l *logFuture) Error() error {
-	if l.err != nil {
-		return l.err
-	}
-	l.err = <-l.errCh
-	return l.err
-}
-
-func (l *logFuture) respond(err error) {
-	if l.errCh == nil {
-		return
-	}
-	l.errCh <- err
-	close(l.errCh)
 }
 
 type shutdownFuture struct {
@@ -56,22 +66,5 @@ func (s *shutdownFuture) Error() error {
 
 // snapshotFuture is used for an in-progress snapshot
 type snapshotFuture struct {
-	err   error
-	errCh chan error
-}
-
-func (s *snapshotFuture) Error() error {
-	if s.err != nil {
-		return s.err
-	}
-	s.err = <-s.errCh
-	return s.err
-}
-
-func (s *snapshotFuture) respond(err error) {
-	if s.errCh == nil {
-		return
-	}
-	s.errCh <- err
-	close(s.errCh)
+	deferError
 }
