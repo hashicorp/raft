@@ -202,3 +202,11 @@ func TestFileSS_Retention(t *testing.T) {
 		t.Fatalf("bad snap: %#v", *snaps[1])
 	}
 }
+
+func TestFileSS_BadPerm(t *testing.T) {
+	// Should fail
+	_, err := NewFileSnapshotStore("/", 3)
+	if err == nil {
+		t.Fatalf("should fail to use root")
+	}
+}
