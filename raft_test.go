@@ -49,13 +49,11 @@ func (m *MockSnapshot) Persist(sink SnapshotSink) error {
 
 // Return configurations optimized for in-memory
 func inmemConfig() *Config {
-	return &Config{
-		HeartbeatTimeout: 10 * time.Millisecond,
-		ElectionTimeout:  10 * time.Millisecond,
-		CommitTimeout:    time.Millisecond,
-		MaxAppendEntries: 32,
-		ShutdownOnRemove: true,
-	}
+	conf := DefaultConfig()
+	conf.HeartbeatTimeout = 10 * time.Millisecond
+	conf.ElectionTimeout = 10 * time.Millisecond
+	conf.CommitTimeout = time.Millisecond
+	return conf
 }
 
 func TestRaft_StartStop(t *testing.T) {
@@ -64,12 +62,15 @@ func TestRaft_StartStop(t *testing.T) {
 	defer logs.Close()
 	defer store.Close()
 
+	dir2, snap := FileSnapTest(t)
+	defer os.RemoveAll(dir2)
+
 	_, trans := NewInmemTransport()
 	fsm := &MockFSM{}
 	conf := DefaultConfig()
 	peers := &StaticPeers{}
 
-	raft, err := NewRaft(conf, fsm, logs, store, peers, trans)
+	raft, err := NewRaft(conf, fsm, logs, store, snap, peers, trans)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -82,12 +83,15 @@ func TestRaft_AfterShutdown(t *testing.T) {
 	defer logs.Close()
 	defer store.Close()
 
+	dir2, snap := FileSnapTest(t)
+	defer os.RemoveAll(dir2)
+
 	_, trans := NewInmemTransport()
 	fsm := &MockFSM{}
 	conf := DefaultConfig()
 	peers := &StaticPeers{}
 
-	raft, err := NewRaft(conf, fsm, logs, store, peers, trans)
+	raft, err := NewRaft(conf, fsm, logs, store, snap, peers, trans)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -114,12 +118,15 @@ func TestRaft_SingleNode(t *testing.T) {
 	defer logs.Close()
 	defer store.Close()
 
+	dir2, snap := FileSnapTest(t)
+	defer os.RemoveAll(dir2)
+
 	_, trans := NewInmemTransport()
 	fsm := &MockFSM{}
 	conf := inmemConfig()
 	peers := &StaticPeers{}
 
-	raft, err := NewRaft(conf, fsm, logs, store, peers, trans)
+	raft, err := NewRaft(conf, fsm, logs, store, snap, peers, trans)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -149,6 +156,7 @@ type cluster struct {
 	logs   []*LevelDBLogStore
 	stores []*LevelDBStableStore
 	fsms   []*MockFSM
+	snaps  []*FileSnapshotStore
 	trans  []*InmemTransport
 	rafts  []*Raft
 }
@@ -158,6 +166,7 @@ func (c *cluster) Merge(other *cluster) {
 	c.logs = append(c.logs, other.logs...)
 	c.stores = append(c.stores, other.stores...)
 	c.fsms = append(c.fsms, other.fsms...)
+	c.snaps = append(c.snaps, other.snaps...)
 	c.trans = append(c.trans, other.trans...)
 	c.rafts = append(c.rafts, other.rafts...)
 }
@@ -323,6 +332,10 @@ func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 		c.stores = append(c.stores, store)
 		c.fsms = append(c.fsms, &MockFSM{})
 
+		dir2, snap := FileSnapTest(t)
+		c.dirs = append(c.dirs, dir2)
+		c.snaps = append(c.snaps, snap)
+
 		addr, trans := NewInmemTransport()
 		c.trans = append(c.trans, trans)
 		peers = append(peers, addr)
@@ -338,10 +351,11 @@ func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 		}
 		logs := c.logs[i]
 		store := c.stores[i]
+		snap := c.snaps[i]
 		trans := c.trans[i]
 		peerStore := &StaticPeers{peers}
 
-		raft, err := NewRaft(conf, c.fsms[i], logs, store, peerStore, trans)
+		raft, err := NewRaft(conf, c.fsms[i], logs, store, snap, peerStore, trans)
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
