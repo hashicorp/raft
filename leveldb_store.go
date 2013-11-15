@@ -66,6 +66,25 @@ func NewLevelDBLogStore(base string) (*LevelDBLogStore, error) {
 	return ldb, nil
 }
 
+func (l *LevelDBLogStore) FirstIndex() (uint64, error) {
+	// Get an iterator
+	it := l.db.NewIterator(nil)
+	defer it.Release()
+
+	// Seek to the first value
+	it.First()
+
+	// Check if there is a key
+	key := it.Key()
+	if key == nil {
+		// Nothing written yet
+		return 0, it.Error()
+	}
+
+	// Convert the key to the index
+	return bytesToUint64(key), it.Error()
+}
+
 func (l *LevelDBLogStore) LastIndex() (uint64, error) {
 	// Get an iterator
 	it := l.db.NewIterator(nil)

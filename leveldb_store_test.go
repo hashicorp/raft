@@ -134,8 +134,17 @@ func TestLevelDB_Logs(t *testing.T) {
 	}
 	defer l.Close()
 
+	// Should be no first index
+	idx, err := l.FirstIndex()
+	if err != nil {
+		t.Fatalf("err: %v ", err)
+	}
+	if idx != 0 {
+		t.Fatalf("bad idx: %d", idx)
+	}
+
 	// Should be no last index
-	idx, err := l.LastIndex()
+	idx, err = l.LastIndex()
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
@@ -151,6 +160,15 @@ func TestLevelDB_Logs(t *testing.T) {
 
 	// Write out a log
 	log := Log{
+		Index: 1,
+		Term:  1,
+		Type:  LogCommand,
+		Data:  []byte("first"),
+	}
+	if err := l.StoreLog(&log); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	log = Log{
 		Index: 10,
 		Term:  3,
 		Type:  LogCommand,
@@ -163,6 +181,15 @@ func TestLevelDB_Logs(t *testing.T) {
 	// Try to fetch
 	if err := l.GetLog(10, &out); err != nil {
 		t.Fatalf("err: %v ", err)
+	}
+
+	// Check the lowest index
+	idx, err = l.FirstIndex()
+	if err != nil {
+		t.Fatalf("err: %v ", err)
+	}
+	if idx != 1 {
+		t.Fatalf("bad idx: %d", idx)
 	}
 
 	// Check the highest index
@@ -180,6 +207,13 @@ func TestLevelDB_Logs(t *testing.T) {
 	}
 
 	// Index should be zero again
+	idx, err = l.FirstIndex()
+	if err != nil {
+		t.Fatalf("err: %v ", err)
+	}
+	if idx != 0 {
+		t.Fatalf("bad idx: %d", idx)
+	}
 	idx, err = l.LastIndex()
 	if err != nil {
 		t.Fatalf("err: %v ", err)

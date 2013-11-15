@@ -36,6 +36,9 @@ type Log struct {
 // LogStore is used to provide an interface for storing
 // and retrieving logs in a durable fashion
 type LogStore interface {
+	// Returns the first index written. 0 for no entries.
+	FirstIndex() (uint64, error)
+
 	// Returns the last index written. 0 for no entries.
 	LastIndex() (uint64, error)
 
