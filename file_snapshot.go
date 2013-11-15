@@ -326,12 +326,26 @@ func (s *FileSnapshotSink) Cancel() error {
 
 // finalize is used to close all of our resources
 func (s *FileSnapshotSink) finalize() error {
+	// Flush any remaining data
 	if err := s.buffered.Flush(); err != nil {
 		return err
 	}
+
+	// Get the file size
+	stat, statErr := s.stateFile.Stat()
+
+	// Close the file
 	if err := s.stateFile.Close(); err != nil {
 		return err
 	}
+
+	// Set the file size, check after we close
+	if statErr != nil {
+		return statErr
+	}
+	s.meta.Size = stat.Size()
+
+	// Set the CRC
 	s.meta.CRC = s.stateHash.Sum(nil)
 	return nil
 }

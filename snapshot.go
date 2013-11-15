@@ -10,6 +10,7 @@ type SnapshotMeta struct {
 	Index uint64
 	Term  uint64
 	Peers []byte
+	Size  int64
 }
 
 // SnapshotStore interface is used to allow for flexible implementations
