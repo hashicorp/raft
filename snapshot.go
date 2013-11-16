@@ -35,5 +35,6 @@ type SnapshotStore interface {
 // to the sink and call Close on completion. On error, Cancel will be invoked
 type SnapshotSink interface {
 	io.WriteCloser
+	ID() string
 	Cancel() error
 }

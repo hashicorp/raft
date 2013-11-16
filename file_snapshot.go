@@ -307,6 +307,12 @@ func (f *FileSnapshotStore) ReapSnapshots() error {
 	return nil
 }
 
+// ID returns the ID of the snapshot, can be used with Open()
+// after the snapshot is finalized.
+func (s *FileSnapshotSink) ID() string {
+	return s.meta.ID
+}
+
 // Write is used to append to the state file. We write to the
 // buffered IO object to reduce the amount of context switches
 func (s *FileSnapshotSink) Write(b []byte) (int, error) {
