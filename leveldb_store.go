@@ -142,10 +142,24 @@ func (l *LevelDBLogStore) StoreLog(log *Log) error {
 }
 
 // Deletes a range of log entries. The range is inclusive.
-func (l *LevelDBLogStore) DeleteRange(min, max uint64) error {
+func (l *LevelDBLogStore) DeleteRange(minIdx, maxIdx uint64) error {
+	// Get lower and upper index bounds
+	firstIdx, err := l.FirstIndex()
+	if err != nil {
+		return err
+	}
+	lastIdx, err := l.LastIndex()
+	if err != nil {
+		return err
+	}
+
+	// Optimize the index ranges
+	minIdx = max(minIdx, firstIdx)
+	maxIdx = min(maxIdx, lastIdx)
+
 	// Create a batch operation
 	batch := &leveldb.Batch{}
-	for i := min; i <= max; i++ {
+	for i := minIdx; i <= maxIdx; i++ {
 		key := uint64ToBytes(i)
 		batch.Delete(key)
 	}
