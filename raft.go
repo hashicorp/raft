@@ -2,6 +2,7 @@ package raft
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"sync"
@@ -49,6 +50,9 @@ type Raft struct {
 
 	// fsmCommitCh is used to trigger async application of logs to the fsm
 	fsmCommitCh chan commitTuple
+
+	// fsmRestoreCh is used to trigger a restore from snapshot
+	fsmRestoreCh chan *restoreFuture
 
 	// fsmSnapshotCh is used to trigger a new snapshot being taken
 	fsmSnapshotCh chan *reqSnapshotFuture
@@ -117,6 +121,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		conf:          conf,
 		fsm:           fsm,
 		fsmCommitCh:   make(chan commitTuple, 128),
+		fsmRestoreCh:  make(chan *restoreFuture),
 		fsmSnapshotCh: make(chan *reqSnapshotFuture),
 		localAddr:     localAddr,
 		logs:          logs,
@@ -263,6 +268,28 @@ func (r *Raft) runFSM() {
 	var lastIndex, lastTerm uint64
 	for {
 		select {
+		case req := <-r.fsmRestoreCh:
+			// Open the snapshot
+			meta, source, err := r.snapshots.Open(req.ID)
+			if err != nil {
+				req.respond(fmt.Errorf("Failed to open snapshot %v: %v",
+					req.ID, err))
+				continue
+			}
+
+			// Attempt to restore
+			if err := r.fsm.Restore(source); err != nil {
+				req.respond(fmt.Errorf("Failed to restore snapshot %v: %v",
+					req.ID, err))
+				source.Close()
+				continue
+			}
+			source.Close()
+
+			// Update the last index and term
+			lastIndex = meta.Index
+			lastTerm = meta.Term
+
 		case req := <-r.fsmSnapshotCh:
 			// Get our peers
 			peers, err := r.peerStore.Peers()
@@ -331,6 +358,8 @@ func (r *Raft) runFollower() {
 				r.appendEntries(rpc, cmd)
 			case *RequestVoteRequest:
 				r.requestVote(rpc, cmd)
+			case *InstallSnapshotRequest:
+				r.installSnapshot(rpc, cmd)
 			default:
 				log.Printf("[ERR] Follower state, got unexpected command: %#v",
 					rpc.Command)
@@ -612,7 +641,13 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 	switch l.Type {
 	case LogCommand:
 		// Forward to the fsm handler
-		r.fsmCommitCh <- commitTuple{l, future}
+		select {
+		case r.fsmCommitCh <- commitTuple{l, future}:
+		case <-r.shutdownCh:
+			if future != nil {
+				future.respond(RaftShutdown)
+			}
+		}
 
 		// Return so that the future is only responded to
 		// by the FSM handler when the application is done
@@ -691,7 +726,6 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 }
 
 // appendEntries is invoked when we get an append entries RPC call
-// Returns true if we transition to a Follower
 func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	// Setup a response
 	resp := &AppendEntriesResponse{
@@ -768,7 +802,6 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 }
 
 // requestVote is invoked when we get an request vote RPC call
-// Returns true if we transition to a Follower
 func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// Setup a response
 	resp := &RequestVoteResponse{
@@ -843,6 +876,93 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	}
 
 	resp.Granted = true
+	return
+}
+
+// installSnapshot is invoked when we get a InstallSnapshot RPC call.
+// We must be in the follower state for this, since it means we are
+// too far behind a leader for log replay.
+func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
+	// Setup a response
+	resp := &InstallSnapshotResponse{
+		Term:    r.getCurrentTerm(),
+		Success: false,
+	}
+	var rpcErr error
+	defer rpc.Respond(resp, rpcErr)
+
+	// Ignore an older term
+	if req.Term < r.getCurrentTerm() {
+		return
+	}
+
+	// Increase the term if we see a newer one
+	if req.Term > r.getCurrentTerm() {
+		// Ensure transition to follower
+		r.setState(Follower)
+		if err := r.setCurrentTerm(req.Term); err != nil {
+			log.Printf("[ERR] Failed to update current term: %v", err)
+			return
+		}
+		resp.Term = req.Term
+	}
+
+	// Encode the peerset
+	peerSet := encodePeers(req.Peers, r.trans)
+
+	// Create a new snapshot
+	sink, err := r.snapshots.Create(req.LastLogIndex, req.LastLogTerm, peerSet)
+	if err != nil {
+		log.Printf("[ERR] Failed to create snapshot to install: %v", err)
+		rpcErr = fmt.Errorf("Failed to create snapshot: %v", err)
+		return
+	}
+
+	// Spill the remote snapshot to disk
+	n, err := io.Copy(sink, rpc.Reader)
+	if err != nil {
+		sink.Cancel()
+		log.Printf("[ERR] Failed to copy snapshot: %v", err)
+		rpcErr = err
+		return
+	}
+
+	// Finalize the snapshot
+	if err := sink.Close(); err != nil {
+		log.Printf("[ERR] Failed to finalize snapshot: %v", err)
+		rpcErr = err
+		return
+	} else {
+		log.Printf("[INFO] Copied %d bytes to local snapshot", n)
+	}
+
+	// Restore snapshot
+	future := &restoreFuture{ID: sink.ID()}
+	select {
+	case r.fsmRestoreCh <- future:
+	case <-r.shutdownCh:
+		future.respond(RaftShutdown)
+	}
+
+	// Wait for the restore to happen
+	if err := future.Error(); err != nil {
+		log.Printf("[ERR] Failed to restore snapshot: %v", err)
+		rpcErr = err
+		return
+	}
+
+	// Update the lastApplied so we don't replay old logs
+	r.setLastApplied(req.LastLogIndex)
+
+	// Restore the peer set
+	r.peers = excludePeer(req.Peers, r.localAddr)
+
+	// Compact logs, continue even if this fails
+	if err := r.compactLogs(req.LastLogIndex); err != nil {
+		log.Printf("[ERR] Failed to compact logs: %v", err)
+	}
+
+	resp.Success = true
 	return
 }
 
@@ -1030,8 +1150,25 @@ func (r *Raft) takeSnapshot() error {
 		sink.Cancel()
 		return fmt.Errorf("Failed to persist snapshot: %v", err)
 	}
-	sink.Close()
 
+	// Close and check for error
+	if err := sink.Close(); err != nil {
+		return fmt.Errorf("Failed to close snapshot: %v", err)
+	}
+
+	// Compact the logs
+	if err := r.compactLogs(req.index); err != nil {
+		return err
+	}
+
+	// Log completion
+	log.Printf("[INFO] Snapshot to %d complete", req.index)
+	return nil
+}
+
+// compactLogs takes the last inclusive index of a snapshot
+// and trims the logs that are no longer needed
+func (r *Raft) compactLogs(snapIdx uint64) error {
 	// Determine log ranges to compact
 	minLog, err := r.logs.FirstIndex()
 	if err != nil {
@@ -1042,7 +1179,7 @@ func (r *Raft) takeSnapshot() error {
 	// back from the head, which ever is futher back. This ensures
 	// at least `TrailingLogs` entries, but does not allow logs
 	// after the snapshot to be removed
-	maxLog := min(req.index, r.getLastLog()-r.conf.TrailingLogs)
+	maxLog := min(snapIdx, r.getLastLog()-r.conf.TrailingLogs)
 
 	// Log this
 	log.Printf("[INFO] Compacting logs from %d to %d", minLog, maxLog)
@@ -1051,9 +1188,6 @@ func (r *Raft) takeSnapshot() error {
 	if err := r.logs.DeleteRange(minLog, maxLog); err != nil {
 		return fmt.Errorf("Log compaction failed: %v", err)
 	}
-
-	// Log completion
-	log.Printf("[INFO] Snapshot to %d complete", req.index)
 	return nil
 }
 
@@ -1069,7 +1203,7 @@ func (r *Raft) restoreSnapshot() error {
 
 	// Try to load in order of newest to oldest
 	for _, snapshot := range snapshots {
-		source, err := r.snapshots.Open(snapshot.ID)
+		_, source, err := r.snapshots.Open(snapshot.ID)
 		if err != nil {
 			log.Printf("[ERR] Failed to open snapshot %v: %v", snapshot.ID, err)
 			continue

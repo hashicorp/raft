@@ -81,3 +81,10 @@ type reqSnapshotFuture struct {
 	peers    []net.Addr
 	snapshot FSMSnapshot
 }
+
+// restoreFuture is used for requesting an FSM to perform a
+// snapshot restore. Used internally only.
+type restoreFuture struct {
+	deferError
+	ID string
+}
