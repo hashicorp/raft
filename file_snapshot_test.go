@@ -115,7 +115,7 @@ func TestFileSS_CreateSnapshot(t *testing.T) {
 	}
 
 	// Read the snapshot
-	r, err := snap.Open(latest.ID)
+	_, r, err := snap.Open(latest.ID)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}

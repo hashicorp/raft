@@ -28,7 +28,7 @@ type SnapshotStore interface {
 
 	// Open takes a snapshot ID and provides a ReadCloser. Once close is
 	// called it is assumed the snapshot is no longer needed.
-	Open(id string) (io.ReadCloser, error)
+	Open(id string) (*SnapshotMeta, io.ReadCloser, error)
 }
 
 // SnapshotSink is returned by StartSnapshot. The FSM will Write state

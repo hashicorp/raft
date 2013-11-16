@@ -237,12 +237,12 @@ func (f *FileSnapshotStore) readMeta(name string) (*fileSnapshotMeta, error) {
 	return meta, nil
 }
 
-func (f *FileSnapshotStore) Open(id string) (io.ReadCloser, error) {
+func (f *FileSnapshotStore) Open(id string) (*SnapshotMeta, io.ReadCloser, error) {
 	// Get the metadata
 	meta, err := f.readMeta(id)
 	if err != nil {
 		log.Printf("[ERR] Failed to get meta data to open snapshot: %v", err)
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Open the state file
@@ -250,7 +250,7 @@ func (f *FileSnapshotStore) Open(id string) (io.ReadCloser, error) {
 	fh, err := os.Open(statePath)
 	if err != nil {
 		log.Printf("[ERR] Failed to open state file: %v", err)
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Create a CRC64 hash
@@ -261,7 +261,7 @@ func (f *FileSnapshotStore) Open(id string) (io.ReadCloser, error) {
 	if err != nil {
 		log.Printf("[ERR] Failed to read state file: %v", err)
 		fh.Close()
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Verify the hash
@@ -270,14 +270,14 @@ func (f *FileSnapshotStore) Open(id string) (io.ReadCloser, error) {
 		log.Printf("[ERR] CRC checksum failed (stored: %v computed: %v)",
 			meta.CRC, computed)
 		fh.Close()
-		return nil, fmt.Errorf("CRC mismatch")
+		return nil, nil, fmt.Errorf("CRC mismatch")
 	}
 
 	// Seek to the start
 	if _, err := fh.Seek(0, 0); err != nil {
 		log.Printf("[ERR] State file seek failed: %v", err)
 		fh.Close()
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Return a buffered file
@@ -286,7 +286,7 @@ func (f *FileSnapshotStore) Open(id string) (io.ReadCloser, error) {
 		fh: fh,
 	}
 
-	return buffered, nil
+	return &meta.SnapshotMeta, buffered, nil
 }
 
 // Used to reap any snapshots beyond the retain count
