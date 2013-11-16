@@ -51,3 +51,23 @@ type RequestVoteResponse struct {
 	// Is the vote granted
 	Granted bool
 }
+
+type InstallSnapshotRequest struct {
+	Term   uint64
+	Leader net.Addr
+
+	// These are the last index/term included in the snapshot
+	LastLogIndex uint64
+	LastLogTerm  uint64
+
+	// Peer Set in the snapshot
+	Peers []net.Addr
+
+	// Size of the snapshot
+	Size uint64
+}
+
+type InstallSnapshotResponse struct {
+	Term    uint64
+	Success bool
+}

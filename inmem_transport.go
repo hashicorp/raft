@@ -2,6 +2,7 @@ package raft
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"time"
@@ -58,7 +59,7 @@ func (i *InmemTransport) LocalAddr() net.Addr {
 }
 
 func (i *InmemTransport) AppendEntries(target net.Addr, args *AppendEntriesRequest, resp *AppendEntriesResponse) error {
-	rpcResp, err := i.makeRPC(target, args)
+	rpcResp, err := i.makeRPC(target, args, nil)
 	if err != nil {
 		return err
 	}
@@ -70,7 +71,7 @@ func (i *InmemTransport) AppendEntries(target net.Addr, args *AppendEntriesReque
 }
 
 func (i *InmemTransport) RequestVote(target net.Addr, args *RequestVoteRequest, resp *RequestVoteResponse) error {
-	rpcResp, err := i.makeRPC(target, args)
+	rpcResp, err := i.makeRPC(target, args, nil)
 	if err != nil {
 		return err
 	}
@@ -81,7 +82,20 @@ func (i *InmemTransport) RequestVote(target net.Addr, args *RequestVoteRequest, 
 	return nil
 }
 
-func (i *InmemTransport) makeRPC(target net.Addr, args interface{}) (rpcResp RPCResponse, err error) {
+func (i *InmemTransport) InstallSnapshot(target net.Addr, args *InstallSnapshotRequest, resp *InstallSnapshotResponse, data io.ReadCloser) error {
+	defer data.Close()
+	rpcResp, err := i.makeRPC(target, args, data)
+	if err != nil {
+		return err
+	}
+
+	// Copy the result back
+	out := rpcResp.Response.(*InstallSnapshotResponse)
+	*resp = *out
+	return nil
+}
+
+func (i *InmemTransport) makeRPC(target net.Addr, args interface{}, r io.Reader) (rpcResp RPCResponse, err error) {
 	i.RLock()
 	peer, ok := i.peers[target.String()]
 	i.RUnlock()
@@ -95,6 +109,7 @@ func (i *InmemTransport) makeRPC(target net.Addr, args interface{}) (rpcResp RPC
 	respCh := make(chan RPCResponse)
 	peer.consumerCh <- RPC{
 		Command:  args,
+		Reader:   r,
 		RespChan: respCh,
 	}
 

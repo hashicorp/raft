@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"io"
 	"net"
 )
 
@@ -13,6 +14,7 @@ type RPCResponse struct {
 // RPC has a command, and provides a Reponse mechanism
 type RPC struct {
 	Command  interface{}
+	Reader   io.Reader // Set only for InstallSnapshot
 	RespChan chan<- RPCResponse
 }
 
@@ -36,6 +38,10 @@ type Transport interface {
 
 	// RequestVote sends the appropriate RPC to the target node
 	RequestVote(target net.Addr, args *RequestVoteRequest, resp *RequestVoteResponse) error
+
+	// InstallSnapshot is used to push a snapshot down to a follower. The data is read from
+	// the ReadCloser and streamed to the client.
+	InstallSnapshot(target net.Addr, args *InstallSnapshotRequest, resp *InstallSnapshotResponse, data io.ReadCloser) error
 
 	// EncodePeer is used to serialize a peer name
 	EncodePeer(net.Addr) []byte
