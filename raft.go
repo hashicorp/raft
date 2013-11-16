@@ -464,7 +464,7 @@ func (r *Raft) startReplication(peer net.Addr) {
 	s := &followerReplication{
 		peer:        peer,
 		inflight:    r.leaderState.inflight,
-		stopCh:      make(chan struct{}),
+		stopCh:      make(chan uint64, 1),
 		triggerCh:   make(chan struct{}, 1),
 		currentTerm: r.getCurrentTerm(),
 		matchIndex:  r.getLastLog(),
@@ -656,7 +656,9 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 			for _, repl := range r.leaderState.replState {
 				if !peerContained(r.peers, repl.peer) {
 					log.Printf("[INFO] Removed peer %v, stopping replication", repl.peer)
-					close(repl.stopCh)
+
+					// Replicate up to this index and stop
+					repl.stopCh <- l.Index
 					toDelete = append(toDelete, repl.peer.String())
 				}
 			}

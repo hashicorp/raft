@@ -189,7 +189,7 @@ func (c *cluster) Close() {
 	}
 
 	// Wait for shutdown
-	timer := time.AfterFunc(100*time.Millisecond, func() {
+	timer := time.AfterFunc(200*time.Millisecond, func() {
 		panic("timed out waiting for shutdown")
 	})
 

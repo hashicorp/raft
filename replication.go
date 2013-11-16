@@ -9,7 +9,7 @@ type followerReplication struct {
 	peer     net.Addr
 	inflight *inflight
 
-	stopCh    chan struct{}
+	stopCh    chan uint64
 	triggerCh chan struct{}
 
 	currentTerm uint64
@@ -21,7 +21,9 @@ type followerReplication struct {
 // the process of replicating logs to our followers
 func (r *Raft) replicate(s *followerReplication) {
 	// Start an async heartbeating routing
-	r.goFunc(func() { r.heartbeat(s) })
+	stopHeartbeat := make(chan struct{})
+	defer close(stopHeartbeat)
+	r.goFunc(func() { r.heartbeat(s, stopHeartbeat) })
 
 	shouldStop := false
 	for !shouldStop {
@@ -30,7 +32,11 @@ func (r *Raft) replicate(s *followerReplication) {
 			shouldStop = r.replicateTo(s, r.getLastLog())
 		case <-randomTimeout(r.conf.CommitTimeout):
 			shouldStop = r.replicateTo(s, r.getLastLog())
-		case <-s.stopCh:
+		case maxIndex := <-s.stopCh:
+			// Make a best effort to replicate up to this index
+			if maxIndex > 0 {
+				r.replicateTo(s, maxIndex)
+			}
 			return
 		}
 	}
@@ -115,7 +121,7 @@ START:
 // hearbeat is used to periodically invoke AppendEntries on a peer
 // to ensure they don't time out. This is done async of replicate(),
 // since that routine could potentially be blocked on disk IO
-func (r *Raft) heartbeat(s *followerReplication) {
+func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 	req := AppendEntriesRequest{
 		Term:   s.currentTerm,
 		Leader: r.localAddr,
@@ -127,7 +133,7 @@ func (r *Raft) heartbeat(s *followerReplication) {
 			if err := r.trans.AppendEntries(s.peer, &req, &resp); err != nil {
 				log.Printf("[ERR] Failed to heartbeat to %v: %v", s.peer, err)
 			}
-		case <-s.stopCh:
+		case <-stopCh:
 			return
 		}
 	}
