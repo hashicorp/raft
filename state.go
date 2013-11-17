@@ -32,6 +32,9 @@ type raftState struct {
 	// Last applied log to the FSM
 	lastApplied uint64
 
+	// Term of the last applied log
+	lastAppliedTerm uint64
+
 	// Tracks the number of live routines
 	runningRoutines int32
 }
@@ -76,6 +79,14 @@ func (r *raftState) getLastApplied() uint64 {
 
 func (r *raftState) setLastApplied(term uint64) {
 	atomic.StoreUint64(&r.lastApplied, term)
+}
+
+func (r *raftState) getLastAppliedTerm() uint64 {
+	return atomic.LoadUint64(&r.lastAppliedTerm)
+}
+
+func (r *raftState) setLastAppliedTerm(term uint64) {
+	atomic.StoreUint64(&r.lastAppliedTerm, term)
 }
 
 func (r *raftState) incrRoutines() {
