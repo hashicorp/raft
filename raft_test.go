@@ -893,12 +893,11 @@ func TestRaft_SendSnapshotFollower(t *testing.T) {
 	}
 
 	// Snapshot, this will truncate logs!
-	future = leader.Snapshot()
-	if err := future.Error(); err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if idx, _ := leader.logs.FirstIndex(); idx != 92 {
-		t.Fatalf("bad first index: %d", idx)
+	for _, r := range c.rafts {
+		future = r.Snapshot()
+		if err := future.Error(); err != nil {
+			t.Fatalf("err: %v", err)
+		}
 	}
 
 	// Reconnect the behind node
