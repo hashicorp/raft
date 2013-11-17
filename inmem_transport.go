@@ -59,7 +59,7 @@ func (i *InmemTransport) LocalAddr() net.Addr {
 }
 
 func (i *InmemTransport) AppendEntries(target net.Addr, args *AppendEntriesRequest, resp *AppendEntriesResponse) error {
-	rpcResp, err := i.makeRPC(target, args, nil)
+	rpcResp, err := i.makeRPC(target, args, nil, i.timeout)
 	if err != nil {
 		return err
 	}
@@ -71,7 +71,7 @@ func (i *InmemTransport) AppendEntries(target net.Addr, args *AppendEntriesReque
 }
 
 func (i *InmemTransport) RequestVote(target net.Addr, args *RequestVoteRequest, resp *RequestVoteResponse) error {
-	rpcResp, err := i.makeRPC(target, args, nil)
+	rpcResp, err := i.makeRPC(target, args, nil, i.timeout)
 	if err != nil {
 		return err
 	}
@@ -84,7 +84,7 @@ func (i *InmemTransport) RequestVote(target net.Addr, args *RequestVoteRequest, 
 
 func (i *InmemTransport) InstallSnapshot(target net.Addr, args *InstallSnapshotRequest, resp *InstallSnapshotResponse, data io.ReadCloser) error {
 	defer data.Close()
-	rpcResp, err := i.makeRPC(target, args, data)
+	rpcResp, err := i.makeRPC(target, args, data, 10*i.timeout)
 	if err != nil {
 		return err
 	}
@@ -95,7 +95,7 @@ func (i *InmemTransport) InstallSnapshot(target net.Addr, args *InstallSnapshotR
 	return nil
 }
 
-func (i *InmemTransport) makeRPC(target net.Addr, args interface{}, r io.Reader) (rpcResp RPCResponse, err error) {
+func (i *InmemTransport) makeRPC(target net.Addr, args interface{}, r io.Reader, timeout time.Duration) (rpcResp RPCResponse, err error) {
 	i.RLock()
 	peer, ok := i.peers[target.String()]
 	i.RUnlock()
@@ -119,7 +119,7 @@ func (i *InmemTransport) makeRPC(target net.Addr, args interface{}, r io.Reader)
 		if rpcResp.Error != nil {
 			err = rpcResp.Error
 		}
-	case <-time.After(i.timeout):
+	case <-time.After(timeout):
 		err = fmt.Errorf("command timed out")
 	}
 	return
