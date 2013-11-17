@@ -108,7 +108,7 @@ func (f *FileSnapshotStore) testPermissions() error {
 // Create is used to start a new snapshot
 func (f *FileSnapshotStore) Create(index, term uint64, peers []byte) (SnapshotSink, error) {
 	// Create a new path
-	name := fmt.Sprintf("%s-%d-%d", time.Now().Format(time.RFC3339), index, term)
+	name := fmt.Sprintf("%s-%d-%d", time.Now().Format(time.RFC3339Nano), index, term)
 	path := filepath.Join(f.path, name+tmpSuffix)
 	log.Printf("[INFO] Creating new snapshot at %s", path)
 
