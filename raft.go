@@ -353,18 +353,7 @@ func (r *Raft) runFollower() {
 	for {
 		select {
 		case rpc := <-r.rpcCh:
-			switch cmd := rpc.Command.(type) {
-			case *AppendEntriesRequest:
-				r.appendEntries(rpc, cmd)
-			case *RequestVoteRequest:
-				r.requestVote(rpc, cmd)
-			case *InstallSnapshotRequest:
-				r.installSnapshot(rpc, cmd)
-			default:
-				log.Printf("[ERR] Follower state, got unexpected command: %#v",
-					rpc.Command)
-				rpc.Respond(nil, fmt.Errorf("Unexpected command"))
-			}
+			r.processRPC(rpc)
 
 		case a := <-r.applyCh:
 			// Reject any operations since we are not the leader
@@ -398,16 +387,7 @@ func (r *Raft) runCandidate() {
 	for r.getState() == Candidate {
 		select {
 		case rpc := <-r.rpcCh:
-			switch cmd := rpc.Command.(type) {
-			case *AppendEntriesRequest:
-				r.appendEntries(rpc, cmd)
-			case *RequestVoteRequest:
-				r.requestVote(rpc, cmd)
-			default:
-				log.Printf("[ERR] Candidate state, got unexpected command: %#v",
-					rpc.Command)
-				rpc.Respond(nil, fmt.Errorf("Unexpected command"))
-			}
+			r.processRPC(rpc)
 
 		case vote := <-voteCh:
 			// Check if the term is greater than ours, bail
@@ -509,16 +489,7 @@ func (r *Raft) leaderLoop() {
 	for r.getState() == Leader {
 		select {
 		case rpc := <-r.rpcCh:
-			switch cmd := rpc.Command.(type) {
-			case *AppendEntriesRequest:
-				r.appendEntries(rpc, cmd)
-			case *RequestVoteRequest:
-				r.requestVote(rpc, cmd)
-			default:
-				log.Printf("[ERR] Leader state, got unexpected command: %#v",
-					rpc.Command)
-				rpc.Respond(nil, fmt.Errorf("Unexpected command"))
-			}
+			r.processRPC(rpc)
 
 		case commitLog := <-r.leaderState.commitCh:
 			// Increment the commit index
@@ -722,6 +693,22 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 	// Invoke the future if given
 	if future != nil {
 		future.respond(nil)
+	}
+}
+
+// processRPC is called to handle an incoming RPC request
+func (r *Raft) processRPC(rpc RPC) {
+	switch cmd := rpc.Command.(type) {
+	case *AppendEntriesRequest:
+		r.appendEntries(rpc, cmd)
+	case *RequestVoteRequest:
+		r.requestVote(rpc, cmd)
+	case *InstallSnapshotRequest:
+		r.installSnapshot(rpc, cmd)
+	default:
+		log.Printf("[ERR] Got unexpected command: %#v",
+			rpc.Command)
+		rpc.Respond(nil, fmt.Errorf("Unexpected command"))
 	}
 }
 
@@ -938,6 +925,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 
 	// Restore snapshot
 	future := &restoreFuture{ID: sink.ID()}
+	future.init()
 	select {
 	case r.fsmRestoreCh <- future:
 	case <-r.shutdownCh:
