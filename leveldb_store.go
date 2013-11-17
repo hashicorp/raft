@@ -118,7 +118,7 @@ func (l *LevelDBLogStore) GetLog(index uint64, logOut *Log) error {
 	// Look for the key
 	val, err := snap.Get(key, nil)
 	if err == leveldb.ErrNotFound {
-		return fmt.Errorf("log not found")
+		return LogNotFound
 	} else if err != nil {
 		return err
 	}

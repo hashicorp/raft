@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"fmt"
 	"net"
 )
 
@@ -18,6 +19,10 @@ const (
 
 	// Used to remove an existing peer
 	LogRemovePeer
+)
+
+var (
+	LogNotFound = fmt.Errorf("log not found")
 )
 
 // Log entries are replicated to all members of the Raft cluster
