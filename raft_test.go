@@ -866,6 +866,36 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 	}
 }
 
+func TestRaft_AutoSnapshot(t *testing.T) {
+	// Make the cluster
+	conf := inmemConfig()
+	conf.SnapshotInterval = 5 * time.Millisecond
+	conf.SnapshotThreshold = 50
+	conf.TrailingLogs = 10
+	c := MakeCluster(1, t, conf)
+	defer c.Close()
+
+	// Commit a lot of things
+	leader := c.Leader()
+	var future Future
+	for i := 0; i < 100; i++ {
+		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	// Wait for the last future to apply
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Wait for a snapshot to happen
+	time.Sleep(50 * time.Millisecond)
+
+	// Check for snapshot
+	if snaps, _ := leader.snapshots.List(); len(snaps) != 1 {
+		t.Fatalf("should have a snapshot")
+	}
+}
+
 func TestRaft_SendSnapshotFollower(t *testing.T) {
 	// Make the cluster
 	conf := inmemConfig()
