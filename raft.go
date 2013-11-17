@@ -603,13 +603,14 @@ func (r *Raft) processLogs(index uint64, future *logFuture) {
 			r.processLog(l, nil)
 		}
 	}
-
-	// Update the lastApplied
-	r.setLastApplied(index)
 }
 
 // processLog is invoked to process the application of a single committed log
 func (r *Raft) processLog(l *Log, future *logFuture) {
+	// Update the lastApplied index and term
+	r.setLastApplied(l.Index)
+	r.setLastAppliedTerm(l.Term)
+
 	switch l.Type {
 	case LogCommand:
 		// Forward to the fsm handler
@@ -742,16 +743,24 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	}
 
 	// Verify the last log entry
-	var prevLog Log
 	if a.PrevLogEntry > 0 {
-		if err := r.logs.GetLog(a.PrevLogEntry, &prevLog); err != nil {
-			log.Printf("[WARN] Failed to get previous log: %d %v",
-				a.PrevLogEntry, err)
-			return
+		var prevLogTerm uint64
+		if a.PrevLogEntry == r.getLastApplied() {
+			prevLogTerm = r.getLastAppliedTerm()
+
+		} else {
+			var prevLog Log
+			if err := r.logs.GetLog(a.PrevLogEntry, &prevLog); err != nil {
+				log.Printf("[WARN] Failed to get previous log: %d %v",
+					a.PrevLogEntry, err)
+				return
+			}
+			prevLogTerm = prevLog.Term
 		}
-		if a.PrevLogTerm != prevLog.Term {
+
+		if a.PrevLogTerm != prevLogTerm {
 			log.Printf("[WARN] Previous log term mis-match: ours: %d remote: %d",
-				prevLog.Term, a.PrevLogTerm)
+				prevLogTerm, a.PrevLogTerm)
 			return
 		}
 	}
@@ -942,6 +951,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 
 	// Update the lastApplied so we don't replay old logs
 	r.setLastApplied(req.LastLogIndex)
+	r.setLastAppliedTerm(req.LastLogTerm)
 
 	// Restore the peer set
 	r.peers = excludePeer(req.Peers, r.localAddr)
@@ -1206,6 +1216,7 @@ func (r *Raft) restoreSnapshot() error {
 
 		// Update the lastApplied so we don't replay old logs
 		r.setLastApplied(snapshot.Index)
+		r.setLastAppliedTerm(snapshot.Term)
 
 		// Restore the peer set
 		peerSet := decodePeers(snapshot.Peers, r.trans)
