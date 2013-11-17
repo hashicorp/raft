@@ -865,3 +865,45 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 		t.Fatalf("bad last: %v", last)
 	}
 }
+
+func TestRaft_SendSnapshotFollower(t *testing.T) {
+	// Make the cluster
+	conf := inmemConfig()
+	conf.TrailingLogs = 10
+	c := MakeCluster(3, t, conf)
+	defer c.Close()
+
+	// Disconnect one follower
+	followers := c.GetInState(Follower)
+	behind := followers[0]
+	c.Disconnect(behind.localAddr)
+
+	// Commit a lot of things
+	leader := c.Leader()
+	var future Future
+	for i := 0; i < 100; i++ {
+		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	// Wait for the last future to apply
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	} else {
+		log.Printf("[INFO] Finished apply without behind follower")
+	}
+
+	// Snapshot, this will truncate logs!
+	future = leader.Snapshot()
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if idx, _ := leader.logs.FirstIndex(); idx != 92 {
+		t.Fatalf("bad first index: %d", idx)
+	}
+
+	// Reconnect the behind node
+	c.FullyConnect()
+
+	// Ensure all the logs are the same
+	c.EnsureSame(t)
+}
