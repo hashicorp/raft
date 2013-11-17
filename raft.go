@@ -289,6 +289,7 @@ func (r *Raft) runFSM() {
 			// Update the last index and term
 			lastIndex = meta.Index
 			lastTerm = meta.Term
+			req.respond(nil)
 
 		case req := <-r.fsmSnapshotCh:
 			// Get our peers
