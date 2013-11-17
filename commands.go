@@ -64,7 +64,7 @@ type InstallSnapshotRequest struct {
 	Peers []net.Addr
 
 	// Size of the snapshot
-	Size uint64
+	Size int64
 }
 
 type InstallSnapshotResponse struct {
