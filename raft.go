@@ -57,6 +57,9 @@ type Raft struct {
 	// fsmSnapshotCh is used to trigger a new snapshot being taken
 	fsmSnapshotCh chan *reqSnapshotFuture
 
+	// Leader is the current cluster leader
+	leader net.Addr
+
 	// leaderState used only while state is leader
 	leaderState leaderState
 
@@ -161,6 +164,13 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	r.goFunc(r.runFSM)
 	r.goFunc(r.runSnapshots)
 	return r, nil
+}
+
+// Leader is used to return the current leader of the cluster,
+// it may return nil if there is no current leader or the leader
+// is unknown
+func (r *Raft) Leader() net.Addr {
+	return r.leader
 }
 
 // Apply is used to apply a command to the FSM in a highly consistent
@@ -373,6 +383,7 @@ func (r *Raft) runFollower() {
 		case <-randomTimeout(r.conf.HeartbeatTimeout):
 			// Heartbeat failed! Transition to the candidate state
 			log.Printf("[WARN] Heartbeat timeout reached, starting election")
+			r.leader = nil
 			r.setState(Candidate)
 			return
 
@@ -418,6 +429,7 @@ func (r *Raft) runCandidate() {
 			// Check if we've become the leader
 			if grantedVotes >= votesNeeded {
 				log.Printf("[INFO] Election won. Tally: %d", grantedVotes)
+				r.leader = r.localAddr
 				r.setState(Leader)
 				return
 			}
@@ -748,6 +760,9 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		resp.Term = a.Term
 	}
 
+	// Save the current leader
+	r.leader = a.Leader
+
 	// Verify the last log entry
 	if a.PrevLogEntry > 0 {
 		lastIdx, lastTerm := r.getLastEntry()
@@ -900,6 +915,9 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 		r.setCurrentTerm(req.Term)
 		resp.Term = req.Term
 	}
+
+	// Save the current leader
+	r.leader = req.Leader
 
 	// Encode the peerset
 	peerSet := encodePeers(req.Peers, r.trans)

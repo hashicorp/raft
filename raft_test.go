@@ -163,6 +163,36 @@ func (c *cluster) Disconnect(a net.Addr) {
 	}
 }
 
+func (c *cluster) EnsureLeader(t *testing.T, expect net.Addr) {
+	limit := time.Now().Add(100 * time.Millisecond)
+CHECK:
+	for _, r := range c.rafts {
+		leader := r.Leader()
+		if expect == nil {
+			if leader != nil {
+				if time.Now().After(limit) {
+					t.Fatalf("leader %v expected nil", leader)
+				} else {
+					goto WAIT
+				}
+			}
+		} else {
+			if leader == nil || leader.String() != expect.String() {
+				if time.Now().After(limit) {
+					t.Fatalf("leader %v expected %v", leader, expect)
+				} else {
+					goto WAIT
+				}
+			}
+		}
+	}
+
+	return
+WAIT:
+	time.Sleep(10 * time.Millisecond)
+	goto CHECK
+}
+
 func (c *cluster) EnsureSame(t *testing.T) {
 	limit := time.Now().Add(200 * time.Millisecond)
 	first := c.fsms[0]
@@ -344,6 +374,7 @@ func TestRaft_TripleNode(t *testing.T) {
 
 	// Should be one leader
 	leader := c.Leader()
+	c.EnsureLeader(t, leader.localAddr)
 
 	// Should be able to apply
 	future := leader.Apply([]byte("test"), time.Millisecond)
@@ -473,11 +504,15 @@ func TestRaft_BehindFollower(t *testing.T) {
 
 	// Ensure all the logs are the same
 	c.EnsureSame(t)
+
+	// Ensure one leader
+	leader = c.Leader()
+	c.EnsureLeader(t, leader.localAddr)
 }
 
 func TestRaft_ApplyNonLeader(t *testing.T) {
 	// Make the cluster
-	c := MakeCluster(5, t, nil)
+	c := MakeCluster(3, t, nil)
 	defer c.Close()
 
 	// Wait for a leader
@@ -486,8 +521,8 @@ func TestRaft_ApplyNonLeader(t *testing.T) {
 
 	// Try to apply to them
 	followers := c.GetInState(Follower)
-	if len(followers) != 4 {
-		t.Fatalf("Expected 4 followers")
+	if len(followers) != 2 {
+		t.Fatalf("Expected 2 followers")
 	}
 	follower := followers[0]
 
@@ -618,6 +653,10 @@ func TestRaft_JoinNode(t *testing.T) {
 
 	// Check the peers
 	c.EnsureSamePeers(t)
+
+	// Ensure one leader
+	leader = c.Leader()
+	c.EnsureLeader(t, leader.localAddr)
 }
 
 func TestRaft_RemoveFollower(t *testing.T) {
