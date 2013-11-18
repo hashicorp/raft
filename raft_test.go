@@ -891,7 +891,7 @@ func TestRaft_AutoSnapshot(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Check for snapshot
-	if snaps, _ := leader.snapshots.List(); len(snaps) != 1 {
+	if snaps, _ := leader.snapshots.List(); len(snaps) == 0 {
 		t.Fatalf("should have a snapshot")
 	}
 }
