@@ -450,12 +450,12 @@ func TestRaft_BehindFollower(t *testing.T) {
 	defer c.Close()
 
 	// Disconnect one follower
+	leader := c.Leader()
 	followers := c.GetInState(Follower)
 	behind := followers[0]
 	c.Disconnect(behind.localAddr)
 
 	// Commit a lot of things
-	leader := c.Leader()
 	var future Future
 	for i := 0; i < 100; i++ {
 		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
