@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"log"
@@ -761,7 +762,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	}
 
 	// Save the current leader
-	r.leader = a.Leader
+	r.leader = r.trans.DecodePeer(a.Leader)
 
 	// Verify the last log entry
 	if a.PrevLogEntry > 0 {
@@ -828,7 +829,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// Setup a response
 	resp := &RequestVoteResponse{
 		Term:    r.getCurrentTerm(),
-		Peers:   r.peers,
+		Peers:   encodePeers(r.peers, r.trans),
 		Granted: false,
 	}
 	var rpcErr error
@@ -862,7 +863,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// Check if we've voted in this election before
 	if lastVoteTerm == req.Term && lastVoteCandBytes != nil {
 		log.Printf("[INFO] Duplicate RequestVote for same term: %d", req.Term)
-		if string(lastVoteCandBytes) == req.Candidate.String() {
+		if bytes.Compare(lastVoteCandBytes, req.Candidate) == 0 {
 			log.Printf("[WARN] Duplicate RequestVote from candidate: %s", req.Candidate)
 			resp.Granted = true
 		}
@@ -882,7 +883,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	}
 
 	// Persist a vote for safety
-	if err := r.persistVote(req.Term, req.Candidate.String()); err != nil {
+	if err := r.persistVote(req.Term, req.Candidate); err != nil {
 		log.Printf("[ERR] Failed to persist vote: %v", err)
 		return
 	}
@@ -917,13 +918,10 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	}
 
 	// Save the current leader
-	r.leader = req.Leader
-
-	// Encode the peerset
-	peerSet := encodePeers(req.Peers, r.trans)
+	r.leader = r.trans.DecodePeer(req.Leader)
 
 	// Create a new snapshot
-	sink, err := r.snapshots.Create(req.LastLogIndex, req.LastLogTerm, peerSet)
+	sink, err := r.snapshots.Create(req.LastLogIndex, req.LastLogTerm, req.Peers)
 	if err != nil {
 		log.Printf("[ERR] Failed to create snapshot to install: %v", err)
 		rpcErr = fmt.Errorf("Failed to create snapshot: %v", err)
@@ -981,7 +979,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	r.setLastSnapshotTerm(req.LastLogTerm)
 
 	// Restore the peer set
-	r.peers = excludePeer(req.Peers, r.localAddr)
+	r.peers = excludePeer(decodePeers(req.Peers, r.trans), r.localAddr)
 
 	// Compact logs, continue even if this fails
 	if err := r.compactLogs(req.LastLogIndex); err != nil {
@@ -1008,7 +1006,7 @@ func (r *Raft) electSelf() <-chan *RequestVoteResponse {
 	lastIdx, lastTerm := r.getLastEntry()
 	req := &RequestVoteRequest{
 		Term:         r.getCurrentTerm(),
-		Candidate:    r.localAddr,
+		Candidate:    r.trans.EncodePeer(r.localAddr),
 		LastLogIndex: lastIdx,
 		LastLogTerm:  lastTerm,
 	}
@@ -1027,9 +1025,12 @@ func (r *Raft) electSelf() <-chan *RequestVoteResponse {
 			// If we are not a peer, we could have been removed but failed
 			// to receive the log message. OR it could mean an improperly configured
 			// cluster. Either way, we should warn
-			if err == nil && !peerContained(resp.Peers, r.localAddr) {
-				log.Printf("[WARN] Remote peer %v does not have local node %v as a peer",
-					peer, r.localAddr)
+			if err == nil {
+				peerSet := decodePeers(resp.Peers, r.trans)
+				if !peerContained(peerSet, r.localAddr) {
+					log.Printf("[WARN] Remote peer %v does not have local node %v as a peer",
+						peer, r.localAddr)
+				}
 			}
 
 			respCh <- resp
@@ -1042,7 +1043,7 @@ func (r *Raft) electSelf() <-chan *RequestVoteResponse {
 	}
 
 	// Persist a vote for ourselves
-	if err := r.persistVote(req.Term, req.Candidate.String()); err != nil {
+	if err := r.persistVote(req.Term, req.Candidate); err != nil {
 		log.Printf("[ERR] Failed to persist vote : %v", err)
 		return nil
 	}
@@ -1050,18 +1051,17 @@ func (r *Raft) electSelf() <-chan *RequestVoteResponse {
 	// Include our own vote
 	respCh <- &RequestVoteResponse{
 		Term:    req.Term,
-		Peers:   []net.Addr{r.localAddr},
 		Granted: true,
 	}
 	return respCh
 }
 
 // persistVote is used to persist our vote for safety
-func (r *Raft) persistVote(term uint64, candidate string) error {
+func (r *Raft) persistVote(term uint64, candidate []byte) error {
 	if err := r.stable.SetUint64(keyLastVoteTerm, term); err != nil {
 		return err
 	}
-	if err := r.stable.Set(keyLastVoteCand, []byte(candidate)); err != nil {
+	if err := r.stable.Set(keyLastVoteCand, candidate); err != nil {
 		return err
 	}
 	return nil
