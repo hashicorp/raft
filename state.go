@@ -24,7 +24,8 @@ type raftState struct {
 	currentTerm uint64
 
 	// Cache the latest log from LogStore
-	lastLog uint64
+	LastLogIndex uint64
+	LastLogTerm  uint64
 
 	// Highest commited log entry
 	commitIndex uint64
@@ -32,8 +33,9 @@ type raftState struct {
 	// Last applied log to the FSM
 	lastApplied uint64
 
-	// Term of the last applied log
-	lastAppliedTerm uint64
+	// Cache the latest snapshot index/term
+	lastSnapshotIndex uint64
+	lastSnapshotTerm  uint64
 
 	// Tracks the number of live routines
 	runningRoutines int32
@@ -57,12 +59,20 @@ func (r *raftState) setCurrentTerm(term uint64) {
 	atomic.StoreUint64(&r.currentTerm, term)
 }
 
-func (r *raftState) getLastLog() uint64 {
-	return atomic.LoadUint64(&r.lastLog)
+func (r *raftState) getLastLogIndex() uint64 {
+	return atomic.LoadUint64(&r.LastLogIndex)
 }
 
-func (r *raftState) setLastLog(term uint64) {
-	atomic.StoreUint64(&r.lastLog, term)
+func (r *raftState) setLastLogIndex(term uint64) {
+	atomic.StoreUint64(&r.LastLogIndex, term)
+}
+
+func (r *raftState) getLastLogTerm() uint64 {
+	return atomic.LoadUint64(&r.LastLogTerm)
+}
+
+func (r *raftState) setLastLogTerm(term uint64) {
+	atomic.StoreUint64(&r.LastLogTerm, term)
 }
 
 func (r *raftState) getCommitIndex() uint64 {
@@ -81,12 +91,20 @@ func (r *raftState) setLastApplied(term uint64) {
 	atomic.StoreUint64(&r.lastApplied, term)
 }
 
-func (r *raftState) getLastAppliedTerm() uint64 {
-	return atomic.LoadUint64(&r.lastAppliedTerm)
+func (r *raftState) getLastSnapshotIndex() uint64 {
+	return atomic.LoadUint64(&r.lastSnapshotIndex)
 }
 
-func (r *raftState) setLastAppliedTerm(term uint64) {
-	atomic.StoreUint64(&r.lastAppliedTerm, term)
+func (r *raftState) setLastSnapshotIndex(term uint64) {
+	atomic.StoreUint64(&r.lastSnapshotIndex, term)
+}
+
+func (r *raftState) getLastSnapshotTerm() uint64 {
+	return atomic.LoadUint64(&r.lastSnapshotTerm)
+}
+
+func (r *raftState) setLastSnapshotTerm(term uint64) {
+	atomic.StoreUint64(&r.lastSnapshotTerm, term)
 }
 
 func (r *raftState) incrRoutines() {

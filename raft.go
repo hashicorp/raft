@@ -102,9 +102,17 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	}
 
 	// Read the last log value
-	lastLog, err := logs.LastIndex()
+	lastIdx, err := logs.LastIndex()
 	if err != nil {
 		return nil, fmt.Errorf("Failed to find last log: %v", err)
+	}
+
+	// Get the log
+	var lastLog Log
+	if lastIdx > 0 {
+		if err := logs.GetLog(lastIdx, &lastLog); err != nil {
+			return nil, fmt.Errorf("Failed to get last log: %v", err)
+		}
 	}
 
 	// Construct the list of peers that excludes us
@@ -140,7 +148,8 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 
 	// Restore the current term and the last log
 	r.setCurrentTerm(currentTerm)
-	r.setLastLog(lastLog)
+	r.setLastLogIndex(lastLog.Index)
+	r.setLastLogTerm(lastLog.Term)
 
 	// Attempt to restore a snapshot if there are any
 	if err := r.restoreSnapshot(); err != nil {
@@ -450,7 +459,7 @@ func (r *Raft) runLeader() {
 		// Cancel inflight requests
 		r.leaderState.inflight.Cancel(LeadershipLost)
 
-		// Clear all the staet
+		// Clear all the state
 		r.leaderState.commitCh = nil
 		r.leaderState.inflight = nil
 		r.leaderState.replState = nil
@@ -471,14 +480,15 @@ func (r *Raft) runLeader() {
 
 // startReplication is a helper to setup state and start async replication to a peer
 func (r *Raft) startReplication(peer net.Addr) {
+	lastIdx := r.getLastIndex()
 	s := &followerReplication{
 		peer:        peer,
 		inflight:    r.leaderState.inflight,
 		stopCh:      make(chan uint64, 1),
 		triggerCh:   make(chan struct{}, 1),
 		currentTerm: r.getCurrentTerm(),
-		matchIndex:  r.getLastLog(),
-		nextIndex:   r.getLastLog() + 1,
+		matchIndex:  lastIdx,
+		nextIndex:   lastIdx + 1,
 	}
 	r.leaderState.replState[peer.String()] = s
 	r.goFunc(func() { r.replicate(s) })
@@ -549,7 +559,7 @@ func (r *Raft) preparePeerChange(l *logFuture) bool {
 // as inflight and begin replication of it
 func (r *Raft) dispatchLog(applyLog *logFuture) {
 	// Prepare log
-	applyLog.log.Index = r.getLastLog() + 1
+	applyLog.log.Index = r.getLastIndex() + 1
 	applyLog.log.Term = r.getCurrentTerm()
 
 	// Write the log entry locally
@@ -570,7 +580,8 @@ func (r *Raft) dispatchLog(applyLog *logFuture) {
 	r.leaderState.inflight.Commit(applyLog.log.Index, r.localAddr)
 
 	// Update the last log since it's on disk now
-	r.setLastLog(applyLog.log.Index)
+	r.setLastLogIndex(applyLog.log.Index)
+	r.setLastLogTerm(applyLog.log.Term)
 
 	// Notify the replicators of the new log
 	for _, f := range r.leaderState.replState {
@@ -602,15 +613,14 @@ func (r *Raft) processLogs(index uint64, future *logFuture) {
 			}
 			r.processLog(l, nil)
 		}
+
+		// Update the lastApplied index and term
+		r.setLastApplied(idx)
 	}
 }
 
 // processLog is invoked to process the application of a single committed log
 func (r *Raft) processLog(l *Log, future *logFuture) {
-	// Update the lastApplied index and term
-	r.setLastApplied(l.Index)
-	r.setLastAppliedTerm(l.Term)
-
 	switch l.Type {
 	case LogCommand:
 		// Forward to the fsm handler
@@ -719,7 +729,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	// Setup a response
 	resp := &AppendEntriesResponse{
 		Term:    r.getCurrentTerm(),
-		LastLog: r.getLastLog(),
+		LastLog: r.getLastIndex(),
 		Success: false,
 	}
 	var rpcErr error
@@ -744,9 +754,11 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 
 	// Verify the last log entry
 	if a.PrevLogEntry > 0 {
+		lastIdx, lastTerm := r.getLastEntry()
+
 		var prevLogTerm uint64
-		if a.PrevLogEntry == r.getLastApplied() {
-			prevLogTerm = r.getLastAppliedTerm()
+		if a.PrevLogEntry == lastIdx {
+			prevLogTerm = lastTerm
 
 		} else {
 			var prevLog Log
@@ -768,9 +780,10 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	// Add all the entries
 	for _, entry := range a.Entries {
 		// Delete any conflicting entries
-		if entry.Index <= r.getLastLog() {
-			log.Printf("[WARN] Clearing log suffix from %d to %d", entry.Index, r.getLastLog())
-			if err := r.logs.DeleteRange(entry.Index, r.getLastLog()); err != nil {
+		lastLogIdx := r.getLastLogIndex()
+		if entry.Index <= lastLogIdx {
+			log.Printf("[WARN] Clearing log suffix from %d to %d", entry.Index, lastLogIdx)
+			if err := r.logs.DeleteRange(entry.Index, lastLogIdx); err != nil {
 				log.Printf("[ERR] Failed to clear log suffix: %v", err)
 				return
 			}
@@ -783,12 +796,13 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		}
 
 		// Update the lastLog
-		r.setLastLog(entry.Index)
+		r.setLastLogIndex(entry.Index)
+		r.setLastLogTerm(entry.Term)
 	}
 
 	// Update the commit index
 	if a.LeaderCommitIndex > 0 && a.LeaderCommitIndex > r.getCommitIndex() {
-		idx := min(a.LeaderCommitIndex, r.getLastLog())
+		idx := min(a.LeaderCommitIndex, r.getLastIndex())
 		r.setCommitIndex(idx)
 		r.processLogs(idx, nil)
 	}
@@ -848,22 +862,15 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	}
 
 	// Reject if their term is older
-	if r.getLastLog() > 0 {
-		var lastLog Log
-		if err := r.logs.GetLog(r.getLastLog(), &lastLog); err != nil {
-			log.Printf("[ERR] Failed to get last log: %d %v",
-				r.getLastLog(), err)
-			return
-		}
-		if lastLog.Term > req.LastLogTerm {
-			log.Printf("[WARN] Rejecting vote since our last term is greater")
-			return
-		}
+	lastIdx, lastTerm := r.getLastEntry()
+	if lastTerm > req.LastLogTerm {
+		log.Printf("[WARN] Rejecting vote since our last term is greater")
+		return
+	}
 
-		if lastLog.Index > req.LastLogIndex {
-			log.Printf("[WARN] Rejecting vote since our last index is greater")
-			return
-		}
+	if lastIdx > req.LastLogIndex {
+		log.Printf("[WARN] Rejecting vote since our last index is greater")
+		return
 	}
 
 	// Persist a vote for safety
@@ -959,7 +966,10 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 
 	// Update the lastApplied so we don't replay old logs
 	r.setLastApplied(req.LastLogIndex)
-	r.setLastAppliedTerm(req.LastLogTerm)
+
+	// Update the last stable snapshot info
+	r.setLastSnapshotIndex(req.LastLogIndex)
+	r.setLastSnapshotTerm(req.LastLogTerm)
 
 	// Restore the peer set
 	r.peers = excludePeer(req.Peers, r.localAddr)
@@ -981,16 +991,6 @@ func (r *Raft) electSelf() <-chan *RequestVoteResponse {
 	// Create a response channel
 	respCh := make(chan *RequestVoteResponse, len(r.peers)+1)
 
-	// Get the last log
-	var lastLog Log
-	if r.getLastLog() > 0 {
-		if err := r.logs.GetLog(r.getLastLog(), &lastLog); err != nil {
-			log.Printf("[ERR] Failed to get last log: %d %v",
-				r.getLastLog(), err)
-			return nil
-		}
-	}
-
 	// Increment the term
 	if err := r.setCurrentTerm(r.getCurrentTerm() + 1); err != nil {
 		log.Printf("[ERR] Failed to update current term: %v", err)
@@ -998,11 +998,12 @@ func (r *Raft) electSelf() <-chan *RequestVoteResponse {
 	}
 
 	// Construct the request
+	lastIdx, lastTerm := r.getLastEntry()
 	req := &RequestVoteRequest{
 		Term:         r.getCurrentTerm(),
 		Candidate:    r.localAddr,
-		LastLogIndex: lastLog.Index,
-		LastLogTerm:  lastLog.Term,
+		LastLogIndex: lastIdx,
+		LastLogTerm:  lastTerm,
 	}
 
 	// Construct a function to ask for a vote
@@ -1186,7 +1187,7 @@ func (r *Raft) compactLogs(snapIdx uint64) error {
 	// back from the head, which ever is futher back. This ensures
 	// at least `TrailingLogs` entries, but does not allow logs
 	// after the snapshot to be removed
-	maxLog := min(snapIdx, r.getLastLog()-r.conf.TrailingLogs)
+	maxLog := min(snapIdx, r.getLastLogIndex()-r.conf.TrailingLogs)
 
 	// Log this
 	log.Printf("[INFO] Compacting logs from %d to %d", minLog, maxLog)
@@ -1224,7 +1225,10 @@ func (r *Raft) restoreSnapshot() error {
 
 		// Update the lastApplied so we don't replay old logs
 		r.setLastApplied(snapshot.Index)
-		r.setLastAppliedTerm(snapshot.Term)
+
+		// Update the last stable snapshot info
+		r.setLastSnapshotIndex(snapshot.Index)
+		r.setLastSnapshotTerm(snapshot.Term)
 
 		// Restore the peer set
 		peerSet := decodePeers(snapshot.Peers, r.trans)
@@ -1239,4 +1243,20 @@ func (r *Raft) restoreSnapshot() error {
 		return fmt.Errorf("Failed to load any existing snapshots!")
 	}
 	return nil
+}
+
+// getLastIndex returns the last index in stable storage.
+// Either from the last log or from the last snapshot
+func (r *Raft) getLastIndex() uint64 {
+	return max(r.getLastLogIndex(), r.getLastSnapshotIndex())
+}
+
+// getLastEntry returns the last index and term in stable storage.
+// Either from the last log or from the last snapshot
+func (r *Raft) getLastEntry() (uint64, uint64) {
+	if r.getLastLogIndex() >= r.getLastSnapshotIndex() {
+		return r.getLastLogIndex(), r.getLastLogTerm()
+	} else {
+		return r.getLastSnapshotIndex(), r.getLastSnapshotTerm()
+	}
 }
