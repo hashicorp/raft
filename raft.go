@@ -1223,6 +1223,9 @@ func (r *Raft) restoreSnapshot() error {
 			continue
 		}
 
+		// Log success
+		log.Printf("[INFO] Restored from snapshot %v", snapshot.ID)
+
 		// Update the lastApplied so we don't replay old logs
 		r.setLastApplied(snapshot.Index)
 
