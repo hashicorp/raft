@@ -65,7 +65,7 @@ type StreamLayer interface {
 	net.Listener
 
 	// Dial is used to create a new outgoing connection
-	Dial(network, address string, timeout time.Duration) (net.Conn, error)
+	Dial(address string, timeout time.Duration) (net.Conn, error)
 }
 
 type netConn struct {
@@ -174,7 +174,7 @@ func (n *NetworkTransport) getConn(target net.Addr) (*netConn, error) {
 	}
 
 	// Dial a new connection
-	conn, err := n.stream.Dial(target.Network(), target.String(), n.timeout)
+	conn, err := n.stream.Dial(target.String(), n.timeout)
 	if err != nil {
 		return nil, err
 	}
