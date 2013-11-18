@@ -54,7 +54,7 @@ func (r *Raft) replicateTo(s *followerReplication, lastIndex uint64) (shouldStop
 START:
 	req = AppendEntriesRequest{
 		Term:              s.currentTerm,
-		Leader:            r.localAddr,
+		Leader:            r.trans.EncodePeer(r.localAddr),
 		LeaderCommitIndex: r.getCommitIndex(),
 	}
 
@@ -173,10 +173,10 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	// Setup the request
 	req := InstallSnapshotRequest{
 		Term:         s.currentTerm,
-		Leader:       r.localAddr,
+		Leader:       r.trans.EncodePeer(r.localAddr),
 		LastLogIndex: meta.Index,
 		LastLogTerm:  meta.Term,
-		Peers:        decodePeers(meta.Peers, r.trans),
+		Peers:        meta.Peers,
 		Size:         meta.Size,
 	}
 
@@ -214,7 +214,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 	req := AppendEntriesRequest{
 		Term:   s.currentTerm,
-		Leader: r.localAddr,
+		Leader: r.trans.EncodePeer(r.localAddr),
 	}
 	var resp AppendEntriesResponse
 	for {
