@@ -26,7 +26,7 @@ var (
 
 NetworkTransport provides a network based transport that can be
 used to communicate with Raft on remote machines. It requires
-an underlying layer to provide a stream abstraction, which can
+an underlying stream layer to provide a stream abstraction, which can
 be simple TCP, TLS, etc. Underlying addresses must be castable to TCPAddr
 
 This transport is very simple and lightweight. Each RPC request is
@@ -47,16 +47,25 @@ type NetworkTransport struct {
 
 	consumeCh chan RPC
 
-	dialer   net.Dialer
-	listener net.Listener
-	maxPool  int
+	maxPool int
 
 	shutdown     bool
 	shutdownCh   chan struct{}
 	shutdownLock sync.Mutex
 
+	stream StreamLayer
+
 	timeout      time.Duration
 	timeoutScale int
+}
+
+// StreamLayer is used with the NetworkTransport to provide
+// the low level stream abstraction
+type StreamLayer interface {
+	net.Listener
+
+	// Dial is used to create a new outgoing connection
+	Dial(network, address string, timeout time.Duration) (net.Conn, error)
 }
 
 type netConn struct {
@@ -75,14 +84,13 @@ func (n *netConn) Release() error {
 // Creates a new network transport with the given dailer and listener
 // The timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
 // the timeout by (SnapshotSize / TimeoutScale)
-func NewNetworkTransport(dialer net.Dialer, listener net.Listener, timeout time.Duration) *NetworkTransport {
+func NewNetworkTransport(stream StreamLayer, timeout time.Duration) *NetworkTransport {
 	trans := &NetworkTransport{
 		connPool:     make(map[string][]*netConn),
 		consumeCh:    make(chan RPC),
-		dialer:       dialer,
-		listener:     listener,
 		maxPool:      2,
 		shutdownCh:   make(chan struct{}),
+		stream:       stream,
 		timeout:      timeout,
 		timeoutScale: DefaultTimeoutScale,
 	}
@@ -125,7 +133,7 @@ func (n *NetworkTransport) Close() error {
 
 	if !n.shutdown {
 		close(n.shutdownCh)
-		n.listener.Close()
+		n.stream.Close()
 		n.shutdown = true
 		n.SetMaxPool(0)
 	}
@@ -137,7 +145,7 @@ func (n *NetworkTransport) Consumer() <-chan RPC {
 }
 
 func (n *NetworkTransport) LocalAddr() net.Addr {
-	return n.listener.Addr()
+	return n.stream.Addr()
 }
 
 // getExistingConn is used to grab a pooled connection
@@ -166,7 +174,7 @@ func (n *NetworkTransport) getConn(target net.Addr) (*netConn, error) {
 	}
 
 	// Dial a new connection
-	conn, err := n.dialer.Dial(target.Network(), target.String())
+	conn, err := n.stream.Dial(target.Network(), target.String(), n.timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -284,7 +292,7 @@ func (n *NetworkTransport) DecodePeer(buf []byte) net.Addr {
 func (n *NetworkTransport) listen() {
 	for {
 		// Accept incoming connections
-		conn, err := n.listener.Accept()
+		conn, err := n.stream.Accept()
 		if err != nil {
 			if n.shutdown {
 				return
