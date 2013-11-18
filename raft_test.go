@@ -24,8 +24,9 @@ type MockSnapshot struct {
 	maxIndex int
 }
 
-func (m *MockFSM) Apply(log []byte) {
+func (m *MockFSM) Apply(log []byte) interface{} {
 	m.logs = append(m.logs, log)
+	return len(m.logs)
 }
 
 func (m *MockFSM) Snapshot() (FSMSnapshot, error) {
@@ -62,104 +63,6 @@ func inmemConfig() *Config {
 	conf.ElectionTimeout = 10 * time.Millisecond
 	conf.CommitTimeout = time.Millisecond
 	return conf
-}
-
-func TestRaft_StartStop(t *testing.T) {
-	dir, logs, store := LevelDBTestStore(t)
-	defer os.RemoveAll(dir)
-	defer logs.Close()
-	defer store.Close()
-
-	dir2, snap := FileSnapTest(t)
-	defer os.RemoveAll(dir2)
-
-	_, trans := NewInmemTransport()
-	fsm := &MockFSM{}
-	conf := DefaultConfig()
-	peers := &StaticPeers{}
-
-	raft, err := NewRaft(conf, fsm, logs, store, snap, peers, trans)
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	defer raft.Shutdown()
-}
-
-func TestRaft_AfterShutdown(t *testing.T) {
-	dir, logs, store := LevelDBTestStore(t)
-	defer os.RemoveAll(dir)
-	defer logs.Close()
-	defer store.Close()
-
-	dir2, snap := FileSnapTest(t)
-	defer os.RemoveAll(dir2)
-
-	_, trans := NewInmemTransport()
-	fsm := &MockFSM{}
-	conf := DefaultConfig()
-	peers := &StaticPeers{}
-
-	raft, err := NewRaft(conf, fsm, logs, store, snap, peers, trans)
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	raft.Shutdown()
-
-	// Everything should fail now
-	if f := raft.Apply(nil, 0); f.Error() != RaftShutdown {
-		t.Fatalf("should be shutdown: %v", f.Error())
-	}
-	if f := raft.AddPeer(NewInmemAddr()); f.Error() != RaftShutdown {
-		t.Fatalf("should be shutdown: %v", f.Error())
-	}
-	if f := raft.RemovePeer(NewInmemAddr()); f.Error() != RaftShutdown {
-		t.Fatalf("should be shutdown: %v", f.Error())
-	}
-	if f := raft.Snapshot(); f.Error() != RaftShutdown {
-		t.Fatalf("should be shutdown: %v", f.Error())
-	}
-
-	// Should be idempotent
-	raft.Shutdown()
-}
-
-func TestRaft_SingleNode(t *testing.T) {
-	dir, logs, store := LevelDBTestStore(t)
-	defer os.RemoveAll(dir)
-	defer logs.Close()
-	defer store.Close()
-
-	dir2, snap := FileSnapTest(t)
-	defer os.RemoveAll(dir2)
-
-	_, trans := NewInmemTransport()
-	fsm := &MockFSM{}
-	conf := inmemConfig()
-	peers := &StaticPeers{}
-
-	raft, err := NewRaft(conf, fsm, logs, store, snap, peers, trans)
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	defer raft.Shutdown()
-
-	time.Sleep(conf.HeartbeatTimeout * 3)
-
-	// Should be leader
-	if s := raft.State(); s != Leader {
-		t.Fatalf("expected leader: %v", s)
-	}
-
-	// Should be able to apply
-	future := raft.Apply([]byte("test"), time.Millisecond)
-	if err := future.Error(); err != nil {
-		t.Fatalf("err: %v", err)
-	}
-
-	// Check that it is applied to the FSM
-	if len(fsm.logs) != 1 {
-		t.Fatalf("did not apply to FSM!")
-	}
 }
 
 type cluster struct {
@@ -374,6 +277,59 @@ func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 	}
 
 	return c
+}
+
+func TestRaft_StartStop(t *testing.T) {
+	c := MakeCluster(1, t, nil)
+	c.Close()
+}
+
+func TestRaft_AfterShutdown(t *testing.T) {
+	c := MakeCluster(1, t, nil)
+	c.Close()
+	raft := c.rafts[0]
+
+	// Everything should fail now
+	if f := raft.Apply(nil, 0); f.Error() != RaftShutdown {
+		t.Fatalf("should be shutdown: %v", f.Error())
+	}
+	if f := raft.AddPeer(NewInmemAddr()); f.Error() != RaftShutdown {
+		t.Fatalf("should be shutdown: %v", f.Error())
+	}
+	if f := raft.RemovePeer(NewInmemAddr()); f.Error() != RaftShutdown {
+		t.Fatalf("should be shutdown: %v", f.Error())
+	}
+	if f := raft.Snapshot(); f.Error() != RaftShutdown {
+		t.Fatalf("should be shutdown: %v", f.Error())
+	}
+
+	// Should be idempotent
+	raft.Shutdown()
+}
+
+func TestRaft_SingleNode(t *testing.T) {
+	conf := inmemConfig()
+	c := MakeCluster(1, t, conf)
+	defer c.Close()
+	raft := c.rafts[0]
+
+	time.Sleep(conf.HeartbeatTimeout * 3)
+
+	// Should be leader
+	if s := raft.State(); s != Leader {
+		t.Fatalf("expected leader: %v", s)
+	}
+
+	// Should be able to apply
+	future := raft.Apply([]byte("test"), time.Millisecond)
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Check that it is applied to the FSM
+	if len(c.fsms[0].logs) != 1 {
+		t.Fatalf("did not apply to FSM!")
+	}
 }
 
 func TestRaft_TripleNode(t *testing.T) {
@@ -608,8 +564,9 @@ func TestRaft_JoinNode(t *testing.T) {
 	defer c.Close()
 
 	// Apply a log to this cluster to ensure it is 'newer'
+	var future Future
 	leader := c.Leader()
-	future := leader.Apply([]byte("first"), 0)
+	future = leader.Apply([]byte("first"), 0)
 	if err := future.Error(); err != nil {
 		t.Fatalf("err: %v", err)
 	} else {
