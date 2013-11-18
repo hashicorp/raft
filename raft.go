@@ -924,6 +924,14 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 		return
 	}
 
+	// Check that we received it all
+	if n != req.Size {
+		sink.Cancel()
+		log.Printf("[ERR] Failed to receive whole snapshot: %d / %d", n, req.Size)
+		rpcErr = fmt.Errorf("short read")
+		return
+	}
+
 	// Finalize the snapshot
 	if err := sink.Close(); err != nil {
 		log.Printf("[ERR] Failed to finalize snapshot: %v", err)
