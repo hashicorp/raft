@@ -40,30 +40,68 @@ is not known if there is an error.
 
 */
 type NetworkTransport struct {
-	connPool     map[string][]net.Conn
+	connPool     map[string][]*netConn
 	connPoolLock sync.Mutex
 
 	consumeCh chan RPC
 
 	dialer   net.Dialer
 	listener net.Listener
+	maxPool  int
 
 	shutdown     bool
 	shutdownCh   chan struct{}
 	shutdownLock sync.Mutex
 }
 
+type netConn struct {
+	target net.Addr
+	conn   net.Conn
+	r      *bufio.Reader
+	w      *bufio.Writer
+	dec    *codec.Decoder
+	enc    *codec.Encoder
+}
+
+func (n *netConn) Release() error {
+	return n.conn.Close()
+}
+
 // Creates a new network transport with the given dailer and listener
 func NewNetworkTransport(dialer net.Dialer, listener net.Listener) *NetworkTransport {
 	trans := &NetworkTransport{
-		connPool:   make(map[string][]net.Conn),
+		connPool:   make(map[string][]*netConn),
 		consumeCh:  make(chan RPC),
 		dialer:     dialer,
 		listener:   listener,
+		maxPool:    2,
 		shutdownCh: make(chan struct{}),
 	}
 	go trans.listen()
 	return trans
+}
+
+// SetMaxPool is used to set the maximum number of pooled connections per host
+func (n *NetworkTransport) SetMaxPool(maxPool int) {
+	reduced := maxPool < n.maxPool
+	n.maxPool = maxPool
+
+	// If we reduced the pool size, we need to close any open connections
+	if reduced {
+		n.shutdownLock.Lock()
+		defer n.shutdownLock.Lock()
+
+		for key := range n.connPool {
+			conns := n.connPool[key]
+			if len(conns) > maxPool {
+				for i := maxPool; i < len(conns); i++ {
+					conns[i].Release()
+					conns[i] = nil
+				}
+				n.connPool[key] = conns[:maxPool]
+			}
+		}
+	}
 }
 
 // Close is used to stop the network transport
@@ -75,6 +113,7 @@ func (n *NetworkTransport) Close() error {
 		close(n.shutdownCh)
 		n.listener.Close()
 		n.shutdown = true
+		n.SetMaxPool(0)
 	}
 	return nil
 }
@@ -87,19 +126,121 @@ func (n *NetworkTransport) LocalAddr() net.Addr {
 	return n.listener.Addr()
 }
 
+// getExistingConn is used to grab a pooled connection
+func (n *NetworkTransport) getPooledConn(target net.Addr) *netConn {
+	n.connPoolLock.Lock()
+	defer n.connPoolLock.Unlock()
+
+	key := target.String()
+	conns, ok := n.connPool[key]
+	if !ok || len(conns) == 0 {
+		return nil
+	}
+
+	var conn *netConn
+	num := len(conns)
+	conn, conns[num-1] = conns[num-1], nil
+	n.connPool[key] = conns[:num-1]
+	return conn
+}
+
+// getConn is used to get a connection from the pool
+func (n *NetworkTransport) getConn(target net.Addr) (*netConn, error) {
+	// Check for a pooled conn
+	if conn := n.getPooledConn(target); conn != nil {
+		return conn, nil
+	}
+
+	// Dial a new connection
+	conn, err := n.dialer.Dial(target.Network(), target.String())
+	if err != nil {
+		return nil, err
+	}
+
+	// Wrap the conn
+	netConn := &netConn{
+		target: target,
+		conn:   conn,
+		r:      bufio.NewReader(conn),
+		w:      bufio.NewWriter(conn),
+	}
+
+	// Setup encoder/decoders
+	netConn.dec = codec.NewDecoder(netConn.r, &codec.MsgpackHandle{})
+	netConn.enc = codec.NewEncoder(netConn.w, &codec.MsgpackHandle{})
+
+	// Done
+	return netConn, nil
+}
+
+// returnConn returns a connection back to the pool
+func (n *NetworkTransport) returnConn(conn *netConn) {
+	n.connPoolLock.Lock()
+	defer n.connPoolLock.Unlock()
+
+	key := conn.target.String()
+	conns, _ := n.connPool[key]
+
+	if len(conns) < n.maxPool {
+		n.connPool[key] = append(conns, conn)
+	} else {
+		conn.Release()
+	}
+}
+
 func (n *NetworkTransport) AppendEntries(target net.Addr, args *AppendEntriesRequest, resp *AppendEntriesResponse) error {
-	// TODO
-	return nil
+	return n.genericRPC(target, rpcAppendEntries, args, resp)
 }
 
 func (n *NetworkTransport) RequestVote(target net.Addr, args *RequestVoteRequest, resp *RequestVoteResponse) error {
-	// TODO
-	return nil
+	return n.genericRPC(target, rpcRequestVote, args, resp)
+}
+
+// genericRPC handles a simple request/response RPC
+func (n *NetworkTransport) genericRPC(target net.Addr, rpcType uint8, args interface{}, resp interface{}) error {
+	// Get a conn
+	conn, err := n.getConn(target)
+	if err != nil {
+		return err
+	}
+
+	// Send the RPC
+	if err := sendRPC(conn, rpcType, args); err != nil {
+		return err
+	}
+
+	// Decode the response
+	return n.decodeResponse(conn, resp, true)
 }
 
 func (n *NetworkTransport) InstallSnapshot(target net.Addr, args *InstallSnapshotRequest, resp *InstallSnapshotResponse, data io.ReadCloser) error {
-	// TODO
-	return nil
+	// Make sure the state file is closed
+	defer data.Close()
+
+	// Get a conn, always close for InstallSnapshot
+	conn, err := n.getConn(target)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+
+	// Send the RPC
+	if err := sendRPC(conn, rpcInstallSnapshot, args); err != nil {
+		return err
+	}
+
+	// Stream the state
+	if _, err := io.Copy(conn.w, data); err != nil {
+		return err
+	}
+
+	// Flush
+	if err := conn.w.Flush(); err != nil {
+		return err
+	}
+
+	// Decode the response, do not return conn
+	return n.decodeResponse(conn, resp, false)
 }
 
 func (n *NetworkTransport) EncodePeer(p net.Addr) []byte {
@@ -221,6 +362,55 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 		}
 	case <-n.shutdownCh:
 		return TransportShutdown
+	}
+	return nil
+}
+
+// decodeResponse is used to decode an RPC response and return the conn
+func (n *NetworkTransport) decodeResponse(conn *netConn, resp interface{}, retConn bool) error {
+	// Decode the error if any
+	var rpcError string
+	if err := conn.dec.Decode(&rpcError); err != nil {
+		conn.Release()
+		return err
+	}
+
+	// Decode the response
+	if err := conn.dec.Decode(resp); err != nil {
+		conn.Release()
+		return err
+	}
+
+	// Return the conn
+	if retConn {
+		n.returnConn(conn)
+	}
+
+	// Format an error if any
+	if rpcError != "" {
+		return fmt.Errorf(rpcError)
+	}
+	return nil
+}
+
+// sendRPC is used to encode and send the RPC
+func sendRPC(conn *netConn, rpcType uint8, args interface{}) error {
+	// Write the request type
+	if err := conn.w.WriteByte(rpcType); err != nil {
+		conn.Release()
+		return err
+	}
+
+	// Send the request
+	if err := conn.enc.Encode(args); err != nil {
+		conn.Release()
+		return err
+	}
+
+	// Flush
+	if err := conn.w.Flush(); err != nil {
+		conn.Release()
+		return err
 	}
 	return nil
 }
