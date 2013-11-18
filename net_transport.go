@@ -8,12 +8,14 @@ import (
 	"log"
 	"net"
 	"sync"
+	"time"
 )
 
 const (
 	rpcAppendEntries uint8 = iota
 	rpcRequestVote
 	rpcInstallSnapshot
+	DefaultTimeoutScale = 1024 * 1024 // 1MB
 )
 
 var (
@@ -52,6 +54,9 @@ type NetworkTransport struct {
 	shutdown     bool
 	shutdownCh   chan struct{}
 	shutdownLock sync.Mutex
+
+	timeout      time.Duration
+	timeoutScale int
 }
 
 type netConn struct {
@@ -68,14 +73,18 @@ func (n *netConn) Release() error {
 }
 
 // Creates a new network transport with the given dailer and listener
-func NewNetworkTransport(dialer net.Dialer, listener net.Listener) *NetworkTransport {
+// The timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
+// the timeout by (SnapshotSize / TimeoutScale)
+func NewNetworkTransport(dialer net.Dialer, listener net.Listener, timeout time.Duration) *NetworkTransport {
 	trans := &NetworkTransport{
-		connPool:   make(map[string][]*netConn),
-		consumeCh:  make(chan RPC),
-		dialer:     dialer,
-		listener:   listener,
-		maxPool:    2,
-		shutdownCh: make(chan struct{}),
+		connPool:     make(map[string][]*netConn),
+		consumeCh:    make(chan RPC),
+		dialer:       dialer,
+		listener:     listener,
+		maxPool:      2,
+		shutdownCh:   make(chan struct{}),
+		timeout:      timeout,
+		timeoutScale: DefaultTimeoutScale,
 	}
 	go trans.listen()
 	return trans
@@ -102,6 +111,11 @@ func (n *NetworkTransport) SetMaxPool(maxPool int) {
 			}
 		}
 	}
+}
+
+// SetTimeoutScale is used to change the default timeout scale
+func (n *NetworkTransport) SetTimeoutScale(scale int) {
+	n.timeoutScale = scale
 }
 
 // Close is used to stop the network transport
@@ -204,6 +218,11 @@ func (n *NetworkTransport) genericRPC(target net.Addr, rpcType uint8, args inter
 		return err
 	}
 
+	// Set a deadline
+	if n.timeout > 0 {
+		conn.conn.SetDeadline(time.Now().Add(n.timeout))
+	}
+
 	// Send the RPC
 	if err := sendRPC(conn, rpcType, args); err != nil {
 		return err
@@ -223,6 +242,12 @@ func (n *NetworkTransport) InstallSnapshot(target net.Addr, args *InstallSnapsho
 		return err
 	}
 	defer conn.Release()
+
+	// Set a deadline, scaled by request size
+	if n.timeout > 0 {
+		timeout := n.timeout * time.Duration(args.Size/int64(n.timeoutScale))
+		conn.conn.SetDeadline(time.Now().Add(timeout))
+	}
 
 	// Send the RPC
 	if err := sendRPC(conn, rpcInstallSnapshot, args); err != nil {
