@@ -5,9 +5,15 @@ import (
 	"time"
 )
 
-// Future is used to represent an application that may occur in the future
+// Future is used to represent an action that may occur in the future
 type Future interface {
 	Error() error
+}
+
+// ApplyFuture is used for Apply() and can returns the FSM response
+type ApplyFuture interface {
+	Future
+	Response() interface{}
 }
 
 // errorFuture is used to return a static error
@@ -17,6 +23,10 @@ type errorFuture struct {
 
 func (e errorFuture) Error() error {
 	return e.err
+}
+
+func (e errorFuture) Response() interface{} {
+	return nil
 }
 
 // deferError can be embedded to allow a future
@@ -53,8 +63,13 @@ func (d *deferError) respond(err error) {
 // the log is considered committed
 type logFuture struct {
 	deferError
-	log    Log
-	policy quorumPolicy
+	log      Log
+	policy   quorumPolicy
+	response interface{}
+}
+
+func (l *logFuture) Response() interface{} {
+	return l.response
 }
 
 type shutdownFuture struct {

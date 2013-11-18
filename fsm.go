@@ -8,7 +8,7 @@ import (
 // clients to make use of the replicated log
 type FSM interface {
 	// Apply log is invoked once a log entry is commited
-	Apply([]byte)
+	Apply([]byte) interface{}
 
 	// Snapshot is used to support log compaction. This call should
 	// return an FSMSnapshot which can be used to save a point-in-time

@@ -168,7 +168,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 // An optional timeout can be provided to limit the amount of time we wait
 // for the command to be started. This must be run on the leader or it
 // will fail.
-func (r *Raft) Apply(cmd []byte, timeout time.Duration) Future {
+func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
 	var timer <-chan time.Time
 	if timeout > 0 {
 		timer = time.After(timeout)
@@ -319,7 +319,7 @@ func (r *Raft) runFSM() {
 
 		case commitTuple := <-r.fsmCommitCh:
 			// Apply the log
-			r.fsm.Apply(commitTuple.log.Data)
+			resp := r.fsm.Apply(commitTuple.log.Data)
 
 			// Update the indexes
 			lastIndex = commitTuple.log.Index
@@ -327,6 +327,7 @@ func (r *Raft) runFSM() {
 
 			// Invoke the future if given
 			if commitTuple.future != nil {
+				commitTuple.future.response = resp
 				commitTuple.future.respond(nil)
 			}
 		case <-r.shutdownCh:
@@ -944,6 +945,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	case r.fsmRestoreCh <- future:
 	case <-r.shutdownCh:
 		future.respond(RaftShutdown)
+		return
 	}
 
 	// Wait for the restore to happen
@@ -968,6 +970,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 		log.Printf("[ERR] Failed to compact logs: %v", err)
 	}
 
+	log.Printf("[INFO] Installed remote snapshot")
 	resp.Success = true
 	return
 }

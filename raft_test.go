@@ -326,6 +326,11 @@ func TestRaft_SingleNode(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 
+	// Check the response
+	if future.Response().(int) != 1 {
+		t.Fatalf("bad response: %v", future.Response())
+	}
+
 	// Check that it is applied to the FSM
 	if len(c.fsms[0].logs) != 1 {
 		t.Fatalf("did not apply to FSM!")
