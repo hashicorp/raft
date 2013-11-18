@@ -128,3 +128,19 @@ func (r *raftState) goFunc(f func()) {
 		f()
 	}()
 }
+
+// getLastIndex returns the last index in stable storage.
+// Either from the last log or from the last snapshot
+func (r *raftState) getLastIndex() uint64 {
+	return max(r.getLastLogIndex(), r.getLastSnapshotIndex())
+}
+
+// getLastEntry returns the last index and term in stable storage.
+// Either from the last log or from the last snapshot
+func (r *raftState) getLastEntry() (uint64, uint64) {
+	if r.getLastLogIndex() >= r.getLastSnapshotIndex() {
+		return r.getLastLogIndex(), r.getLastLogTerm()
+	} else {
+		return r.getLastSnapshotIndex(), r.getLastSnapshotTerm()
+	}
+}
