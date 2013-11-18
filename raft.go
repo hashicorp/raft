@@ -404,9 +404,7 @@ func (r *Raft) runCandidate() {
 			if vote.Term > r.getCurrentTerm() {
 				log.Printf("[DEBUG] Newer term discovered")
 				r.setState(Follower)
-				if err := r.setCurrentTerm(vote.Term); err != nil {
-					log.Printf("[ERR] Failed to update current term: %v", err)
-				}
+				r.setCurrentTerm(vote.Term)
 				return
 			}
 
@@ -745,10 +743,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	if a.Term > r.getCurrentTerm() || r.getState() != Follower {
 		// Ensure transition to follower
 		r.setState(Follower)
-		if err := r.setCurrentTerm(a.Term); err != nil {
-			log.Printf("[ERR] Failed to update current term: %v", err)
-			return
-		}
+		r.setCurrentTerm(a.Term)
 		resp.Term = a.Term
 	}
 
@@ -832,10 +827,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	if req.Term > r.getCurrentTerm() {
 		// Ensure transition to follower
 		r.setState(Follower)
-		if err := r.setCurrentTerm(req.Term); err != nil {
-			log.Printf("[ERR] Failed to update current term: %v", err)
-			return
-		}
+		r.setCurrentTerm(req.Term)
 		resp.Term = req.Term
 	}
 
@@ -904,10 +896,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	if req.Term > r.getCurrentTerm() {
 		// Ensure transition to follower
 		r.setState(Follower)
-		if err := r.setCurrentTerm(req.Term); err != nil {
-			log.Printf("[ERR] Failed to update current term: %v", err)
-			return
-		}
+		r.setCurrentTerm(req.Term)
 		resp.Term = req.Term
 	}
 
@@ -992,10 +981,7 @@ func (r *Raft) electSelf() <-chan *RequestVoteResponse {
 	respCh := make(chan *RequestVoteResponse, len(r.peers)+1)
 
 	// Increment the term
-	if err := r.setCurrentTerm(r.getCurrentTerm() + 1); err != nil {
-		log.Printf("[ERR] Failed to update current term: %v", err)
-		return nil
-	}
+	r.setCurrentTerm(r.getCurrentTerm() + 1)
 
 	// Construct the request
 	lastIdx, lastTerm := r.getLastEntry()
@@ -1061,14 +1047,12 @@ func (r *Raft) persistVote(term uint64, candidate string) error {
 }
 
 // setCurrentTerm is used to set the current term in a durable manner
-func (r *Raft) setCurrentTerm(t uint64) error {
+func (r *Raft) setCurrentTerm(t uint64) {
 	// Persist to disk first
 	if err := r.stable.SetUint64(keyCurrentTerm, t); err != nil {
-		log.Printf("[ERR] Failed to save current term: %v", err)
-		return err
+		panic(fmt.Errorf("Failed to save current term: %v", err))
 	}
 	r.raftState.setCurrentTerm(t)
-	return nil
 }
 
 // runSnapshots is a long running goroutine used to manage taking
