@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"sync"
@@ -106,6 +107,11 @@ func (i *inflight) Commit(index uint64, peer net.Addr) {
 
 	// Check if we've satisfied the commit
 	if op.policy.Commit(peer) {
+		// Sanity check for sequential commit
+		if _, ok := i.operations[index-1]; ok {
+			panic(fmt.Sprintf("Non-sequential commit of %d, previous index not committed", index))
+		}
+
 		// Stop tracking since it is committed
 		delete(i.operations, index)
 

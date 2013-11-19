@@ -223,8 +223,9 @@ func TestRaft_Integ(t *testing.T) {
 	}
 
 	// Shoot two nodes in the head!
-	envs[0].Release()
-	envs[1].Release()
+	rm1, rm2 := envs[0], envs[1]
+	rm1.Release()
+	rm2.Release()
 	envs = envs[2:]
 	time.Sleep(10 * time.Millisecond)
 
@@ -250,10 +251,26 @@ func TestRaft_Integ(t *testing.T) {
 		envs = append(envs, env)
 	}
 
+	// Remove the old nodes
+	NoErr(WaitFuture(leader.raft.RemovePeer(rm1.raft.localAddr), t), t)
+	NoErr(WaitFuture(leader.raft.RemovePeer(rm2.raft.localAddr), t), t)
+
+	// Shoot the leader
+	env1.Release()
+	time.Sleep(3 * conf.HeartbeatTimeout)
+
+	// Wait for a leader
+	leader, err = WaitForAny(Leader, envs)
+	NoErr(err, t)
+
 	allEnvs := append([]*RaftEnv{env1}, envs...)
 	CheckConsistent(allEnvs, t)
 
-	for _, e := range allEnvs {
+	if len(env1.fsm.logs) != 300 {
+		t.Fatalf("should apply 300 logs! %d", len(env1.fsm.logs))
+	}
+
+	for _, e := range envs {
 		e.Release()
 	}
 }

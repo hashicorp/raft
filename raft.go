@@ -611,12 +611,6 @@ func (r *Raft) processLogs(index uint64, future *logFuture) {
 		return
 	}
 
-	// Ensure the leader commits contiguous logs (sanity check)
-	if r.getState() == Leader && index != lastApplied+1 {
-		log.Printf("[ERR] %v : last %d curr: %d", r, r.getLastApplied(), index)
-		panic("leader cannot apply log without applying preceeding logs")
-	}
-
 	// Apply all the preceeding logs
 	for idx := r.getLastApplied() + 1; idx <= index; idx++ {
 		// Get the log, either from the future or from our log store
