@@ -107,7 +107,7 @@ START:
 	// Update the s based on success
 	if resp.Success {
 		// Mark any inflight logs as committed
-		for i := s.matchIndex; i <= maxIndex; i++ {
+		for i := s.matchIndex + 1; i <= maxIndex; i++ {
 			s.inflight.Commit(i, s.peer)
 		}
 
@@ -195,7 +195,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	// Check for success
 	if resp.Success {
 		// Mark any inflight logs as committed
-		for i := s.matchIndex; i <= meta.Index; i++ {
+		for i := s.matchIndex + 1; i <= meta.Index; i++ {
 			s.inflight.Commit(i, s.peer)
 		}
 
