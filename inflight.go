@@ -58,6 +58,8 @@ func (e *excludeNodeQuorum) Commit(p net.Addr) bool {
 type inflight struct {
 	sync.Mutex
 	commitCh   chan *logFuture
+	minCommit  uint64
+	maxCommit  uint64
 	operations map[uint64]*logFuture
 	stopCh     chan struct{}
 }
@@ -67,6 +69,8 @@ type inflight struct {
 func newInflight(commitCh chan *logFuture) *inflight {
 	return &inflight{
 		commitCh:   commitCh,
+		minCommit:  0,
+		maxCommit:  0,
 		operations: make(map[uint64]*logFuture),
 		stopCh:     make(chan struct{}),
 	}
@@ -76,7 +80,16 @@ func newInflight(commitCh chan *logFuture) *inflight {
 func (i *inflight) Start(l *logFuture) {
 	i.Lock()
 	defer i.Unlock()
-	i.operations[l.log.Index] = l
+
+	idx := l.log.Index
+	i.operations[idx] = l
+
+	if idx > i.maxCommit {
+		i.maxCommit = idx
+	}
+	if i.minCommit == 0 {
+		i.minCommit = idx
+	}
 }
 
 // Cancel is used to cancel all in-flight operations.
@@ -100,6 +113,10 @@ func (i *inflight) Cancel(err error) {
 
 	// Close the commmitCh
 	close(i.commitCh)
+
+	// Reset indexes
+	i.minCommit = 0
+	i.maxCommit = 0
 }
 
 // Commit is used by leader replication routines to indicate that
@@ -117,8 +134,9 @@ func (i *inflight) Commit(index uint64, peer net.Addr) {
 	// Check if we've satisfied the commit
 	if op.policy.Commit(peer) {
 		// Sanity check for sequential commit
-		if _, ok := i.operations[index-1]; ok {
-			panic(fmt.Sprintf("Non-sequential commit of %d, previous index not committed", index))
+		if index != i.minCommit {
+			panic(fmt.Sprintf("Non-sequential commit of %d, min index %d, max index %d",
+				index, i.minCommit, i.maxCommit))
 		}
 
 		// Notify of commit
@@ -126,6 +144,16 @@ func (i *inflight) Commit(index uint64, peer net.Addr) {
 		case i.commitCh <- op:
 			// Stop tracking since it is committed
 			delete(i.operations, index)
+
+			// Update the indexes
+			if index == i.maxCommit {
+				i.minCommit = 0
+				i.maxCommit = 0
+
+			} else {
+				i.minCommit++
+			}
+
 		case <-i.stopCh:
 		}
 	}
