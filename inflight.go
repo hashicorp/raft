@@ -59,6 +59,7 @@ type inflight struct {
 	sync.Mutex
 	commitCh   chan *logFuture
 	operations map[uint64]*logFuture
+	stopCh     chan struct{}
 }
 
 // NewInflight returns an inflight struct that notifies
@@ -67,6 +68,7 @@ func newInflight(commitCh chan *logFuture) *inflight {
 	return &inflight{
 		commitCh:   commitCh,
 		operations: make(map[uint64]*logFuture),
+		stopCh:     make(chan struct{}),
 	}
 }
 
@@ -81,6 +83,10 @@ func (i *inflight) Start(l *logFuture) {
 // This is done when the leader steps down, and all futures
 // are sent the given error.
 func (i *inflight) Cancel(err error) {
+	// Close the channel first to unblock any pending commits
+	close(i.stopCh)
+
+	// Lock after close to avoid deadlock
 	i.Lock()
 	defer i.Unlock()
 
@@ -91,6 +97,9 @@ func (i *inflight) Cancel(err error) {
 
 	// Clear the map
 	i.operations = make(map[uint64]*logFuture)
+
+	// Close the commmitCh
+	close(i.commitCh)
 }
 
 // Commit is used by leader replication routines to indicate that
@@ -112,10 +121,12 @@ func (i *inflight) Commit(index uint64, peer net.Addr) {
 			panic(fmt.Sprintf("Non-sequential commit of %d, previous index not committed", index))
 		}
 
-		// Stop tracking since it is committed
-		delete(i.operations, index)
-
 		// Notify of commit
-		i.commitCh <- op
+		select {
+		case i.commitCh <- op:
+			// Stop tracking since it is committed
+			delete(i.operations, index)
+		case <-i.stopCh:
+		}
 	}
 }

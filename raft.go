@@ -471,6 +471,11 @@ func (r *Raft) runLeader() {
 		// Cancel inflight requests
 		r.leaderState.inflight.Cancel(LeadershipLost)
 
+		// Respond to any requests in the queue
+		for future := range r.leaderState.commitCh {
+			future.respond(LeadershipLost)
+		}
+
 		// Clear all the state
 		r.leaderState.commitCh = nil
 		r.leaderState.inflight = nil
