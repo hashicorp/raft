@@ -13,6 +13,21 @@ const (
 	Shutdown
 )
 
+func (s RaftState) String() string {
+	switch s {
+	case Follower:
+		return "Follower"
+	case Candidate:
+		return "Candidate"
+	case Leader:
+		return "Leader"
+	case Shutdown:
+		return "Shutdown"
+	default:
+		return "Unknown"
+	}
+}
+
 // raftState is used to maintain various state variables
 // and provides an interface to set/get the variables in a
 // thread safe manner
