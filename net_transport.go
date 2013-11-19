@@ -129,13 +129,12 @@ func (n *NetworkTransport) SetTimeoutScale(scale int) {
 // Close is used to stop the network transport
 func (n *NetworkTransport) Close() error {
 	n.shutdownLock.Lock()
-	defer n.shutdownLock.Lock()
+	defer n.shutdownLock.Unlock()
 
 	if !n.shutdown {
 		close(n.shutdownCh)
 		n.stream.Close()
 		n.shutdown = true
-		n.SetMaxPool(0)
 	}
 	return nil
 }
@@ -203,7 +202,7 @@ func (n *NetworkTransport) returnConn(conn *netConn) {
 	key := conn.target.String()
 	conns, _ := n.connPool[key]
 
-	if len(conns) < n.maxPool {
+	if !n.shutdown && len(conns) < n.maxPool {
 		n.connPool[key] = append(conns, conn)
 	} else {
 		conn.Release()
@@ -254,6 +253,9 @@ func (n *NetworkTransport) InstallSnapshot(target net.Addr, args *InstallSnapsho
 	// Set a deadline, scaled by request size
 	if n.timeout > 0 {
 		timeout := n.timeout * time.Duration(args.Size/int64(n.timeoutScale))
+		if timeout < n.timeout {
+			timeout = n.timeout
+		}
 		conn.conn.SetDeadline(time.Now().Add(timeout))
 	}
 
