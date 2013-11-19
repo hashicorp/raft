@@ -278,7 +278,7 @@ func (r *Raft) State() RaftState {
 }
 
 func (r *Raft) String() string {
-	return fmt.Sprintf("Node at %s", r.localAddr.String())
+	return fmt.Sprintf("Node at %s [%v]", r.localAddr.String(), r.getState())
 }
 
 // runFSM is a long running goroutine responsible for applying logs
@@ -499,7 +499,7 @@ func (r *Raft) startReplication(peer net.Addr) {
 		stopCh:      make(chan uint64, 1),
 		triggerCh:   make(chan struct{}, 1),
 		currentTerm: r.getCurrentTerm(),
-		matchIndex:  lastIdx,
+		matchIndex:  0,
 		nextIndex:   lastIdx + 1,
 	}
 	r.leaderState.replState[peer.String()] = s
@@ -605,10 +605,16 @@ func (r *Raft) dispatchLog(applyLog *logFuture) {
 // up to the given index
 func (r *Raft) processLogs(index uint64, future *logFuture) {
 	// Reject logs we've applied already
-	if index <= r.getLastApplied() {
-		log.Printf("[WARN] Skipping application of old log: %d",
-			index)
+	lastApplied := r.getLastApplied()
+	if index <= lastApplied {
+		log.Printf("[WARN] Skipping application of old log: %d", index)
 		return
+	}
+
+	// Ensure the leader commits contiguous logs (sanity check)
+	if r.getState() == Leader && index != lastApplied+1 {
+		log.Printf("[ERR] %v : last %d curr: %d", r, r.getLastApplied(), index)
+		panic("leader cannot apply log without applying preceeding logs")
 	}
 
 	// Apply all the preceeding logs
