@@ -3,12 +3,13 @@ package raft
 import (
 	"bytes"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 )
 
 func TestNetworkTransport_StartStop(t *testing.T) {
-	trans, err := NewTCPTransport("127.0.0.1:0", time.Second)
+	trans, err := NewTCPTransport("127.0.0.1:0", 2, time.Second)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -17,7 +18,7 @@ func TestNetworkTransport_StartStop(t *testing.T) {
 
 func TestNetworkTransport_AppendEntries(t *testing.T) {
 	// Transport 1 is consumer
-	trans1, err := NewTCPTransport("127.0.0.1:0", time.Second)
+	trans1, err := NewTCPTransport("127.0.0.1:0", 2, time.Second)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -63,7 +64,7 @@ func TestNetworkTransport_AppendEntries(t *testing.T) {
 	}()
 
 	// Transport 2 makes outbound request
-	trans2, err := NewTCPTransport("127.0.0.1:0", time.Second)
+	trans2, err := NewTCPTransport("127.0.0.1:0", 2, time.Second)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -82,7 +83,7 @@ func TestNetworkTransport_AppendEntries(t *testing.T) {
 
 func TestNetworkTransport_RequestVote(t *testing.T) {
 	// Transport 1 is consumer
-	trans1, err := NewTCPTransport("127.0.0.1:0", time.Second)
+	trans1, err := NewTCPTransport("127.0.0.1:0", 2, time.Second)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -120,7 +121,7 @@ func TestNetworkTransport_RequestVote(t *testing.T) {
 	}()
 
 	// Transport 2 makes outbound request
-	trans2, err := NewTCPTransport("127.0.0.1:0", time.Second)
+	trans2, err := NewTCPTransport("127.0.0.1:0", 2, time.Second)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -139,7 +140,7 @@ func TestNetworkTransport_RequestVote(t *testing.T) {
 
 func TestNetworkTransport_InstallSnapshot(t *testing.T) {
 	// Transport 1 is consumer
-	trans1, err := NewTCPTransport("127.0.0.1:0", time.Second)
+	trans1, err := NewTCPTransport("127.0.0.1:0", 2, time.Second)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -187,7 +188,7 @@ func TestNetworkTransport_InstallSnapshot(t *testing.T) {
 	}()
 
 	// Transport 2 makes outbound request
-	trans2, err := NewTCPTransport("127.0.0.1:0", time.Second)
+	trans2, err := NewTCPTransport("127.0.0.1:0", 2, time.Second)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -209,7 +210,7 @@ func TestNetworkTransport_InstallSnapshot(t *testing.T) {
 
 func TestNetworkTransport_EncodeDecode(t *testing.T) {
 	// Transport 1 is consumer
-	trans1, err := NewTCPTransport("127.0.0.1:0", time.Second)
+	trans1, err := NewTCPTransport("127.0.0.1:0", 2, time.Second)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -221,5 +222,92 @@ func TestNetworkTransport_EncodeDecode(t *testing.T) {
 
 	if dec.String() != local.String() {
 		t.Fatalf("enc/dec fail: %v %v", dec, local)
+	}
+}
+
+func TestNetworkTransport_PooledConn(t *testing.T) {
+	// Transport 1 is consumer
+	trans1, err := NewTCPTransport("127.0.0.1:0", 2, time.Second)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	defer trans1.Close()
+	rpcCh := trans1.Consumer()
+
+	// Make the RPC request
+	args := AppendEntriesRequest{
+		Term:         10,
+		Leader:       []byte("cartman"),
+		PrevLogEntry: 100,
+		PrevLogTerm:  4,
+		Entries: []*Log{
+			&Log{
+				Index: 101,
+				Term:  4,
+				Type:  LogNoop,
+			},
+		},
+		LeaderCommitIndex: 90,
+	}
+	resp := AppendEntriesResponse{
+		Term:    4,
+		LastLog: 90,
+		Success: true,
+	}
+
+	// Listen for a request
+	go func() {
+		for {
+			select {
+			case rpc := <-rpcCh:
+				// Verify the command
+				req := rpc.Command.(*AppendEntriesRequest)
+				if !reflect.DeepEqual(req, &args) {
+					t.Fatalf("command mismatch: %#v %#v", *req, args)
+				}
+				rpc.Respond(&resp, nil)
+
+			case <-time.After(200 * time.Millisecond):
+				return
+			}
+		}
+	}()
+
+	// Transport 2 makes outbound request, 3 conn pool
+	trans2, err := NewTCPTransport("127.0.0.1:0", 3, time.Second)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	defer trans2.Close()
+
+	// Create wait group
+	wg := &sync.WaitGroup{}
+	wg.Add(5)
+
+	appendFunc := func() {
+		defer wg.Done()
+		var out AppendEntriesResponse
+		if err := trans2.AppendEntries(trans1.LocalAddr(), &args, &out); err != nil {
+			t.Fatalf("err: %v", err)
+		}
+
+		// Verify the response
+		if !reflect.DeepEqual(resp, out) {
+			t.Fatalf("command mismatch: %#v %#v", resp, out)
+		}
+	}
+
+	// Try to do parallel appends, should stress the conn pool
+	for i := 0; i < 5; i++ {
+		go appendFunc()
+	}
+
+	// Wait for the routines to finish
+	wg.Wait()
+
+	// Check the conn pool size
+	addr := trans1.LocalAddr()
+	if len(trans2.connPool[addr.String()]) != 3 {
+		t.Fatalf("Expected 2 pooled conns!")
 	}
 }
