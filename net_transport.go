@@ -82,13 +82,14 @@ func (n *netConn) Release() error {
 }
 
 // Creates a new network transport with the given dailer and listener
+// The maxPool controls how many connections we will pool.
 // The timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
 // the timeout by (SnapshotSize / TimeoutScale)
-func NewNetworkTransport(stream StreamLayer, timeout time.Duration) *NetworkTransport {
+func NewNetworkTransport(stream StreamLayer, maxPool int, timeout time.Duration) *NetworkTransport {
 	trans := &NetworkTransport{
 		connPool:     make(map[string][]*netConn),
 		consumeCh:    make(chan RPC),
-		maxPool:      2,
+		maxPool:      maxPool,
 		shutdownCh:   make(chan struct{}),
 		stream:       stream,
 		timeout:      timeout,
@@ -96,29 +97,6 @@ func NewNetworkTransport(stream StreamLayer, timeout time.Duration) *NetworkTran
 	}
 	go trans.listen()
 	return trans
-}
-
-// SetMaxPool is used to set the maximum number of pooled connections per host
-func (n *NetworkTransport) SetMaxPool(maxPool int) {
-	reduced := maxPool < n.maxPool
-	n.maxPool = maxPool
-
-	// If we reduced the pool size, we need to close any open connections
-	if reduced {
-		n.shutdownLock.Lock()
-		defer n.shutdownLock.Lock()
-
-		for key := range n.connPool {
-			conns := n.connPool[key]
-			if len(conns) > maxPool {
-				for i := maxPool; i < len(conns); i++ {
-					conns[i].Release()
-					conns[i] = nil
-				}
-				n.connPool[key] = conns[:maxPool]
-			}
-		}
-	}
 }
 
 // Close is used to stop the network transport

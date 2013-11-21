@@ -81,7 +81,7 @@ func MakeRaft(t *testing.T, conf *Config) *RaftEnv {
 
 	env.fsm = &MockFSM{}
 
-	trans, err := NewTCPTransport("127.0.0.1:0", time.Second)
+	trans, err := NewTCPTransport("127.0.0.1:0", 2, time.Second)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}

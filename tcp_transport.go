@@ -12,7 +12,7 @@ type TCPStreamLayer struct {
 
 // NewTCPTransport returns a NetworkTransport that is built on top of
 // a TCP streaming transport layer
-func NewTCPTransport(bindAddr string, timeout time.Duration) (*NetworkTransport, error) {
+func NewTCPTransport(bindAddr string, maxPool int, timeout time.Duration) (*NetworkTransport, error) {
 	// Try to bind
 	list, err := net.Listen("tcp", bindAddr)
 	if err != nil {
@@ -23,7 +23,7 @@ func NewTCPTransport(bindAddr string, timeout time.Duration) (*NetworkTransport,
 	stream := &TCPStreamLayer{listener: list.(*net.TCPListener)}
 
 	// Create the network transport
-	trans := NewNetworkTransport(stream, timeout)
+	trans := NewNetworkTransport(stream, maxPool, timeout)
 	return trans, nil
 }
 
