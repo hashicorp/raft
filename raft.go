@@ -96,7 +96,10 @@ type Raft struct {
 	trans Transport
 }
 
-// NewRaft is used to construct a new Raft node
+// NewRaft is used to construct a new Raft node. It takes a configuration, as well
+// as implementations of various interfaces that are required. If we have any old state,
+// such as snapshots, logs, peers, etc, all those will be restored when creating the
+// Raft node.
 func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps SnapshotStore,
 	peerStore PeerStore, trans Transport) (*Raft, error) {
 	// Try to restore the current term
