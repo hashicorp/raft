@@ -61,3 +61,56 @@ func TestInflight_Cancel(t *testing.T) {
 		t.Fatalf("expected error")
 	}
 }
+
+func TestInflight_CommitRange(t *testing.T) {
+	commitCh := make(chan *logFuture, 3)
+	in := newInflight(commitCh)
+
+	// Commit a few transaction as being in flight
+	l1 := &logFuture{log: Log{Index: 2}}
+	l1.policy = newMajorityQuorum(5)
+	in.Start(l1)
+
+	l2 := &logFuture{log: Log{Index: 3}}
+	l2.policy = newMajorityQuorum(5)
+	in.Start(l2)
+
+	l3 := &logFuture{log: Log{Index: 4}}
+	l3.policy = newMajorityQuorum(5)
+	in.Start(l3)
+
+	// Commit ranges
+	in.CommitRange(1, 5, nil)
+	in.CommitRange(1, 4, nil)
+	in.CommitRange(1, 10, nil)
+
+	// Should get 3 back
+	if len(commitCh) != 3 {
+		t.Fatalf("expected all 3 to commit")
+	}
+}
+
+// Should panic if we commit non contiguously!
+func TestInflight_NonContiguous(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("should panic")
+		}
+	}()
+
+	commitCh := make(chan *logFuture, 3)
+	in := newInflight(commitCh)
+
+	// Commit a few transaction as being in flight
+	l1 := &logFuture{log: Log{Index: 2}}
+	l1.policy = newMajorityQuorum(5)
+	in.Start(l1)
+
+	l2 := &logFuture{log: Log{Index: 3}}
+	l2.policy = newMajorityQuorum(5)
+	in.Start(l2)
+
+	in.Commit(3, nil)
+	in.Commit(3, nil)
+	in.Commit(3, nil) // panic!
+}
