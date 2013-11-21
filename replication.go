@@ -60,7 +60,16 @@ START:
 
 	// Get the previous log entry based on the nextIndex.
 	// Guard for the first index, since there is no 0 log entry
-	if s.nextIndex > 1 {
+	// Guard against the previous index being a snapshot as well
+	if s.nextIndex == 1 {
+		req.PrevLogEntry = 0
+		req.PrevLogTerm = 0
+
+	} else if (s.nextIndex - 1) == r.getLastSnapshotIndex() {
+		req.PrevLogEntry = r.getLastSnapshotIndex()
+		req.PrevLogTerm = r.getLastSnapshotTerm()
+
+	} else {
 		if err := r.logs.GetLog(s.nextIndex-1, &l); err != nil {
 			if err == LogNotFound {
 				goto SEND_SNAP
@@ -73,9 +82,6 @@ START:
 		// Set the previous index and term (0 if nextIndex is 1)
 		req.PrevLogEntry = l.Index
 		req.PrevLogTerm = l.Term
-	} else {
-		req.PrevLogEntry = 0
-		req.PrevLogTerm = 0
 	}
 
 	// Append up to MaxAppendEntries or up to the lastIndex

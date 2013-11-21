@@ -1174,6 +1174,10 @@ func (r *Raft) takeSnapshot() error {
 		return fmt.Errorf("Failed to close snapshot: %v", err)
 	}
 
+	// Update the last stable snapshot info
+	r.setLastSnapshotIndex(req.index)
+	r.setLastSnapshotTerm(req.term)
+
 	// Compact the logs
 	if err := r.compactLogs(req.index); err != nil {
 		return err
@@ -1196,10 +1200,8 @@ func (r *Raft) compactLogs(snapIdx uint64) error {
 	// Truncate up to the end of the snapshot, or `TrailingLogs`
 	// back from the head, which ever is futher back. This ensures
 	// at least `TrailingLogs` entries, but does not allow logs
-	// after the snapshot to be removed. We include the last index of
-	// the snapshot so that the replication routines can easily check
-	// for the previous log.
-	maxLog := min(snapIdx-1, r.getLastLogIndex()-r.conf.TrailingLogs)
+	// after the snapshot to be removed.
+	maxLog := min(snapIdx, r.getLastLogIndex()-r.conf.TrailingLogs)
 
 	// Log this
 	log.Printf("[INFO] Compacting logs from %d to %d", minLog, maxLog)
