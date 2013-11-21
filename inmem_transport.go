@@ -82,8 +82,7 @@ func (i *InmemTransport) RequestVote(target net.Addr, args *RequestVoteRequest, 
 	return nil
 }
 
-func (i *InmemTransport) InstallSnapshot(target net.Addr, args *InstallSnapshotRequest, resp *InstallSnapshotResponse, data io.ReadCloser) error {
-	defer data.Close()
+func (i *InmemTransport) InstallSnapshot(target net.Addr, args *InstallSnapshotRequest, resp *InstallSnapshotResponse, data io.Reader) error {
 	rpcResp, err := i.makeRPC(target, args, data, 10*i.timeout)
 	if err != nil {
 		return err

@@ -56,7 +56,7 @@ type NetworkTransport struct {
 	stream StreamLayer
 
 	timeout      time.Duration
-	timeoutScale int
+	TimeoutScale int
 }
 
 // StreamLayer is used with the NetworkTransport to provide
@@ -92,7 +92,7 @@ func NewNetworkTransport(stream StreamLayer, timeout time.Duration) *NetworkTran
 		shutdownCh:   make(chan struct{}),
 		stream:       stream,
 		timeout:      timeout,
-		timeoutScale: DefaultTimeoutScale,
+		TimeoutScale: DefaultTimeoutScale,
 	}
 	go trans.listen()
 	return trans
@@ -119,11 +119,6 @@ func (n *NetworkTransport) SetMaxPool(maxPool int) {
 			}
 		}
 	}
-}
-
-// SetTimeoutScale is used to change the default timeout scale
-func (n *NetworkTransport) SetTimeoutScale(scale int) {
-	n.timeoutScale = scale
 }
 
 // Close is used to stop the network transport
@@ -239,10 +234,7 @@ func (n *NetworkTransport) genericRPC(target net.Addr, rpcType uint8, args inter
 	return n.decodeResponse(conn, resp, true)
 }
 
-func (n *NetworkTransport) InstallSnapshot(target net.Addr, args *InstallSnapshotRequest, resp *InstallSnapshotResponse, data io.ReadCloser) error {
-	// Make sure the state file is closed
-	defer data.Close()
-
+func (n *NetworkTransport) InstallSnapshot(target net.Addr, args *InstallSnapshotRequest, resp *InstallSnapshotResponse, data io.Reader) error {
 	// Get a conn, always close for InstallSnapshot
 	conn, err := n.getConn(target)
 	if err != nil {
@@ -252,7 +244,7 @@ func (n *NetworkTransport) InstallSnapshot(target net.Addr, args *InstallSnapsho
 
 	// Set a deadline, scaled by request size
 	if n.timeout > 0 {
-		timeout := n.timeout * time.Duration(args.Size/int64(n.timeoutScale))
+		timeout := n.timeout * time.Duration(args.Size/int64(n.TimeoutScale))
 		if timeout < n.timeout {
 			timeout = n.timeout
 		}
