@@ -158,3 +158,19 @@ func (i *inflight) Commit(index uint64, peer net.Addr) {
 		}
 	}
 }
+
+// CommitRange is used to commit a range of indexes inclusively
+// It optimized to avoid commits for indexes that are not tracked
+func (i *inflight) CommitRange(minIndex, maxIndex uint64, peer net.Addr) {
+	i.Lock()
+	minInflight := i.minCommit
+	i.Unlock()
+
+	// Update the minimum index
+	minIndex = max(minInflight, minIndex)
+
+	// Commit each index
+	for idx := minIndex; idx <= maxIndex; idx++ {
+		i.Commit(idx, peer)
+	}
+}
