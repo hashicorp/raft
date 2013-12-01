@@ -113,9 +113,7 @@ data integer);`,
 	return nil
 }
 
-func (s *SQLiteStore) Set(key []byte, val []byte) error {
-	stmt := s.prepared[confSetKVStr]
-	res, err := stmt.Exec(key, val)
+func (s *SQLiteStore) checkSet(res sql.Result, err error) error {
 	if err != nil {
 		return err
 	}
@@ -124,9 +122,19 @@ func (s *SQLiteStore) Set(key []byte, val []byte) error {
 		return err
 	}
 	if n != 1 {
-		return fmt.Errorf("Failed to set key: %s", key)
+		return fmt.Errorf("Failed to set key")
 	}
 	return nil
+}
+
+func (s *SQLiteStore) Set(key []byte, val []byte) error {
+	stmt := s.prepared[confSetKVStr]
+	return s.checkSet(stmt.Exec(key, val))
+}
+
+func (s *SQLiteStore) SetUint64(key []byte, val uint64) error {
+	stmt := s.prepared[confSetKVInt]
+	return s.checkSet(stmt.Exec(key, val))
 }
 
 func (s *SQLiteStore) Get(key []byte) ([]byte, error) {
@@ -138,22 +146,6 @@ func (s *SQLiteStore) Get(key []byte) ([]byte, error) {
 		return nil, notFound
 	}
 	return val, err
-}
-
-func (s *SQLiteStore) SetUint64(key []byte, val uint64) error {
-	stmt := s.prepared[confSetKVInt]
-	res, err := stmt.Exec(key, val)
-	if err != nil {
-		return err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n != 1 {
-		return fmt.Errorf("Failed to set key: %s", key)
-	}
-	return nil
 }
 
 func (s *SQLiteStore) GetUint64(key []byte) (uint64, error) {
@@ -201,18 +193,7 @@ func (s *SQLiteStore) GetLog(index uint64, log *Log) error {
 
 func (s *SQLiteStore) StoreLog(log *Log) error {
 	stmt := s.prepared[logsStore]
-	res, err := stmt.Exec(log.Index, log.Term, log.Type, log.Data)
-	if err != nil {
-		return err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n != 1 {
-		return fmt.Errorf("Failed to insert log: %#v", *log)
-	}
-	return nil
+	return s.checkSet(stmt.Exec(log.Index, log.Term, log.Type, log.Data))
 }
 
 func (s *SQLiteStore) DeleteRange(min, max uint64) error {
