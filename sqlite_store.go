@@ -68,7 +68,6 @@ func (s *SQLiteStore) Close() error {
 func (s *SQLiteStore) initialize() error {
 	// Set the pragma first
 	pragmas := []string{
-		"pragma locking_mode=exclusive;",
 		"pragma journal_mode=wal;",
 	}
 	for _, p := range pragmas {
@@ -218,16 +217,9 @@ func (s *SQLiteStore) StoreLog(log *Log) error {
 
 func (s *SQLiteStore) DeleteRange(min, max uint64) error {
 	stmt := s.prepared[logsDelete]
-	res, err := stmt.Exec(min, max)
+	_, err := stmt.Exec(min, max)
 	if err != nil {
 		return err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return fmt.Errorf("Failed to delete any logs between: %d %d", min, max)
 	}
 	return nil
 }

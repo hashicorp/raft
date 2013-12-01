@@ -26,8 +26,7 @@ type RaftEnv struct {
 	dir      string
 	conf     *Config
 	fsm      *MockFSM
-	logs     *LevelDBLogStore
-	store    *LevelDBStableStore
+	store    *SQLiteStore
 	snapshot *FileSnapshotStore
 	peers    *JSONPeers
 	trans    *NetworkTransport
@@ -40,7 +39,6 @@ func (r *RaftEnv) Release() {
 	if err := f.Error(); err != nil {
 		panic(err)
 	}
-	r.logs.Close()
 	r.store.Close()
 	r.trans.Close()
 	os.RemoveAll(r.dir)
@@ -61,13 +59,7 @@ func MakeRaft(t *testing.T, conf *Config) *RaftEnv {
 	}
 	env.dir = dir
 
-	logs, err := NewLevelDBLogStore(dir)
-	if err != nil {
-		t.Fatalf("err: %v ", err)
-	}
-	env.logs = logs
-
-	stable, err := NewLevelDBStableStore(dir)
+	stable, err := NewSQLiteStore(dir)
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
@@ -90,7 +82,7 @@ func MakeRaft(t *testing.T, conf *Config) *RaftEnv {
 	env.peers = NewJSONPeers(dir, trans)
 
 	log.Printf("[INFO] Starting node at %v", trans.LocalAddr())
-	raft, err := NewRaft(conf, env.fsm, logs, stable, snap, env.peers, trans)
+	raft, err := NewRaft(conf, env.fsm, stable, stable, snap, env.peers, trans)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
