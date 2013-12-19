@@ -3,6 +3,7 @@ package raft
 import (
 	"fmt"
 	"github.com/armon/gomdb"
+	"os"
 	"path/filepath"
 )
 
@@ -26,6 +27,9 @@ type MDBStore struct {
 func NewMDBStore(base string) (*MDBStore, error) {
 	// Get the paths
 	path := filepath.Join(base, mdbPath)
+	if err := os.MkdirAll(path, 0755); err != nil {
+		return nil, err
+	}
 
 	// Create the env
 	env, err := mdb.NewEnv()
