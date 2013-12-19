@@ -309,7 +309,7 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 	}
 
 	// Create the RPC object
-	respCh := make(chan RPCResponse)
+	respCh := make(chan RPCResponse, 1)
 	rpc := RPC{
 		RespChan: respCh,
 	}
