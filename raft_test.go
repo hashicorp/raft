@@ -67,8 +67,7 @@ func inmemConfig() *Config {
 
 type cluster struct {
 	dirs   []string
-	logs   []*LevelDBLogStore
-	stores []*LevelDBStableStore
+	stores []*MDBStore
 	fsms   []*MockFSM
 	snaps  []*FileSnapshotStore
 	trans  []*InmemTransport
@@ -77,7 +76,6 @@ type cluster struct {
 
 func (c *cluster) Merge(other *cluster) {
 	c.dirs = append(c.dirs, other.dirs...)
-	c.logs = append(c.logs, other.logs...)
 	c.stores = append(c.stores, other.stores...)
 	c.fsms = append(c.fsms, other.fsms...)
 	c.snaps = append(c.snaps, other.snaps...)
@@ -103,9 +101,6 @@ func (c *cluster) Close() {
 	}
 	timer.Stop()
 
-	for _, l := range c.logs {
-		l.Close()
-	}
 	for _, s := range c.stores {
 		s.Close()
 	}
@@ -270,9 +265,8 @@ func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 
 	// Setup the stores and transports
 	for i := 0; i < n; i++ {
-		dir, logs, store := LevelDBTestStore(t)
+		dir, store := MDBTestStore(t)
 		c.dirs = append(c.dirs, dir)
-		c.logs = append(c.logs, logs)
 		c.stores = append(c.stores, store)
 		c.fsms = append(c.fsms, &MockFSM{})
 
@@ -293,7 +287,7 @@ func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 		if conf == nil {
 			conf = inmemConfig()
 		}
-		logs := c.logs[i]
+		logs := c.stores[i]
 		store := c.stores[i]
 		snap := c.snaps[i]
 		trans := c.trans[i]
