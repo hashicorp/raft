@@ -26,7 +26,7 @@ type RaftEnv struct {
 	dir      string
 	conf     *Config
 	fsm      *MockFSM
-	store    *SQLiteStore
+	store    *MDBStore
 	snapshot *FileSnapshotStore
 	peers    *JSONPeers
 	trans    *NetworkTransport
@@ -59,7 +59,7 @@ func MakeRaft(t *testing.T, conf *Config) *RaftEnv {
 	}
 	env.dir = dir
 
-	stable, err := NewSQLiteStore(dir)
+	stable, err := NewMDBStore(dir)
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
