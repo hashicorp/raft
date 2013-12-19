@@ -267,7 +267,7 @@ func (m *MDBStore) Get(key []byte) ([]byte, error) {
 	} else if err != nil {
 		return nil, err
 	}
-	return val, nil
+	return sliceCopy(val), nil
 }
 
 func (m *MDBStore) SetUint64(key []byte, val uint64) error {
@@ -280,4 +280,10 @@ func (m *MDBStore) GetUint64(key []byte) (uint64, error) {
 		return 0, err
 	}
 	return bytesToUint64(buf), nil
+}
+
+func sliceCopy(inp []byte) []byte {
+	c := make([]byte, len(inp))
+	copy(c, inp)
+	return c
 }
