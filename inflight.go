@@ -2,7 +2,6 @@ package raft
 
 import (
 	"fmt"
-	"log"
 	"net"
 	"sync"
 )
@@ -47,7 +46,6 @@ func newExcludeNodeQuorum(clusterSize int, exclude net.Addr) *excludeNodeQuorum 
 
 func (e *excludeNodeQuorum) Commit(p net.Addr) bool {
 	if p.String() == e.exclude.String() {
-		log.Printf("[WARN] Excluded vote from %v", p)
 		return false
 	}
 	e.count++

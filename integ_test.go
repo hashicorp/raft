@@ -65,7 +65,7 @@ func MakeRaft(t *testing.T, conf *Config) *RaftEnv {
 	}
 	env.store = stable
 
-	snap, err := NewFileSnapshotStore(dir, 3)
+	snap, err := NewFileSnapshotStore(dir, 3, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -73,7 +73,7 @@ func MakeRaft(t *testing.T, conf *Config) *RaftEnv {
 
 	env.fsm = &MockFSM{}
 
-	trans, err := NewTCPTransport("127.0.0.1:0", 2, time.Second)
+	trans, err := NewTCPTransport("127.0.0.1:0", 2, time.Second, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}

@@ -2,7 +2,6 @@ package raft
 
 import (
 	"fmt"
-	"log"
 	"net"
 )
 
@@ -74,7 +73,7 @@ START:
 			if err == LogNotFound {
 				goto SEND_SNAP
 			}
-			log.Printf("[ERR] Failed to get log at index %d: %v",
+			r.logger.Printf("[ERR] raft: Failed to get log at index %d: %v",
 				s.nextIndex-1, err)
 			return
 		}
@@ -93,7 +92,7 @@ START:
 			if err == LogNotFound {
 				goto SEND_SNAP
 			}
-			log.Printf("[ERR] Failed to get log at index %d: %v", i, err)
+			r.logger.Printf("[ERR] raft: Failed to get log at index %d: %v", i, err)
 			return
 		}
 		req.Entries = append(req.Entries, oldLog)
@@ -101,7 +100,7 @@ START:
 
 	// Make the RPC call
 	if err := r.trans.AppendEntries(s.peer, &req, &resp); err != nil {
-		log.Printf("[ERR] Failed to AppendEntries to %v: %v", s.peer, err)
+		r.logger.Printf("[ERR] raft: Failed to AppendEntries to %v: %v", s.peer, err)
 		return
 	}
 
@@ -119,7 +118,7 @@ START:
 		s.matchIndex = maxIndex
 		s.nextIndex = maxIndex + 1
 	} else {
-		log.Printf("[WARN] AppendEntries to %v rejected, sending older logs", s.peer)
+		r.logger.Printf("[WARN] raft: AppendEntries to %v rejected, sending older logs", s.peer)
 		s.nextIndex = max(min(s.nextIndex-1, resp.LastLog+1), 1)
 		s.matchIndex = s.nextIndex - 1
 	}
@@ -143,7 +142,7 @@ SEND_SNAP:
 
 	// Check for an error
 	if err != nil {
-		log.Printf("[ERR] Failed to send snapshot to %v: %v", s.peer, err)
+		r.logger.Printf("[ERR] raft: Failed to send snapshot to %v: %v", s.peer, err)
 		return
 	}
 
@@ -157,7 +156,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	// Get the snapshots
 	snapshots, err := r.snapshots.List()
 	if err != nil {
-		log.Printf("[ERR] Failed to list snapshots: %v", err)
+		r.logger.Printf("[ERR] raft: Failed to list snapshots: %v", err)
 		return false, err
 	}
 
@@ -170,7 +169,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	snapId := snapshots[0].ID
 	meta, snapshot, err := r.snapshots.Open(snapId)
 	if err != nil {
-		log.Printf("[ERR] Failed to open snapshot %v: %v", snapId, err)
+		r.logger.Printf("[ERR] raft: Failed to open snapshot %v: %v", snapId, err)
 		return false, err
 	}
 	defer snapshot.Close()
@@ -188,7 +187,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	// Make the call
 	var resp InstallSnapshotResponse
 	if err := r.trans.InstallSnapshot(s.peer, &req, &resp, snapshot); err != nil {
-		log.Printf("[ERR] Failed to install snapshot %v: %v", snapId, err)
+		r.logger.Printf("[ERR] raft: Failed to install snapshot %v: %v", snapId, err)
 		return false, err
 	}
 
@@ -206,7 +205,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 		s.matchIndex = meta.Index
 		s.nextIndex = s.matchIndex + 1
 	} else {
-		log.Printf("[WARN] InstallSnapshot to %v rejected", s.peer)
+		r.logger.Printf("[WARN] raft: InstallSnapshot to %v rejected", s.peer)
 	}
 	return false, nil
 }
@@ -224,7 +223,7 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 		select {
 		case <-randomTimeout(r.conf.HeartbeatTimeout / 4):
 			if err := r.trans.AppendEntries(s.peer, &req, &resp); err != nil {
-				log.Printf("[ERR] Failed to heartbeat to %v: %v", s.peer, err)
+				r.logger.Printf("[ERR] raft: Failed to heartbeat to %v: %v", s.peer, err)
 			}
 		case <-stopCh:
 			return

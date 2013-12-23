@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 	"sync"
 	"time"
 )
@@ -47,6 +48,8 @@ type NetworkTransport struct {
 
 	consumeCh chan RPC
 
+	logger *log.Logger
+
 	maxPool int
 
 	shutdown     bool
@@ -85,10 +88,15 @@ func (n *netConn) Release() error {
 // The maxPool controls how many connections we will pool.
 // The timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
 // the timeout by (SnapshotSize / TimeoutScale)
-func NewNetworkTransport(stream StreamLayer, maxPool int, timeout time.Duration) *NetworkTransport {
+func NewNetworkTransport(stream StreamLayer, maxPool int, timeout time.Duration,
+	logOutput io.Writer) *NetworkTransport {
+	if logOutput == nil {
+		logOutput = os.Stderr
+	}
 	trans := &NetworkTransport{
 		connPool:     make(map[string][]*netConn),
 		consumeCh:    make(chan RPC),
+		logger:       log.New(logOutput, "", log.LstdFlags),
 		maxPool:      maxPool,
 		shutdownCh:   make(chan struct{}),
 		stream:       stream,
@@ -269,7 +277,7 @@ func (n *NetworkTransport) listen() {
 			if n.shutdown {
 				return
 			}
-			log.Printf("[ERR] Failed to accept connection: %v", err)
+			n.logger.Printf("[ERR] raft-net: Failed to accept connection: %v", err)
 			continue
 		}
 
@@ -289,12 +297,12 @@ func (n *NetworkTransport) handleConn(conn net.Conn) {
 	for {
 		if err := n.handleCommand(r, dec, enc); err != nil {
 			if err != io.EOF {
-				log.Printf("[ERR] Failed to decode incoming command: %v", err)
+				n.logger.Printf("[ERR] raft-net: Failed to decode incoming command: %v", err)
 			}
 			return
 		}
 		if err := w.Flush(); err != nil {
-			log.Printf("[ERR] Failed to flush response: %v", err)
+			n.logger.Printf("[ERR] raft-net: Failed to flush response: %v", err)
 			return
 		}
 	}

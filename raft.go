@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 	"sync"
 	"time"
 )
@@ -67,6 +68,9 @@ type Raft struct {
 	// Stores our local addr
 	localAddr net.Addr
 
+	// Used for our logging
+	logger *log.Logger
+
 	// LogStore provides durable storage for logs
 	logs LogStore
 
@@ -102,6 +106,11 @@ type Raft struct {
 // Raft node.
 func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps SnapshotStore,
 	peerStore PeerStore, trans Transport) (*Raft, error) {
+	// Ensure we have a LogOutput
+	if conf.LogOutput == nil {
+		conf.LogOutput = os.Stderr
+	}
+
 	// Try to restore the current term
 	currentTerm, err := stable.GetUint64(keyCurrentTerm)
 	if err != nil && err.Error() != "not found" {
@@ -139,6 +148,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		fsmRestoreCh:  make(chan *restoreFuture),
 		fsmSnapshotCh: make(chan *reqSnapshotFuture),
 		localAddr:     localAddr,
+		logger:        log.New(conf.LogOutput, "", log.LstdFlags),
 		logs:          logs,
 		peers:         peers,
 		peerStore:     peerStore,
@@ -374,7 +384,7 @@ func (r *Raft) run() {
 
 // runFollower runs the FSM for a follower
 func (r *Raft) runFollower() {
-	log.Printf("[INFO] %v entering Follower state", r)
+	r.logger.Printf("[INFO] raft: %v entering Follower state", r)
 	for {
 		select {
 		case rpc := <-r.rpcCh:
@@ -386,7 +396,7 @@ func (r *Raft) runFollower() {
 
 		case <-randomTimeout(r.conf.HeartbeatTimeout):
 			// Heartbeat failed! Transition to the candidate state
-			log.Printf("[WARN] Heartbeat timeout reached, starting election")
+			r.logger.Printf("[WARN] raft: Heartbeat timeout reached, starting election")
 			r.leader = nil
 			r.setState(Candidate)
 			return
@@ -399,7 +409,7 @@ func (r *Raft) runFollower() {
 
 // runCandidate runs the FSM for a candidate
 func (r *Raft) runCandidate() {
-	log.Printf("[INFO] %v entering Candidate state", r)
+	r.logger.Printf("[INFO] raft: %v entering Candidate state", r)
 
 	// Start vote for us, and set a timeout
 	voteCh := r.electSelf()
@@ -408,7 +418,7 @@ func (r *Raft) runCandidate() {
 	// Tally the votes, need a simple majority
 	grantedVotes := 0
 	votesNeeded := ((len(r.peers) + 1) / 2) + 1
-	log.Printf("[DEBUG] Votes needed: %d", votesNeeded)
+	r.logger.Printf("[DEBUG] raft: Votes needed: %d", votesNeeded)
 
 	for r.getState() == Candidate {
 		select {
@@ -418,7 +428,7 @@ func (r *Raft) runCandidate() {
 		case vote := <-voteCh:
 			// Check if the term is greater than ours, bail
 			if vote.Term > r.getCurrentTerm() {
-				log.Printf("[DEBUG] Newer term discovered")
+				r.logger.Printf("[DEBUG] raft: Newer term discovered, fallback to follower")
 				r.setState(Follower)
 				r.setCurrentTerm(vote.Term)
 				return
@@ -427,12 +437,12 @@ func (r *Raft) runCandidate() {
 			// Check if the vote is granted
 			if vote.Granted {
 				grantedVotes++
-				log.Printf("[DEBUG] Vote granted. Tally: %d", grantedVotes)
+				r.logger.Printf("[DEBUG] raft: Vote granted. Tally: %d", grantedVotes)
 			}
 
 			// Check if we've become the leader
 			if grantedVotes >= votesNeeded {
-				log.Printf("[INFO] Election won. Tally: %d", grantedVotes)
+				r.logger.Printf("[INFO] raft: Election won. Tally: %d", grantedVotes)
 				r.leader = r.localAddr
 				r.setState(Leader)
 				return
@@ -445,7 +455,7 @@ func (r *Raft) runCandidate() {
 		case <-electionTimer:
 			// Election failed! Restart the elction. We simply return,
 			// which will kick us back into runCandidate
-			log.Printf("[WARN] Election timeout reached, restarting election")
+			r.logger.Printf("[WARN] raft: Election timeout reached, restarting election")
 			return
 
 		case <-r.shutdownCh:
@@ -457,7 +467,7 @@ func (r *Raft) runCandidate() {
 // runLeader runs the FSM for a leader. Do the setup here and drop into
 // the leaderLoop for the hot loop
 func (r *Raft) runLeader() {
-	log.Printf("[INFO] %v entering Leader state", r)
+	r.logger.Printf("[INFO] raft: %v entering Leader state", r)
 
 	// Setup leader state
 	r.leaderState.commitCh = make(chan *logFuture, 128)
@@ -584,7 +594,7 @@ func (r *Raft) dispatchLog(applyLog *logFuture) {
 
 	// Write the log entry locally
 	if err := r.logs.StoreLog(&applyLog.log); err != nil {
-		log.Printf("[ERR] Failed to commit log: %v", err)
+		r.logger.Printf("[ERR] raft: Failed to commit log: %v", err)
 		applyLog.respond(err)
 		r.setState(Follower)
 		return
@@ -615,7 +625,7 @@ func (r *Raft) processLogs(index uint64, future *logFuture) {
 	// Reject logs we've applied already
 	lastApplied := r.getLastApplied()
 	if index <= lastApplied {
-		log.Printf("[WARN] Skipping application of old log: %d", index)
+		r.logger.Printf("[WARN] raft: Skipping application of old log: %d", index)
 		return
 	}
 
@@ -628,7 +638,7 @@ func (r *Raft) processLogs(index uint64, future *logFuture) {
 		} else {
 			l := new(Log)
 			if err := r.logs.GetLog(idx, l); err != nil {
-				log.Printf("[ERR] Failed to get log at %d: %v", idx, err)
+				r.logger.Printf("[ERR] raft: Failed to get log at %d: %v", idx, err)
 				panic(err)
 			}
 			r.processLog(l, nil)
@@ -658,7 +668,7 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 
 	case LogAddPeer:
 		peers := decodePeers(l.Data, r.trans)
-		log.Printf("[DEBUG] Node %v updated peer set (add): %v", r.localAddr, peers)
+		r.logger.Printf("[DEBUG] raft: Node %v updated peer set (add): %v", r.localAddr, peers)
 
 		// Update our peer set
 		r.peers = ExcludePeer(peers, r.localAddr)
@@ -668,7 +678,7 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 		if r.getState() == Leader {
 			for _, p := range r.peers {
 				if _, ok := r.leaderState.replState[p.String()]; !ok {
-					log.Printf("[INFO] Added peer %v, starting replication", p)
+					r.logger.Printf("[INFO] raft: Added peer %v, starting replication", p)
 					r.startReplication(p)
 				}
 			}
@@ -676,7 +686,7 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 
 	case LogRemovePeer:
 		peers := decodePeers(l.Data, r.trans)
-		log.Printf("[DEBUG] Node %v updated peer set (remove): %v", r.localAddr, peers)
+		r.logger.Printf("[DEBUG] raft: Node %v updated peer set (remove): %v", r.localAddr, peers)
 
 		// If the peer set does not include us, remove all other peers
 		removeSelf := !PeerContained(peers, r.localAddr)
@@ -693,7 +703,7 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 			var toDelete []string
 			for _, repl := range r.leaderState.replState {
 				if !PeerContained(r.peers, repl.peer) {
-					log.Printf("[INFO] Removed peer %v, stopping replication", repl.peer)
+					r.logger.Printf("[INFO] raft: Removed peer %v, stopping replication", repl.peer)
 
 					// Replicate up to this index and stop
 					repl.stopCh <- l.Index
@@ -708,10 +718,10 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 		// Handle removing ourself
 		if removeSelf {
 			if r.conf.ShutdownOnRemove {
-				log.Printf("[INFO] Removed ourself, shutting down")
+				r.logger.Printf("[INFO] raft: Removed ourself, shutting down")
 				r.Shutdown()
 			} else {
-				log.Printf("[INFO] Removed ourself, transitioning to follower")
+				r.logger.Printf("[INFO] raft: Removed ourself, transitioning to follower")
 				r.setState(Follower)
 			}
 		}
@@ -719,7 +729,7 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 	case LogNoop:
 		// Ignore the no-op
 	default:
-		log.Printf("[ERR] Got unrecognized log type: %#v", l)
+		r.logger.Printf("[ERR] raft: Got unrecognized log type: %#v", l)
 	}
 
 	// Invoke the future if given
@@ -738,7 +748,7 @@ func (r *Raft) processRPC(rpc RPC) {
 	case *InstallSnapshotRequest:
 		r.installSnapshot(rpc, cmd)
 	default:
-		log.Printf("[ERR] Got unexpected command: %#v",
+		r.logger.Printf("[ERR] raft: Got unexpected command: %#v",
 			rpc.Command)
 		rpc.Respond(nil, fmt.Errorf("Unexpected command"))
 	}
@@ -783,7 +793,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		} else {
 			var prevLog Log
 			if err := r.logs.GetLog(a.PrevLogEntry, &prevLog); err != nil {
-				log.Printf("[WARN] Failed to get previous log: %d %v",
+				r.logger.Printf("[WARN] raft: Failed to get previous log: %d %v",
 					a.PrevLogEntry, err)
 				return
 			}
@@ -791,7 +801,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		}
 
 		if a.PrevLogTerm != prevLogTerm {
-			log.Printf("[WARN] Previous log term mis-match: ours: %d remote: %d",
+			r.logger.Printf("[WARN] raft: Previous log term mis-match: ours: %d remote: %d",
 				prevLogTerm, a.PrevLogTerm)
 			return
 		}
@@ -802,16 +812,16 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		// Delete any conflicting entries
 		lastLogIdx := r.getLastLogIndex()
 		if entry.Index <= lastLogIdx {
-			log.Printf("[WARN] Clearing log suffix from %d to %d", entry.Index, lastLogIdx)
+			r.logger.Printf("[WARN] raft: Clearing log suffix from %d to %d", entry.Index, lastLogIdx)
 			if err := r.logs.DeleteRange(entry.Index, lastLogIdx); err != nil {
-				log.Printf("[ERR] Failed to clear log suffix: %v", err)
+				r.logger.Printf("[ERR] raft: Failed to clear log suffix: %v", err)
 				return
 			}
 		}
 
 		// Append the entry
 		if err := r.logs.StoreLog(entry); err != nil {
-			log.Printf("[ERR] Failed to append to log: %v", err)
+			r.logger.Printf("[ERR] raft: Failed to append to log: %v", err)
 			return
 		}
 
@@ -859,20 +869,20 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// Check if we have voted yet
 	lastVoteTerm, err := r.stable.GetUint64(keyLastVoteTerm)
 	if err != nil && err.Error() != "not found" {
-		log.Printf("[ERR] Failed to get last vote term: %v", err)
+		r.logger.Printf("[ERR] raft: Failed to get last vote term: %v", err)
 		return
 	}
 	lastVoteCandBytes, err := r.stable.Get(keyLastVoteCand)
 	if err != nil && err.Error() != "not found" {
-		log.Printf("[ERR] Failed to get last vote candidate: %v", err)
+		r.logger.Printf("[ERR] raft: Failed to get last vote candidate: %v", err)
 		return
 	}
 
 	// Check if we've voted in this election before
 	if lastVoteTerm == req.Term && lastVoteCandBytes != nil {
-		log.Printf("[INFO] Duplicate RequestVote for same term: %d", req.Term)
+		r.logger.Printf("[INFO] raft: Duplicate RequestVote for same term: %d", req.Term)
 		if bytes.Compare(lastVoteCandBytes, req.Candidate) == 0 {
-			log.Printf("[WARN] Duplicate RequestVote from candidate: %s", req.Candidate)
+			r.logger.Printf("[WARN] raft: Duplicate RequestVote from candidate: %s", req.Candidate)
 			resp.Granted = true
 		}
 		return
@@ -881,18 +891,18 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// Reject if their term is older
 	lastIdx, lastTerm := r.getLastEntry()
 	if lastTerm > req.LastLogTerm {
-		log.Printf("[WARN] Rejecting vote since our last term is greater")
+		r.logger.Printf("[WARN] raft: Rejecting vote since our last term is greater")
 		return
 	}
 
 	if lastIdx > req.LastLogIndex {
-		log.Printf("[WARN] Rejecting vote since our last index is greater")
+		r.logger.Printf("[WARN] raft: Rejecting vote since our last index is greater")
 		return
 	}
 
 	// Persist a vote for safety
 	if err := r.persistVote(req.Term, req.Candidate); err != nil {
-		log.Printf("[ERR] Failed to persist vote: %v", err)
+		r.logger.Printf("[ERR] raft: Failed to persist vote: %v", err)
 		return
 	}
 
@@ -931,7 +941,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	// Create a new snapshot
 	sink, err := r.snapshots.Create(req.LastLogIndex, req.LastLogTerm, req.Peers)
 	if err != nil {
-		log.Printf("[ERR] Failed to create snapshot to install: %v", err)
+		r.logger.Printf("[ERR] raft: Failed to create snapshot to install: %v", err)
 		rpcErr = fmt.Errorf("Failed to create snapshot: %v", err)
 		return
 	}
@@ -940,7 +950,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	n, err := io.Copy(sink, rpc.Reader)
 	if err != nil {
 		sink.Cancel()
-		log.Printf("[ERR] Failed to copy snapshot: %v", err)
+		r.logger.Printf("[ERR] raft: Failed to copy snapshot: %v", err)
 		rpcErr = err
 		return
 	}
@@ -948,18 +958,18 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	// Check that we received it all
 	if n != req.Size {
 		sink.Cancel()
-		log.Printf("[ERR] Failed to receive whole snapshot: %d / %d", n, req.Size)
+		r.logger.Printf("[ERR] raft: Failed to receive whole snapshot: %d / %d", n, req.Size)
 		rpcErr = fmt.Errorf("short read")
 		return
 	}
 
 	// Finalize the snapshot
 	if err := sink.Close(); err != nil {
-		log.Printf("[ERR] Failed to finalize snapshot: %v", err)
+		r.logger.Printf("[ERR] raft: Failed to finalize snapshot: %v", err)
 		rpcErr = err
 		return
 	} else {
-		log.Printf("[INFO] Copied %d bytes to local snapshot", n)
+		r.logger.Printf("[INFO] raft: Copied %d bytes to local snapshot", n)
 	}
 
 	// Restore snapshot
@@ -974,7 +984,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 
 	// Wait for the restore to happen
 	if err := future.Error(); err != nil {
-		log.Printf("[ERR] Failed to restore snapshot: %v", err)
+		r.logger.Printf("[ERR] raft: Failed to restore snapshot: %v", err)
 		rpcErr = err
 		return
 	}
@@ -991,10 +1001,10 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 
 	// Compact logs, continue even if this fails
 	if err := r.compactLogs(req.LastLogIndex); err != nil {
-		log.Printf("[ERR] Failed to compact logs: %v", err)
+		r.logger.Printf("[ERR] raft: Failed to compact logs: %v", err)
 	}
 
-	log.Printf("[INFO] Installed remote snapshot")
+	r.logger.Printf("[INFO] raft: Installed remote snapshot")
 	resp.Success = true
 	return
 }
@@ -1025,7 +1035,7 @@ func (r *Raft) electSelf() <-chan *RequestVoteResponse {
 			resp := new(RequestVoteResponse)
 			err := r.trans.RequestVote(peer, req, resp)
 			if err != nil {
-				log.Printf("[ERR] Failed to make RequestVote RPC to %v: %v", peer, err)
+				r.logger.Printf("[ERR] raft: Failed to make RequestVote RPC to %v: %v", peer, err)
 				resp.Term = req.Term
 				resp.Granted = false
 			}
@@ -1036,7 +1046,7 @@ func (r *Raft) electSelf() <-chan *RequestVoteResponse {
 			if err == nil {
 				peerSet := decodePeers(resp.Peers, r.trans)
 				if !PeerContained(peerSet, r.localAddr) {
-					log.Printf("[WARN] Remote peer %v does not have local node %v as a peer",
+					r.logger.Printf("[WARN] raft: Remote peer %v does not have local node %v as a peer",
 						peer, r.localAddr)
 				}
 			}
@@ -1052,7 +1062,7 @@ func (r *Raft) electSelf() <-chan *RequestVoteResponse {
 
 	// Persist a vote for ourselves
 	if err := r.persistVote(req.Term, req.Candidate); err != nil {
-		log.Printf("[ERR] Failed to persist vote : %v", err)
+		r.logger.Printf("[ERR] raft: Failed to persist vote : %v", err)
 		return nil
 	}
 
@@ -1098,14 +1108,14 @@ func (r *Raft) runSnapshots() {
 
 			// Trigger a snapshot
 			if err := r.takeSnapshot(); err != nil {
-				log.Printf("[ERR] Failed to take snapshot: %v", err)
+				r.logger.Printf("[ERR] raft: Failed to take snapshot: %v", err)
 			}
 
 		case future := <-r.snapshotCh:
 			// User-triggered, run immediately
 			err := r.takeSnapshot()
 			if err != nil {
-				log.Printf("[ERR] Failed to take snapshot: %v", err)
+				r.logger.Printf("[ERR] raft: Failed to take snapshot: %v", err)
 			}
 			future.respond(err)
 
@@ -1121,12 +1131,12 @@ func (r *Raft) shouldSnapshot() bool {
 	// Check the spread of logs
 	firstIdx, err := r.logs.FirstIndex()
 	if err != nil {
-		log.Printf("[ERR] Failed to get first log index: %v", err)
+		r.logger.Printf("[ERR] raft: Failed to get first log index: %v", err)
 		return false
 	}
 	lastIdx, err := r.logs.LastIndex()
 	if err != nil {
-		log.Printf("[ERR] Failed to get last log index: %v", err)
+		r.logger.Printf("[ERR] raft: Failed to get last log index: %v", err)
 		return false
 	}
 
@@ -1155,7 +1165,7 @@ func (r *Raft) takeSnapshot() error {
 	defer req.snapshot.Release()
 
 	// Log that we are starting the snapshot
-	log.Printf("[INFO] Starting snapshot up to %d", req.index)
+	r.logger.Printf("[INFO] raft: Starting snapshot up to %d", req.index)
 
 	// Encode the peerset
 	peerSet := encodePeers(req.peers, r.trans)
@@ -1187,7 +1197,7 @@ func (r *Raft) takeSnapshot() error {
 	}
 
 	// Log completion
-	log.Printf("[INFO] Snapshot to %d complete", req.index)
+	r.logger.Printf("[INFO] raft: Snapshot to %d complete", req.index)
 	return nil
 }
 
@@ -1207,7 +1217,7 @@ func (r *Raft) compactLogs(snapIdx uint64) error {
 	maxLog := min(snapIdx, r.getLastLogIndex()-r.conf.TrailingLogs)
 
 	// Log this
-	log.Printf("[INFO] Compacting logs from %d to %d", minLog, maxLog)
+	r.logger.Printf("[INFO] raft: Compacting logs from %d to %d", minLog, maxLog)
 
 	// Compact the logs
 	if err := r.logs.DeleteRange(minLog, maxLog); err != nil {
@@ -1222,7 +1232,7 @@ func (r *Raft) compactLogs(snapIdx uint64) error {
 func (r *Raft) restoreSnapshot() error {
 	snapshots, err := r.snapshots.List()
 	if err != nil {
-		log.Printf("[ERR] Failed to list snapshots: %v", err)
+		r.logger.Printf("[ERR] raft: Failed to list snapshots: %v", err)
 		return err
 	}
 
@@ -1230,18 +1240,18 @@ func (r *Raft) restoreSnapshot() error {
 	for _, snapshot := range snapshots {
 		_, source, err := r.snapshots.Open(snapshot.ID)
 		if err != nil {
-			log.Printf("[ERR] Failed to open snapshot %v: %v", snapshot.ID, err)
+			r.logger.Printf("[ERR] raft: Failed to open snapshot %v: %v", snapshot.ID, err)
 			continue
 		}
 		defer source.Close()
 
 		if err := r.fsm.Restore(source); err != nil {
-			log.Printf("[ERR] Failed to restore snapshot %v: %v", snapshot.ID, err)
+			r.logger.Printf("[ERR] raft: Failed to restore snapshot %v: %v", snapshot.ID, err)
 			continue
 		}
 
 		// Log success
-		log.Printf("[INFO] Restored from snapshot %v", snapshot.ID)
+		r.logger.Printf("[INFO] raft: Restored from snapshot %v", snapshot.ID)
 
 		// Update the lastApplied so we don't replay old logs
 		r.setLastApplied(snapshot.Index)

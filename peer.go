@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"io/ioutil"
-	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -110,6 +109,5 @@ func (j *JSONPeers) SetPeers(peers []net.Addr) error {
 	}
 
 	// Write out as JSON
-	log.Printf("[INFO] Writing peer set to %s", j.path)
 	return ioutil.WriteFile(j.path, buf.Bytes(), 0755)
 }

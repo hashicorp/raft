@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"io"
 	"net"
 	"time"
 )
@@ -12,7 +13,7 @@ type TCPStreamLayer struct {
 
 // NewTCPTransport returns a NetworkTransport that is built on top of
 // a TCP streaming transport layer
-func NewTCPTransport(bindAddr string, maxPool int, timeout time.Duration) (*NetworkTransport, error) {
+func NewTCPTransport(bindAddr string, maxPool int, timeout time.Duration, logOutput io.Writer) (*NetworkTransport, error) {
 	// Try to bind
 	list, err := net.Listen("tcp", bindAddr)
 	if err != nil {
@@ -23,7 +24,7 @@ func NewTCPTransport(bindAddr string, maxPool int, timeout time.Duration) (*Netw
 	stream := &TCPStreamLayer{listener: list.(*net.TCPListener)}
 
 	// Create the network transport
-	trans := NewNetworkTransport(stream, maxPool, timeout)
+	trans := NewNetworkTransport(stream, maxPool, timeout, logOutput)
 	return trans, nil
 }
 

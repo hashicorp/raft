@@ -15,7 +15,7 @@ func FileSnapTest(t *testing.T) (string, *FileSnapshotStore) {
 		t.Fatalf("err: %v ", err)
 	}
 
-	snap, err := NewFileSnapshotStore(dir, 3)
+	snap, err := NewFileSnapshotStore(dir, 3, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestFileSS_CreateSnapshot(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	snap, err := NewFileSnapshotStore(dir, 3)
+	snap, err := NewFileSnapshotStore(dir, 3, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestFileSS_CancelSnapshot(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	snap, err := NewFileSnapshotStore(dir, 3)
+	snap, err := NewFileSnapshotStore(dir, 3, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestFileSS_Retention(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	snap, err := NewFileSnapshotStore(dir, 2)
+	snap, err := NewFileSnapshotStore(dir, 2, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestFileSS_Retention(t *testing.T) {
 
 func TestFileSS_BadPerm(t *testing.T) {
 	// Should fail
-	_, err := NewFileSnapshotStore("/", 3)
+	_, err := NewFileSnapshotStore("/", 3, nil)
 	if err == nil {
 		t.Fatalf("should fail to use root")
 	}

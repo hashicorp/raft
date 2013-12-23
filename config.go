@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"io"
 	"time"
 )
 
@@ -44,6 +45,9 @@ type Config struct {
 	// we perform a snapshot. This is to prevent excessive snapshots when we can
 	// just replay a small set of logs.
 	SnapshotThreshold uint64
+
+	// LogOutput is used as a sink for logs. Defaults to os.Stderr.
+	LogOutput io.Writer
 }
 
 func DefaultConfig() *Config {
