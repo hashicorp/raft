@@ -128,7 +128,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	if err != nil {
 		return nil, fmt.Errorf("Failed to get list of peers: %v", err)
 	}
-	peers = excludePeer(peers, localAddr)
+	peers = ExcludePeer(peers, localAddr)
 
 	// Create Raft struct
 	r := &Raft{
@@ -548,7 +548,7 @@ func (r *Raft) leaderLoop() {
 func (r *Raft) preparePeerChange(l *logFuture) bool {
 	// Check if this is a known peer
 	p := l.log.peer
-	knownPeer := peerContained(r.peers, p) || r.localAddr.String() == p.String()
+	knownPeer := PeerContained(r.peers, p) || r.localAddr.String() == p.String()
 
 	// Ignore known peers on add
 	if l.log.Type == LogAddPeer && knownPeer {
@@ -567,7 +567,7 @@ func (r *Raft) preparePeerChange(l *logFuture) bool {
 	if l.log.Type == LogAddPeer {
 		peerSet = append([]net.Addr{p, r.localAddr}, r.peers...)
 	} else {
-		peerSet = excludePeer(append([]net.Addr{r.localAddr}, r.peers...), p)
+		peerSet = ExcludePeer(append([]net.Addr{r.localAddr}, r.peers...), p)
 	}
 
 	// Setup the log
@@ -661,7 +661,7 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 		log.Printf("[DEBUG] Node %v updated peer set (add): %v", r.localAddr, peers)
 
 		// Update our peer set
-		r.peers = excludePeer(peers, r.localAddr)
+		r.peers = ExcludePeer(peers, r.localAddr)
 		r.peerStore.SetPeers(peers)
 
 		// Handle replication if we are the leader
@@ -679,12 +679,12 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 		log.Printf("[DEBUG] Node %v updated peer set (remove): %v", r.localAddr, peers)
 
 		// If the peer set does not include us, remove all other peers
-		removeSelf := !peerContained(peers, r.localAddr)
+		removeSelf := !PeerContained(peers, r.localAddr)
 		if removeSelf {
 			r.peers = nil
 			r.peerStore.SetPeers([]net.Addr{r.localAddr})
 		} else {
-			r.peers = excludePeer(peers, r.localAddr)
+			r.peers = ExcludePeer(peers, r.localAddr)
 			r.peerStore.SetPeers(peers)
 		}
 
@@ -692,7 +692,7 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 		if r.getState() == Leader {
 			var toDelete []string
 			for _, repl := range r.leaderState.replState {
-				if !peerContained(r.peers, repl.peer) {
+				if !PeerContained(r.peers, repl.peer) {
 					log.Printf("[INFO] Removed peer %v, stopping replication", repl.peer)
 
 					// Replicate up to this index and stop
@@ -987,7 +987,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	r.setLastSnapshotTerm(req.LastLogTerm)
 
 	// Restore the peer set
-	r.peers = excludePeer(decodePeers(req.Peers, r.trans), r.localAddr)
+	r.peers = ExcludePeer(decodePeers(req.Peers, r.trans), r.localAddr)
 
 	// Compact logs, continue even if this fails
 	if err := r.compactLogs(req.LastLogIndex); err != nil {
@@ -1035,7 +1035,7 @@ func (r *Raft) electSelf() <-chan *RequestVoteResponse {
 			// cluster. Either way, we should warn
 			if err == nil {
 				peerSet := decodePeers(resp.Peers, r.trans)
-				if !peerContained(peerSet, r.localAddr) {
+				if !PeerContained(peerSet, r.localAddr) {
 					log.Printf("[WARN] Remote peer %v does not have local node %v as a peer",
 						peer, r.localAddr)
 				}
@@ -1252,7 +1252,7 @@ func (r *Raft) restoreSnapshot() error {
 
 		// Restore the peer set
 		peerSet := decodePeers(snapshot.Peers, r.trans)
-		r.peers = excludePeer(peerSet, r.localAddr)
+		r.peers = ExcludePeer(peerSet, r.localAddr)
 
 		// Success!
 		return nil

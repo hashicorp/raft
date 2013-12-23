@@ -109,7 +109,7 @@ func TestExcludePeer(t *testing.T) {
 	peers := []net.Addr{NewInmemAddr(), NewInmemAddr(), NewInmemAddr()}
 	peer := peers[2]
 
-	after := excludePeer(peers, peer)
+	after := ExcludePeer(peers, peer)
 	if len(after) != 2 {
 		t.Fatalf("Bad length")
 	}
@@ -121,21 +121,21 @@ func TestExcludePeer(t *testing.T) {
 func TestPeerContained(t *testing.T) {
 	peers := []net.Addr{NewInmemAddr(), NewInmemAddr(), NewInmemAddr()}
 
-	if !peerContained(peers, peers[2]) {
+	if !PeerContained(peers, peers[2]) {
 		t.Fatalf("Expect contained")
 	}
-	if peerContained(peers, NewInmemAddr()) {
+	if PeerContained(peers, NewInmemAddr()) {
 		t.Fatalf("unexpected contained")
 	}
 }
 
 func TestAddUniquePeer(t *testing.T) {
 	peers := []net.Addr{NewInmemAddr(), NewInmemAddr(), NewInmemAddr()}
-	after := addUniquePeer(peers, peers[2])
+	after := AddUniquePeer(peers, peers[2])
 	if !reflect.DeepEqual(after, peers) {
 		t.Fatalf("unexpected append")
 	}
-	after = addUniquePeer(peers, NewInmemAddr())
+	after = AddUniquePeer(peers, NewInmemAddr())
 	if len(after) != 4 {
 		t.Fatalf("expected append")
 	}

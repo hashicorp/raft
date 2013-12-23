@@ -68,8 +68,8 @@ func asyncNotifyCh(ch chan struct{}) {
 	}
 }
 
-// excludePeer is used to exclude a single peer from a list of peers
-func excludePeer(peers []net.Addr, peer net.Addr) []net.Addr {
+// ExcludePeer is used to exclude a single peer from a list of peers
+func ExcludePeer(peers []net.Addr, peer net.Addr) []net.Addr {
 	otherPeers := make([]net.Addr, 0, len(peers))
 	for _, p := range peers {
 		if p.String() != peer.String() {
@@ -79,8 +79,8 @@ func excludePeer(peers []net.Addr, peer net.Addr) []net.Addr {
 	return otherPeers
 }
 
-// peerContained checks if a given peer is contained in a list
-func peerContained(peers []net.Addr, peer net.Addr) bool {
+// PeerContained checks if a given peer is contained in a list
+func PeerContained(peers []net.Addr, peer net.Addr) bool {
 	for _, p := range peers {
 		if p.String() == peer.String() {
 			return true
@@ -89,10 +89,10 @@ func peerContained(peers []net.Addr, peer net.Addr) bool {
 	return false
 }
 
-// addUniquePeer is used to add a peer to a list of existing
+// AddUniquePeer is used to add a peer to a list of existing
 // peers only if it is not already contained
-func addUniquePeer(peers []net.Addr, peer net.Addr) []net.Addr {
-	if peerContained(peers, peer) {
+func AddUniquePeer(peers []net.Addr, peer net.Addr) []net.Addr {
+	if PeerContained(peers, peer) {
 		return peers
 	} else {
 		return append(peers, peer)
