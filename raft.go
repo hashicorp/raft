@@ -366,6 +366,8 @@ func (r *Raft) run() {
 		// Check if we are doing a shutdown
 		select {
 		case <-r.shutdownCh:
+			// Clear the leader to prevent forwarding
+			r.leader = nil
 			return
 		default:
 		}
