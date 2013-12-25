@@ -11,6 +11,10 @@ import (
 	"time"
 )
 
+const (
+	noPeerWait = 5 * time.Second
+)
+
 var (
 	keyCurrentTerm  = []byte("CurrentTerm")
 	keyLastVoteTerm = []byte("LastVoteTerm")
@@ -417,6 +421,10 @@ func (r *Raft) runCandidate() {
 	if len(r.peers) == 0 && !r.conf.EnableSingleNode {
 		r.logger.Printf("[WARN] raft: EnableSingleNode disabled, and no known peers. Aborting election.")
 		r.setState(Follower)
+		select {
+		case <-time.After(noPeerWait):
+		case <-r.shutdownCh:
+		}
 		return
 	}
 
