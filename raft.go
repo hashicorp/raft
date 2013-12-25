@@ -413,6 +413,13 @@ func (r *Raft) runFollower() {
 func (r *Raft) runCandidate() {
 	r.logger.Printf("[INFO] raft: %v entering Candidate state", r)
 
+	// Check if we have any peers
+	if len(r.peers) == 0 && !r.conf.EnableSingleNode {
+		r.logger.Printf("[WARN] raft: EnableSingleNode disabled, and no known peers. Aborting election.")
+		r.setState(Follower)
+		return
+	}
+
 	// Start vote for us, and set a timeout
 	voteCh := r.electSelf()
 	electionTimer := randomTimeout(r.conf.ElectionTimeout)

@@ -46,6 +46,11 @@ type Config struct {
 	// just replay a small set of logs.
 	SnapshotThreshold uint64
 
+	// EnableSingleMode allows for a single node mode of operation. This
+	// is false by default, which prevents a lone node from electing itself
+	// leader.
+	EnableSingleNode bool
+
 	// LogOutput is used as a sink for logs. Defaults to os.Stderr.
 	LogOutput io.Writer
 }

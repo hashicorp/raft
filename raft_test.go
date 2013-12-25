@@ -287,6 +287,10 @@ func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 		if conf == nil {
 			conf = inmemConfig()
 		}
+		if n == 1 {
+			conf.EnableSingleNode = true
+		}
+
 		logs := c.stores[i]
 		store := c.stores[i]
 		snap := c.snaps[i]
@@ -741,6 +745,7 @@ func TestRaft_RemoveLeader(t *testing.T) {
 func TestRaft_RemoveLeader_SplitCluster(t *testing.T) {
 	// Enable operation after a remove
 	conf := inmemConfig()
+	conf.EnableSingleNode = true
 	conf.ShutdownOnRemove = false
 
 	// Make a cluster
@@ -930,4 +935,85 @@ func TestRaft_SendSnapshotFollower(t *testing.T) {
 
 	// Ensure all the logs are the same
 	c.EnsureSame(t)
+}
+
+func TestRaft_ReJoinFollower(t *testing.T) {
+	// Enable operation after a remove
+	conf := inmemConfig()
+	conf.ShutdownOnRemove = false
+
+	// Make a cluster
+	c := MakeCluster(3, t, conf)
+	defer c.Close()
+
+	// Get the leader
+	leader := c.Leader()
+
+	// Wait until we have 2 followers
+	limit := time.Now().Add(100 * time.Millisecond)
+	var followers []*Raft
+	for time.Now().Before(limit) && len(followers) != 2 {
+		time.Sleep(10 * time.Millisecond)
+		followers = c.GetInState(Follower)
+	}
+	if len(followers) != 2 {
+		t.Fatalf("expected two followers: %v", followers)
+	}
+
+	// Remove a follower
+	follower := followers[0]
+	future := leader.RemovePeer(follower.localAddr)
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Wait a while
+	time.Sleep(20 * time.Millisecond)
+
+	// Other nodes should have fewer peers
+	if len(leader.peers) != 1 {
+		t.Fatalf("too many peers")
+	}
+	if len(followers[1].peers) != 1 {
+		t.Fatalf("too many peers")
+	}
+
+	// Restart follower now
+	raft, err := NewRaft(follower.conf,
+		follower.fsm,
+		follower.logs,
+		follower.stable,
+		follower.snapshots,
+		follower.peerStore,
+		follower.trans)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	defer raft.Shutdown()
+
+	// Get the leader
+	time.Sleep(20 * time.Millisecond)
+	leader = c.Leader()
+
+	// Rejoin
+	future = leader.AddPeer(raft.localAddr)
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Wait a while
+	time.Sleep(20 * time.Millisecond)
+
+	// Other nodes should have fewer peers
+	if len(leader.peers) != 2 {
+		t.Fatalf("missing peer")
+	}
+	if len(followers[1].peers) != 2 {
+		t.Fatalf("missing peer")
+	}
+
+	// Should be a follower now
+	if raft.State() != Follower {
+		t.Fatalf("bad state: %v", raft.State())
+	}
 }
