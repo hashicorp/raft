@@ -9,7 +9,7 @@ import (
 )
 
 func TestNetworkTransport_StartStop(t *testing.T) {
-	trans, err := NewTCPTransport("127.0.0.1:0", 2, time.Second, nil)
+	trans, err := NewTCPTransport("127.0.0.1:0", nil, 2, time.Second, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -18,7 +18,7 @@ func TestNetworkTransport_StartStop(t *testing.T) {
 
 func TestNetworkTransport_AppendEntries(t *testing.T) {
 	// Transport 1 is consumer
-	trans1, err := NewTCPTransport("127.0.0.1:0", 2, time.Second, nil)
+	trans1, err := NewTCPTransport("127.0.0.1:0", nil, 2, time.Second, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestNetworkTransport_AppendEntries(t *testing.T) {
 	}()
 
 	// Transport 2 makes outbound request
-	trans2, err := NewTCPTransport("127.0.0.1:0", 2, time.Second, nil)
+	trans2, err := NewTCPTransport("127.0.0.1:0", nil, 2, time.Second, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestNetworkTransport_AppendEntries(t *testing.T) {
 
 func TestNetworkTransport_RequestVote(t *testing.T) {
 	// Transport 1 is consumer
-	trans1, err := NewTCPTransport("127.0.0.1:0", 2, time.Second, nil)
+	trans1, err := NewTCPTransport("127.0.0.1:0", nil, 2, time.Second, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestNetworkTransport_RequestVote(t *testing.T) {
 	}()
 
 	// Transport 2 makes outbound request
-	trans2, err := NewTCPTransport("127.0.0.1:0", 2, time.Second, nil)
+	trans2, err := NewTCPTransport("127.0.0.1:0", nil, 2, time.Second, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestNetworkTransport_RequestVote(t *testing.T) {
 
 func TestNetworkTransport_InstallSnapshot(t *testing.T) {
 	// Transport 1 is consumer
-	trans1, err := NewTCPTransport("127.0.0.1:0", 2, time.Second, nil)
+	trans1, err := NewTCPTransport("127.0.0.1:0", nil, 2, time.Second, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestNetworkTransport_InstallSnapshot(t *testing.T) {
 	}()
 
 	// Transport 2 makes outbound request
-	trans2, err := NewTCPTransport("127.0.0.1:0", 2, time.Second, nil)
+	trans2, err := NewTCPTransport("127.0.0.1:0", nil, 2, time.Second, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestNetworkTransport_InstallSnapshot(t *testing.T) {
 
 func TestNetworkTransport_EncodeDecode(t *testing.T) {
 	// Transport 1 is consumer
-	trans1, err := NewTCPTransport("127.0.0.1:0", 2, time.Second, nil)
+	trans1, err := NewTCPTransport("127.0.0.1:0", nil, 2, time.Second, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestNetworkTransport_EncodeDecode(t *testing.T) {
 
 func TestNetworkTransport_PooledConn(t *testing.T) {
 	// Transport 1 is consumer
-	trans1, err := NewTCPTransport("127.0.0.1:0", 2, time.Second, nil)
+	trans1, err := NewTCPTransport("127.0.0.1:0", nil, 2, time.Second, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 	}()
 
 	// Transport 2 makes outbound request, 3 conn pool
-	trans2, err := NewTCPTransport("127.0.0.1:0", 3, time.Second, nil)
+	trans2, err := NewTCPTransport("127.0.0.1:0", nil, 3, time.Second, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
