@@ -77,7 +77,7 @@ func (j *JSONPeers) Peers() ([]net.Addr, error) {
 	}
 
 	// Decode the peers
-	var peerSet [][]byte
+	var peerSet []string
 	dec := json.NewDecoder(bytes.NewReader(buf))
 	if err := dec.Decode(&peerSet); err != nil {
 		return nil, err
@@ -86,7 +86,7 @@ func (j *JSONPeers) Peers() ([]net.Addr, error) {
 	// Deserialize each peer
 	var peers []net.Addr
 	for _, p := range peerSet {
-		peers = append(peers, j.trans.DecodePeer(p))
+		peers = append(peers, j.trans.DecodePeer([]byte(p)))
 	}
 	return peers, nil
 }
@@ -96,9 +96,9 @@ func (j *JSONPeers) SetPeers(peers []net.Addr) error {
 	defer j.l.Unlock()
 
 	// Encode each peer
-	var peerSet [][]byte
+	var peerSet []string
 	for _, p := range peers {
-		peerSet = append(peerSet, j.trans.EncodePeer(p))
+		peerSet = append(peerSet, string(j.trans.EncodePeer(p)))
 	}
 
 	// Convert to JSON
