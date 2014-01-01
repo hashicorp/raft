@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -31,6 +32,8 @@ type FileSnapshotStore struct {
 	retain int
 	logger *log.Logger
 }
+
+type dirEnts []os.FileInfo
 
 // Implements the SnapshotSink
 type FileSnapshotSink struct {
@@ -192,6 +195,9 @@ func (f *FileSnapshotStore) getSnapshots() ([]*fileSnapshotMeta, error) {
 		f.logger.Printf("[ERR] snapshot: Failed to scan snapshot dir: %v", err)
 		return nil, err
 	}
+
+	// Sort the contents, ensures lexical order
+	sort.Sort(dirEnts(snapshots))
 
 	// Populate the metadata, reverse order (newest first)
 	var snapMeta []*fileSnapshotMeta
@@ -422,4 +428,17 @@ func (s *FileSnapshotSink) writeMeta() error {
 		return err
 	}
 	return nil
+}
+
+// Implement the sort interface for dirEnts
+func (d dirEnts) Len() int {
+	return len(d)
+}
+
+func (d dirEnts) Less(i, j int) bool {
+	return d[i].Name() < d[j].Name()
+}
+
+func (d dirEnts) Swap(i, j int) {
+	d[i], d[j] = d[j], d[i]
 }
