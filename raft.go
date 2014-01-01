@@ -510,6 +510,13 @@ func (r *Raft) runLeader() {
 		r.leaderState.commitCh = nil
 		r.leaderState.inflight = nil
 		r.leaderState.replState = nil
+
+		// If we are stepping down for some reason, no known leader.
+		// We may have stepped down due to an RPC call, which would
+		// provide the leader, so we cannot always nil this out.
+		if r.leader == r.localAddr {
+			r.leader = nil
+		}
 	}()
 
 	// Start a replication routine for each peer
