@@ -63,7 +63,7 @@ func DefaultConfig() *Config {
 		MaxAppendEntries:  64,
 		ShutdownOnRemove:  true,
 		TrailingLogs:      1024,
-		SnapshotInterval:  5 * time.Minute,
+		SnapshotInterval:  150 * time.Second,
 		SnapshotThreshold: 8192,
 	}
 }
