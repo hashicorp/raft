@@ -312,6 +312,7 @@ func (f *FileSnapshotStore) ReapSnapshots() error {
 
 	for i := f.retain; i < len(snapshots); i++ {
 		path := filepath.Join(f.path, snapshots[i].ID)
+		f.logger.Printf("[INFO] snapshot: reaping snapshot %v", path)
 		if err := os.RemoveAll(path); err != nil {
 			f.logger.Printf("[ERR] snapshot: Failed to reap snapshot %v: %v", path, err)
 			return err
