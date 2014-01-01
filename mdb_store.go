@@ -8,8 +8,9 @@ import (
 )
 
 const (
-	dbLogs = "logs"
-	dbConf = "conf"
+	dbLogs       = "logs"
+	dbConf       = "conf"
+	dbMaxMapSize = 1024 * 1024 * 1024 // 1GB maximum map size
 )
 
 // Sub-dir used for MDB
@@ -55,6 +56,11 @@ func NewMDBStore(base string) (*MDBStore, error) {
 func (m *MDBStore) initialize() error {
 	// Allow up to 16 sub-dbs
 	if err := m.env.SetMaxDBs(mdb.DBI(16)); err != nil {
+		return err
+	}
+
+	// Increase the maximum map size
+	if err := m.env.SetMapSize(dbMaxMapSize); err != nil {
 		return err
 	}
 
