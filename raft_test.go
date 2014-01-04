@@ -24,8 +24,8 @@ type MockSnapshot struct {
 	maxIndex int
 }
 
-func (m *MockFSM) Apply(log []byte) interface{} {
-	m.logs = append(m.logs, log)
+func (m *MockFSM) Apply(log *Log) interface{} {
+	m.logs = append(m.logs, log.Data)
 	return len(m.logs)
 }
 

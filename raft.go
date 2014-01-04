@@ -347,7 +347,7 @@ func (r *Raft) runFSM() {
 
 		case commitTuple := <-r.fsmCommitCh:
 			// Apply the log
-			resp := r.fsm.Apply(commitTuple.log.Data)
+			resp := r.fsm.Apply(commitTuple.log)
 
 			// Update the indexes
 			lastIndex = commitTuple.log.Index
