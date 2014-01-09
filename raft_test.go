@@ -341,7 +341,15 @@ func TestRaft_SingleNode(t *testing.T) {
 	defer c.Close()
 	raft := c.rafts[0]
 
-	time.Sleep(conf.HeartbeatTimeout * 3)
+	// Watch leaderCh for change
+	select {
+	case v := <-raft.LeaderCh():
+		if !v {
+			t.Fatalf("should become leader")
+		}
+	case <-time.After(conf.HeartbeatTimeout * 3):
+		t.Fatalf("timeout becoming leader")
+	}
 
 	// Should be leader
 	if s := raft.State(); s != Leader {
@@ -1026,7 +1034,7 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	defer c.Close()
 
 	// Get the leader
-	_ = c.Leader()
+	leader := c.Leader()
 
 	// Wait until we have a followers
 	limit := time.Now().Add(100 * time.Millisecond)
@@ -1044,8 +1052,15 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	log.Printf("[INFO] Disconnecting %v", follower)
 	c.Disconnect(follower.localAddr)
 
-	// Wait a while
-	time.Sleep(60 * time.Millisecond)
+	// Watch the leaderCh
+	select {
+	case v := <-leader.LeaderCh():
+		if v {
+			t.Fatalf("should step down as leader")
+		}
+	case <-time.After(conf.LeaderLeaseTimeout * 2):
+		t.Fatalf("timeout stepping down as leader")
+	}
 
 	// Should be no leaders
 	if len(c.GetInState(Leader)) != 0 {

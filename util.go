@@ -68,6 +68,15 @@ func asyncNotifyCh(ch chan struct{}) {
 	}
 }
 
+// asyncNotifyBool is used to do an async notification
+// on a bool channel
+func asyncNotifyBool(ch chan bool, v bool) {
+	select {
+	case ch <- v:
+	default:
+	}
+}
+
 // ExcludePeer is used to exclude a single peer from a list of peers
 func ExcludePeer(peers []net.Addr, peer net.Addr) []net.Addr {
 	otherPeers := make([]net.Addr, 0, len(peers))

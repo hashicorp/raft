@@ -67,6 +67,9 @@ type Raft struct {
 	// Leader is the current cluster leader
 	leader net.Addr
 
+	// leaderCh is used to notify of leadership changes
+	leaderCh chan bool
+
 	// leaderState used only while state is leader
 	leaderState leaderState
 
@@ -152,6 +155,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		fsmCommitCh:   make(chan commitTuple, 128),
 		fsmRestoreCh:  make(chan *restoreFuture),
 		fsmSnapshotCh: make(chan *reqSnapshotFuture),
+		leaderCh:      make(chan bool),
 		localAddr:     localAddr,
 		logger:        log.New(conf.LogOutput, "", log.LstdFlags),
 		logs:          logs,
@@ -322,6 +326,14 @@ func (r *Raft) Snapshot() Future {
 // State is used to return the state raft is currently in
 func (r *Raft) State() RaftState {
 	return r.getState()
+}
+
+// LeaderCh is used to get a channel which delivers signals on
+// acquiring or losing leadership. It sends true if we become
+// the leader, and false if we lose it. The channel is not buffered,
+// and does not block on writes.
+func (r *Raft) LeaderCh() <-chan bool {
+	return r.leaderCh
 }
 
 func (r *Raft) String() string {
@@ -519,6 +531,9 @@ func (r *Raft) runCandidate() {
 func (r *Raft) runLeader() {
 	r.logger.Printf("[INFO] raft: %v entering Leader state", r)
 
+	// Notify that we are the leader
+	asyncNotifyBool(r.leaderCh, true)
+
 	// Setup leader state
 	r.leaderState.commitCh = make(chan *logFuture, 128)
 	r.leaderState.inflight = newInflight(r.leaderState.commitCh)
@@ -550,6 +565,9 @@ func (r *Raft) runLeader() {
 		if r.leader == r.localAddr {
 			r.leader = nil
 		}
+
+		// Notify that we are not the leader
+		asyncNotifyBool(r.leaderCh, false)
 	}()
 
 	// Start a replication routine for each peer
