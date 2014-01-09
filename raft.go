@@ -222,6 +222,35 @@ func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
 	}
 }
 
+// Barrier is used to issue a command that blocks until all preceeding
+// operations have been applied to the FSM. It can be used to ensure the
+// FSM reflects all queued writes. An optional timeout can be provided to
+// limit the amount of time we wait for the command to be started. This
+// must be run on the leader or it will fail.
+func (r *Raft) Barrier(timeout time.Duration) Future {
+	var timer <-chan time.Time
+	if timeout > 0 {
+		timer = time.After(timeout)
+	}
+
+	// Create a log future, no index or term yet
+	logFuture := &logFuture{
+		log: Log{
+			Type: LogBarrier,
+		},
+	}
+	logFuture.init()
+
+	select {
+	case <-timer:
+		return errorFuture{EnqueueTimeout}
+	case <-r.shutdownCh:
+		return errorFuture{RaftShutdown}
+	case r.applyCh <- logFuture:
+		return logFuture
+	}
+}
+
 // AddPeer is used to add a new peer into the cluster. This must be
 // run on the leader or it will fail.
 func (r *Raft) AddPeer(peer net.Addr) Future {
@@ -347,8 +376,11 @@ func (r *Raft) runFSM() {
 			req.respond(err)
 
 		case commitTuple := <-r.fsmCommitCh:
-			// Apply the log
-			resp := r.fsm.Apply(commitTuple.log)
+			// Apply the log if a command
+			var resp interface{}
+			if commitTuple.log.Type == LogCommand {
+				resp = r.fsm.Apply(commitTuple.log)
+			}
 
 			// Update the indexes
 			lastIndex = commitTuple.log.Index
@@ -725,6 +757,10 @@ func (r *Raft) processLogs(index uint64, future *logFuture) {
 // processLog is invoked to process the application of a single committed log
 func (r *Raft) processLog(l *Log, future *logFuture) {
 	switch l.Type {
+	case LogBarrier:
+		// Barrier is handled by the FSM
+		fallthrough
+
 	case LogCommand:
 		// Forward to the fsm handler
 		select {

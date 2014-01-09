@@ -1052,3 +1052,31 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 		t.Fatalf("expected step down")
 	}
 }
+
+func TestRaft_Barrier(t *testing.T) {
+	// Make the cluster
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	// Get the leader
+	leader := c.Leader()
+
+	// Commit a lot of things
+	for i := 0; i < 100; i++ {
+		leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	// Wait for a barrier complete
+	barrier := leader.Barrier(0)
+
+	// Wait for the barrier future to apply
+	if err := barrier.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Ensure all the logs are the same
+	c.EnsureSame(t)
+	if len(c.fsms[0].logs) != 100 {
+		t.Fatalf("Bad log length")
+	}
+}
