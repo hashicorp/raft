@@ -51,19 +51,27 @@ type Config struct {
 	// leader.
 	EnableSingleNode bool
 
+	// LeaderLeaveTimeout is used to control how long the "lease" lasts
+	// for being the leader without being able to contact a quorum
+	// of nodes. If we reach this interval without contact, we will
+	// step down as leader.
+	LeaderLeaseTimeout time.Duration
+
 	// LogOutput is used as a sink for logs. Defaults to os.Stderr.
 	LogOutput io.Writer
 }
 
 func DefaultConfig() *Config {
 	return &Config{
-		HeartbeatTimeout:  200 * time.Millisecond,
-		ElectionTimeout:   250 * time.Millisecond,
-		CommitTimeout:     10 * time.Millisecond,
-		MaxAppendEntries:  64,
-		ShutdownOnRemove:  true,
-		TrailingLogs:      1024,
-		SnapshotInterval:  150 * time.Second,
-		SnapshotThreshold: 8192,
+		HeartbeatTimeout:   200 * time.Millisecond,
+		ElectionTimeout:    250 * time.Millisecond,
+		CommitTimeout:      10 * time.Millisecond,
+		MaxAppendEntries:   64,
+		ShutdownOnRemove:   true,
+		TrailingLogs:       1024,
+		SnapshotInterval:   150 * time.Second,
+		SnapshotThreshold:  8192,
+		EnableSingleNode:   false,
+		LeaderLeaseTimeout: time.Second,
 	}
 }

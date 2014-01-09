@@ -1017,3 +1017,38 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 		t.Fatalf("bad state: %v", raft.State())
 	}
 }
+
+func TestRaft_LeaderLeaseExpire(t *testing.T) {
+	// Make a cluster
+	conf := inmemConfig()
+	conf.LeaderLeaseTimeout = 40 * time.Millisecond
+	c := MakeCluster(2, t, conf)
+	defer c.Close()
+
+	// Get the leader
+	_ = c.Leader()
+
+	// Wait until we have a followers
+	limit := time.Now().Add(100 * time.Millisecond)
+	var followers []*Raft
+	for time.Now().Before(limit) && len(followers) != 1 {
+		time.Sleep(10 * time.Millisecond)
+		followers = c.GetInState(Follower)
+	}
+	if len(followers) != 1 {
+		t.Fatalf("expected a followers: %v", followers)
+	}
+
+	// Disconnect the follower now
+	follower := followers[0]
+	log.Printf("[INFO] Disconnecting %v", follower)
+	c.Disconnect(follower.localAddr)
+
+	// Wait a while
+	time.Sleep(60 * time.Millisecond)
+
+	// Should be no leaders
+	if len(c.GetInState(Leader)) != 0 {
+		t.Fatalf("expected step down")
+	}
+}

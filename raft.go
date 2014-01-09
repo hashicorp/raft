@@ -12,7 +12,8 @@ import (
 )
 
 const (
-	noPeerWait = 5 * time.Second
+	noPeerWait       = 5 * time.Second
+	minCheckInterval = 10 * time.Millisecond
 )
 
 var (
@@ -552,6 +553,7 @@ func (r *Raft) startReplication(peer net.Addr) {
 // leaderLoop is the hot loop for a leader, it is invoked
 // after all the various leader setup is done
 func (r *Raft) leaderLoop() {
+	lease := time.After(r.conf.LeaderLeaseTimeout)
 	for r.getState() == Leader {
 		select {
 		case rpc := <-r.rpcCh:
@@ -572,10 +574,56 @@ func (r *Raft) leaderLoop() {
 			}
 			r.dispatchLog(newLog)
 
+		case <-lease:
+			// Check if we've exceeded the lease, potentially stepping down
+			maxDiff := r.checkLeaderLease()
+
+			// Next check interval should adjust for the last node we've
+			// contacted, without going negative
+			checkInterval := r.conf.LeaderLeaseTimeout - maxDiff
+			if checkInterval < minCheckInterval {
+				checkInterval = minCheckInterval
+			}
+
+			// Renew the lease timer
+			lease = time.After(checkInterval)
+
 		case <-r.shutdownCh:
 			return
 		}
 	}
+}
+
+// checkLeaderLease is used to check if we can contact a quorum of nodes
+// within the last leader lease interval. If not, we need to step down,
+// as we may have lost connectivity. Returns the maximum duration without
+// contact
+func (r *Raft) checkLeaderLease() time.Duration {
+	// Track contacted nodes, we can always contact ourself
+	contacted := 1
+
+	// Check each follower
+	var maxDiff time.Duration
+	now := time.Now()
+	for peer, f := range r.leaderState.replState {
+		diff := now.Sub(f.lastContact)
+		if diff <= r.conf.LeaderLeaseTimeout {
+			contacted++
+			if diff > maxDiff {
+				maxDiff = diff
+			}
+		} else {
+			r.logger.Printf("[WARN] raft: Failed to contact %v in %v", peer, diff)
+		}
+	}
+
+	// Verify we can contact a quorum
+	quorum := ((len(r.peers) + 1) / 2) + 1
+	if contacted < quorum {
+		r.logger.Printf("[WARN] raft: Failed to contact quorum of nodes, stepping down")
+		r.setState(Follower)
+	}
+	return maxDiff
 }
 
 // preparePeerChange checks if a LogAddPeer or LogRemovePeer should be performed,

@@ -173,6 +173,7 @@ func TestRaft_Integ(t *testing.T) {
 	conf.CommitTimeout = 5 * time.Millisecond
 	conf.SnapshotThreshold = 100
 	conf.TrailingLogs = 10
+	conf.EnableSingleNode = true
 
 	// Create a single node
 	env1 := MakeRaft(t, conf)
