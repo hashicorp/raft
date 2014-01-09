@@ -3,6 +3,7 @@ package raft
 import (
 	"fmt"
 	"net"
+	"time"
 )
 
 type followerReplication struct {
@@ -15,6 +16,8 @@ type followerReplication struct {
 	currentTerm uint64
 	matchIndex  uint64
 	nextIndex   uint64
+
+	lastContact time.Time
 }
 
 // replicate is a long running routine that is used to manage
@@ -109,6 +112,9 @@ START:
 		return true
 	}
 
+	// Update the last contact
+	s.lastContact = time.Now()
+
 	// Update the s based on success
 	if resp.Success {
 		// Mark any inflight logs as committed
@@ -196,6 +202,9 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 		return true, nil
 	}
 
+	// Update the last contact
+	s.lastContact = time.Now()
+
 	// Check for success
 	if resp.Success {
 		// Mark any inflight logs as committed
@@ -224,7 +233,10 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 		case <-randomTimeout(r.conf.HeartbeatTimeout / 4):
 			if err := r.trans.AppendEntries(s.peer, &req, &resp); err != nil {
 				r.logger.Printf("[ERR] raft: Failed to heartbeat to %v: %v", s.peer, err)
+			} else {
+				s.lastContact = time.Now()
 			}
+
 		case <-stopCh:
 			return
 		}

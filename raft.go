@@ -543,6 +543,7 @@ func (r *Raft) startReplication(peer net.Addr) {
 		currentTerm: r.getCurrentTerm(),
 		matchIndex:  0,
 		nextIndex:   lastIdx + 1,
+		lastContact: time.Now(),
 	}
 	r.leaderState.replState[peer.String()] = s
 	r.goFunc(func() { r.replicate(s) })
