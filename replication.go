@@ -38,16 +38,16 @@ func (r *Raft) replicate(s *followerReplication) {
 	shouldStop := false
 	for !shouldStop {
 		select {
-		case <-s.triggerCh:
-			shouldStop = r.replicateTo(s, r.getLastLogIndex())
-		case <-randomTimeout(r.conf.CommitTimeout):
-			shouldStop = r.replicateTo(s, r.getLastLogIndex())
 		case maxIndex := <-s.stopCh:
 			// Make a best effort to replicate up to this index
 			if maxIndex > 0 {
 				r.replicateTo(s, maxIndex)
 			}
 			return
+		case <-s.triggerCh:
+			shouldStop = r.replicateTo(s, r.getLastLogIndex())
+		case <-randomTimeout(r.conf.CommitTimeout):
+			shouldStop = r.replicateTo(s, r.getLastLogIndex())
 		}
 	}
 }

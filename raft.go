@@ -625,8 +625,7 @@ func (r *Raft) leaderLoop() {
 
 			// Update peers once dispatch in progress
 			if newLog.log.Type == LogAddPeer || newLog.log.Type == LogRemovePeer {
-				peerSet := decodePeers(newLog.log.Data, r.trans)
-				r.peers = ExcludePeer(peerSet, r.localAddr)
+				r.processLog(&newLog.log, nil, true)
 			}
 
 		case <-lease:
@@ -761,7 +760,7 @@ func (r *Raft) processLogs(index uint64, future *logFuture) {
 	for idx := r.getLastApplied() + 1; idx <= index; idx++ {
 		// Get the log, either from the future or from our log store
 		if future != nil && future.log.Index == idx {
-			r.processLog(&future.log, future)
+			r.processLog(&future.log, future, false)
 
 		} else {
 			l := new(Log)
@@ -769,7 +768,7 @@ func (r *Raft) processLogs(index uint64, future *logFuture) {
 				r.logger.Printf("[ERR] raft: Failed to get log at %d: %v", idx, err)
 				panic(err)
 			}
-			r.processLog(l, nil)
+			r.processLog(l, nil, false)
 		}
 
 		// Update the lastApplied index and term
@@ -778,7 +777,7 @@ func (r *Raft) processLogs(index uint64, future *logFuture) {
 }
 
 // processLog is invoked to process the application of a single committed log
-func (r *Raft) processLog(l *Log, future *logFuture) {
+func (r *Raft) processLog(l *Log, future *logFuture, precommit bool) {
 	switch l.Type {
 	case LogBarrier:
 		// Barrier is handled by the FSM
@@ -848,7 +847,7 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 		}
 
 		// Handle removing ourself
-		if removeSelf {
+		if removeSelf && !precommit {
 			if r.conf.ShutdownOnRemove {
 				r.logger.Printf("[INFO] raft: Removed ourself, shutting down")
 				r.Shutdown()
@@ -865,7 +864,7 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 	}
 
 	// Invoke the future if given
-	if future != nil {
+	if future != nil && !precommit {
 		future.respond(nil)
 	}
 }
