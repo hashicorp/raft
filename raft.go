@@ -12,7 +12,6 @@ import (
 )
 
 const (
-	noPeerWait       = 5 * time.Second
 	minCheckInterval = 10 * time.Millisecond
 )
 
@@ -434,6 +433,7 @@ func (r *Raft) run() {
 
 // runFollower runs the FSM for a follower
 func (r *Raft) runFollower() {
+	didWarn := false
 	r.logger.Printf("[INFO] raft: %v entering Follower state", r)
 	for {
 		select {
@@ -446,9 +446,16 @@ func (r *Raft) runFollower() {
 
 		case <-randomTimeout(r.conf.HeartbeatTimeout):
 			// Heartbeat failed! Transition to the candidate state
-			r.logger.Printf("[WARN] raft: Heartbeat timeout reached, starting election")
 			r.leader = nil
-			r.setState(Candidate)
+			if len(r.peers) == 0 && !r.conf.EnableSingleNode {
+				if !didWarn {
+					r.logger.Printf("[WARN] raft: EnableSingleNode disabled, and no known peers. Aborting election.")
+					didWarn = true
+				}
+			} else {
+				r.logger.Printf("[WARN] raft: Heartbeat timeout reached, starting election")
+				r.setState(Candidate)
+			}
 			return
 
 		case <-r.shutdownCh:
@@ -460,17 +467,6 @@ func (r *Raft) runFollower() {
 // runCandidate runs the FSM for a candidate
 func (r *Raft) runCandidate() {
 	r.logger.Printf("[INFO] raft: %v entering Candidate state", r)
-
-	// Check if we have any peers
-	if len(r.peers) == 0 && !r.conf.EnableSingleNode {
-		r.logger.Printf("[WARN] raft: EnableSingleNode disabled, and no known peers. Aborting election.")
-		r.setState(Follower)
-		select {
-		case <-time.After(noPeerWait):
-		case <-r.shutdownCh:
-		}
-		return
-	}
 
 	// Start vote for us, and set a timeout
 	voteCh := r.electSelf()

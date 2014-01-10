@@ -280,7 +280,7 @@ func (n *NetworkTransport) listen() {
 			n.logger.Printf("[ERR] raft-net: Failed to accept connection: %v", err)
 			continue
 		}
-		n.logger.Printf("[DEBUG] raft-net: Accepted connection from: %v", conn.RemoteAddr())
+		n.logger.Printf("[DEBUG] raft-net: %v accepted connection from: %v", n.LocalAddr(), conn.RemoteAddr())
 
 		// Handle the connection in dedicated routine
 		go n.handleConn(conn)
