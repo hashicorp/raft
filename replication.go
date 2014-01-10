@@ -6,6 +6,10 @@ import (
 	"time"
 )
 
+const (
+	maxHeartbeatBackoff = 128
+)
+
 type followerReplication struct {
 	peer     net.Addr
 	inflight *inflight
@@ -223,6 +227,9 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 // to ensure they don't time out. This is done async of replicate(),
 // since that routine could potentially be blocked on disk IO
 func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
+	// Use an exponential backoff for retries
+	backoff := 1
+
 	req := AppendEntriesRequest{
 		Term:   s.currentTerm,
 		Leader: r.trans.EncodePeer(r.localAddr),
@@ -230,11 +237,16 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 	var resp AppendEntriesResponse
 	for {
 		select {
-		case <-randomTimeout(r.conf.HeartbeatTimeout / 4):
+		case <-randomTimeout((r.conf.HeartbeatTimeout / 4) * time.Duration(backoff)):
 			if err := r.trans.AppendEntries(s.peer, &req, &resp); err != nil {
 				r.logger.Printf("[ERR] raft: Failed to heartbeat to %v: %v", s.peer, err)
+				backoff *= 2
+				if backoff > maxHeartbeatBackoff {
+					backoff = maxHeartbeatBackoff
+				}
 			} else {
 				s.lastContact = time.Now()
+				backoff = 1
 			}
 
 		case <-stopCh:
