@@ -153,3 +153,25 @@ func TestEncodeDecodePeers(t *testing.T) {
 		t.Fatalf("mismatch %v %v", peers, decoded)
 	}
 }
+
+func TestBackoff(t *testing.T) {
+	b := backoff(10*time.Millisecond, 1, 8)
+	if b != 10*time.Millisecond {
+		t.Fatalf("bad: %v", b)
+	}
+
+	b = backoff(20*time.Millisecond, 2, 8)
+	if b != 20*time.Millisecond {
+		t.Fatalf("bad: %v", b)
+	}
+
+	b = backoff(10*time.Millisecond, 8, 8)
+	if b != 640*time.Millisecond {
+		t.Fatalf("bad: %v", b)
+	}
+
+	b = backoff(10*time.Millisecond, 9, 8)
+	if b != 640*time.Millisecond {
+		t.Fatalf("bad: %v", b)
+	}
+}

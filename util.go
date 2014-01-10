@@ -170,3 +170,15 @@ func uint64ToBytes(u uint64) []byte {
 	binary.BigEndian.PutUint64(buf, u)
 	return buf
 }
+
+// backoff is used to compute an exponential backoff
+// duration. Base time is scaled by the current round,
+// up to some maximum scale factor.
+func backoff(base time.Duration, round, limit uint64) time.Duration {
+	power := min(round, limit)
+	for power > 2 {
+		base *= 2
+		power--
+	}
+	return base
+}

@@ -7,7 +7,9 @@ import (
 )
 
 const (
-	maxHeartbeatBackoff = 128
+	maxHeartbeatBackoff = 256
+	maxFailureScale     = 8
+	failureWait         = 10 * time.Millisecond
 )
 
 type followerReplication struct {
@@ -22,6 +24,7 @@ type followerReplication struct {
 	nextIndex   uint64
 
 	lastContact time.Time
+	failures    uint64
 }
 
 // replicate is a long running routine that is used to manage
@@ -108,8 +111,11 @@ START:
 	// Make the RPC call
 	if err := r.trans.AppendEntries(s.peer, &req, &resp); err != nil {
 		r.logger.Printf("[ERR] raft: Failed to AppendEntries to %v: %v", s.peer, err)
+		s.failures++
+		time.Sleep(backoff(failureWait, s.failures, maxFailureScale))
 		return
 	}
+	s.failures = 0
 
 	// Check for a newer term, stop running
 	if resp.Term > req.Term {
