@@ -31,27 +31,6 @@ func (m *majorityQuorum) Commit(p net.Addr) bool {
 	return m.count >= m.votesNeeded
 }
 
-// ExcludeNodeQuorum requires a majority of nodes excluding
-// a particular node to agree
-type excludeNodeQuorum struct {
-	exclude     net.Addr
-	count       int
-	votesNeeded int
-}
-
-func newExcludeNodeQuorum(clusterSize int, exclude net.Addr) *excludeNodeQuorum {
-	votesNeeded := ((clusterSize - 1) / 2) + 1
-	return &excludeNodeQuorum{exclude: exclude, count: 0, votesNeeded: votesNeeded}
-}
-
-func (e *excludeNodeQuorum) Commit(p net.Addr) bool {
-	if p.String() == e.exclude.String() {
-		return false
-	}
-	e.count++
-	return e.count >= e.votesNeeded
-}
-
 // Inflight is used to track operations that are still in-flight
 type inflight struct {
 	sync.Mutex

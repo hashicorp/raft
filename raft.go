@@ -282,7 +282,6 @@ func (r *Raft) RemovePeer(peer net.Addr) Future {
 			Type: LogRemovePeer,
 			peer: peer,
 		},
-		policy: newExcludeNodeQuorum(len(r.peers)+1, peer),
 	}
 	logFuture.init()
 	select {
@@ -623,6 +622,12 @@ func (r *Raft) leaderLoop() {
 				}
 			}
 			r.dispatchLog(newLog)
+
+			// Update peers once dispatch in progress
+			if newLog.log.Type == LogAddPeer || newLog.log.Type == LogRemovePeer {
+				peerSet := decodePeers(newLog.log.Data, r.trans)
+				r.peers = ExcludePeer(peerSet, r.localAddr)
+			}
 
 		case <-lease:
 			// Check if we've exceeded the lease, potentially stepping down
