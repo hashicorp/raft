@@ -597,6 +597,7 @@ func (r *Raft) startReplication(peer net.Addr) {
 	}
 	r.leaderState.replState[peer.String()] = s
 	r.goFunc(func() { r.replicate(s) })
+	asyncNotifyCh(s.triggerCh)
 }
 
 // leaderLoop is the hot loop for a leader, it is invoked
