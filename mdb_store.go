@@ -216,8 +216,15 @@ func (m *MDBStore) DeleteRange(minIdx, maxIdx uint64) error {
 		return err
 	}
 
+	var key []byte
+	didDelete := false
 	for {
-		key, _, err := cursor.Get(nil, mdb.NEXT)
+		if didDelete {
+			key, _, err = cursor.Get(nil, 0)
+			didDelete = false
+		} else {
+			key, _, err = cursor.Get(nil, mdb.NEXT)
+		}
 		if err == mdb.NotFound {
 			break
 		} else if err != nil {
@@ -239,6 +246,7 @@ func (m *MDBStore) DeleteRange(minIdx, maxIdx uint64) error {
 			tx.Abort()
 			return err
 		}
+		didDelete = true
 	}
 	return tx.Commit()
 }

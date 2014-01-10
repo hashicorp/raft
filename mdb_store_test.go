@@ -159,17 +159,12 @@ func TestMDB_Logs(t *testing.T) {
 		Type:  LogCommand,
 		Data:  []byte("first"),
 	}
-	if err := l.StoreLog(&log); err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	log = Log{
-		Index: 10,
-		Term:  3,
-		Type:  LogCommand,
-		Data:  []byte("test"),
-	}
-	if err := l.StoreLog(&log); err != nil {
-		t.Fatalf("err: %v", err)
+	for i := 1; i <= 10; i++ {
+		log.Index = uint64(i)
+		log.Term = uint64(i)
+		if err := l.StoreLog(&log); err != nil {
+			t.Fatalf("err: %v", err)
+		}
 	}
 
 	// Try to fetch
@@ -195,29 +190,29 @@ func TestMDB_Logs(t *testing.T) {
 		t.Fatalf("bad idx: %d", idx)
 	}
 
-	// Delete the entire range
-	if err := l.DeleteRange(1, 10); err != nil {
+	// Delete a suffix
+	if err := l.DeleteRange(5, 10); err != nil {
 		t.Fatalf("err: %v ", err)
 	}
 
-	// Index should be zero again
+	// Index should be one
 	idx, err = l.FirstIndex()
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
-	if idx != 0 {
+	if idx != 1 {
 		t.Fatalf("bad idx: %d", idx)
 	}
 	idx, err = l.LastIndex()
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
-	if idx != 0 {
+	if idx != 4 {
 		t.Fatalf("bad idx: %d", idx)
 	}
 
 	// Should not be able to fetch
-	if err := l.GetLog(10, &out); err.Error() != "log not found" {
+	if err := l.GetLog(5, &out); err.Error() != "log not found" {
 		t.Fatalf("err: %v ", err)
 	}
 }
