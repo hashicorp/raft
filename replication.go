@@ -119,6 +119,7 @@ START:
 
 	// Check for a newer term, stop running
 	if resp.Term > req.Term {
+		r.logger.Printf("[ERR] raft: peer %v has newer term, stopping replication", s.peer)
 		return true
 	}
 
@@ -209,6 +210,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 
 	// Check for a newer term, stop running
 	if resp.Term > req.Term {
+		r.logger.Printf("[ERR] raft: peer %v has newer term, stopping replication", s.peer)
 		return true, nil
 	}
 
