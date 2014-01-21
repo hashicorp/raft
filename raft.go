@@ -455,8 +455,8 @@ func (r *Raft) runFollower() {
 			} else {
 				r.logger.Printf("[WARN] raft: Heartbeat timeout reached, starting election")
 				r.setState(Candidate)
+				return
 			}
-			return
 
 		case <-r.shutdownCh:
 			return
