@@ -2,6 +2,7 @@ package raft
 
 import (
 	"fmt"
+	"github.com/armon/go-metrics"
 	"net"
 	"time"
 )
@@ -60,6 +61,7 @@ func (r *Raft) replicateTo(s *followerReplication, lastIndex uint64) (shouldStop
 	var req AppendEntriesRequest
 	var resp AppendEntriesResponse
 	var maxIndex uint64
+	var start time.Time
 START:
 	req = AppendEntriesRequest{
 		Term:              s.currentTerm,
@@ -109,6 +111,7 @@ START:
 	}
 
 	// Make the RPC call
+	start = time.Now()
 	if err := r.trans.AppendEntries(s.peer, &req, &resp); err != nil {
 		r.logger.Printf("[ERR] raft: Failed to AppendEntries to %v: %v", s.peer, err)
 		s.failures++
@@ -116,6 +119,7 @@ START:
 		return
 	}
 	s.failures = 0
+	metrics.MeasureSince([]string{"raft", "replication", "appendEntries", s.peer.String()}, start)
 
 	// Check for a newer term, stop running
 	if resp.Term > req.Term {
@@ -202,11 +206,13 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	}
 
 	// Make the call
+	start := time.Now()
 	var resp InstallSnapshotResponse
 	if err := r.trans.InstallSnapshot(s.peer, &req, &resp, snapshot); err != nil {
 		r.logger.Printf("[ERR] raft: Failed to install snapshot %v: %v", snapId, err)
 		return false, err
 	}
+	metrics.MeasureSince([]string{"raft", "replication", "installSnapshot", s.peer.String()}, start)
 
 	// Check for a newer term, stop running
 	if resp.Term > req.Term {
@@ -246,6 +252,7 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 	for {
 		select {
 		case <-randomTimeout((r.conf.HeartbeatTimeout / 4) * time.Duration(backoff)):
+			start := time.Now()
 			if err := r.trans.AppendEntries(s.peer, &req, &resp); err != nil {
 				r.logger.Printf("[ERR] raft: Failed to heartbeat to %v: %v", s.peer, err)
 				backoff *= 2
@@ -255,6 +262,7 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 			} else {
 				s.lastContact = time.Now()
 				backoff = 1
+				metrics.MeasureSince([]string{"raft", "replication", "heartbeat", s.peer.String()}, start)
 			}
 
 		case <-stopCh:

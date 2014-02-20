@@ -3,6 +3,7 @@ package raft
 import (
 	"bytes"
 	"fmt"
+	"github.com/armon/go-metrics"
 	"io"
 	"log"
 	"net"
@@ -201,6 +202,7 @@ func (r *Raft) Leader() net.Addr {
 // for the command to be started. This must be run on the leader or it
 // will fail.
 func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
+	metrics.IncrCounter([]string{"raft", "apply"}, 1)
 	var timer <-chan time.Time
 	if timeout > 0 {
 		timer = time.After(timeout)
@@ -231,6 +233,7 @@ func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
 // limit the amount of time we wait for the command to be started. This
 // must be run on the leader or it will fail.
 func (r *Raft) Barrier(timeout time.Duration) Future {
+	metrics.IncrCounter([]string{"raft", "barrier"}, 1)
 	var timer <-chan time.Time
 	if timeout > 0 {
 		timer = time.After(timeout)
@@ -355,6 +358,7 @@ func (r *Raft) runFSM() {
 			}
 
 			// Attempt to restore
+			start := time.Now()
 			if err := r.fsm.Restore(source); err != nil {
 				req.respond(fmt.Errorf("Failed to restore snapshot %v: %v",
 					req.ID, err))
@@ -362,6 +366,7 @@ func (r *Raft) runFSM() {
 				continue
 			}
 			source.Close()
+			metrics.MeasureSince([]string{"raft", "fsm", "restore"}, start)
 
 			// Update the last index and term
 			lastIndex = meta.Index
@@ -376,7 +381,9 @@ func (r *Raft) runFSM() {
 			}
 
 			// Start a snapshot
+			start := time.Now()
 			snap, err := r.fsm.Snapshot()
+			metrics.MeasureSince([]string{"raft", "fsm", "snapshot"}, start)
 
 			// Respond to the request
 			req.index = lastIndex
@@ -389,7 +396,9 @@ func (r *Raft) runFSM() {
 			// Apply the log if a command
 			var resp interface{}
 			if commitTuple.log.Type == LogCommand {
+				start := time.Now()
 				resp = r.fsm.Apply(commitTuple.log)
+				metrics.MeasureSince([]string{"raft", "fsm", "apply"}, start)
 			}
 
 			// Update the indexes
@@ -606,6 +615,9 @@ func (r *Raft) leaderLoop() {
 			r.processRPC(rpc)
 
 		case commitLog := <-r.leaderState.commitCh:
+			// Measure the commit time
+			metrics.MeasureSince([]string{"raft", "commitTime"}, commitLog.dispatch)
+
 			// Increment the commit index
 			idx := commitLog.log.Index
 			r.setCommitIndex(idx)
@@ -666,6 +678,7 @@ func (r *Raft) checkLeaderLease() time.Duration {
 		} else {
 			r.logger.Printf("[WARN] raft: Failed to contact %v in %v", peer, diff)
 		}
+		metrics.AddSample([]string{"raft", "leader", "lastContact"}, float32(diff/time.Millisecond))
 	}
 
 	// Verify we can contact a quorum
@@ -712,6 +725,11 @@ func (r *Raft) preparePeerChange(l *logFuture) bool {
 // dispatchLog is called to push a log to disk, mark it
 // as inflight and begin replication of it
 func (r *Raft) dispatchLog(applyLog *logFuture) {
+	defer metrics.MeasureSince([]string{"raft", "leader", "dispatchLog"}, time.Now())
+
+	// Attach a dispatch time
+	applyLog.dispatch = time.Now()
+
 	// Prepare log
 	applyLog.log.Index = r.getLastIndex() + 1
 	applyLog.log.Term = r.getCurrentTerm()
@@ -884,6 +902,7 @@ func (r *Raft) processRPC(rpc RPC) {
 
 // appendEntries is invoked when we get an append entries RPC call
 func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
+	defer metrics.MeasureSince([]string{"raft", "rpc", "appendEntries"}, time.Now())
 	// Setup a response
 	resp := &AppendEntriesResponse{
 		Term:    r.getCurrentTerm(),
@@ -972,6 +991,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 
 // requestVote is invoked when we get an request vote RPC call
 func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
+	defer metrics.MeasureSince([]string{"raft", "rpc", "requestVote"}, time.Now())
 	// Setup a response
 	resp := &RequestVoteResponse{
 		Term:    r.getCurrentTerm(),
@@ -1042,6 +1062,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 // We must be in the follower state for this, since it means we are
 // too far behind a leader for log replay.
 func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
+	defer metrics.MeasureSince([]string{"raft", "rpc", "installSnapshot"}, time.Now())
 	// Setup a response
 	resp := &InstallSnapshotResponse{
 		Term:    r.getCurrentTerm(),
@@ -1160,6 +1181,7 @@ func (r *Raft) electSelf() <-chan *RequestVoteResponse {
 	// Construct a function to ask for a vote
 	askPeer := func(peer net.Addr) {
 		r.goFunc(func() {
+			defer metrics.MeasureSince([]string{"raft", "candidate", "electSelf"}, time.Now())
 			resp := new(RequestVoteResponse)
 			err := r.trans.RequestVote(peer, req, resp)
 			if err != nil {
@@ -1275,6 +1297,7 @@ func (r *Raft) shouldSnapshot() bool {
 
 // takeSnapshot is used to take a new snapshot
 func (r *Raft) takeSnapshot() error {
+	defer metrics.MeasureSince([]string{"raft", "snapshot", "takeSnapshot"}, time.Now())
 	// Create a snapshot request
 	req := &reqSnapshotFuture{}
 	req.init()
@@ -1299,16 +1322,20 @@ func (r *Raft) takeSnapshot() error {
 	peerSet := encodePeers(req.peers, r.trans)
 
 	// Create a new snapshot
+	start := time.Now()
 	sink, err := r.snapshots.Create(req.index, req.term, peerSet)
 	if err != nil {
 		return fmt.Errorf("Failed to create snapshot: %v", err)
 	}
+	metrics.MeasureSince([]string{"raft", "snapshot", "create"}, start)
 
 	// Try to persist the snapshot
+	start = time.Now()
 	if err := req.snapshot.Persist(sink); err != nil {
 		sink.Cancel()
 		return fmt.Errorf("Failed to persist snapshot: %v", err)
 	}
+	metrics.MeasureSince([]string{"raft", "snapshot", "persist"}, start)
 
 	// Close and check for error
 	if err := sink.Close(); err != nil {
@@ -1332,6 +1359,7 @@ func (r *Raft) takeSnapshot() error {
 // compactLogs takes the last inclusive index of a snapshot
 // and trims the logs that are no longer needed
 func (r *Raft) compactLogs(snapIdx uint64) error {
+	defer metrics.MeasureSince([]string{"raft", "compactLogs"}, time.Now())
 	// Determine log ranges to compact
 	minLog, err := r.logs.FirstIndex()
 	if err != nil {

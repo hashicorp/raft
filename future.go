@@ -66,6 +66,7 @@ type logFuture struct {
 	log      Log
 	policy   quorumPolicy
 	response interface{}
+	dispatch time.Time
 }
 
 func (l *logFuture) Response() interface{} {
