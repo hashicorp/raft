@@ -92,12 +92,6 @@ func TestInflight_CommitRange(t *testing.T) {
 
 // Should panic if we commit non contiguously!
 func TestInflight_NonContiguous(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatalf("should panic")
-		}
-	}()
-
 	commitCh := make(chan *logFuture, 3)
 	in := newInflight(commitCh)
 
@@ -113,4 +107,32 @@ func TestInflight_NonContiguous(t *testing.T) {
 	in.Commit(3, nil)
 	in.Commit(3, nil)
 	in.Commit(3, nil) // panic!
+
+	select {
+	case <-commitCh:
+		t.Fatalf("should not commit")
+	default:
+	}
+
+	in.Commit(2, nil)
+	in.Commit(2, nil)
+	in.Commit(2, nil) // panic!
+
+	select {
+	case l := <-commitCh:
+		if l.log.Index != 2 {
+			t.Fatalf("bad: %v", *l)
+		}
+	default:
+		t.Fatalf("should commit")
+	}
+
+	select {
+	case l := <-commitCh:
+		if l.log.Index != 3 {
+			t.Fatalf("bad: %v", *l)
+		}
+	default:
+		t.Fatalf("should commit")
+	}
 }

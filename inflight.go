@@ -1,7 +1,6 @@
 package raft
 
 import (
-	"fmt"
 	"net"
 	"sync"
 )
@@ -12,6 +11,9 @@ type quorumPolicy interface {
 	// Checks if a commit from a given peer is enough to
 	// satisfy the commitment rules
 	Commit(net.Addr) bool
+
+	// Checks if a commit is committed
+	IsCommitted() bool
 }
 
 // MajorityQuorum is used by Apply transactions and requires
@@ -28,6 +30,10 @@ func newMajorityQuorum(clusterSize int) *majorityQuorum {
 
 func (m *majorityQuorum) Commit(p net.Addr) bool {
 	m.count++
+	return m.count >= m.votesNeeded
+}
+
+func (m *majorityQuorum) IsCommitted() bool {
 	return m.count >= m.votesNeeded
 }
 
@@ -112,11 +118,13 @@ func (i *inflight) Commit(index uint64, peer net.Addr) {
 	if op.policy.Commit(peer) {
 		// Sanity check for sequential commit
 		if index != i.minCommit {
-			panic(fmt.Sprintf("Non-sequential commit of %d, min index %d, max index %d. Future: %#v",
-				index, i.minCommit, i.maxCommit, *op))
+			return
+			//panic(fmt.Sprintf("Non-sequential commit of %d, min index %d, max index %d. Future: %#v",
+			//    index, i.minCommit, i.maxCommit, *op))
 		}
 
 		// Notify of commit
+	NOTIFY:
 		select {
 		case i.commitCh <- op:
 			// Stop tracking since it is committed
@@ -132,6 +140,15 @@ func (i *inflight) Commit(index uint64, peer net.Addr) {
 			}
 
 		case <-i.stopCh:
+		}
+
+		// Check if the next in-flight operation is ready
+		if i.minCommit != 0 {
+			op = i.operations[i.minCommit]
+			if op.policy.IsCommitted() {
+				index = i.minCommit
+				goto NOTIFY
+			}
 		}
 	}
 }
