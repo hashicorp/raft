@@ -8,9 +8,8 @@ import (
 )
 
 const (
-	maxHeartbeatBackoff = 256
-	maxFailureScale     = 12
-	failureWait         = 10 * time.Millisecond
+	maxFailureScale = 12
+	failureWait     = 10 * time.Millisecond
 )
 
 type followerReplication struct {
@@ -121,7 +120,10 @@ START:
 	if err := r.trans.AppendEntries(s.peer, &req, &resp); err != nil {
 		r.logger.Printf("[ERR] raft: Failed to AppendEntries to %v: %v", s.peer, err)
 		s.failures++
-		time.Sleep(backoff(failureWait, s.failures, maxFailureScale))
+		select {
+		case <-time.After(backoff(failureWait, s.failures, maxFailureScale)):
+		case <-s.stopCh:
+		}
 		return
 	}
 	s.failures = 0
@@ -248,9 +250,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 // to ensure they don't time out. This is done async of replicate(),
 // since that routine could potentially be blocked on disk IO
 func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
-	// Use an exponential backoff for retries
-	backoff := 1
-
+	var failures uint64
 	req := AppendEntriesRequest{
 		Term:   s.currentTerm,
 		Leader: r.trans.EncodePeer(r.localAddr),
@@ -258,17 +258,18 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 	var resp AppendEntriesResponse
 	for {
 		select {
-		case <-randomTimeout((r.conf.HeartbeatTimeout / 4) * time.Duration(backoff)):
+		case <-randomTimeout(r.conf.HeartbeatTimeout / 8):
 			start := time.Now()
 			if err := r.trans.AppendEntries(s.peer, &req, &resp); err != nil {
 				r.logger.Printf("[ERR] raft: Failed to heartbeat to %v: %v", s.peer, err)
-				backoff *= 2
-				if backoff > maxHeartbeatBackoff {
-					backoff = maxHeartbeatBackoff
+				failures++
+				select {
+				case <-time.After(backoff(failureWait, failures, maxFailureScale)):
+				case <-stopCh:
 				}
 			} else {
 				s.lastContact = time.Now()
-				backoff = 1
+				failures = 0
 				metrics.MeasureSince([]string{"raft", "replication", "heartbeat", s.peer.String()}, start)
 			}
 
