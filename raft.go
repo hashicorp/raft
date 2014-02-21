@@ -1146,7 +1146,9 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	r.setLastSnapshotTerm(req.LastLogTerm)
 
 	// Restore the peer set
-	r.peers = ExcludePeer(decodePeers(req.Peers, r.trans), r.localAddr)
+	peers := decodePeers(req.Peers, r.trans)
+	r.peers = ExcludePeer(peers, r.localAddr)
+	r.peerStore.SetPeers(peers)
 
 	// Compact logs, continue even if this fails
 	if err := r.compactLogs(req.LastLogIndex); err != nil {
@@ -1415,10 +1417,6 @@ func (r *Raft) restoreSnapshot() error {
 		// Update the last stable snapshot info
 		r.setLastSnapshotIndex(snapshot.Index)
 		r.setLastSnapshotTerm(snapshot.Term)
-
-		// Restore the peer set
-		peerSet := decodePeers(snapshot.Peers, r.trans)
-		r.peers = ExcludePeer(peerSet, r.localAddr)
 
 		// Success!
 		return nil
