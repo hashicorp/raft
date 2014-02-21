@@ -122,7 +122,7 @@ START:
 		s.failures++
 		select {
 		case <-time.After(backoff(failureWait, s.failures, maxFailureScale)):
-		case <-s.stopCh:
+		case <-r.shutdownCh:
 		}
 		return
 	}
