@@ -9,7 +9,7 @@ import (
 
 const (
 	maxHeartbeatBackoff = 256
-	maxFailureScale     = 8
+	maxFailureScale     = 12
 	failureWait         = 10 * time.Millisecond
 )
 
@@ -20,9 +20,10 @@ type followerReplication struct {
 	stopCh    chan uint64
 	triggerCh chan struct{}
 
-	currentTerm uint64
-	matchIndex  uint64
-	nextIndex   uint64
+	currentTerm     uint64
+	matchIndex      uint64
+	nextIndex       uint64
+	lastCommitIndex uint64
 
 	lastContact time.Time
 	failures    uint64
@@ -110,6 +111,11 @@ START:
 		req.Entries = append(req.Entries, oldLog)
 	}
 
+	// Skip the RPC call if there is nothing to do
+	if len(req.Entries) == 0 && req.LeaderCommitIndex == s.lastCommitIndex {
+		return
+	}
+
 	// Make the RPC call
 	start = time.Now()
 	if err := r.trans.AppendEntries(s.peer, &req, &resp); err != nil {
@@ -138,6 +144,7 @@ START:
 		// Update the indexes
 		s.matchIndex = maxIndex
 		s.nextIndex = maxIndex + 1
+		s.lastCommitIndex = req.LeaderCommitIndex
 	} else {
 		r.logger.Printf("[WARN] raft: AppendEntries to %v rejected, sending older logs", s.peer)
 		s.nextIndex = max(min(s.nextIndex-1, resp.LastLog+1), 1)
