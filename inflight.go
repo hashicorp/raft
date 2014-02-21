@@ -112,8 +112,8 @@ func (i *inflight) Commit(index uint64, peer net.Addr) {
 	if op.policy.Commit(peer) {
 		// Sanity check for sequential commit
 		if index != i.minCommit {
-			panic(fmt.Sprintf("Non-sequential commit of %d, min index %d, max index %d",
-				index, i.minCommit, i.maxCommit))
+			panic(fmt.Sprintf("Non-sequential commit of %d, min index %d, max index %d. Future: %#v",
+				index, i.minCommit, i.maxCommit, *op))
 		}
 
 		// Notify of commit
