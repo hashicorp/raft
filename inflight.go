@@ -107,7 +107,26 @@ func (i *inflight) Cancel(err error) {
 func (i *inflight) Commit(index uint64, peer net.Addr) {
 	i.Lock()
 	defer i.Unlock()
+	i.commit(index, peer)
+}
 
+// CommitRange is used to commit a range of indexes inclusively
+// It optimized to avoid commits for indexes that are not tracked
+func (i *inflight) CommitRange(minIndex, maxIndex uint64, peer net.Addr) {
+	i.Lock()
+	defer i.Unlock()
+
+	// Update the minimum index
+	minIndex = max(i.minCommit, minIndex)
+
+	// Commit each index
+	for idx := minIndex; idx <= maxIndex; idx++ {
+		i.commit(idx, peer)
+	}
+}
+
+// commit is used to commit a single index. Must be called with the lock held.
+func (i *inflight) commit(index uint64, peer net.Addr) {
 	op, ok := i.operations[index]
 	if !ok {
 		// Ignore if not in the map, as it may be commited already
@@ -115,56 +134,43 @@ func (i *inflight) Commit(index uint64, peer net.Addr) {
 	}
 
 	// Check if we've satisfied the commit
-	if op.policy.Commit(peer) {
-		// Sanity check for sequential commit
-		if index != i.minCommit {
-			return
-			//panic(fmt.Sprintf("Non-sequential commit of %d, min index %d, max index %d. Future: %#v",
-			//    index, i.minCommit, i.maxCommit, *op))
-		}
-
-		// Notify of commit
-	NOTIFY:
-		select {
-		case i.commitCh <- op:
-			// Stop tracking since it is committed
-			delete(i.operations, index)
-
-			// Update the indexes
-			if index == i.maxCommit {
-				i.minCommit = 0
-				i.maxCommit = 0
-
-			} else {
-				i.minCommit++
-			}
-
-		case <-i.stopCh:
-		}
-
-		// Check if the next in-flight operation is ready
-		if i.minCommit != 0 {
-			op = i.operations[i.minCommit]
-			if op.policy.IsCommitted() {
-				index = i.minCommit
-				goto NOTIFY
-			}
-		}
+	if !op.policy.Commit(peer) {
+		return
 	}
-}
 
-// CommitRange is used to commit a range of indexes inclusively
-// It optimized to avoid commits for indexes that are not tracked
-func (i *inflight) CommitRange(minIndex, maxIndex uint64, peer net.Addr) {
-	i.Lock()
-	minInflight := i.minCommit
-	i.Unlock()
+	// Cannot commit if this is not the minimum inflight. This can happen
+	// if the quorum size changes, meaning a previous commit requires a larger
+	// quorum that this commit. We MUST block until the previous log is committed,
+	// otherwise logs will be applied out of order.
+	if index != i.minCommit {
+		return
+	}
 
-	// Update the minimum index
-	minIndex = max(minInflight, minIndex)
+	// Notify of commit
+NOTIFY:
+	select {
+	case i.commitCh <- op:
+		// Stop tracking since it is committed
+		delete(i.operations, index)
 
-	// Commit each index
-	for idx := minIndex; idx <= maxIndex; idx++ {
-		i.Commit(idx, peer)
+		// Update the indexes
+		if index == i.maxCommit {
+			i.minCommit = 0
+			i.maxCommit = 0
+
+		} else {
+			i.minCommit++
+		}
+
+	case <-i.stopCh:
+	}
+
+	// Check if the next in-flight operation is ready
+	if i.minCommit != 0 {
+		op = i.operations[i.minCommit]
+		if op.policy.IsCommitted() {
+			index = i.minCommit
+			goto NOTIFY
+		}
 	}
 }
