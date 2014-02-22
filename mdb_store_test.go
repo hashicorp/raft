@@ -167,8 +167,28 @@ func TestMDB_Logs(t *testing.T) {
 		}
 	}
 
+	// Attempt to write multiple logs
+	var logs []*Log
+	for i := 11; i <= 20; i++ {
+		nl := &Log{
+			Index: uint64(i),
+			Term:  uint64(i),
+			Type:  LogCommand,
+			Data:  []byte("first"),
+		}
+		logs = append(logs, nl)
+	}
+	if err := l.StoreLogs(logs); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
 	// Try to fetch
 	if err := l.GetLog(10, &out); err != nil {
+		t.Fatalf("err: %v ", err)
+	}
+
+	// Try to fetch
+	if err := l.GetLog(20, &out); err != nil {
 		t.Fatalf("err: %v ", err)
 	}
 
@@ -186,12 +206,12 @@ func TestMDB_Logs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
-	if idx != 10 {
+	if idx != 20 {
 		t.Fatalf("bad idx: %d", idx)
 	}
 
 	// Delete a suffix
-	if err := l.DeleteRange(5, 10); err != nil {
+	if err := l.DeleteRange(5, 20); err != nil {
 		t.Fatalf("err: %v ", err)
 	}
 

@@ -181,22 +181,31 @@ func (m *MDBStore) GetLog(index uint64, logOut *Log) error {
 
 // Stores a log entry
 func (m *MDBStore) StoreLog(log *Log) error {
-	// Convert to an on-disk format
-	key := uint64ToBytes(log.Index)
-	val, err := encodeMsgPack(log)
-	if err != nil {
-		return err
-	}
+	return m.StoreLogs([]*Log{log})
+}
 
+// Stores multiple log entries
+func (m *MDBStore) StoreLogs(logs []*Log) error {
 	// Start write txn
 	tx, dbis, err := m.startTxn(false, dbLogs)
 	if err != nil {
 		return err
 	}
 
-	if err := tx.Put(dbis[0], key, val.Bytes(), 0); err != nil {
-		tx.Abort()
-		return err
+	for _, log := range logs {
+		// Convert to an on-disk format
+		key := uint64ToBytes(log.Index)
+		val, err := encodeMsgPack(log)
+		if err != nil {
+			tx.Abort()
+			return err
+		}
+
+		// Write to the table
+		if err := tx.Put(dbis[0], key, val.Bytes(), 0); err != nil {
+			tx.Abort()
+			return err
+		}
 	}
 	return tx.Commit()
 }

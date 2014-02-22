@@ -61,6 +61,9 @@ type LogStore interface {
 	// Stores a log entry
 	StoreLog(log *Log) error
 
+	// Stores multiple log entries
+	StoreLogs(logs []*Log) error
+
 	// Deletes a range of log entries. The range is inclusive.
 	DeleteRange(min, max uint64) error
 }

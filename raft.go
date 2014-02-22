@@ -954,27 +954,30 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		}
 	}
 
-	// Add all the entries
-	for _, entry := range a.Entries {
+	// Process any new entries
+	if n := len(a.Entries); n > 0 {
+		first := a.Entries[0]
+		last := a.Entries[n-1]
+
 		// Delete any conflicting entries
 		lastLogIdx := r.getLastLogIndex()
-		if entry.Index <= lastLogIdx {
-			r.logger.Printf("[WARN] raft: Clearing log suffix from %d to %d", entry.Index, lastLogIdx)
-			if err := r.logs.DeleteRange(entry.Index, lastLogIdx); err != nil {
+		if first.Index <= lastLogIdx {
+			r.logger.Printf("[WARN] raft: Clearing log suffix from %d to %d", first.Index, lastLogIdx)
+			if err := r.logs.DeleteRange(first.Index, lastLogIdx); err != nil {
 				r.logger.Printf("[ERR] raft: Failed to clear log suffix: %v", err)
 				return
 			}
 		}
 
 		// Append the entry
-		if err := r.logs.StoreLog(entry); err != nil {
-			r.logger.Printf("[ERR] raft: Failed to append to log: %v", err)
+		if err := r.logs.StoreLogs(a.Entries); err != nil {
+			r.logger.Printf("[ERR] raft: Failed to append to logs: %v", err)
 			return
 		}
 
 		// Update the lastLog
-		r.setLastLogIndex(entry.Index)
-		r.setLastLogTerm(entry.Term)
+		r.setLastLogIndex(last.Index)
+		r.setLastLogTerm(last.Term)
 	}
 
 	// Update the commit index
