@@ -33,7 +33,7 @@ type FileSnapshotStore struct {
 	logger *log.Logger
 }
 
-type dirEnts []os.FileInfo
+type snapMetaSlice []*fileSnapshotMeta
 
 // Implements the SnapshotSink
 type FileSnapshotSink struct {
@@ -215,14 +215,10 @@ func (f *FileSnapshotStore) getSnapshots() ([]*fileSnapshotMeta, error) {
 		return nil, err
 	}
 
-	// Sort the contents, ensures lexical order
-	sort.Sort(dirEnts(snapshots))
-
 	// Populate the metadata, reverse order (newest first)
 	var snapMeta []*fileSnapshotMeta
-	for i := len(snapshots); i > 0; i-- {
+	for _, snap := range snapshots {
 		// Ignore any files
-		snap := snapshots[i-1]
 		if !snap.IsDir() {
 			continue
 		}
@@ -244,6 +240,10 @@ func (f *FileSnapshotStore) getSnapshots() ([]*fileSnapshotMeta, error) {
 		// Append, but only return up to the retain count
 		snapMeta = append(snapMeta, meta)
 	}
+
+	// Sort the snapshot, reverse so we get new -> old
+	sort.Sort(sort.Reverse(snapMetaSlice(snapMeta)))
+
 	return snapMeta, nil
 }
 
@@ -450,15 +450,18 @@ func (s *FileSnapshotSink) writeMeta() error {
 	return nil
 }
 
-// Implement the sort interface for dirEnts
-func (d dirEnts) Len() int {
-	return len(d)
+// Implement the sort interface for []*fileSnapshotMeta
+func (s snapMetaSlice) Len() int {
+	return len(s)
 }
 
-func (d dirEnts) Less(i, j int) bool {
-	return d[i].Name() < d[j].Name()
+func (s snapMetaSlice) Less(i, j int) bool {
+	if s[i].Term != s[j].Term {
+		return s[i].Term < s[j].Term
+	}
+	return s[i].Index < s[j].Index
 }
 
-func (d dirEnts) Swap(i, j int) {
-	d[i], d[j] = d[j], d[i]
+func (s snapMetaSlice) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
 }

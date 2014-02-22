@@ -242,3 +242,55 @@ func TestFileSS_Names(t *testing.T) {
 		t.Fatalf("bad: %v", when)
 	}
 }
+
+func TestFileSS_Ordering(t *testing.T) {
+	// Create a test dir
+	dir, err := ioutil.TempDir("", "raft")
+	if err != nil {
+		t.Fatalf("err: %v ", err)
+	}
+	defer os.RemoveAll(dir)
+
+	snap, err := NewFileSnapshotStore(dir, 3, nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Create a new sink
+	peers := []byte("all my lovely friends")
+
+	sink, err := snap.Create(130350, 5, peers)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	err = sink.Close()
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	sink, err = snap.Create(204917, 36, peers)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	err = sink.Close()
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Should only have 2 listed!
+	snaps, err := snap.List()
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(snaps) != 2 {
+		t.Fatalf("expect 2 snapshots: %v", snaps)
+	}
+
+	// Check they are ordered
+	if snaps[0].Term != 36 {
+		t.Fatalf("bad snap: %#v", *snaps[0])
+	}
+	if snaps[1].Term != 5 {
+		t.Fatalf("bad snap: %#v", *snaps[1])
+	}
+}
