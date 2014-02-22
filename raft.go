@@ -940,8 +940,8 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		} else {
 			var prevLog Log
 			if err := r.logs.GetLog(a.PrevLogEntry, &prevLog); err != nil {
-				r.logger.Printf("[WARN] raft: Failed to get previous log: %d %v",
-					a.PrevLogEntry, err)
+				r.logger.Printf("[WARN] raft: Failed to get previous log: %d %v (last: %d)",
+					a.PrevLogEntry, err, lastIdx)
 				return
 			}
 			prevLogTerm = prevLog.Term

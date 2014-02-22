@@ -148,9 +148,9 @@ START:
 		s.nextIndex = maxIndex + 1
 		s.lastCommitIndex = req.LeaderCommitIndex
 	} else {
-		r.logger.Printf("[WARN] raft: AppendEntries to %v rejected, sending older logs", s.peer)
 		s.nextIndex = max(min(s.nextIndex-1, resp.LastLog+1), 1)
 		s.matchIndex = s.nextIndex - 1
+		r.logger.Printf("[WARN] raft: AppendEntries to %v rejected, sending older logs (next: %d)", s.peer, s.nextIndex)
 	}
 
 CHECK_MORE:
