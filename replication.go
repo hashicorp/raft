@@ -219,8 +219,14 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	var resp InstallSnapshotResponse
 	if err := r.trans.InstallSnapshot(s.peer, &req, &resp, snapshot); err != nil {
 		r.logger.Printf("[ERR] raft: Failed to install snapshot %v: %v", snapId, err)
+		s.failures++
+		select {
+		case <-time.After(backoff(failureWait, s.failures, maxFailureScale)):
+		case <-r.shutdownCh:
+		}
 		return false, err
 	}
+	s.failures = 0
 	metrics.MeasureSince([]string{"raft", "replication", "installSnapshot", s.peer.String()}, start)
 
 	// Check for a newer term, stop running
