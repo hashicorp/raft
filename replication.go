@@ -127,7 +127,8 @@ START:
 		return
 	}
 	s.failures = 0
-	metrics.MeasureSince([]string{"raft", "replication", "appendEntries", s.peer.String()}, start)
+	metrics.MeasureSince([]string{"raft", "replication", "appendEntries", "rpc", s.peer.String()}, start)
+	metrics.IncrCounter([]string{"raft", "replication", "appendEntries", "logs", s.peer.String()}, float32(len(req.Entries)))
 
 	// Check for a newer term, stop running
 	if resp.Term > req.Term {
