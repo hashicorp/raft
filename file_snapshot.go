@@ -460,7 +460,7 @@ func (s snapMetaSlice) Less(i, j int) bool {
 		return s[i].Term < s[j].Term
 	}
 	if s[i].Index != s[j].Index {
-		return s[i].Index < s[j].Term
+		return s[i].Index < s[j].Index
 	}
 	return s[i].ID < s[j].ID
 }
