@@ -45,7 +45,7 @@ func (d *deferError) Error() error {
 		return d.err
 	}
 	if d.errCh == nil {
-		panic("waiting from response on nil channel")
+		panic("waiting for response on nil channel")
 	}
 	d.err = <-d.errCh
 	return d.err

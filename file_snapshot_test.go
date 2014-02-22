@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"os"
 	"testing"
+	"time"
 )
 
 func FileSnapTest(t *testing.T) (string, *FileSnapshotStore) {
@@ -222,5 +223,22 @@ func TestFileSS_BadPerm(t *testing.T) {
 	_, err := NewFileSnapshotStore("/", 3, nil)
 	if err == nil {
 		t.Fatalf("should fail to use root")
+	}
+}
+
+func TestFileSS_Names(t *testing.T) {
+	name := snapshotName(36, 204917)
+	term, index, when, err := parseName(name)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if term != 36 {
+		t.Fatalf("bad: %v", index)
+	}
+	if index != 204917 {
+		t.Fatalf("bad: %v", index)
+	}
+	if time.Now().Sub(when) > time.Millisecond {
+		t.Fatalf("bad: %v", when)
 	}
 }

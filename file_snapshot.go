@@ -114,10 +114,29 @@ func (f *FileSnapshotStore) testPermissions() error {
 	return nil
 }
 
+// snapshotName generate s name for the snapshot
+func snapshotName(term, index uint64) string {
+	return fmt.Sprintf("%d-%d-%s", term, index, time.Now().Format(time.RFC3339Nano))
+}
+
+// parseName parse the components of a name
+func parseName(name string) (uint64, uint64, time.Time, error) {
+	var term, index uint64
+	var timeString string
+	if _, err := fmt.Sscanf(name, "%d-%d-%s", &term, &index, &timeString); err != nil {
+		return 0, 0, time.Time{}, err
+	}
+	when, err := time.Parse(time.RFC3339Nano, timeString)
+	if err != nil {
+		return 0, 0, time.Time{}, err
+	}
+	return term, index, when, nil
+}
+
 // Create is used to start a new snapshot
 func (f *FileSnapshotStore) Create(index, term uint64, peers []byte) (SnapshotSink, error) {
 	// Create a new path
-	name := fmt.Sprintf("%d-%d-%s", term, index, time.Now().Format(time.RFC3339Nano))
+	name := snapshotName(term, index)
 	path := filepath.Join(f.path, name+tmpSuffix)
 	f.logger.Printf("[INFO] snapshot: Creating new snapshot at %s", path)
 
