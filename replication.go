@@ -63,6 +63,14 @@ func (r *Raft) replicateTo(s *followerReplication, lastIndex uint64) (shouldStop
 	var maxIndex uint64
 	var start time.Time
 START:
+	// Prevent an excessive retry rate on errors
+	if s.failures > 0 {
+		select {
+		case <-time.After(backoff(failureWait, s.failures, maxFailureScale)):
+		case <-r.shutdownCh:
+		}
+	}
+
 	req = AppendEntriesRequest{
 		Term:              s.currentTerm,
 		Leader:            r.trans.EncodePeer(r.localAddr),
@@ -120,13 +128,8 @@ START:
 	if err := r.trans.AppendEntries(s.peer, &req, &resp); err != nil {
 		r.logger.Printf("[ERR] raft: Failed to AppendEntries to %v: %v", s.peer, err)
 		s.failures++
-		select {
-		case <-time.After(backoff(failureWait, s.failures, maxFailureScale)):
-		case <-r.shutdownCh:
-		}
 		return
 	}
-	s.failures = 0
 	metrics.MeasureSince([]string{"raft", "replication", "appendEntries", "rpc", s.peer.String()}, start)
 	metrics.IncrCounter([]string{"raft", "replication", "appendEntries", "logs", s.peer.String()}, float32(len(req.Entries)))
 
@@ -148,9 +151,13 @@ START:
 		s.matchIndex = maxIndex
 		s.nextIndex = maxIndex + 1
 		s.lastCommitIndex = req.LeaderCommitIndex
+
+		// Clear any failures
+		s.failures = 0
 	} else {
 		s.nextIndex = max(min(s.nextIndex-1, resp.LastLog+1), 1)
 		s.matchIndex = s.nextIndex - 1
+		s.failures++
 		r.logger.Printf("[WARN] raft: AppendEntries to %v rejected, sending older logs (next: %d)", s.peer, s.nextIndex)
 	}
 
@@ -221,13 +228,8 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	if err := r.trans.InstallSnapshot(s.peer, &req, &resp, snapshot); err != nil {
 		r.logger.Printf("[ERR] raft: Failed to install snapshot %v: %v", snapId, err)
 		s.failures++
-		select {
-		case <-time.After(backoff(failureWait, s.failures, maxFailureScale)):
-		case <-r.shutdownCh:
-		}
 		return false, err
 	}
-	s.failures = 0
 	metrics.MeasureSince([]string{"raft", "replication", "installSnapshot", s.peer.String()}, start)
 
 	// Check for a newer term, stop running
@@ -247,7 +249,11 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 		// Update the indexes
 		s.matchIndex = meta.Index
 		s.nextIndex = s.matchIndex + 1
+
+		// Clear any failures
+		s.failures = 0
 	} else {
+		s.failures++
 		r.logger.Printf("[WARN] raft: InstallSnapshot to %v rejected", s.peer)
 	}
 	return false, nil
