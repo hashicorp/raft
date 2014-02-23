@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 )
@@ -555,7 +556,12 @@ func TestRaft_ApplyConcurrent(t *testing.T) {
 	// Wait for a leader
 	leader := c.Leader()
 
+	// Create a wait group
+	var group sync.WaitGroup
+	group.Add(100)
+
 	applyF := func(i int) {
+		defer group.Done()
 		future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
 		if err := future.Error(); err != nil {
 			t.Fatalf("err: %v", err)
@@ -567,8 +573,17 @@ func TestRaft_ApplyConcurrent(t *testing.T) {
 		go applyF(i)
 	}
 
-	// Block on the last one
-	applyF(100)
+	// Wait to finish
+	doneCh := make(chan struct{})
+	go func() {
+		group.Wait()
+		close(doneCh)
+	}()
+	select {
+	case <-doneCh:
+	case <-time.After(time.Second):
+		t.Fatalf("timeout")
+	}
 
 	// Check the FSMs
 	c.EnsureSame(t)

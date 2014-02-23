@@ -1283,12 +1283,10 @@ func (r *Raft) runSnapshots() {
 // shouldSnapshot checks if we meet the conditions to take
 // a new snapshot
 func (r *Raft) shouldSnapshot() bool {
-	// Check the spread of logs
-	firstIdx, err := r.logs.FirstIndex()
-	if err != nil {
-		r.logger.Printf("[ERR] raft: Failed to get first log index: %v", err)
-		return false
-	}
+	// Check the last snapshot index
+	lastSnap := r.getLastSnapshotIndex()
+
+	// Check the last log index
 	lastIdx, err := r.logs.LastIndex()
 	if err != nil {
 		r.logger.Printf("[ERR] raft: Failed to get last log index: %v", err)
@@ -1296,7 +1294,7 @@ func (r *Raft) shouldSnapshot() bool {
 	}
 
 	// Compare the delta to the threshold
-	delta := lastIdx - firstIdx
+	delta := lastIdx - lastSnap
 	return delta >= r.conf.SnapshotThreshold
 }
 

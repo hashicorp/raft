@@ -67,7 +67,7 @@ func DefaultConfig() *Config {
 		CommitTimeout:      20 * time.Millisecond,
 		MaxAppendEntries:   64,
 		ShutdownOnRemove:   true,
-		TrailingLogs:       10000,
+		TrailingLogs:       10240,
 		SnapshotInterval:   120 * time.Second,
 		SnapshotThreshold:  8192,
 		EnableSingleNode:   false,
