@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -339,6 +340,27 @@ func (r *Raft) LeaderCh() <-chan bool {
 
 func (r *Raft) String() string {
 	return fmt.Sprintf("Node at %s [%v]", r.localAddr.String(), r.getState())
+}
+
+// Stats is used to return a map of various internal stats. This should only
+// be used for informative purposes or debugging
+func (r *Raft) Stats() map[string]string {
+	toString := func(v uint64) string {
+		return strconv.FormatUint(v, 10)
+	}
+	s := map[string]string{
+		"state":               r.getState().String(),
+		"term":                toString(r.getCurrentTerm()),
+		"last_log_index":      toString(r.getLastLogIndex()),
+		"last_log_term":       toString(r.getLastLogTerm()),
+		"commit_index":        toString(r.getCommitIndex()),
+		"applied_index":       toString(r.getLastApplied()),
+		"fsm_pending":         toString(uint64(len(r.fsmCommitCh))),
+		"last_snapshot_index": toString(r.getLastSnapshotIndex()),
+		"last_snapshot_term":  toString(r.getLastSnapshotTerm()),
+		"num_peers":           toString(uint64(len(r.peers))),
+	}
+	return s
 }
 
 // runFSM is a long running goroutine responsible for applying logs
