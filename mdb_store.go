@@ -10,7 +10,7 @@ import (
 const (
 	dbLogs       = "logs"
 	dbConf       = "conf"
-	dbMaxMapSize = 1024 * 1024 * 1024 // 1GB maximum map size
+	dbMaxMapSize = 128 * 1024 * 1024 // 128MB default max map size
 )
 
 // Sub-dir used for MDB
@@ -19,17 +19,31 @@ var mdbPath = "mdb/"
 // MDBStore provides an implementation of LogStore and StableStore,
 // all backed by a single MDB database.
 type MDBStore struct {
-	env  *mdb.Env
-	path string
+	env     *mdb.Env
+	path    string
+	maxSize uint64
 }
 
 // NewMDBStore returns a new MDBStore and potential
 // error. Requres a base directory from which to operate.
+// Uses the default maximum size.
 func NewMDBStore(base string) (*MDBStore, error) {
+	return NewMDBStoreWithSize(base, 0)
+}
+
+// NewMDBStore returns a new MDBStore and potential
+// error. Requres a base directory from which to operate,
+// and a maximum size. If maxSize is not 0, a default value is used.
+func NewMDBStoreWithSize(base string, maxSize uint64) (*MDBStore, error) {
 	// Get the paths
 	path := filepath.Join(base, mdbPath)
 	if err := os.MkdirAll(path, 0755); err != nil {
 		return nil, err
+	}
+
+	// Set the maxSize if not given
+	if maxSize == 0 {
+		maxSize = dbMaxMapSize
 	}
 
 	// Create the env
@@ -40,8 +54,9 @@ func NewMDBStore(base string) (*MDBStore, error) {
 
 	// Create the struct
 	store := &MDBStore{
-		env:  env,
-		path: path,
+		env:     env,
+		path:    path,
+		maxSize: maxSize,
 	}
 
 	// Initialize the db
@@ -60,7 +75,7 @@ func (m *MDBStore) initialize() error {
 	}
 
 	// Increase the maximum map size
-	if err := m.env.SetMapSize(dbMaxMapSize); err != nil {
+	if err := m.env.SetMapSize(m.maxSize); err != nil {
 		return err
 	}
 
