@@ -138,6 +138,7 @@ func (m *MDBStore) FirstIndex() (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
+	defer cursor.Close()
 
 	key, _, err := cursor.Get(nil, mdb.FIRST)
 	if err == mdb.NotFound {
@@ -161,6 +162,7 @@ func (m *MDBStore) LastIndex() (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
+	defer cursor.Close()
 
 	key, _, err := cursor.Get(nil, mdb.LAST)
 	if err == mdb.NotFound {
@@ -239,6 +241,7 @@ func (m *MDBStore) DeleteRange(minIdx, maxIdx uint64) error {
 		tx.Abort()
 		return err
 	}
+	defer cursor.Close()
 
 	var key []byte
 	didDelete := false
@@ -305,7 +308,7 @@ func (m *MDBStore) Get(key []byte) ([]byte, error) {
 	} else if err != nil {
 		return nil, err
 	}
-	return sliceCopy(val), nil
+	return val, nil
 }
 
 func (m *MDBStore) SetUint64(key []byte, val uint64) error {
@@ -318,10 +321,4 @@ func (m *MDBStore) GetUint64(key []byte) (uint64, error) {
 		return 0, err
 	}
 	return bytesToUint64(buf), nil
-}
-
-func sliceCopy(inp []byte) []byte {
-	c := make([]byte, len(inp))
-	copy(c, inp)
-	return c
 }

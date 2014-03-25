@@ -215,6 +215,13 @@ func TestMDB_Logs(t *testing.T) {
 		t.Fatalf("err: %v ", err)
 	}
 
+	// Verify they are all deleted
+	for i := 5; i <= 20; i++ {
+		if err := l.GetLog(uint64(i), &out); err != LogNotFound {
+			t.Fatalf("err: %v ", err)
+		}
+	}
+
 	// Index should be one
 	idx, err = l.FirstIndex()
 	if err != nil {
