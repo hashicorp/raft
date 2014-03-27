@@ -241,7 +241,6 @@ func (m *MDBStore) DeleteRange(minIdx, maxIdx uint64) error {
 		tx.Abort()
 		return err
 	}
-	defer cursor.Close()
 
 	var key []byte
 	didDelete := false
