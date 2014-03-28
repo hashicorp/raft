@@ -15,7 +15,8 @@ type Config struct {
 	ElectionTimeout time.Duration
 
 	// Time without an Apply() operation before we heartbeat to ensure
-	// a timely commit.
+	// a timely commit. Due to random staggering, may be delayed as much as
+	// 2x this value.
 	CommitTimeout time.Duration
 
 	// MaxAppendEntries controls the maximum number of append entries
@@ -64,7 +65,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		HeartbeatTimeout:   300 * time.Millisecond,
 		ElectionTimeout:    250 * time.Millisecond,
-		CommitTimeout:      20 * time.Millisecond,
+		CommitTimeout:      80 * time.Millisecond,
 		MaxAppendEntries:   64,
 		ShutdownOnRemove:   true,
 		TrailingLogs:       10240,
