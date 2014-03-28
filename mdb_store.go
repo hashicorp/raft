@@ -246,17 +246,16 @@ func (m *MDBStore) DeleteRange(minIdx, maxIdx uint64) error {
 	didDelete := false
 	for {
 		if didDelete {
-			// TODO: XXX: FIRST should be GET_CURRENT, upstream bug
-			key, _, err = cursor.Get(nil, mdb.FIRST)
+			key, _, err = cursor.Get(nil, mdb.GET_CURRENT)
 			didDelete = false
 
 			// LMDB will return EINVAL(22) for the GET_CURRENT op if
 			// there is no further keys. We treat this as no more
 			// keys being found.
-			//if num, ok := err.(mdb.Errno); ok && num == 22 {
-			//    println("errno 22")
-			//    err = mdb.NotFound
-			//}
+			if num, ok := err.(mdb.Errno); ok && num == 22 {
+				println("errno 22")
+				err = mdb.NotFound
+			}
 		} else {
 			key, _, err = cursor.Get(nil, mdb.NEXT)
 		}
