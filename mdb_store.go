@@ -69,8 +69,8 @@ func NewMDBStoreWithSize(base string, maxSize uint64) (*MDBStore, error) {
 
 // initialize is used to setup the mdb store
 func (m *MDBStore) initialize() error {
-	// Allow up to 16 sub-dbs
-	if err := m.env.SetMaxDBs(mdb.DBI(16)); err != nil {
+	// Allow up to 2 sub-dbs
+	if err := m.env.SetMaxDBs(mdb.DBI(2)); err != nil {
 		return err
 	}
 
