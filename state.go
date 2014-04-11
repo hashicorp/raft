@@ -32,9 +32,6 @@ func (s RaftState) String() string {
 // and provides an interface to set/get the variables in a
 // thread safe manner
 type raftState struct {
-	// The current state
-	state RaftState
-
 	// The current term, cache of StableStore
 	currentTerm uint64
 
@@ -54,6 +51,9 @@ type raftState struct {
 
 	// Tracks the number of live routines
 	runningRoutines int32
+
+	// The current state
+	state RaftState
 }
 
 func (r *raftState) getState() RaftState {
