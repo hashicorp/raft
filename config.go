@@ -72,6 +72,6 @@ func DefaultConfig() *Config {
 		SnapshotInterval:   120 * time.Second,
 		SnapshotThreshold:  8192,
 		EnableSingleNode:   false,
-		LeaderLeaseTimeout: time.Second,
+		LeaderLeaseTimeout: 300 * time.Millisecond,
 	}
 }
