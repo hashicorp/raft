@@ -506,6 +506,11 @@ func TestRaft_BehindFollower(t *testing.T) {
 		log.Printf("[INFO] Finished apply without behind follower")
 	}
 
+	// Check that we have a non zero last contact
+	if behind.LastContact().IsZero() {
+		t.Fatalf("expected previous contact")
+	}
+
 	// Reconnect the behind node
 	c.FullyConnect()
 
@@ -1066,6 +1071,7 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	follower := followers[0]
 	log.Printf("[INFO] Disconnecting %v", follower)
 	c.Disconnect(follower.localAddr)
+	last := follower.LastContact()
 
 	// Watch the leaderCh
 	select {
@@ -1080,6 +1086,11 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	// Should be no leaders
 	if len(c.GetInState(Leader)) != 0 {
 		t.Fatalf("expected step down")
+	}
+
+	// Check that last contact has not changed
+	if last != follower.LastContact() {
+		t.Fatalf("unexpected further contact")
 	}
 }
 
