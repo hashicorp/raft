@@ -150,6 +150,7 @@ START:
 	// Check for a newer term, stop running
 	if resp.Term > req.Term {
 		r.logger.Printf("[ERR] raft: peer %v has newer term, stopping replication", s.peer)
+		s.notifyAll(false) // No longer leader
 		return true
 	}
 
@@ -167,6 +168,9 @@ START:
 
 		// Clear any failures
 		s.failures = 0
+
+		// Notify still leader
+		s.notifyAll(true)
 	} else {
 		s.nextIndex = max(min(s.nextIndex-1, resp.LastLog+1), 1)
 		s.matchIndex = s.nextIndex - 1
@@ -248,6 +252,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	// Check for a newer term, stop running
 	if resp.Term > req.Term {
 		r.logger.Printf("[ERR] raft: peer %v has newer term, stopping replication", s.peer)
+		s.notifyAll(false) // No longer leader
 		return true, nil
 	}
 
@@ -265,6 +270,9 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 
 		// Clear any failures
 		s.failures = 0
+
+		// Notify we are still leader
+		s.notifyAll(true)
 	} else {
 		s.failures++
 		r.logger.Printf("[WARN] raft: InstallSnapshot to %v rejected", s.peer)
