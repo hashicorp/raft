@@ -107,3 +107,9 @@ type restoreFuture struct {
 	deferError
 	ID string
 }
+
+// verifyFuture is used to verify the current node is still
+// the leader. This is to prevent a stale read.
+type verifyFuture struct {
+	deferError
+}

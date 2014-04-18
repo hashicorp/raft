@@ -107,6 +107,10 @@ type Raft struct {
 
 	// The transport layer we use
 	trans Transport
+
+	// verifyCh is used to async send verify futures to the main thread
+	// to verify we are still the leader
+	verifyCh chan *verifyFuture
 }
 
 // NewRaft is used to construct a new Raft node. It takes a configuration, as well
@@ -168,6 +172,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		shutdownCh:    make(chan struct{}),
 		stable:        stable,
 		trans:         trans,
+		verifyCh:      make(chan *verifyFuture),
 	}
 
 	// Initialize as a follower
@@ -269,20 +274,16 @@ func (r *Raft) VerifyLeader(timeout time.Duration) Future {
 	}
 
 	// Create a log future, this will never be committed
-	logFuture := &logFuture{
-		log: Log{
-			Type: LogVerifyLeader,
-		},
-	}
-	logFuture.init()
+	verifyFuture := &verifyFuture{}
+	verifyFuture.init()
 
 	select {
 	case <-timer:
 		return errorFuture{EnqueueTimeout}
 	case <-r.shutdownCh:
 		return errorFuture{RaftShutdown}
-	case r.applyCh <- logFuture:
-		return logFuture
+	case r.verifyCh <- verifyFuture:
+		return verifyFuture
 	}
 }
 
@@ -503,6 +504,10 @@ func (r *Raft) runFollower() {
 			// Reject any operations since we are not the leader
 			a.respond(NotLeader)
 
+		case v := <-r.verifyCh:
+			// Reject any operations since we are not the leader
+			v.respond(NotLeader)
+
 		case <-randomTimeout(r.conf.HeartbeatTimeout):
 			// Heartbeat failed! Transition to the candidate state
 			r.leader = nil
@@ -567,6 +572,10 @@ func (r *Raft) runCandidate() {
 		case a := <-r.applyCh:
 			// Reject any operations since we are not the leader
 			a.respond(NotLeader)
+
+		case v := <-r.verifyCh:
+			// Reject any operations since we are not the leader
+			v.respond(NotLeader)
 
 		case <-electionTimer:
 			// Election failed! Restart the elction. We simply return,
@@ -673,14 +682,11 @@ func (r *Raft) leaderLoop() {
 			r.setCommitIndex(idx)
 			r.processLogs(idx, commitLog)
 
-		case newLog := <-r.applyCh:
-			// Check if this is a very type, never commit
-			if newLog.log.Type == LogVerifyLeader {
-				// TODO: Actually heartbeat...
-				newLog.respond(nil)
-				continue
-			}
+		case verify := <-r.verifyCh:
+			// TODO: Actually heartbeat...
+			verify.respond(nil)
 
+		case newLog := <-r.applyCh:
 			// Prepare peer set changes
 			if newLog.log.Type == LogAddPeer || newLog.log.Type == LogRemovePeer {
 				if !r.preparePeerChange(newLog) {
