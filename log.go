@@ -27,11 +27,6 @@ const (
 	// possible there are operations committed but not yet applied to
 	// the FSM.
 	LogBarrier
-
-	// VerifyLeader is used to check that the current ndoe is still
-	// the leader. This is never committed to the raft log, but is
-	// used internally.
-	LogVerifyLeader
 )
 
 var (
