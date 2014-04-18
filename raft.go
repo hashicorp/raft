@@ -41,6 +41,7 @@ type leaderState struct {
 	commitCh  chan *logFuture
 	inflight  *inflight
 	replState map[string]*followerReplication
+	notify    map[*verifyFuture]struct{}
 }
 
 type Raft struct {
@@ -172,7 +173,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		shutdownCh:    make(chan struct{}),
 		stable:        stable,
 		trans:         trans,
-		verifyCh:      make(chan *verifyFuture),
+		verifyCh:      make(chan *verifyFuture, 64),
 	}
 
 	// Initialize as a follower
@@ -266,20 +267,11 @@ func (r *Raft) Barrier(timeout time.Duration) Future {
 // VerifyLeader is used to ensure the current node is still
 // the leader. This can be done to prevent stale reads when a
 // new leader has potentially been elected.
-func (r *Raft) VerifyLeader(timeout time.Duration) Future {
+func (r *Raft) VerifyLeader() Future {
 	metrics.IncrCounter([]string{"raft", "verify_leader"}, 1)
-	var timer <-chan time.Time
-	if timeout > 0 {
-		timer = time.After(timeout)
-	}
-
-	// Create a log future, this will never be committed
 	verifyFuture := &verifyFuture{}
 	verifyFuture.init()
-
 	select {
-	case <-timer:
-		return errorFuture{EnqueueTimeout}
 	case <-r.shutdownCh:
 		return errorFuture{RaftShutdown}
 	case r.verifyCh <- verifyFuture:
@@ -601,6 +593,7 @@ func (r *Raft) runLeader() {
 	r.leaderState.commitCh = make(chan *logFuture, 128)
 	r.leaderState.inflight = newInflight(r.leaderState.commitCh)
 	r.leaderState.replState = make(map[string]*followerReplication)
+	r.leaderState.notify = make(map[*verifyFuture]struct{})
 
 	// Cleanup state on step down
 	defer func() {
@@ -617,10 +610,16 @@ func (r *Raft) runLeader() {
 			future.respond(LeadershipLost)
 		}
 
+		// Respond to any pending verify requets
+		for future := range r.leaderState.notify {
+			future.respond(LeadershipLost)
+		}
+
 		// Clear all the state
 		r.leaderState.commitCh = nil
 		r.leaderState.inflight = nil
 		r.leaderState.replState = nil
+		r.leaderState.notify = nil
 
 		// If we are stepping down for some reason, no known leader.
 		// We may have stepped down due to an RPC call, which would
@@ -658,6 +657,7 @@ func (r *Raft) startReplication(peer net.Addr) {
 		matchIndex:  0,
 		nextIndex:   lastIdx + 1,
 		lastContact: time.Now(),
+		notifyCh:    make(chan struct{}, 1),
 	}
 	r.leaderState.replState[peer.String()] = s
 	r.goFunc(func() { r.replicate(s) })
@@ -682,9 +682,23 @@ func (r *Raft) leaderLoop() {
 			r.setCommitIndex(idx)
 			r.processLogs(idx, commitLog)
 
-		case verify := <-r.verifyCh:
-			// TODO: Actually heartbeat...
-			verify.respond(nil)
+		case v := <-r.verifyCh:
+			if v.quorumSize == 0 {
+				// Just dispatched, start the verification
+				r.verifyLeader(v)
+
+			} else if v.votes < v.quorumSize {
+				// Early return, means there must be a new leader
+				r.logger.Printf("[WARN] raft: New leader elected, stepping down")
+				r.setState(Follower)
+				delete(r.leaderState.notify, v)
+				v.respond(NotLeader)
+
+			} else {
+				// Quorum of members agree, we are still leader
+				delete(r.leaderState.notify, v)
+				v.respond(nil)
+			}
 
 		case newLog := <-r.applyCh:
 			// Prepare peer set changes
@@ -717,6 +731,32 @@ func (r *Raft) leaderLoop() {
 		case <-r.shutdownCh:
 			return
 		}
+	}
+}
+
+// verifyLeader must be called from the main thread for safety.
+// Causes the followers to attempt an immediate heartbeat.
+func (r *Raft) verifyLeader(v *verifyFuture) {
+	// Current leader always votes for self
+	v.votes = 1
+
+	// Set the quorum size, hot-path for single node
+	v.quorumSize = r.quorumSize()
+	if v.quorumSize == 1 {
+		v.respond(nil)
+		return
+	}
+
+	// Track this request
+	v.notifyCh = r.verifyCh
+	r.leaderState.notify[v] = struct{}{}
+
+	// Trigger immediate heartbeats
+	for _, repl := range r.leaderState.replState {
+		repl.notifyLock.Lock()
+		repl.notify = append(repl.notify, v)
+		repl.notifyLock.Unlock()
+		asyncNotifyCh(repl.notifyCh)
 	}
 }
 

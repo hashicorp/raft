@@ -2,6 +2,7 @@ package raft
 
 import (
 	"net"
+	"sync"
 	"time"
 )
 
@@ -112,4 +113,31 @@ type restoreFuture struct {
 // the leader. This is to prevent a stale read.
 type verifyFuture struct {
 	deferError
+	notifyCh   chan *verifyFuture
+	quorumSize int
+	votes      int
+	voteLock   sync.Mutex
+}
+
+// vote is used to respond to a verifyFuture.
+// This may block when responding on the notifyCh
+func (v *verifyFuture) vote(leader bool) {
+	v.voteLock.Lock()
+	defer v.voteLock.Unlock()
+
+	// Guard against having notified already
+	if v.notifyCh == nil {
+		return
+	}
+
+	if leader {
+		v.votes++
+		if v.votes >= v.quorumSize {
+			v.notifyCh <- v
+			v.notifyCh = nil
+		}
+	} else {
+		v.notifyCh <- v
+		v.notifyCh = nil
+	}
 }
