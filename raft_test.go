@@ -1110,3 +1110,87 @@ func TestRaft_Barrier(t *testing.T) {
 		t.Fatalf("Bad log length")
 	}
 }
+
+func TestRaft_VerifyLeader(t *testing.T) {
+	// Make the cluster
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	// Get the leader
+	leader := c.Leader()
+
+	// Verify we are leader
+	verify := leader.VerifyLeader()
+
+	// Wait for the verify to apply
+	if err := verify.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+}
+
+func TestRaft_VerifyLeader_Fail(t *testing.T) {
+	// Make a cluster
+	conf := inmemConfig()
+	c := MakeCluster(2, t, conf)
+	defer c.Close()
+
+	// Get the leader
+	leader := c.Leader()
+
+	// Wait until we have a followers
+	limit := time.Now().Add(100 * time.Millisecond)
+	var followers []*Raft
+	for time.Now().Before(limit) && len(followers) != 1 {
+		time.Sleep(10 * time.Millisecond)
+		followers = c.GetInState(Follower)
+	}
+	if len(followers) != 1 {
+		t.Fatalf("expected a followers: %v", followers)
+	}
+
+	// Force follower to different term
+	follower := followers[0]
+	follower.setCurrentTerm(follower.getCurrentTerm() + 1)
+
+	// Verify we are leader
+	verify := leader.VerifyLeader()
+
+	// Wait for the leader to step down
+	if err := verify.Error(); err != NotLeader {
+		t.Fatalf("err: %v", err)
+	}
+}
+
+func TestRaft_VerifyLeader_ParitalConnect(t *testing.T) {
+	// Make a cluster
+	conf := inmemConfig()
+	c := MakeCluster(3, t, conf)
+	defer c.Close()
+
+	// Get the leader
+	leader := c.Leader()
+
+	// Wait until we have a followers
+	limit := time.Now().Add(100 * time.Millisecond)
+	var followers []*Raft
+	for time.Now().Before(limit) && len(followers) != 2 {
+		time.Sleep(10 * time.Millisecond)
+		followers = c.GetInState(Follower)
+	}
+	if len(followers) != 2 {
+		t.Fatalf("expected a followers: %v", followers)
+	}
+
+	// Force partial disconnect
+	follower := followers[0]
+	log.Printf("[INFO] Disconnecting %v", follower)
+	c.Disconnect(follower.localAddr)
+
+	// Verify we are leader
+	verify := leader.VerifyLeader()
+
+	// Wait for the leader to step down
+	if err := verify.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+}
