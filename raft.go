@@ -258,6 +258,34 @@ func (r *Raft) Barrier(timeout time.Duration) Future {
 	}
 }
 
+// VerifyLeader is used to ensure the current node is still
+// the leader. This can be done to prevent stale reads when a
+// new leader has potentially been elected.
+func (r *Raft) VerifyLeader(timeout time.Duration) Future {
+	metrics.IncrCounter([]string{"raft", "verify_leader"}, 1)
+	var timer <-chan time.Time
+	if timeout > 0 {
+		timer = time.After(timeout)
+	}
+
+	// Create a log future, this will never be committed
+	logFuture := &logFuture{
+		log: Log{
+			Type: LogVerifyLeader,
+		},
+	}
+	logFuture.init()
+
+	select {
+	case <-timer:
+		return errorFuture{EnqueueTimeout}
+	case <-r.shutdownCh:
+		return errorFuture{RaftShutdown}
+	case r.applyCh <- logFuture:
+		return logFuture
+	}
+}
+
 // AddPeer is used to add a new peer into the cluster. This must be
 // run on the leader or it will fail.
 func (r *Raft) AddPeer(peer net.Addr) Future {
@@ -646,6 +674,13 @@ func (r *Raft) leaderLoop() {
 			r.processLogs(idx, commitLog)
 
 		case newLog := <-r.applyCh:
+			// Check if this is a very type, never commit
+			if newLog.log.Type == LogVerifyLeader {
+				// TODO: Actually heartbeat...
+				newLog.respond(nil)
+				continue
+			}
+
 			// Prepare peer set changes
 			if newLog.log.Type == LogAddPeer || newLog.log.Type == LogRemovePeer {
 				if !r.preparePeerChange(newLog) {
