@@ -66,6 +66,10 @@ type Raft struct {
 	// fsmSnapshotCh is used to trigger a new snapshot being taken
 	fsmSnapshotCh chan *reqSnapshotFuture
 
+	// lastContact is the last time we had contact from the
+	// leader node. This can be used to guage staleness.
+	lastContact time.Time
+
 	// Leader is the current cluster leader
 	leader net.Addr
 
@@ -363,6 +367,12 @@ func (r *Raft) String() string {
 	return fmt.Sprintf("Node at %s [%v]", r.localAddr.String(), r.getState())
 }
 
+// LastContact returns the time of last contact by a leader.
+// This only makes sense if we are currently a follower.
+func (r *Raft) LastContact() time.Time {
+	return r.lastContact
+}
+
 // Stats is used to return a map of various internal stats. This should only
 // be used for informative purposes or debugging
 func (r *Raft) Stats() map[string]string {
@@ -380,6 +390,13 @@ func (r *Raft) Stats() map[string]string {
 		"last_snapshot_index": toString(r.getLastSnapshotIndex()),
 		"last_snapshot_term":  toString(r.getLastSnapshotTerm()),
 		"num_peers":           toString(uint64(len(r.peers))),
+	}
+	if r.lastContact.IsZero() {
+		s["last_contact"] = "never"
+	} else if r.getState() == Leader {
+		s["last_contact"] = "0"
+	} else {
+		s["last_contact"] = fmt.Sprintf("%v", time.Now().Sub(r.lastContact))
 	}
 	return s
 }
@@ -1097,6 +1114,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 
 	// Everything went well, set success
 	resp.Success = true
+	r.lastContact = time.Now()
 	return
 }
 
