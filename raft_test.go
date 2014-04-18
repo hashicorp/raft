@@ -1128,6 +1128,23 @@ func TestRaft_VerifyLeader(t *testing.T) {
 	}
 }
 
+func TestRaft_VerifyLeader_Single(t *testing.T) {
+	// Make the cluster
+	c := MakeCluster(1, t, nil)
+	defer c.Close()
+
+	// Get the leader
+	leader := c.Leader()
+
+	// Verify we are leader
+	verify := leader.VerifyLeader()
+
+	// Wait for the verify to apply
+	if err := verify.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+}
+
 func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	// Make a cluster
 	conf := inmemConfig()
