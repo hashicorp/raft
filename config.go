@@ -63,15 +63,15 @@ type Config struct {
 
 func DefaultConfig() *Config {
 	return &Config{
-		HeartbeatTimeout:   300 * time.Millisecond,
-		ElectionTimeout:    250 * time.Millisecond,
-		CommitTimeout:      80 * time.Millisecond,
+		HeartbeatTimeout:   1000 * time.Millisecond,
+		ElectionTimeout:    400 * time.Millisecond,
+		CommitTimeout:      50 * time.Millisecond,
 		MaxAppendEntries:   64,
 		ShutdownOnRemove:   true,
 		TrailingLogs:       10240,
 		SnapshotInterval:   120 * time.Second,
 		SnapshotThreshold:  8192,
 		EnableSingleNode:   false,
-		LeaderLeaseTimeout: 300 * time.Millisecond,
+		LeaderLeaseTimeout: 500 * time.Millisecond,
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/armon/go-metrics"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -25,6 +26,25 @@ type followerReplication struct {
 
 	lastContact time.Time
 	failures    uint64
+
+	notifyCh   chan struct{}
+	notify     []*verifyFuture
+	notifyLock sync.Mutex
+}
+
+// notifyAll is used to notify all the waiting verify futures
+// if the follower believes we are still the leader
+func (s *followerReplication) notifyAll(leader bool) {
+	// Clear the waiting notifies minimizing lock time
+	s.notifyLock.Lock()
+	n := s.notify
+	s.notify = nil
+	s.notifyLock.Unlock()
+
+	// Submit our votes
+	for _, v := range n {
+		v.vote(leader)
+	}
 }
 
 // replicate is a long running routine that is used to manage
@@ -130,6 +150,7 @@ START:
 	// Check for a newer term, stop running
 	if resp.Term > req.Term {
 		r.logger.Printf("[ERR] raft: peer %v has newer term, stopping replication", s.peer)
+		s.notifyAll(false) // No longer leader
 		return true
 	}
 
@@ -147,6 +168,9 @@ START:
 
 		// Clear any failures
 		s.failures = 0
+
+		// Notify still leader
+		s.notifyAll(true)
 	} else {
 		s.nextIndex = max(min(s.nextIndex-1, resp.LastLog+1), 1)
 		s.matchIndex = s.nextIndex - 1
@@ -228,6 +252,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	// Check for a newer term, stop running
 	if resp.Term > req.Term {
 		r.logger.Printf("[ERR] raft: peer %v has newer term, stopping replication", s.peer)
+		s.notifyAll(false) // No longer leader
 		return true, nil
 	}
 
@@ -245,6 +270,9 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 
 		// Clear any failures
 		s.failures = 0
+
+		// Notify we are still leader
+		s.notifyAll(true)
 	} else {
 		s.failures++
 		r.logger.Printf("[WARN] raft: InstallSnapshot to %v rejected", s.peer)
@@ -263,24 +291,27 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 	}
 	var resp AppendEntriesResponse
 	for {
+		// Wait for the next heartbeat interval or forced notify
 		select {
-		case <-randomTimeout(r.conf.HeartbeatTimeout / 8):
-			start := time.Now()
-			if err := r.trans.AppendEntries(s.peer, &req, &resp); err != nil {
-				r.logger.Printf("[ERR] raft: Failed to heartbeat to %v: %v", s.peer, err)
-				failures++
-				select {
-				case <-time.After(backoff(failureWait, failures, maxFailureScale)):
-				case <-stopCh:
-				}
-			} else {
-				s.lastContact = time.Now()
-				failures = 0
-				metrics.MeasureSince([]string{"raft", "replication", "heartbeat", s.peer.String()}, start)
-			}
-
+		case <-s.notifyCh:
+		case <-randomTimeout(r.conf.HeartbeatTimeout / 10):
 		case <-stopCh:
 			return
+		}
+
+		start := time.Now()
+		if err := r.trans.AppendEntries(s.peer, &req, &resp); err != nil {
+			r.logger.Printf("[ERR] raft: Failed to heartbeat to %v: %v", s.peer, err)
+			failures++
+			select {
+			case <-time.After(backoff(failureWait, failures, maxFailureScale)):
+			case <-stopCh:
+			}
+		} else {
+			s.lastContact = time.Now()
+			failures = 0
+			metrics.MeasureSince([]string{"raft", "replication", "heartbeat", s.peer.String()}, start)
+			s.notifyAll(resp.Success)
 		}
 	}
 }
