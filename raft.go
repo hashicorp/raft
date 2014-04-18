@@ -538,7 +538,7 @@ func (r *Raft) runCandidate() {
 
 	// Tally the votes, need a simple majority
 	grantedVotes := 0
-	votesNeeded := ((len(r.peers) + 1) / 2) + 1
+	votesNeeded := r.quorumSize()
 	r.logger.Printf("[DEBUG] raft: Votes needed: %d", votesNeeded)
 
 	for r.getState() == Candidate {
@@ -745,12 +745,17 @@ func (r *Raft) checkLeaderLease() time.Duration {
 	}
 
 	// Verify we can contact a quorum
-	quorum := ((len(r.peers) + 1) / 2) + 1
+	quorum := r.quorumSize()
 	if contacted < quorum {
 		r.logger.Printf("[WARN] raft: Failed to contact quorum of nodes, stepping down")
 		r.setState(Follower)
 	}
 	return maxDiff
+}
+
+// quorumSize is used to return the quorum size
+func (r *Raft) quorumSize() int {
+	return ((len(r.peers) + 1) / 2) + 1
 }
 
 // preparePeerChange checks if a LogAddPeer or LogRemovePeer should be performed,
