@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/ugorji/go/codec"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"os"
@@ -68,7 +69,7 @@ func inmemConfig() *Config {
 
 type cluster struct {
 	dirs   []string
-	stores []*MDBStore
+	stores []*InmemStore
 	fsms   []*MockFSM
 	snaps  []*FileSnapshotStore
 	trans  []*InmemTransport
@@ -102,9 +103,6 @@ func (c *cluster) Close() {
 	}
 	timer.Stop()
 
-	for _, s := range c.stores {
-		s.Close()
-	}
 	for _, d := range c.dirs {
 		os.RemoveAll(d)
 	}
@@ -266,7 +264,11 @@ func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 
 	// Setup the stores and transports
 	for i := 0; i < n; i++ {
-		dir, store := MDBTestStore(t)
+		dir, err := ioutil.TempDir("", "raft")
+		if err != nil {
+			t.Fatalf("err: %v ", err)
+		}
+		store := NewInmemStore()
 		c.dirs = append(c.dirs, dir)
 		c.stores = append(c.stores, store)
 		c.fsms = append(c.fsms, &MockFSM{})
