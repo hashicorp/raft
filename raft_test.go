@@ -1073,7 +1073,6 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	follower := followers[0]
 	log.Printf("[INFO] Disconnecting %v", follower)
 	c.Disconnect(follower.localAddr)
-	last := follower.LastContact()
 
 	// Watch the leaderCh
 	select {
@@ -1089,6 +1088,10 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	if len(c.GetInState(Leader)) != 0 {
 		t.Fatalf("expected step down")
 	}
+
+	// Verify no further contact
+	last := follower.LastContact()
+	time.Sleep(50 * time.Millisecond)
 
 	// Check that last contact has not changed
 	if last != follower.LastContact() {
