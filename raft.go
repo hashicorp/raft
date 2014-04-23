@@ -1168,12 +1168,14 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// Reject if their term is older
 	lastIdx, lastTerm := r.getLastEntry()
 	if lastTerm > req.LastLogTerm {
-		r.logger.Printf("[WARN] raft: Rejecting vote since our last term is greater")
+		r.logger.Printf("[WARN] raft: Rejecting vote from %v since our last term is greater (%d, %d)",
+			r.trans.DecodePeer(req.Candidate), lastTerm, req.LastLogTerm)
 		return
 	}
 
 	if lastIdx > req.LastLogIndex {
-		r.logger.Printf("[WARN] raft: Rejecting vote since our last index is greater")
+		r.logger.Printf("[WARN] raft: Rejecting vote from %v since our last index is greater (%d, %d)",
+			r.trans.DecodePeer(req.Candidate), lastIdx, req.LastLogIndex)
 		return
 	}
 
