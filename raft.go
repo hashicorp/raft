@@ -509,10 +509,12 @@ func (r *Raft) run() {
 func (r *Raft) runFollower() {
 	didWarn := false
 	r.logger.Printf("[INFO] raft: %v entering Follower state", r)
+	heartbeatTimer := randomTimeout(r.conf.HeartbeatTimeout)
 	for {
 		select {
 		case rpc := <-r.rpcCh:
 			r.processRPC(rpc)
+			heartbeatTimer = randomTimeout(r.conf.HeartbeatTimeout)
 
 		case a := <-r.applyCh:
 			// Reject any operations since we are not the leader
@@ -522,7 +524,7 @@ func (r *Raft) runFollower() {
 			// Reject any operations since we are not the leader
 			v.respond(NotLeader)
 
-		case <-randomTimeout(r.conf.HeartbeatTimeout):
+		case <-heartbeatTimer:
 			// Heartbeat failed! Transition to the candidate state
 			r.leader = nil
 			if len(r.peers) == 0 && !r.conf.EnableSingleNode {
