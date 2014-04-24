@@ -129,6 +129,11 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		conf.LogOutput = os.Stderr
 	}
 
+	// Ensure the ElectionTimeout is not less than the HeartbeatTimeout
+	if conf.ElectionTimeout < conf.HeartbeatTimeout {
+		return nil, fmt.Errorf("ElectionTimeout must be equal or greater than HeartbeatTimeout")
+	}
+
 	// Try to restore the current term
 	currentTerm, err := stable.GetUint64(keyCurrentTerm)
 	if err != nil && err.Error() != "not found" {

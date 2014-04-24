@@ -557,6 +557,7 @@ func TestRaft_ApplyConcurrent(t *testing.T) {
 	// Make the cluster
 	conf := inmemConfig()
 	conf.HeartbeatTimeout = 100 * time.Millisecond
+	conf.ElectionTimeout = 100 * time.Millisecond
 	c := MakeCluster(3, t, conf)
 	defer c.Close()
 
@@ -600,6 +601,7 @@ func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 	// Make the cluster
 	conf := inmemConfig()
 	conf.HeartbeatTimeout = 100 * time.Millisecond
+	conf.ElectionTimeout = 100 * time.Millisecond
 	c := MakeCluster(1, t, conf)
 	defer c.Close()
 
