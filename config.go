@@ -64,7 +64,7 @@ type Config struct {
 func DefaultConfig() *Config {
 	return &Config{
 		HeartbeatTimeout:   1000 * time.Millisecond,
-		ElectionTimeout:    400 * time.Millisecond,
+		ElectionTimeout:    1000 * time.Millisecond,
 		CommitTimeout:      50 * time.Millisecond,
 		MaxAppendEntries:   64,
 		ShutdownOnRemove:   true,
