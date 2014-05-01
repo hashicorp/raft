@@ -35,7 +35,7 @@ type FileSnapshotStore struct {
 
 type snapMetaSlice []*fileSnapshotMeta
 
-// Implements the SnapshotSink
+// FileSnapshotSink implements SnapshotSink with a file.
 type FileSnapshotSink struct {
 	store  *FileSnapshotStore
 	logger *log.Logger
@@ -188,6 +188,7 @@ func (f *FileSnapshotStore) Create(index, term uint64, peers []byte) (SnapshotSi
 	return sink, nil
 }
 
+// List returns available snapshots in the store.
 func (f *FileSnapshotStore) List() ([]*SnapshotMeta, error) {
 	// Get the eligible snapshots
 	snapshots, err := f.getSnapshots()
@@ -269,6 +270,7 @@ func (f *FileSnapshotStore) readMeta(name string) (*fileSnapshotMeta, error) {
 	return meta, nil
 }
 
+// Open takes a snapshot ID and returns a ReadCloser for that snapshot.
 func (f *FileSnapshotStore) Open(id string) (*SnapshotMeta, io.ReadCloser, error) {
 	// Get the metadata
 	meta, err := f.readMeta(id)
@@ -321,7 +323,7 @@ func (f *FileSnapshotStore) Open(id string) (*SnapshotMeta, io.ReadCloser, error
 	return &meta.SnapshotMeta, buffered, nil
 }
 
-// Used to reap any snapshots beyond the retain count
+// ReapSnapshots reaps any snapshots beyond the retain count.
 func (f *FileSnapshotStore) ReapSnapshots() error {
 	snapshots, err := f.getSnapshots()
 	if err != nil {

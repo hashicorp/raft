@@ -61,6 +61,7 @@ type Config struct {
 	LogOutput io.Writer
 }
 
+// DefaultConfig returns a Config with usable defaults.
 func DefaultConfig() *Config {
 	return &Config{
 		HeartbeatTimeout:   1000 * time.Millisecond,

@@ -17,7 +17,7 @@ func TestInmemAddr(t *testing.T) {
 	if inm.Network() != "inmem" {
 		t.Fatalf("bad network")
 	}
-	if inm.String() != inm.Id {
+	if inm.String() != inm.ID {
 		t.Fatalf("bad string")
 	}
 }

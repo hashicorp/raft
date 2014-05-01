@@ -5,10 +5,11 @@ import (
 	crand "crypto/rand"
 	"encoding/binary"
 	"fmt"
-	"github.com/ugorji/go/codec"
 	"math/rand"
 	"net"
 	"time"
+
+	"github.com/ugorji/go/codec"
 )
 
 // randomTimeout returns a value that is between the minVal and 2x minVal
@@ -40,7 +41,7 @@ func max(a, b uint64) uint64 {
 func generateUUID() string {
 	buf := make([]byte, 16)
 	if _, err := crand.Read(buf); err != nil {
-		panic(fmt.Errorf("Failed to read random bytes: %v", err))
+		panic(fmt.Errorf("failed to read random bytes: %v", err))
 	}
 
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%12x",
@@ -103,9 +104,8 @@ func PeerContained(peers []net.Addr, peer net.Addr) bool {
 func AddUniquePeer(peers []net.Addr, peer net.Addr) []net.Addr {
 	if PeerContained(peers, peer) {
 		return peers
-	} else {
-		return append(peers, peer)
 	}
+	return append(peers, peer)
 }
 
 // encodePeers is used to serialize a list of peers
@@ -119,7 +119,7 @@ func encodePeers(peers []net.Addr, trans Transport) []byte {
 	// Encode the entire array
 	buf, err := encodeMsgPack(encPeers)
 	if err != nil {
-		panic(fmt.Errorf("Failed to encode peers: %v", err))
+		panic(fmt.Errorf("failed to encode peers: %v", err))
 	}
 
 	return buf.Bytes()
@@ -130,7 +130,7 @@ func decodePeers(buf []byte, trans Transport) []net.Addr {
 	// Decode the buffer first
 	var encPeers [][]byte
 	if err := decodeMsgPack(buf, &encPeers); err != nil {
-		panic(fmt.Errorf("Failed to decode peers: %v", err))
+		panic(fmt.Errorf("failed to decode peers: %v", err))
 	}
 
 	// Deserialize each peer

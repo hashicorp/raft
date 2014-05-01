@@ -4,12 +4,21 @@ import (
 	"sync/atomic"
 )
 
+// RaftState captures the state of a Raft node: Follower, Candidate, Leader,
+// or Shutdown.
 type RaftState uint32
 
 const (
+	// Follower is the initial state of a Raft node.
 	Follower RaftState = iota
+
+	// Candidate is one of the valid states of a Raft node.
 	Candidate
+
+	// Leader is one of the valid states of a Raft node.
 	Leader
+
+	// Shutdown is the terminal state of a Raft node.
 	Shutdown
 )
 
@@ -155,7 +164,6 @@ func (r *raftState) getLastIndex() uint64 {
 func (r *raftState) getLastEntry() (uint64, uint64) {
 	if r.getLastLogIndex() >= r.getLastSnapshotIndex() {
 		return r.getLastLogIndex(), r.getLastLogTerm()
-	} else {
-		return r.getLastSnapshotIndex(), r.getLastSnapshotTerm()
 	}
+	return r.getLastSnapshotIndex(), r.getLastSnapshotTerm()
 }

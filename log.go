@@ -1,36 +1,29 @@
 package raft
 
-import (
-	"fmt"
-	"net"
-)
+import "net"
 
+// LogType describes various types of log entries.
 type LogType uint8
 
 const (
-	// Commands are applied to a user FSM
+	// LogCommand is applied to a user FSM.
 	LogCommand LogType = iota
 
-	// Noop is used to assert leadership
+	// LogNoop is used to assert leadership.
 	LogNoop
 
-	// Used to add a new peer
+	// LogAddPeer is used to add a new peer.
 	LogAddPeer
 
-	// Used to remove an existing peer
+	// LogRemovePeer is used to remove an existing peer.
 	LogRemovePeer
 
-	// Barrier is used to ensure all preceeding
-	// operations have been applied to the FSM. It is
-	// similar to LogNoop, but instead of returning once committed,
-	// it only returns once the FSM manager acks it. Otherwise it is
-	// possible there are operations committed but not yet applied to
+	// LogBarrier is used to ensure all preceeding operations have been
+	// applied to the FSM. It is similar to LogNoop, but instead of returning
+	// once committed, it only returns once the FSM manager acks it. Otherwise
+	// it is possible there are operations committed but not yet applied to
 	// the FSM.
 	LogBarrier
-)
-
-var (
-	LogNotFound = fmt.Errorf("log not found")
 )
 
 // Log entries are replicated to all members of the Raft cluster
