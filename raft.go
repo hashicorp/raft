@@ -2,8 +2,8 @@ package raft
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
-	"github.com/armon/go-metrics"
 	"io"
 	"log"
 	"net"
@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/armon/go-metrics"
 )
 
 const (
@@ -21,12 +23,29 @@ var (
 	keyCurrentTerm  = []byte("CurrentTerm")
 	keyLastVoteTerm = []byte("LastVoteTerm")
 	keyLastVoteCand = []byte("LastVoteCand")
-	NotLeader       = fmt.Errorf("node is not the leader")
-	LeadershipLost  = fmt.Errorf("leadership lost while committing log")
-	RaftShutdown    = fmt.Errorf("raft is already shutdown")
-	EnqueueTimeout  = fmt.Errorf("timed out enqueuing operation")
-	KnownPeer       = fmt.Errorf("peer already known")
-	UnknownPeer     = fmt.Errorf("peer is unknown")
+
+	// ErrNotLeader is returned when an operation can't be completed on a
+	// follower or candidate node.
+	ErrNotLeader = errors.New("node is not the leader")
+
+	// ErrLeadershipLost is returned when a leader fails to commit a log entry
+	// because it's been deposed in the process.
+	ErrLeadershipLost = errors.New("leadership lost while committing log")
+
+	// ErrRaftShutdown is returned when operations are requested against an
+	// inactive Raft.
+	ErrRaftShutdown = errors.New("raft is already shutdown")
+
+	// ErrEnqueueTimeout is returned when a command fails due to a timeout.
+	ErrEnqueueTimeout = errors.New("timed out enqueuing operation")
+
+	// ErrKnownPeer is returned when trying to add a peer to the configuration
+	// that already exists.
+	ErrKnownPeer = errors.New("peer already known")
+
+	// ErrUnknownPeer is returned when trying to remove a peer from the
+	// configuration that doesn't exist.
+	ErrUnknownPeer = errors.New("peer is unknown")
 )
 
 // commitTupel is used to send an index that was committed,
@@ -44,6 +63,7 @@ type leaderState struct {
 	notify    map[*verifyFuture]struct{}
 }
 
+// Raft implements a Raft node.
 type Raft struct {
 	raftState
 
@@ -131,26 +151,26 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 
 	// Ensure the ElectionTimeout is not less than the HeartbeatTimeout
 	if conf.ElectionTimeout < conf.HeartbeatTimeout {
-		return nil, fmt.Errorf("ElectionTimeout must be equal or greater than HeartbeatTimeout")
+		return nil, fmt.Errorf("the ElectionTimeout must be equal or greater than HeartbeatTimeout")
 	}
 
 	// Try to restore the current term
 	currentTerm, err := stable.GetUint64(keyCurrentTerm)
 	if err != nil && err.Error() != "not found" {
-		return nil, fmt.Errorf("Failed to load current term: %v", err)
+		return nil, fmt.Errorf("failed to load current term: %v", err)
 	}
 
 	// Read the last log value
 	lastIdx, err := logs.LastIndex()
 	if err != nil {
-		return nil, fmt.Errorf("Failed to find last log: %v", err)
+		return nil, fmt.Errorf("failed to find last log: %v", err)
 	}
 
 	// Get the log
 	var lastLog Log
 	if lastIdx > 0 {
 		if err := logs.GetLog(lastIdx, &lastLog); err != nil {
-			return nil, fmt.Errorf("Failed to get last log: %v", err)
+			return nil, fmt.Errorf("failed to get last log: %v", err)
 		}
 	}
 
@@ -158,7 +178,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	localAddr := trans.LocalAddr()
 	peers, err := peerStore.Peers()
 	if err != nil {
-		return nil, fmt.Errorf("Failed to get list of peers: %v", err)
+		return nil, fmt.Errorf("failed to get list of peers: %v", err)
 	}
 	peers = ExcludePeer(peers, localAddr)
 
@@ -235,9 +255,9 @@ func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
 
 	select {
 	case <-timer:
-		return errorFuture{EnqueueTimeout}
+		return errorFuture{ErrEnqueueTimeout}
 	case <-r.shutdownCh:
-		return errorFuture{RaftShutdown}
+		return errorFuture{ErrRaftShutdown}
 	case r.applyCh <- logFuture:
 		return logFuture
 	}
@@ -265,9 +285,9 @@ func (r *Raft) Barrier(timeout time.Duration) Future {
 
 	select {
 	case <-timer:
-		return errorFuture{EnqueueTimeout}
+		return errorFuture{ErrEnqueueTimeout}
 	case <-r.shutdownCh:
-		return errorFuture{RaftShutdown}
+		return errorFuture{ErrRaftShutdown}
 	case r.applyCh <- logFuture:
 		return logFuture
 	}
@@ -282,7 +302,7 @@ func (r *Raft) VerifyLeader() Future {
 	verifyFuture.init()
 	select {
 	case <-r.shutdownCh:
-		return errorFuture{RaftShutdown}
+		return errorFuture{ErrRaftShutdown}
 	case r.verifyCh <- verifyFuture:
 		return verifyFuture
 	}
@@ -302,7 +322,7 @@ func (r *Raft) AddPeer(peer net.Addr) Future {
 	case r.applyCh <- logFuture:
 		return logFuture
 	case <-r.shutdownCh:
-		return errorFuture{RaftShutdown}
+		return errorFuture{ErrRaftShutdown}
 	}
 }
 
@@ -321,7 +341,7 @@ func (r *Raft) RemovePeer(peer net.Addr) Future {
 	case r.applyCh <- logFuture:
 		return logFuture
 	case <-r.shutdownCh:
-		return errorFuture{RaftShutdown}
+		return errorFuture{ErrRaftShutdown}
 	}
 }
 
@@ -350,7 +370,7 @@ func (r *Raft) Snapshot() Future {
 	case r.snapshotCh <- snapFuture:
 		return snapFuture
 	case <-r.shutdownCh:
-		return errorFuture{RaftShutdown}
+		return errorFuture{ErrRaftShutdown}
 	}
 
 }
@@ -417,16 +437,14 @@ func (r *Raft) runFSM() {
 			// Open the snapshot
 			meta, source, err := r.snapshots.Open(req.ID)
 			if err != nil {
-				req.respond(fmt.Errorf("Failed to open snapshot %v: %v",
-					req.ID, err))
+				req.respond(fmt.Errorf("failed to open snapshot %v: %v", req.ID, err))
 				continue
 			}
 
 			// Attempt to restore
 			start := time.Now()
 			if err := r.fsm.Restore(source); err != nil {
-				req.respond(fmt.Errorf("Failed to restore snapshot %v: %v",
-					req.ID, err))
+				req.respond(fmt.Errorf("failed to restore snapshot %v: %v", req.ID, err))
 				source.Close()
 				continue
 			}
@@ -518,11 +536,11 @@ func (r *Raft) runFollower() {
 
 		case a := <-r.applyCh:
 			// Reject any operations since we are not the leader
-			a.respond(NotLeader)
+			a.respond(ErrNotLeader)
 
 		case v := <-r.verifyCh:
 			// Reject any operations since we are not the leader
-			v.respond(NotLeader)
+			v.respond(ErrNotLeader)
 
 		case <-heartbeatTimer:
 			// Heartbeat failed! Transition to the candidate state
@@ -587,11 +605,11 @@ func (r *Raft) runCandidate() {
 
 		case a := <-r.applyCh:
 			// Reject any operations since we are not the leader
-			a.respond(NotLeader)
+			a.respond(ErrNotLeader)
 
 		case v := <-r.verifyCh:
 			// Reject any operations since we are not the leader
-			v.respond(NotLeader)
+			v.respond(ErrNotLeader)
 
 		case <-electionTimer:
 			// Election failed! Restart the elction. We simply return,
@@ -627,16 +645,16 @@ func (r *Raft) runLeader() {
 		}
 
 		// Cancel inflight requests
-		r.leaderState.inflight.Cancel(LeadershipLost)
+		r.leaderState.inflight.Cancel(ErrLeadershipLost)
 
 		// Respond to any requests in the queue
 		for future := range r.leaderState.commitCh {
-			future.respond(LeadershipLost)
+			future.respond(ErrLeadershipLost)
 		}
 
 		// Respond to any pending verify requets
 		for future := range r.leaderState.notify {
-			future.respond(LeadershipLost)
+			future.respond(ErrLeadershipLost)
 		}
 
 		// Clear all the state
@@ -716,7 +734,7 @@ func (r *Raft) leaderLoop() {
 				r.logger.Printf("[WARN] raft: New leader elected, stepping down")
 				r.setState(Follower)
 				delete(r.leaderState.notify, v)
-				v.respond(NotLeader)
+				v.respond(ErrNotLeader)
 
 			} else {
 				// Quorum of members agree, we are still leader
@@ -831,13 +849,13 @@ func (r *Raft) preparePeerChange(l *logFuture) bool {
 
 	// Ignore known peers on add
 	if l.log.Type == LogAddPeer && knownPeer {
-		l.respond(KnownPeer)
+		l.respond(ErrKnownPeer)
 		return false
 	}
 
 	// Ignore unknown peers on remove
 	if l.log.Type == LogRemovePeer && !knownPeer {
-		l.respond(UnknownPeer)
+		l.respond(ErrUnknownPeer)
 		return false
 	}
 
@@ -936,7 +954,7 @@ func (r *Raft) processLog(l *Log, future *logFuture, precommit bool) {
 		case r.fsmCommitCh <- commitTuple{l, future}:
 		case <-r.shutdownCh:
 			if future != nil {
-				future.respond(RaftShutdown)
+				future.respond(ErrRaftShutdown)
 			}
 		}
 
@@ -1026,9 +1044,8 @@ func (r *Raft) processRPC(rpc RPC) {
 	case *InstallSnapshotRequest:
 		r.installSnapshot(rpc, cmd)
 	default:
-		r.logger.Printf("[ERR] raft: Got unexpected command: %#v",
-			rpc.Command)
-		rpc.Respond(nil, fmt.Errorf("Unexpected command"))
+		r.logger.Printf("[ERR] raft: Got unexpected command: %#v", rpc.Command)
+		rpc.Respond(nil, fmt.Errorf("unexpected command"))
 	}
 }
 
@@ -1229,7 +1246,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	sink, err := r.snapshots.Create(req.LastLogIndex, req.LastLogTerm, req.Peers)
 	if err != nil {
 		r.logger.Printf("[ERR] raft: Failed to create snapshot to install: %v", err)
-		rpcErr = fmt.Errorf("Failed to create snapshot: %v", err)
+		rpcErr = fmt.Errorf("failed to create snapshot: %v", err)
 		return
 	}
 
@@ -1255,9 +1272,8 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 		r.logger.Printf("[ERR] raft: Failed to finalize snapshot: %v", err)
 		rpcErr = err
 		return
-	} else {
-		r.logger.Printf("[INFO] raft: Copied %d bytes to local snapshot", n)
 	}
+	r.logger.Printf("[INFO] raft: Copied %d bytes to local snapshot", n)
 
 	// Restore snapshot
 	future := &restoreFuture{ID: sink.ID()}
@@ -1265,7 +1281,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	select {
 	case r.fsmRestoreCh <- future:
 	case <-r.shutdownCh:
-		future.respond(RaftShutdown)
+		future.respond(ErrRaftShutdown)
 		return
 	}
 
@@ -1379,7 +1395,7 @@ func (r *Raft) persistVote(term uint64, candidate []byte) error {
 func (r *Raft) setCurrentTerm(t uint64) {
 	// Persist to disk first
 	if err := r.stable.SetUint64(keyCurrentTerm, t); err != nil {
-		panic(fmt.Errorf("Failed to save current term: %v", err))
+		panic(fmt.Errorf("failed to save current term: %v", err))
 	}
 	r.raftState.setCurrentTerm(t)
 }
@@ -1444,12 +1460,12 @@ func (r *Raft) takeSnapshot() error {
 	select {
 	case r.fsmSnapshotCh <- req:
 	case <-r.shutdownCh:
-		return RaftShutdown
+		return ErrRaftShutdown
 	}
 
 	// Wait until we get a response
 	if err := req.Error(); err != nil {
-		return fmt.Errorf("Failed to start snapshot: %v", err)
+		return fmt.Errorf("failed to start snapshot: %v", err)
 	}
 	defer req.snapshot.Release()
 
@@ -1463,7 +1479,7 @@ func (r *Raft) takeSnapshot() error {
 	start := time.Now()
 	sink, err := r.snapshots.Create(req.index, req.term, peerSet)
 	if err != nil {
-		return fmt.Errorf("Failed to create snapshot: %v", err)
+		return fmt.Errorf("failed to create snapshot: %v", err)
 	}
 	metrics.MeasureSince([]string{"raft", "snapshot", "create"}, start)
 
@@ -1471,13 +1487,13 @@ func (r *Raft) takeSnapshot() error {
 	start = time.Now()
 	if err := req.snapshot.Persist(sink); err != nil {
 		sink.Cancel()
-		return fmt.Errorf("Failed to persist snapshot: %v", err)
+		return fmt.Errorf("failed to persist snapshot: %v", err)
 	}
 	metrics.MeasureSince([]string{"raft", "snapshot", "persist"}, start)
 
 	// Close and check for error
 	if err := sink.Close(); err != nil {
-		return fmt.Errorf("Failed to close snapshot: %v", err)
+		return fmt.Errorf("failed to close snapshot: %v", err)
 	}
 
 	// Update the last stable snapshot info
@@ -1501,7 +1517,7 @@ func (r *Raft) compactLogs(snapIdx uint64) error {
 	// Determine log ranges to compact
 	minLog, err := r.logs.FirstIndex()
 	if err != nil {
-		return fmt.Errorf("Failed to get first log index: %v", err)
+		return fmt.Errorf("failed to get first log index: %v", err)
 	}
 
 	// Truncate up to the end of the snapshot, or `TrailingLogs`
@@ -1515,7 +1531,7 @@ func (r *Raft) compactLogs(snapIdx uint64) error {
 
 	// Compact the logs
 	if err := r.logs.DeleteRange(minLog, maxLog); err != nil {
-		return fmt.Errorf("Log compaction failed: %v", err)
+		return fmt.Errorf("log compaction failed: %v", err)
 	}
 	return nil
 }
@@ -1560,7 +1576,7 @@ func (r *Raft) restoreSnapshot() error {
 
 	// If we had snapshots and failed to load them, its an error
 	if len(snapshots) > 0 {
-		return fmt.Errorf("Failed to load any existing snapshots!")
+		return fmt.Errorf("failed to load any existing snapshots")
 	}
 	return nil
 }

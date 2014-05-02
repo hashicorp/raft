@@ -2,25 +2,31 @@ package raft
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
-	"github.com/ugorji/go/codec"
 	"io"
 	"log"
 	"net"
 	"os"
 	"sync"
 	"time"
+
+	"github.com/ugorji/go/codec"
 )
 
 const (
 	rpcAppendEntries uint8 = iota
 	rpcRequestVote
 	rpcInstallSnapshot
+
+	// DefaultTimeoutScale is the default TimeoutScale in a NetworkTransport.
 	DefaultTimeoutScale = 256 * 1024 // 256KB
 )
 
 var (
-	TransportShutdown = fmt.Errorf("transport shutdown")
+	// ErrTransportShutdown is returned when operations on a transport are
+	// invoked after it's been terminated.
+	ErrTransportShutdown = errors.New("transport shutdown")
 )
 
 /*
@@ -84,12 +90,16 @@ func (n *netConn) Release() error {
 	return n.conn.Close()
 }
 
-// Creates a new network transport with the given dailer and listener
-// The maxPool controls how many connections we will pool.
-// The timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
-// the timeout by (SnapshotSize / TimeoutScale)
-func NewNetworkTransport(stream StreamLayer, maxPool int, timeout time.Duration,
-	logOutput io.Writer) *NetworkTransport {
+// NewNetworkTransport creates a new network transport with the given dialer
+// and listener. The maxPool controls how many connections we will pool. The
+// timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
+// the timeout by (SnapshotSize / TimeoutScale).
+func NewNetworkTransport(
+	stream StreamLayer,
+	maxPool int,
+	timeout time.Duration,
+	logOutput io.Writer,
+) *NetworkTransport {
 	if logOutput == nil {
 		logOutput = os.Stderr
 	}
@@ -120,10 +130,12 @@ func (n *NetworkTransport) Close() error {
 	return nil
 }
 
+// Consumer implements the Transport interface.
 func (n *NetworkTransport) Consumer() <-chan RPC {
 	return n.consumeCh
 }
 
+// LocalAddr implements the Transport interface.
 func (n *NetworkTransport) LocalAddr() net.Addr {
 	return n.stream.Addr()
 }
@@ -190,10 +202,12 @@ func (n *NetworkTransport) returnConn(conn *netConn) {
 	}
 }
 
+// AppendEntries implements the Transport interface.
 func (n *NetworkTransport) AppendEntries(target net.Addr, args *AppendEntriesRequest, resp *AppendEntriesResponse) error {
 	return n.genericRPC(target, rpcAppendEntries, args, resp)
 }
 
+// RequestVote implements the Transport interface.
 func (n *NetworkTransport) RequestVote(target net.Addr, args *RequestVoteRequest, resp *RequestVoteResponse) error {
 	return n.genericRPC(target, rpcRequestVote, args, resp)
 }
@@ -220,6 +234,7 @@ func (n *NetworkTransport) genericRPC(target net.Addr, rpcType uint8, args inter
 	return n.decodeResponse(conn, resp, true)
 }
 
+// InstallSnapshot implements the Transport interface.
 func (n *NetworkTransport) InstallSnapshot(target net.Addr, args *InstallSnapshotRequest, resp *InstallSnapshotResponse, data io.Reader) error {
 	// Get a conn, always close for InstallSnapshot
 	conn, err := n.getConn(target)
@@ -256,14 +271,16 @@ func (n *NetworkTransport) InstallSnapshot(target net.Addr, args *InstallSnapsho
 	return n.decodeResponse(conn, resp, false)
 }
 
+// EncodePeer implements the Transport interface.
 func (n *NetworkTransport) EncodePeer(p net.Addr) []byte {
 	return []byte(p.String())
 }
 
+// DecodePeer implements the Transport interface.
 func (n *NetworkTransport) DecodePeer(buf []byte) net.Addr {
 	addr, err := net.ResolveTCPAddr("tcp", string(buf))
 	if err != nil {
-		panic(fmt.Errorf("Failed to parse network address: %s", buf))
+		panic(fmt.Errorf("failed to parse network address: %s", buf))
 	}
 	return addr
 }
@@ -355,7 +372,7 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 	select {
 	case n.consumeCh <- rpc:
 	case <-n.shutdownCh:
-		return TransportShutdown
+		return ErrTransportShutdown
 	}
 
 	// Wait for response
@@ -375,7 +392,7 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 			return err
 		}
 	case <-n.shutdownCh:
-		return TransportShutdown
+		return ErrTransportShutdown
 	}
 	return nil
 }

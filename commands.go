@@ -1,5 +1,7 @@
 package raft
 
+// AppendEntriesRequest is the command used to append entries to the
+// replicated log.
 type AppendEntriesRequest struct {
 	// Provide the current term and leader
 	Term   uint64
@@ -16,6 +18,8 @@ type AppendEntriesRequest struct {
 	LeaderCommitIndex uint64
 }
 
+// AppendEntriesResponse is the response returned from an
+// AppendEntriesRequest.
 type AppendEntriesResponse struct {
 	// Newer term if leader is out of date
 	Term uint64
@@ -27,6 +31,8 @@ type AppendEntriesResponse struct {
 	Success bool
 }
 
+// RequestVoteRequest is the command used by a candidate to ask a Raft peer
+// for a vote in an election.
 type RequestVoteRequest struct {
 	// Provide the term and our id
 	Term      uint64
@@ -37,6 +43,7 @@ type RequestVoteRequest struct {
 	LastLogTerm  uint64
 }
 
+// RequestVoteResponse is the response returned from a RequestVoteRequest.
 type RequestVoteResponse struct {
 	// Newer term if leader is out of date
 	Term uint64
@@ -48,6 +55,8 @@ type RequestVoteResponse struct {
 	Granted bool
 }
 
+// InstallSnapshotRequest is the command sent to a Raft peer to bootstrap its
+// log (and state machine) from a snapshot on another peer.
 type InstallSnapshotRequest struct {
 	Term   uint64
 	Leader []byte
@@ -63,6 +72,8 @@ type InstallSnapshotRequest struct {
 	Size int64
 }
 
+// InstallSnapshotResponse is the response returned from an
+// InstallSnapshotRequest.
 type InstallSnapshotResponse struct {
 	Term    uint64
 	Success bool

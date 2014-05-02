@@ -1,16 +1,23 @@
 package raft
 
 import (
+	"errors"
 	"fmt"
-	"github.com/armon/go-metrics"
 	"net"
 	"sync"
 	"time"
+
+	"github.com/armon/go-metrics"
 )
 
 const (
 	maxFailureScale = 12
 	failureWait     = 10 * time.Millisecond
+)
+
+var (
+	// ErrLogNotFound indicates a given log entry is not available.
+	ErrLogNotFound = errors.New("log not found")
 )
 
 type followerReplication struct {
@@ -109,7 +116,7 @@ START:
 
 	} else {
 		if err := r.logs.GetLog(s.nextIndex-1, &l); err != nil {
-			if err == LogNotFound {
+			if err == ErrLogNotFound {
 				goto SEND_SNAP
 			}
 			r.logger.Printf("[ERR] raft: Failed to get log at index %d: %v",
@@ -128,7 +135,7 @@ START:
 	for i := s.nextIndex; i <= maxIndex; i++ {
 		oldLog := new(Log)
 		if err := r.logs.GetLog(i, oldLog); err != nil {
-			if err == LogNotFound {
+			if err == ErrLogNotFound {
 				goto SEND_SNAP
 			}
 			r.logger.Printf("[ERR] raft: Failed to get log at index %d: %v", i, err)
@@ -221,10 +228,10 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	}
 
 	// Open the most recent snapshot
-	snapId := snapshots[0].ID
-	meta, snapshot, err := r.snapshots.Open(snapId)
+	snapID := snapshots[0].ID
+	meta, snapshot, err := r.snapshots.Open(snapID)
 	if err != nil {
-		r.logger.Printf("[ERR] raft: Failed to open snapshot %v: %v", snapId, err)
+		r.logger.Printf("[ERR] raft: Failed to open snapshot %v: %v", snapID, err)
 		return false, err
 	}
 	defer snapshot.Close()
@@ -243,7 +250,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	start := time.Now()
 	var resp InstallSnapshotResponse
 	if err := r.trans.InstallSnapshot(s.peer, &req, &resp, snapshot); err != nil {
-		r.logger.Printf("[ERR] raft: Failed to install snapshot %v: %v", snapId, err)
+		r.logger.Printf("[ERR] raft: Failed to install snapshot %v: %v", snapID, err)
 		s.failures++
 		return false, err
 	}

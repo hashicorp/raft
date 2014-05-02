@@ -7,7 +7,7 @@ import (
 
 func TestTCPTransport_BadAddr(t *testing.T) {
 	_, err := NewTCPTransport("0.0.0.0:0", nil, 1, 0, nil)
-	if err.Error() != "Local bind address is not advertisable!" {
+	if err != errNotAdvertisable {
 		t.Fatalf("err: %v", err)
 	}
 }

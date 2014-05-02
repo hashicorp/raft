@@ -1,22 +1,32 @@
 package raft
 
 import (
-	"fmt"
+	"errors"
 	"io"
 	"net"
 	"time"
 )
 
-// TCPStreamLayer implements StreamLayer interface for plain TCP
+var (
+	errNotAdvertisable = errors.New("local bind address is not advertisable")
+	errNotTCP          = errors.New("local address is not a TCP address")
+)
+
+// TCPStreamLayer implements StreamLayer interface for plain TCP.
 type TCPStreamLayer struct {
 	advertise net.Addr
 	listener  *net.TCPListener
 }
 
 // NewTCPTransport returns a NetworkTransport that is built on top of
-// a TCP streaming transport layer
-func NewTCPTransport(bindAddr string, advertise net.Addr, maxPool int,
-	timeout time.Duration, logOutput io.Writer) (*NetworkTransport, error) {
+// a TCP streaming transport layer.
+func NewTCPTransport(
+	bindAddr string,
+	advertise net.Addr,
+	maxPool int,
+	timeout time.Duration,
+	logOutput io.Writer,
+) (*NetworkTransport, error) {
 	// Try to bind
 	list, err := net.Listen("tcp", bindAddr)
 	if err != nil {
@@ -33,11 +43,11 @@ func NewTCPTransport(bindAddr string, advertise net.Addr, maxPool int,
 	addr, ok := stream.Addr().(*net.TCPAddr)
 	if !ok {
 		list.Close()
-		return nil, fmt.Errorf("Local address is not a TCP Address!")
+		return nil, errNotTCP
 	}
 	if addr.IP.IsUnspecified() {
 		list.Close()
-		return nil, fmt.Errorf("Local bind address is not advertisable!")
+		return nil, errNotAdvertisable
 	}
 
 	// Create the network transport
@@ -45,18 +55,22 @@ func NewTCPTransport(bindAddr string, advertise net.Addr, maxPool int,
 	return trans, nil
 }
 
+// Dial implements the StreamLayer interface.
 func (t *TCPStreamLayer) Dial(address string, timeout time.Duration) (net.Conn, error) {
 	return net.DialTimeout("tcp", address, timeout)
 }
 
+// Accept implements the net.Listener interface.
 func (t *TCPStreamLayer) Accept() (c net.Conn, err error) {
 	return t.listener.Accept()
 }
 
+// Close implements the net.Listener interface.
 func (t *TCPStreamLayer) Close() (err error) {
 	return t.listener.Close()
 }
 
+// Addr implements the net.Listener interface.
 func (t *TCPStreamLayer) Addr() net.Addr {
 	// Use an advertise addr if provided
 	if t.advertise != nil {

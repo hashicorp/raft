@@ -8,9 +8,9 @@ import (
 	"time"
 )
 
-// Implements the net.Addr interface
+// InmemAddr implements the net.Addr interface.
 type InmemAddr struct {
-	Id string
+	ID string
 }
 
 // NewInmemAddr returns a new in-memory addr with
@@ -19,16 +19,18 @@ func NewInmemAddr() *InmemAddr {
 	return &InmemAddr{generateUUID()}
 }
 
+// Network implements the net.Addr interface.
 func (ia *InmemAddr) Network() string {
 	return "inmem"
 }
 
+// String implements the net.Addr interface.
 func (ia *InmemAddr) String() string {
-	return ia.Id
+	return ia.ID
 }
 
-// Implements the Transport interface to allow Raft to be tested
-// in-memory without going over a network
+// InmemTransport Implements the Transport interface, to allow Raft to be
+// tested in-memory without going over a network.
 type InmemTransport struct {
 	sync.RWMutex
 	consumerCh chan RPC
@@ -50,14 +52,17 @@ func NewInmemTransport() (*InmemAddr, *InmemTransport) {
 	return addr, trans
 }
 
+// Consumer implements the Transport interface.
 func (i *InmemTransport) Consumer() <-chan RPC {
 	return i.consumerCh
 }
 
+// LocalAddr implements the Transport interface.
 func (i *InmemTransport) LocalAddr() net.Addr {
 	return i.localAddr
 }
 
+// AppendEntries implements the Transport interface.
 func (i *InmemTransport) AppendEntries(target net.Addr, args *AppendEntriesRequest, resp *AppendEntriesResponse) error {
 	rpcResp, err := i.makeRPC(target, args, nil, i.timeout)
 	if err != nil {
@@ -70,6 +75,7 @@ func (i *InmemTransport) AppendEntries(target net.Addr, args *AppendEntriesReque
 	return nil
 }
 
+// RequestVote implements the Transport interface.
 func (i *InmemTransport) RequestVote(target net.Addr, args *RequestVoteRequest, resp *RequestVoteResponse) error {
 	rpcResp, err := i.makeRPC(target, args, nil, i.timeout)
 	if err != nil {
@@ -82,6 +88,7 @@ func (i *InmemTransport) RequestVote(target net.Addr, args *RequestVoteRequest, 
 	return nil
 }
 
+// InstallSnapshot implements the Transport interface.
 func (i *InmemTransport) InstallSnapshot(target net.Addr, args *InstallSnapshotRequest, resp *InstallSnapshotResponse, data io.Reader) error {
 	rpcResp, err := i.makeRPC(target, args, data, 10*i.timeout)
 	if err != nil {
@@ -100,7 +107,7 @@ func (i *InmemTransport) makeRPC(target net.Addr, args interface{}, r io.Reader,
 	i.RUnlock()
 
 	if !ok {
-		err = fmt.Errorf("Failed to connect to peer: %v", target)
+		err = fmt.Errorf("failed to connect to peer: %v", target)
 		return
 	}
 
@@ -124,12 +131,14 @@ func (i *InmemTransport) makeRPC(target net.Addr, args interface{}, r io.Reader,
 	return
 }
 
-// Use the UUID as the address directly
+// EncodePeer implements the Transport interface. It uses the UUID as the
+// address directly.
 func (i *InmemTransport) EncodePeer(p net.Addr) []byte {
 	return []byte(p.String())
 }
 
-// Wrap the UUID in an InmemAddr
+// DecodePeer implements the Transport interface. It wraps the UUID in an
+// InmemAddr.
 func (i *InmemTransport) DecodePeer(buf []byte) net.Addr {
 	return &InmemAddr{string(buf)}
 }
@@ -142,14 +151,14 @@ func (i *InmemTransport) Connect(peer net.Addr, trans *InmemTransport) {
 	i.peers[peer.String()] = trans
 }
 
-// Disconnect is used to remove the ability to route to a given peer
+// Disconnect is used to remove the ability to route to a given peer.
 func (i *InmemTransport) Disconnect(peer net.Addr) {
 	i.Lock()
 	defer i.Unlock()
 	delete(i.peers, peer.String())
 }
 
-// DisconnectAll is used to remove all routes to peers
+// DisconnectAll is used to remove all routes to peers.
 func (i *InmemTransport) DisconnectAll() {
 	i.Lock()
 	defer i.Unlock()

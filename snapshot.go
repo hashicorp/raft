@@ -22,7 +22,7 @@ type SnapshotStore interface {
 	// with the current peer set already encoded
 	Create(index, term uint64, peers []byte) (SnapshotSink, error)
 
-	// List is used to list the available snapshots in the store
+	// List is used to list the available snapshots in the store.
 	// It should return then in descending order, with the highest index first.
 	List() ([]*SnapshotMeta, error)
 

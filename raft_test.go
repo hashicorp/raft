@@ -3,7 +3,6 @@ package raft
 import (
 	"bytes"
 	"fmt"
-	"github.com/ugorji/go/codec"
 	"io"
 	"io/ioutil"
 	"log"
@@ -13,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ugorji/go/codec"
 )
 
 // MockFSM is an implementation of the FSM interface, and just stores
@@ -321,16 +322,16 @@ func TestRaft_AfterShutdown(t *testing.T) {
 	raft := c.rafts[0]
 
 	// Everything should fail now
-	if f := raft.Apply(nil, 0); f.Error() != RaftShutdown {
+	if f := raft.Apply(nil, 0); f.Error() != ErrRaftShutdown {
 		t.Fatalf("should be shutdown: %v", f.Error())
 	}
-	if f := raft.AddPeer(NewInmemAddr()); f.Error() != RaftShutdown {
+	if f := raft.AddPeer(NewInmemAddr()); f.Error() != ErrRaftShutdown {
 		t.Fatalf("should be shutdown: %v", f.Error())
 	}
-	if f := raft.RemovePeer(NewInmemAddr()); f.Error() != RaftShutdown {
+	if f := raft.RemovePeer(NewInmemAddr()); f.Error() != ErrRaftShutdown {
 		t.Fatalf("should be shutdown: %v", f.Error())
 	}
-	if f := raft.Snapshot(); f.Error() != RaftShutdown {
+	if f := raft.Snapshot(); f.Error() != ErrRaftShutdown {
 		t.Fatalf("should be shutdown: %v", f.Error())
 	}
 
@@ -463,7 +464,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 	c.FullyConnect()
 
 	// Future1 should fail
-	if err := future1.Error(); err != LeadershipLost {
+	if err := future1.Error(); err != ErrLeadershipLost {
 		t.Fatalf("err: %v", err)
 	}
 
@@ -543,12 +544,12 @@ func TestRaft_ApplyNonLeader(t *testing.T) {
 	// Try to apply
 	future := follower.Apply([]byte("test"), time.Millisecond)
 
-	if future.Error() != NotLeader {
+	if future.Error() != ErrNotLeader {
 		t.Fatalf("should not apply on follower")
 	}
 
 	// Should be cached
-	if future.Error() != NotLeader {
+	if future.Error() != ErrNotLeader {
 		t.Fatalf("should not apply on follower")
 	}
 }
@@ -613,7 +614,7 @@ func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		go func(i int) {
 			future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), time.Microsecond)
-			if future.Error() == EnqueueTimeout {
+			if future.Error() == ErrEnqueueTimeout {
 				didTimeout = true
 			}
 		}(i)
@@ -820,7 +821,7 @@ func TestRaft_AddKnownPeer(t *testing.T) {
 	future := leader.AddPeer(followers[0].localAddr)
 
 	// Should be already added
-	if err := future.Error(); err != KnownPeer {
+	if err := future.Error(); err != ErrKnownPeer {
 		t.Fatalf("err: %v", err)
 	}
 }
@@ -837,7 +838,7 @@ func TestRaft_RemoveUnknownPeer(t *testing.T) {
 	future := leader.RemovePeer(NewInmemAddr())
 
 	// Should be already added
-	if err := future.Error(); err != UnknownPeer {
+	if err := future.Error(); err != ErrUnknownPeer {
 		t.Fatalf("err: %v", err)
 	}
 }
@@ -1191,7 +1192,7 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	verify := leader.VerifyLeader()
 
 	// Wait for the leader to step down
-	if err := verify.Error(); err != NotLeader {
+	if err := verify.Error(); err != ErrNotLeader {
 		t.Fatalf("err: %v", err)
 	}
 }
