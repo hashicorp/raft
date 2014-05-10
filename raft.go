@@ -899,7 +899,7 @@ func (r *Raft) dispatchLog(applyLog *logFuture) {
 
 	// Add this to the inflight logs, commit
 	r.leaderState.inflight.Start(applyLog)
-	r.leaderState.inflight.Commit(applyLog.log.Index, r.localAddr)
+	r.leaderState.inflight.Commit(applyLog.log.Index)
 
 	// Update the last log since it's on disk now
 	r.setLastLogIndex(applyLog.log.Index)

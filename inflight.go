@@ -2,7 +2,6 @@ package raft
 
 import (
 	"container/list"
-	"net"
 	"sync"
 )
 
@@ -11,7 +10,7 @@ import (
 type quorumPolicy interface {
 	// Checks if a commit from a given peer is enough to
 	// satisfy the commitment rules
-	Commit(net.Addr) bool
+	Commit() bool
 
 	// Checks if a commit is committed
 	IsCommitted() bool
@@ -29,7 +28,7 @@ func newMajorityQuorum(clusterSize int) *majorityQuorum {
 	return &majorityQuorum{count: 0, votesNeeded: votesNeeded}
 }
 
-func (m *majorityQuorum) Commit(p net.Addr) bool {
+func (m *majorityQuorum) Commit() bool {
 	m.count++
 	return m.count >= m.votesNeeded
 }
@@ -123,15 +122,15 @@ func (i *inflight) Committed() (l *list.List) {
 
 // Commit is used by leader replication routines to indicate that
 // a follower was finished commiting a log to disk.
-func (i *inflight) Commit(index uint64, peer net.Addr) {
+func (i *inflight) Commit(index uint64) {
 	i.Lock()
 	defer i.Unlock()
-	i.commit(index, peer)
+	i.commit(index)
 }
 
 // CommitRange is used to commit a range of indexes inclusively
 // It optimized to avoid commits for indexes that are not tracked
-func (i *inflight) CommitRange(minIndex, maxIndex uint64, peer net.Addr) {
+func (i *inflight) CommitRange(minIndex, maxIndex uint64) {
 	i.Lock()
 	defer i.Unlock()
 
@@ -140,12 +139,12 @@ func (i *inflight) CommitRange(minIndex, maxIndex uint64, peer net.Addr) {
 
 	// Commit each index
 	for idx := minIndex; idx <= maxIndex; idx++ {
-		i.commit(idx, peer)
+		i.commit(idx)
 	}
 }
 
 // commit is used to commit a single index. Must be called with the lock held.
-func (i *inflight) commit(index uint64, peer net.Addr) {
+func (i *inflight) commit(index uint64) {
 	op, ok := i.operations[index]
 	if !ok {
 		// Ignore if not in the map, as it may be commited already
@@ -153,7 +152,7 @@ func (i *inflight) commit(index uint64, peer net.Addr) {
 	}
 
 	// Check if we've satisfied the commit
-	if !op.policy.Commit(peer) {
+	if !op.policy.Commit() {
 		return
 	}
 

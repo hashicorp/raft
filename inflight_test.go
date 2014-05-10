@@ -15,23 +15,23 @@ func TestInflight_StartCommit(t *testing.T) {
 	in.Start(l)
 
 	// Commit 3 times
-	in.Commit(1, nil)
+	in.Commit(1)
 	if in.Committed().Len() != 0 {
 		t.Fatalf("should not be commited")
 	}
 
-	in.Commit(1, nil)
+	in.Commit(1)
 	if in.Committed().Len() != 0 {
 		t.Fatalf("should not be commited")
 	}
 
-	in.Commit(1, nil)
+	in.Commit(1)
 	if in.Committed().Len() != 1 {
 		t.Fatalf("should be commited")
 	}
 
 	// Already commited but should work anyways
-	in.Commit(1, nil)
+	in.Commit(1)
 }
 
 func TestInflight_Cancel(t *testing.T) {
@@ -74,9 +74,9 @@ func TestInflight_CommitRange(t *testing.T) {
 	in.Start(l3)
 
 	// Commit ranges
-	in.CommitRange(1, 5, nil)
-	in.CommitRange(1, 4, nil)
-	in.CommitRange(1, 10, nil)
+	in.CommitRange(1, 5)
+	in.CommitRange(1, 4)
+	in.CommitRange(1, 10)
 
 	// Should get 3 back
 	if in.Committed().Len() != 3 {
@@ -98,17 +98,17 @@ func TestInflight_NonContiguous(t *testing.T) {
 	l2.policy = newMajorityQuorum(5)
 	in.Start(l2)
 
-	in.Commit(3, nil)
-	in.Commit(3, nil)
-	in.Commit(3, nil) // panic!
+	in.Commit(3)
+	in.Commit(3)
+	in.Commit(3) // panic!
 
 	if in.Committed().Len() != 0 {
 		t.Fatalf("should not commit")
 	}
 
-	in.Commit(2, nil)
-	in.Commit(2, nil)
-	in.Commit(2, nil) // panic!
+	in.Commit(2)
+	in.Commit(2)
+	in.Commit(2) // panic!
 
 	committed := in.Committed()
 	if committed.Len() != 2 {
