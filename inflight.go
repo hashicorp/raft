@@ -61,7 +61,9 @@ func newInflight(commitCh chan struct{}) *inflight {
 	}
 }
 
-// Start is used to mark a logFuture as being inflight
+// Start is used to mark a logFuture as being inflight. It
+// also commits the entry, as it is assumed the leader is
+// starting.
 func (i *inflight) Start(l *logFuture) {
 	i.Lock()
 	defer i.Unlock()
@@ -75,6 +77,8 @@ func (i *inflight) Start(l *logFuture) {
 	if i.minCommit == 0 {
 		i.minCommit = idx
 	}
+
+	i.commit(idx)
 }
 
 // Cancel is used to cancel all in-flight operations.

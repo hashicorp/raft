@@ -21,11 +21,6 @@ func TestInflight_StartCommit(t *testing.T) {
 	}
 
 	in.Commit(1)
-	if in.Committed().Len() != 0 {
-		t.Fatalf("should not be commited")
-	}
-
-	in.Commit(1)
 	if in.Committed().Len() != 1 {
 		t.Fatalf("should be commited")
 	}
