@@ -57,7 +57,7 @@ type commitTuple struct {
 
 // leaderState is state that is used while we are a leader
 type leaderState struct {
-	commitCh  chan *logFuture
+	commitCh  chan struct{}
 	inflight  *inflight
 	replState map[string]*followerReplication
 	notify    map[*verifyFuture]struct{}
@@ -632,7 +632,7 @@ func (r *Raft) runLeader() {
 	asyncNotifyBool(r.leaderCh, true)
 
 	// Setup leader state
-	r.leaderState.commitCh = make(chan *logFuture, 128)
+	r.leaderState.commitCh = make(chan struct{}, 1)
 	r.leaderState.inflight = newInflight(r.leaderState.commitCh)
 	r.leaderState.replState = make(map[string]*followerReplication)
 	r.leaderState.notify = make(map[*verifyFuture]struct{})
@@ -646,11 +646,6 @@ func (r *Raft) runLeader() {
 
 		// Cancel inflight requests
 		r.leaderState.inflight.Cancel(ErrLeadershipLost)
-
-		// Respond to any requests in the queue
-		for future := range r.leaderState.commitCh {
-			future.respond(ErrLeadershipLost)
-		}
 
 		// Respond to any pending verify requets
 		for future := range r.leaderState.notify {
@@ -715,14 +710,19 @@ func (r *Raft) leaderLoop() {
 		case rpc := <-r.rpcCh:
 			r.processRPC(rpc)
 
-		case commitLog := <-r.leaderState.commitCh:
-			// Measure the commit time
-			metrics.MeasureSince([]string{"raft", "commitTime"}, commitLog.dispatch)
+		case <-r.leaderState.commitCh:
+			// Get the committed messages
+			committed := r.leaderState.inflight.Committed()
+			for e := committed.Front(); e != nil; e = e.Next() {
+				// Measure the commit time
+				commitLog := e.Value.(*logFuture)
+				metrics.MeasureSince([]string{"raft", "commitTime"}, commitLog.dispatch)
 
-			// Increment the commit index
-			idx := commitLog.log.Index
-			r.setCommitIndex(idx)
-			r.processLogs(idx, commitLog)
+				// Increment the commit index
+				idx := commitLog.log.Index
+				r.setCommitIndex(idx)
+				r.processLogs(idx, commitLog)
+			}
 
 		case v := <-r.verifyCh:
 			if v.quorumSize == 0 {

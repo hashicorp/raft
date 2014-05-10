@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"container/list"
 	"net"
 	"sync"
 )
@@ -40,7 +41,8 @@ func (m *majorityQuorum) IsCommitted() bool {
 // Inflight is used to track operations that are still in-flight
 type inflight struct {
 	sync.Mutex
-	commitCh   chan *logFuture
+	committed  *list.List
+	commitCh   chan struct{}
 	minCommit  uint64
 	maxCommit  uint64
 	operations map[uint64]*logFuture
@@ -49,8 +51,9 @@ type inflight struct {
 
 // NewInflight returns an inflight struct that notifies
 // the provided channel when logs are finished commiting.
-func newInflight(commitCh chan *logFuture) *inflight {
+func newInflight(commitCh chan struct{}) *inflight {
 	return &inflight{
+		committed:  list.New(),
 		commitCh:   commitCh,
 		minCommit:  0,
 		maxCommit:  0,
@@ -91,8 +94,16 @@ func (i *inflight) Cancel(err error) {
 		op.respond(err)
 	}
 
+	// Clear all the committed but not processed
+	for e := i.committed.Front(); e != nil; e = e.Next() {
+		e.Value.(*logFuture).respond(err)
+	}
+
 	// Clear the map
 	i.operations = make(map[uint64]*logFuture)
+
+	// Clear the list of committed
+	i.committed = list.New()
 
 	// Close the commmitCh
 	close(i.commitCh)
@@ -100,6 +111,14 @@ func (i *inflight) Cancel(err error) {
 	// Reset indexes
 	i.minCommit = 0
 	i.maxCommit = 0
+}
+
+// Committed returns all the committed operations in order
+func (i *inflight) Committed() (l *list.List) {
+	i.Lock()
+	l, i.committed = i.committed, list.New()
+	i.Unlock()
+	return l
 }
 
 // Commit is used by leader replication routines to indicate that
@@ -146,23 +165,20 @@ func (i *inflight) commit(index uint64, peer net.Addr) {
 		return
 	}
 
-	// Notify of commit
 NOTIFY:
-	select {
-	case i.commitCh <- op:
-		// Stop tracking since it is committed
-		delete(i.operations, index)
+	// Add the operation to the committed list
+	i.committed.PushBack(op)
 
-		// Update the indexes
-		if index == i.maxCommit {
-			i.minCommit = 0
-			i.maxCommit = 0
+	// Stop tracking since it is committed
+	delete(i.operations, index)
 
-		} else {
-			i.minCommit++
-		}
+	// Update the indexes
+	if index == i.maxCommit {
+		i.minCommit = 0
+		i.maxCommit = 0
 
-	case <-i.stopCh:
+	} else {
+		i.minCommit++
 	}
 
 	// Check if the next in-flight operation is ready
@@ -173,4 +189,7 @@ NOTIFY:
 			goto NOTIFY
 		}
 	}
+
+	// Async notify of ready operations
+	asyncNotifyCh(i.commitCh)
 }

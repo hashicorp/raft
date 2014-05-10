@@ -6,7 +6,7 @@ import (
 )
 
 func TestInflight_StartCommit(t *testing.T) {
-	commitCh := make(chan *logFuture, 1)
+	commitCh := make(chan struct{}, 1)
 	in := newInflight(commitCh)
 
 	// Commit a transaction as being in flight
@@ -16,23 +16,17 @@ func TestInflight_StartCommit(t *testing.T) {
 
 	// Commit 3 times
 	in.Commit(1, nil)
-	select {
-	case <-commitCh:
+	if in.Committed().Len() != 0 {
 		t.Fatalf("should not be commited")
-	default:
 	}
 
 	in.Commit(1, nil)
-	select {
-	case <-commitCh:
+	if in.Committed().Len() != 0 {
 		t.Fatalf("should not be commited")
-	default:
 	}
 
 	in.Commit(1, nil)
-	select {
-	case <-commitCh:
-	default:
+	if in.Committed().Len() != 1 {
 		t.Fatalf("should be commited")
 	}
 
@@ -41,7 +35,7 @@ func TestInflight_StartCommit(t *testing.T) {
 }
 
 func TestInflight_Cancel(t *testing.T) {
-	commitCh := make(chan *logFuture, 1)
+	commitCh := make(chan struct{}, 1)
 	in := newInflight(commitCh)
 
 	// Commit a transaction as being in flight
@@ -63,7 +57,7 @@ func TestInflight_Cancel(t *testing.T) {
 }
 
 func TestInflight_CommitRange(t *testing.T) {
-	commitCh := make(chan *logFuture, 3)
+	commitCh := make(chan struct{}, 1)
 	in := newInflight(commitCh)
 
 	// Commit a few transaction as being in flight
@@ -85,14 +79,14 @@ func TestInflight_CommitRange(t *testing.T) {
 	in.CommitRange(1, 10, nil)
 
 	// Should get 3 back
-	if len(commitCh) != 3 {
+	if in.Committed().Len() != 3 {
 		t.Fatalf("expected all 3 to commit")
 	}
 }
 
 // Should panic if we commit non contiguously!
 func TestInflight_NonContiguous(t *testing.T) {
-	commitCh := make(chan *logFuture, 3)
+	commitCh := make(chan struct{}, 1)
 	in := newInflight(commitCh)
 
 	// Commit a few transaction as being in flight
@@ -108,31 +102,28 @@ func TestInflight_NonContiguous(t *testing.T) {
 	in.Commit(3, nil)
 	in.Commit(3, nil) // panic!
 
-	select {
-	case <-commitCh:
+	if in.Committed().Len() != 0 {
 		t.Fatalf("should not commit")
-	default:
 	}
 
 	in.Commit(2, nil)
 	in.Commit(2, nil)
 	in.Commit(2, nil) // panic!
 
-	select {
-	case l := <-commitCh:
-		if l.log.Index != 2 {
-			t.Fatalf("bad: %v", *l)
-		}
-	default:
-		t.Fatalf("should commit")
+	committed := in.Committed()
+	if committed.Len() != 2 {
+		t.Fatalf("should commit both")
 	}
 
-	select {
-	case l := <-commitCh:
-		if l.log.Index != 3 {
-			t.Fatalf("bad: %v", *l)
-		}
-	default:
-		t.Fatalf("should commit")
+	current := committed.Front()
+	l := current.Value.(*logFuture)
+	if l.log.Index != 2 {
+		t.Fatalf("bad: %v", *l)
+	}
+
+	current = current.Next()
+	l = current.Value.(*logFuture)
+	if l.log.Index != 3 {
+		t.Fatalf("bad: %v", *l)
 	}
 }
