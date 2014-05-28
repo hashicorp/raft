@@ -233,6 +233,8 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 // it may return nil if there is no current leader or the leader
 // is unknown
 func (r *Raft) Leader() net.Addr {
+  r.stateL.Lock()
+  defer r.stateL.RUnlock()
 	return r.leader
 }
 
@@ -516,7 +518,9 @@ func (r *Raft) run() {
 		select {
 		case <-r.shutdownCh:
 			// Clear the leader to prevent forwarding
+      r.stateL.Lock()
 			r.leader = nil
+      r.stateL.Unlock()
 			return
 		default:
 		}
@@ -554,7 +558,9 @@ func (r *Raft) runFollower() {
 
 		case <-heartbeatTimer:
 			// Heartbeat failed! Transition to the candidate state
+      r.stateL.Lock()
 			r.leader = nil
+      r.stateL.Unlock()
 			if len(r.peers) == 0 && !r.conf.EnableSingleNode {
 				if !didWarn {
 					r.logger.Printf("[WARN] raft: EnableSingleNode disabled, and no known peers. Aborting election.")
