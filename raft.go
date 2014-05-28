@@ -67,6 +67,9 @@ type leaderState struct {
 type Raft struct {
 	raftState
 
+	// used to guard operations that access mutable state
+	stateL *sync.RWMutex
+
 	// applyCh is used to async send logs to the main thread to
 	// be committed and applied to the FSM.
 	applyCh chan *logFuture
@@ -184,6 +187,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 
 	// Create Raft struct
 	r := &Raft{
+		stateL:        new(sync.RWMutex),
 		applyCh:       make(chan *logFuture),
 		conf:          conf,
 		fsm:           fsm,
@@ -229,6 +233,8 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 // it may return nil if there is no current leader or the leader
 // is unknown
 func (r *Raft) Leader() net.Addr {
+  r.stateL.Lock()
+  defer r.stateL.RUnlock()
 	return r.leader
 }
 
@@ -377,6 +383,8 @@ func (r *Raft) Snapshot() Future {
 
 // State is used to return the state raft is currently in
 func (r *Raft) State() RaftState {
+	r.stateL.RLock()
+	defer r.stateL.RUnlock()
 	return r.getState()
 }
 
@@ -395,12 +403,16 @@ func (r *Raft) String() string {
 // LastContact returns the time of last contact by a leader.
 // This only makes sense if we are currently a follower.
 func (r *Raft) LastContact() time.Time {
+	r.stateL.RLock()
+	defer r.stateL.RUnlock()
 	return r.lastContact
 }
 
 // Stats is used to return a map of various internal stats. This should only
 // be used for informative purposes or debugging
 func (r *Raft) Stats() map[string]string {
+	r.stateL.RLock()
+	defer r.stateL.RUnlock()
 	toString := func(v uint64) string {
 		return strconv.FormatUint(v, 10)
 	}
@@ -506,7 +518,9 @@ func (r *Raft) run() {
 		select {
 		case <-r.shutdownCh:
 			// Clear the leader to prevent forwarding
+      r.stateL.Lock()
 			r.leader = nil
+      r.stateL.Unlock()
 			return
 		default:
 		}
@@ -544,7 +558,9 @@ func (r *Raft) runFollower() {
 
 		case <-heartbeatTimer:
 			// Heartbeat failed! Transition to the candidate state
+      r.stateL.Lock()
 			r.leader = nil
+      r.stateL.Unlock()
 			if len(r.peers) == 0 && !r.conf.EnableSingleNode {
 				if !didWarn {
 					r.logger.Printf("[WARN] raft: EnableSingleNode disabled, and no known peers. Aborting election.")
@@ -552,7 +568,9 @@ func (r *Raft) runFollower() {
 				}
 			} else {
 				r.logger.Printf("[WARN] raft: Heartbeat timeout reached, starting election")
+				r.stateL.Lock()
 				r.setState(Candidate)
+				r.stateL.Unlock()
 				return
 			}
 
@@ -584,8 +602,10 @@ func (r *Raft) runCandidate() {
 			// Check if the term is greater than ours, bail
 			if vote.Term > r.getCurrentTerm() {
 				r.logger.Printf("[DEBUG] raft: Newer term discovered, fallback to follower")
+				r.stateL.Lock()
 				r.setState(Follower)
 				r.setCurrentTerm(vote.Term)
+				r.stateL.Unlock()
 				return
 			}
 
@@ -598,8 +618,10 @@ func (r *Raft) runCandidate() {
 			// Check if we've become the leader
 			if grantedVotes >= votesNeeded {
 				r.logger.Printf("[INFO] raft: Election won. Tally: %d", grantedVotes)
+				r.stateL.Lock()
 				r.leader = r.localAddr
 				r.setState(Leader)
+				r.stateL.Unlock()
 				return
 			}
 
@@ -632,10 +654,12 @@ func (r *Raft) runLeader() {
 	asyncNotifyBool(r.leaderCh, true)
 
 	// Setup leader state
+	r.stateL.Lock()
 	r.leaderState.commitCh = make(chan struct{}, 1)
 	r.leaderState.inflight = newInflight(r.leaderState.commitCh)
 	r.leaderState.replState = make(map[string]*followerReplication)
 	r.leaderState.notify = make(map[*verifyFuture]struct{})
+	r.stateL.Unlock()
 
 	// Cleanup state on step down
 	defer func() {
@@ -653,6 +677,7 @@ func (r *Raft) runLeader() {
 		}
 
 		// Clear all the state
+		r.stateL.Lock()
 		r.leaderState.commitCh = nil
 		r.leaderState.inflight = nil
 		r.leaderState.replState = nil
@@ -664,6 +689,7 @@ func (r *Raft) runLeader() {
 		if r.leader == r.localAddr {
 			r.leader = nil
 		}
+		r.stateL.Unlock()
 
 		// Notify that we are not the leader
 		asyncNotifyBool(r.leaderCh, false)
@@ -720,7 +746,9 @@ func (r *Raft) leaderLoop() {
 
 				// Increment the commit index
 				idx := commitLog.log.Index
+				r.stateL.Lock()
 				r.setCommitIndex(idx)
+				r.stateL.Unlock()
 				r.processLogs(idx, commitLog)
 			}
 
@@ -912,6 +940,7 @@ func (r *Raft) dispatchLog(applyLog *logFuture) {
 
 // processLogs is used to process all the logs from the lastApplied
 // up to the given index
+// expects stateL held when called
 func (r *Raft) processLogs(index uint64, future *logFuture) {
 	// Reject logs we've applied already
 	lastApplied := r.getLastApplied()
@@ -985,6 +1014,7 @@ func (r *Raft) processLog(l *Log, future *logFuture, precommit bool) {
 
 		// If the peer set does not include us, remove all other peers
 		removeSelf := !PeerContained(peers, r.localAddr)
+		r.stateL.Lock()
 		if removeSelf {
 			r.peers = nil
 			r.peerStore.SetPeers([]net.Addr{r.localAddr})
@@ -992,6 +1022,7 @@ func (r *Raft) processLog(l *Log, future *logFuture, precommit bool) {
 			r.peers = ExcludePeer(peers, r.localAddr)
 			r.peerStore.SetPeers(peers)
 		}
+		r.stateL.Unlock()
 
 		// Stop replication for old nodes
 		if r.getState() == Leader {
@@ -1017,7 +1048,9 @@ func (r *Raft) processLog(l *Log, future *logFuture, precommit bool) {
 				r.Shutdown()
 			} else {
 				r.logger.Printf("[INFO] raft: Removed ourself, transitioning to follower")
+				r.stateL.Lock()
 				r.setState(Follower)
+				r.stateL.Unlock()
 			}
 		}
 
@@ -1069,8 +1102,10 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	// if we ever get an appendEntries call
 	if a.Term > r.getCurrentTerm() || r.getState() != Follower {
 		// Ensure transition to follower
+		r.stateL.Lock()
 		r.setState(Follower)
 		r.setCurrentTerm(a.Term)
+		r.stateL.Unlock()
 		resp.Term = a.Term
 	}
 
@@ -1131,13 +1166,17 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	// Update the commit index
 	if a.LeaderCommitIndex > 0 && a.LeaderCommitIndex > r.getCommitIndex() {
 		idx := min(a.LeaderCommitIndex, r.getLastIndex())
+		r.stateL.Lock()
 		r.setCommitIndex(idx)
+		r.stateL.Unlock()
 		r.processLogs(idx, nil)
 	}
 
 	// Everything went well, set success
 	resp.Success = true
+	r.stateL.Lock()
 	r.lastContact = time.Now()
+	r.stateL.Unlock()
 	return
 }
 
@@ -1161,8 +1200,10 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// Increase the term if we see a newer one
 	if req.Term > r.getCurrentTerm() {
 		// Ensure transition to follower
+		r.stateL.Lock()
 		r.setState(Follower)
 		r.setCurrentTerm(req.Term)
+		r.stateL.Unlock()
 		resp.Term = req.Term
 	}
 
@@ -1233,8 +1274,10 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	// Increase the term if we see a newer one
 	if req.Term > r.getCurrentTerm() {
 		// Ensure transition to follower
+		r.stateL.Lock()
 		r.setState(Follower)
 		r.setCurrentTerm(req.Term)
+		r.stateL.Unlock()
 		resp.Term = req.Term
 	}
 
@@ -1291,6 +1334,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 		return
 	}
 
+	r.stateL.Lock()
 	// Update the lastApplied so we don't replay old logs
 	r.setLastApplied(req.LastLogIndex)
 
@@ -1302,6 +1346,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	peers := decodePeers(req.Peers, r.trans)
 	r.peers = ExcludePeer(peers, r.localAddr)
 	r.peerStore.SetPeers(peers)
+	r.stateL.Unlock()
 
 	// Compact logs, continue even if this fails
 	if err := r.compactLogs(req.LastLogIndex); err != nil {
@@ -1391,6 +1436,7 @@ func (r *Raft) persistVote(term uint64, candidate []byte) error {
 }
 
 // setCurrentTerm is used to set the current term in a durable manner
+// expects stateL held
 func (r *Raft) setCurrentTerm(t uint64) {
 	// Persist to disk first
 	if err := r.stable.SetUint64(keyCurrentTerm, t); err != nil {
@@ -1496,8 +1542,10 @@ func (r *Raft) takeSnapshot() error {
 	}
 
 	// Update the last stable snapshot info
+	r.stateL.Lock()
 	r.setLastSnapshotIndex(req.index)
 	r.setLastSnapshotTerm(req.term)
+	r.stateL.Unlock()
 
 	// Compact the logs
 	if err := r.compactLogs(req.index); err != nil {
@@ -1563,11 +1611,13 @@ func (r *Raft) restoreSnapshot() error {
 		r.logger.Printf("[INFO] raft: Restored from snapshot %v", snapshot.ID)
 
 		// Update the lastApplied so we don't replay old logs
+		r.stateL.Lock()
 		r.setLastApplied(snapshot.Index)
 
 		// Update the last stable snapshot info
 		r.setLastSnapshotIndex(snapshot.Index)
 		r.setLastSnapshotTerm(snapshot.Term)
+		r.stateL.Unlock()
 
 		// Success!
 		return nil
