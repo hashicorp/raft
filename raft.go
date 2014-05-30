@@ -548,7 +548,6 @@ func (r *Raft) runFollower() {
 		select {
 		case rpc := <-r.rpcCh:
 			r.processRPC(rpc)
-			heartbeatTimer = randomTimeout(r.conf.HeartbeatTimeout)
 
 		case a := <-r.applyCh:
 			// Reject any operations since we are not the leader
@@ -559,6 +558,13 @@ func (r *Raft) runFollower() {
 			v.respond(ErrNotLeader)
 
 		case <-heartbeatTimer:
+			// Check if we have had a successful contact
+			lastContact := r.LastContact()
+			if time.Now().Sub(lastContact) < r.conf.HeartbeatTimeout {
+				heartbeatTimer = randomTimeout(r.conf.HeartbeatTimeout)
+				continue
+			}
+
 			// Heartbeat failed! Transition to the candidate state
 			r.setLeader(nil)
 			if len(r.peers) == 0 && !r.conf.EnableSingleNode {
@@ -1016,7 +1022,7 @@ func (r *Raft) processLog(l *Log, future *logFuture, precommit bool) {
 			var toDelete []string
 			for _, repl := range r.leaderState.replState {
 				if !PeerContained(r.peers, repl.peer) {
-					r.logger.Printf("[INFO] raft: Removed peer %v, stopping replication", repl.peer)
+					r.logger.Printf("[INFO] raft: Removed peer %v, stopping replication (Index: %d)", repl.peer, l.Index)
 
 					// Replicate up to this index and stop
 					repl.stopCh <- l.Index
@@ -1330,6 +1336,9 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 
 	r.logger.Printf("[INFO] raft: Installed remote snapshot")
 	resp.Success = true
+	r.lastContactLock.Lock()
+	r.lastContact = time.Now()
+	r.lastContactLock.Unlock()
 	return
 }
 
