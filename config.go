@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"fmt"
 	"io"
 	"time"
 )
@@ -75,4 +76,36 @@ func DefaultConfig() *Config {
 		EnableSingleNode:   false,
 		LeaderLeaseTimeout: 500 * time.Millisecond,
 	}
+}
+
+// ValidateConfig is used to validate a sane configuration
+func ValidateConfig(config *Config) error {
+	if config.HeartbeatTimeout < 5*time.Millisecond {
+		return fmt.Errorf("Heartbeat timeout is too low")
+	}
+	if config.ElectionTimeout < 5*time.Millisecond {
+		return fmt.Errorf("Election timeout is too low")
+	}
+	if config.CommitTimeout < time.Millisecond {
+		return fmt.Errorf("Commit timeout is too low")
+	}
+	if config.MaxAppendEntries <= 0 {
+		return fmt.Errorf("MaxAppendEntries must be positive")
+	}
+	if config.MaxAppendEntries > 1024 {
+		return fmt.Errorf("MaxAppendEntries is too large")
+	}
+	if config.SnapshotInterval < 5*time.Millisecond {
+		return fmt.Errorf("Snapshot interval is too low")
+	}
+	if config.LeaderLeaseTimeout < 5*time.Millisecond {
+		return fmt.Errorf("Leader lease timeout is too low")
+	}
+	if config.LeaderLeaseTimeout > config.HeartbeatTimeout {
+		return fmt.Errorf("Leader lease timeout cannot be larger than heartbeat timeout")
+	}
+	if config.ElectionTimeout < config.HeartbeatTimeout {
+		return fmt.Errorf("Election timeout must be equal or greater than Heartbeat Timeout")
+	}
+	return nil
 }

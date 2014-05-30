@@ -72,6 +72,7 @@ func inmemConfig() *Config {
 	conf := DefaultConfig()
 	conf.HeartbeatTimeout = 10 * time.Millisecond
 	conf.ElectionTimeout = 10 * time.Millisecond
+	conf.LeaderLeaseTimeout = 10 * time.Millisecond
 	conf.CommitTimeout = time.Millisecond
 	return conf
 }
@@ -445,23 +446,18 @@ func TestRaft_LeaderFail(t *testing.T) {
 	log.Printf("[INFO] Disconnecting %v", leader)
 	c.Disconnect(leader.localAddr)
 
-	// Wait for two leaders
+	// Wait for new leader
 	limit := time.Now().Add(100 * time.Millisecond)
-	var leaders []*Raft
-	for time.Now().Before(limit) && len(leaders) != 2 {
-		time.Sleep(10 * time.Millisecond)
-		leaders = c.GetInState(Leader)
-	}
-	if len(leaders) != 2 {
-		t.Fatalf("expected two leader: %v", leaders)
-	}
-
-	// Get the 'new' leader
 	var newLead *Raft
-	if leaders[0] == leader {
-		newLead = leaders[1]
-	} else {
-		newLead = leaders[0]
+	for time.Now().Before(limit) && newLead == nil {
+		time.Sleep(10 * time.Millisecond)
+		leaders := c.GetInState(Leader)
+		if len(leaders) == 1 && leaders[0] != leader {
+			newLead = leaders[0]
+		}
+	}
+	if newLead == nil {
+		t.Fatalf("expected new leader")
 	}
 
 	// Ensure the term is greater
@@ -485,7 +481,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 	c.FullyConnect()
 
 	// Future1 should fail
-	if err := future1.Error(); err != ErrLeadershipLost {
+	if err := future1.Error(); err != ErrLeadershipLost && err != ErrNotLeader {
 		t.Fatalf("err: %v", err)
 	}
 
@@ -1077,7 +1073,6 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	// Make a cluster
 	conf := inmemConfig()
-	conf.LeaderLeaseTimeout = 40 * time.Millisecond
 	c := MakeCluster(2, t, conf)
 	defer c.Close()
 

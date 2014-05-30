@@ -146,14 +146,14 @@ type Raft struct {
 // Raft node.
 func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps SnapshotStore,
 	peerStore PeerStore, trans Transport) (*Raft, error) {
+	// Validate the configuration
+	if err := ValidateConfig(conf); err != nil {
+		return nil, err
+	}
+
 	// Ensure we have a LogOutput
 	if conf.LogOutput == nil {
 		conf.LogOutput = os.Stderr
-	}
-
-	// Ensure the ElectionTimeout is not less than the HeartbeatTimeout
-	if conf.ElectionTimeout < conf.HeartbeatTimeout {
-		return nil, fmt.Errorf("the ElectionTimeout must be equal or greater than HeartbeatTimeout")
 	}
 
 	// Try to restore the current term
