@@ -743,10 +743,10 @@ func TestRaft_RemoveFollower(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// Other nodes should have fewer peers
-	if len(leader.peers) != 1 {
+	if peers, _ := leader.peerStore.Peers(); len(peers) != 1 {
 		t.Fatalf("too many peers")
 	}
-	if len(followers[1].peers) != 1 {
+	if peers, _ := followers[1].peerStore.Peers(); len(peers) != 1 {
 		t.Fatalf("too many peers")
 	}
 }
@@ -783,7 +783,7 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// Other nodes should have fewer peers
-	if len(newLeader.peers) != 1 {
+	if peers, _ := newLeader.peerStore.Peers(); len(peers) != 1 {
 		t.Fatalf("too many peers")
 	}
 
@@ -1027,11 +1027,11 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// Other nodes should have fewer peers
-	if len(leader.peers) != 1 {
-		t.Fatalf("too many peers")
+	if peers, _ := leader.peerStore.Peers(); len(peers) != 1 {
+		t.Fatalf("too many peers: %v", peers)
 	}
-	if len(followers[1].peers) != 1 {
-		t.Fatalf("too many peers")
+	if peers, _ := followers[1].peerStore.Peers(); len(peers) != 1 {
+		t.Fatalf("too many peers: %v", peers)
 	}
 
 	// Restart follower now
