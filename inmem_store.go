@@ -29,11 +29,15 @@ func NewInmemStore() *InmemStore {
 
 // FirstIndex implements the LogStore interface.
 func (i *InmemStore) FirstIndex() (uint64, error) {
+	i.l.RLock()
+	defer i.l.RUnlock()
 	return i.lowIndex, nil
 }
 
 // LastIndex implements the LogStore interface.
 func (i *InmemStore) LastIndex() (uint64, error) {
+	i.l.RLock()
+	defer i.l.RUnlock()
 	return i.highIndex, nil
 }
 

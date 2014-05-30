@@ -19,6 +19,7 @@ import (
 // MockFSM is an implementation of the FSM interface, and just stores
 // the logs sequentially
 type MockFSM struct {
+	sync.Mutex
 	logs [][]byte
 }
 
@@ -28,15 +29,21 @@ type MockSnapshot struct {
 }
 
 func (m *MockFSM) Apply(log *Log) interface{} {
+	m.Lock()
+	defer m.Unlock()
 	m.logs = append(m.logs, log.Data)
 	return len(m.logs)
 }
 
 func (m *MockFSM) Snapshot() (FSMSnapshot, error) {
+	m.Lock()
+	defer m.Unlock()
 	return &MockSnapshot{m.logs, len(m.logs)}, nil
 }
 
 func (m *MockFSM) Restore(inp io.ReadCloser) error {
+	m.Lock()
+	defer m.Unlock()
 	defer inp.Close()
 	hd := codec.MsgpackHandle{}
 	dec := codec.NewDecoder(inp, &hd)
@@ -193,12 +200,15 @@ func (c *cluster) EnsureSame(t *testing.T) {
 	first := c.fsms[0]
 
 CHECK:
+	first.Lock()
 	for i, fsm := range c.fsms {
 		if i == 0 {
 			continue
 		}
+		fsm.Lock()
 
 		if len(first.logs) != len(fsm.logs) {
+			fsm.Unlock()
 			if time.Now().After(limit) {
 				t.Fatalf("length mismatch: %d %d",
 					len(first.logs), len(fsm.logs))
@@ -209,6 +219,7 @@ CHECK:
 
 		for idx := 0; idx < len(first.logs); idx++ {
 			if bytes.Compare(first.logs[idx], fsm.logs[idx]) != 0 {
+				fsm.Unlock()
 				if time.Now().After(limit) {
 					t.Fatalf("log mismatch at index %d", idx)
 				} else {
@@ -216,10 +227,14 @@ CHECK:
 				}
 			}
 		}
+		fsm.Unlock()
 	}
+
+	first.Unlock()
 	return
 
 WAIT:
+	first.Unlock()
 	time.Sleep(20 * time.Millisecond)
 	goto CHECK
 }
@@ -299,7 +314,7 @@ func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 		store := c.stores[i]
 		snap := c.snaps[i]
 		trans := c.trans[i]
-		peerStore := &StaticPeers{peers}
+		peerStore := &StaticPeers{StaticPeers: peers}
 
 		raft, err := NewRaft(conf, c.fsms[i], logs, store, snap, peerStore, trans)
 		if err != nil {

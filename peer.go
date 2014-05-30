@@ -31,16 +31,22 @@ type PeerStore interface {
 // StaticPeers is used to provide a static list of peers.
 type StaticPeers struct {
 	StaticPeers []net.Addr
+	l           sync.Mutex
 }
 
 // Peers implements the PeerStore interface.
 func (s *StaticPeers) Peers() ([]net.Addr, error) {
-	return s.StaticPeers, nil
+	s.l.Lock()
+	peers := s.StaticPeers
+	s.l.Unlock()
+	return peers, nil
 }
 
 // SetPeers implements the PeerStore interface.
 func (s *StaticPeers) SetPeers(p []net.Addr) error {
+	s.l.Lock()
 	s.StaticPeers = p
+	s.l.Unlock()
 	return nil
 }
 
