@@ -91,7 +91,8 @@ type Raft struct {
 	lastContact time.Time
 
 	// Leader is the current cluster leader
-	leader net.Addr
+	leader     net.Addr
+	leaderLock sync.RWMutex
 
 	// leaderCh is used to notify of leadership changes
 	leaderCh chan bool
@@ -229,7 +230,17 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 // it may return nil if there is no current leader or the leader
 // is unknown
 func (r *Raft) Leader() net.Addr {
-	return r.leader
+	r.leaderLock.RLock()
+	leader := r.leader
+	r.leaderLock.RUnlock()
+	return leader
+}
+
+// setLeader is used to modify the current leader of the cluster
+func (r *Raft) setLeader(leader net.Addr) {
+	r.leaderLock.Lock()
+	r.leader = leader
+	r.leaderLock.Unlock()
 }
 
 // Apply is used to apply a command to the FSM in a highly consistent
@@ -506,7 +517,7 @@ func (r *Raft) run() {
 		select {
 		case <-r.shutdownCh:
 			// Clear the leader to prevent forwarding
-			r.leader = nil
+			r.setLeader(nil)
 			return
 		default:
 		}
@@ -544,7 +555,7 @@ func (r *Raft) runFollower() {
 
 		case <-heartbeatTimer:
 			// Heartbeat failed! Transition to the candidate state
-			r.leader = nil
+			r.setLeader(nil)
 			if len(r.peers) == 0 && !r.conf.EnableSingleNode {
 				if !didWarn {
 					r.logger.Printf("[WARN] raft: EnableSingleNode disabled, and no known peers. Aborting election.")
@@ -598,7 +609,7 @@ func (r *Raft) runCandidate() {
 			// Check if we've become the leader
 			if grantedVotes >= votesNeeded {
 				r.logger.Printf("[INFO] raft: Election won. Tally: %d", grantedVotes)
-				r.leader = r.localAddr
+				r.setLeader(r.localAddr)
 				r.setState(Leader)
 				return
 			}
@@ -661,9 +672,11 @@ func (r *Raft) runLeader() {
 		// If we are stepping down for some reason, no known leader.
 		// We may have stepped down due to an RPC call, which would
 		// provide the leader, so we cannot always nil this out.
+		r.leaderLock.Lock()
 		if r.leader == r.localAddr {
 			r.leader = nil
 		}
+		r.leaderLock.Unlock()
 
 		// Notify that we are not the leader
 		asyncNotifyBool(r.leaderCh, false)
@@ -1075,7 +1088,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	}
 
 	// Save the current leader
-	r.leader = r.trans.DecodePeer(a.Leader)
+	r.setLeader(r.trans.DecodePeer(a.Leader))
 
 	// Verify the last log entry
 	if a.PrevLogEntry > 0 {
@@ -1239,7 +1252,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	}
 
 	// Save the current leader
-	r.leader = r.trans.DecodePeer(req.Leader)
+	r.setLeader(r.trans.DecodePeer(req.Leader))
 
 	// Create a new snapshot
 	sink, err := r.snapshots.Create(req.LastLogIndex, req.LastLogTerm, req.Peers)
