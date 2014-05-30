@@ -10,6 +10,7 @@ import (
 	"os"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -242,7 +243,9 @@ WAIT:
 func raftToPeerSet(r *Raft) map[string]struct{} {
 	peers := make(map[string]struct{})
 	peers[r.localAddr.String()] = struct{}{}
-	for _, p := range r.peers {
+
+	raftPeers, _ := r.peerStore.Peers()
+	for _, p := range raftPeers {
 		peers[p.String()] = struct{}{}
 	}
 	return peers
@@ -412,7 +415,10 @@ func TestRaft_TripleNode(t *testing.T) {
 
 	// Check that it is applied to the FSM
 	for _, fsm := range c.fsms {
-		if len(fsm.logs) != 1 {
+		fsm.Lock()
+		num := len(fsm.logs)
+		fsm.Unlock()
+		if num != 1 {
 			t.Fatalf("did not apply to FSM!")
 		}
 	}
@@ -488,6 +494,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 
 	// Check two entries are applied to the FSM
 	for _, fsm := range c.fsms {
+		fsm.Lock()
 		if len(fsm.logs) != 2 {
 			t.Fatalf("did not apply both to FSM! %v", fsm.logs)
 		}
@@ -497,6 +504,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 		if bytes.Compare(fsm.logs[1], []byte("apply")) != 0 {
 			t.Fatalf("second entry should be 'apply'")
 		}
+		fsm.Unlock()
 	}
 }
 
@@ -625,12 +633,12 @@ func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 	leader := c.Leader()
 
 	// Enough enqueues should cause at least one timeout...
-	didTimeout := false
+	var didTimeout int32 = 0
 	for i := 0; i < 200; i++ {
 		go func(i int) {
 			future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), time.Microsecond)
 			if future.Error() == ErrEnqueueTimeout {
-				didTimeout = true
+				atomic.StoreInt32(&didTimeout, 1)
 			}
 		}(i)
 	}
@@ -639,7 +647,7 @@ func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// Some should have failed
-	if !didTimeout {
+	if atomic.LoadInt32(&didTimeout) == 0 {
 		t.Fatalf("expected a timeout")
 	}
 }
