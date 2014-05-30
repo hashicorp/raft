@@ -1008,7 +1008,7 @@ func (r *Raft) processLog(l *Log, future *logFuture, precommit bool) {
 			r.peerStore.SetPeers([]net.Addr{r.localAddr})
 		} else {
 			r.peers = ExcludePeer(peers, r.localAddr)
-			r.peerStore.SetPeers(peers)
+			r.peerStore.SetPeers(r.peers)
 		}
 
 		// Stop replication for old nodes
