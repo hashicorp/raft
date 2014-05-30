@@ -739,10 +739,10 @@ func TestRaft_RemoveFollower(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// Other nodes should have fewer peers
-	if peers, _ := leader.peerStore.Peers(); len(peers) != 1 {
+	if peers, _ := leader.peerStore.Peers(); len(peers) != 2 {
 		t.Fatalf("too many peers")
 	}
-	if peers, _ := followers[1].peerStore.Peers(); len(peers) != 1 {
+	if peers, _ := followers[1].peerStore.Peers(); len(peers) != 2 {
 		t.Fatalf("too many peers")
 	}
 }
@@ -779,7 +779,7 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// Other nodes should have fewer peers
-	if peers, _ := newLeader.peerStore.Peers(); len(peers) != 1 {
+	if peers, _ := newLeader.peerStore.Peers(); len(peers) != 2 {
 		t.Fatalf("too many peers")
 	}
 
@@ -789,7 +789,7 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	}
 
 	// Old leader should have no peers
-	if len(leader.peers) != 0 {
+	if peers, _ := leader.peerStore.Peers(); len(peers) != 1 {
 		t.Fatalf("leader should have no peers")
 	}
 }
@@ -1023,32 +1023,19 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// Other nodes should have fewer peers
-	if peers, _ := leader.peerStore.Peers(); len(peers) != 1 {
+	if peers, _ := leader.peerStore.Peers(); len(peers) != 2 {
 		t.Fatalf("too many peers: %v", peers)
 	}
-	if peers, _ := followers[1].peerStore.Peers(); len(peers) != 1 {
+	if peers, _ := followers[1].peerStore.Peers(); len(peers) != 2 {
 		t.Fatalf("too many peers: %v", peers)
 	}
-
-	// Restart follower now
-	raft, err := NewRaft(follower.conf,
-		follower.fsm,
-		follower.logs,
-		follower.stable,
-		follower.snapshots,
-		follower.peerStore,
-		follower.trans)
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	defer raft.Shutdown()
 
 	// Get the leader
 	time.Sleep(20 * time.Millisecond)
 	leader = c.Leader()
 
 	// Rejoin
-	future = leader.AddPeer(raft.localAddr)
+	future = leader.AddPeer(follower.localAddr)
 	if err := future.Error(); err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -1057,16 +1044,16 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// Other nodes should have fewer peers
-	if len(leader.peers) != 2 {
-		t.Fatalf("missing peer")
+	if peers, _ := leader.peerStore.Peers(); len(peers) != 3 {
+		t.Fatalf("missing peers: %v", peers)
 	}
-	if len(followers[1].peers) != 2 {
-		t.Fatalf("missing peer")
+	if peers, _ := followers[1].peerStore.Peers(); len(peers) != 3 {
+		t.Fatalf("missing peers: %v", peers)
 	}
 
 	// Should be a follower now
-	if raft.State() != Follower {
-		t.Fatalf("bad state: %v", raft.State())
+	if follower.State() != Follower {
+		t.Fatalf("bad state: %v", follower.State())
 	}
 }
 
