@@ -140,6 +140,16 @@ func (n *NetworkTransport) LocalAddr() net.Addr {
 	return n.stream.Addr()
 }
 
+// IsShutdown is used to check if the transport is shutdown
+func (n *NetworkTransport) IsShutdown() bool {
+	select {
+	case <-n.shutdownCh:
+		return true
+	default:
+		return false
+	}
+}
+
 // getExistingConn is used to grab a pooled connection
 func (n *NetworkTransport) getPooledConn(target net.Addr) *netConn {
 	n.connPoolLock.Lock()
@@ -195,7 +205,7 @@ func (n *NetworkTransport) returnConn(conn *netConn) {
 	key := conn.target.String()
 	conns, _ := n.connPool[key]
 
-	if !n.shutdown && len(conns) < n.maxPool {
+	if !n.IsShutdown() && len(conns) < n.maxPool {
 		n.connPool[key] = append(conns, conn)
 	} else {
 		conn.Release()
@@ -291,7 +301,7 @@ func (n *NetworkTransport) listen() {
 		// Accept incoming connections
 		conn, err := n.stream.Accept()
 		if err != nil {
-			if n.shutdown {
+			if n.IsShutdown() {
 				return
 			}
 			n.logger.Printf("[ERR] raft-net: Failed to accept connection: %v", err)
