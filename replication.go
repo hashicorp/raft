@@ -31,8 +31,10 @@ type followerReplication struct {
 	matchIndex  uint64
 	nextIndex   uint64
 
-	lastContact time.Time
-	failures    uint64
+	lastContact     time.Time
+	lastContactLock sync.RWMutex
+
+	failures uint64
 
 	notifyCh   chan struct{}
 	notify     []*verifyFuture
@@ -52,6 +54,21 @@ func (s *followerReplication) notifyAll(leader bool) {
 	for _, v := range n {
 		v.vote(leader)
 	}
+}
+
+// LastContact returns the time of last contact
+func (s *followerReplication) LastContact() time.Time {
+	s.lastContactLock.RLock()
+	last := s.lastContact
+	s.lastContactLock.RUnlock()
+	return last
+}
+
+// setLastContact sets the last contact to the current time
+func (s *followerReplication) setLastContact() {
+	s.lastContactLock.Lock()
+	s.lastContact = time.Now()
+	s.lastContactLock.Unlock()
 }
 
 // replicate is a long running routine that is used to manage
@@ -162,7 +179,7 @@ START:
 	}
 
 	// Update the last contact
-	s.lastContact = time.Now()
+	s.setLastContact()
 
 	// Update the s based on success
 	if resp.Success {
@@ -264,7 +281,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	}
 
 	// Update the last contact
-	s.lastContact = time.Now()
+	s.setLastContact()
 
 	// Check for success
 	if resp.Success {
@@ -315,7 +332,7 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 			case <-stopCh:
 			}
 		} else {
-			s.lastContact = time.Now()
+			s.setLastContact()
 			failures = 0
 			metrics.MeasureSince([]string{"raft", "replication", "heartbeat", s.peer.String()}, start)
 			s.notifyAll(resp.Success)

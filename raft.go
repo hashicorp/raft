@@ -88,7 +88,8 @@ type Raft struct {
 
 	// lastContact is the last time we had contact from the
 	// leader node. This can be used to guage staleness.
-	lastContact time.Time
+	lastContact     time.Time
+	lastContactLock sync.RWMutex
 
 	// Leader is the current cluster leader
 	leader     net.Addr
@@ -406,7 +407,10 @@ func (r *Raft) String() string {
 // LastContact returns the time of last contact by a leader.
 // This only makes sense if we are currently a follower.
 func (r *Raft) LastContact() time.Time {
-	return r.lastContact
+	r.lastContactLock.RLock()
+	last := r.lastContact
+	r.lastContactLock.RUnlock()
+	return last
 }
 
 // Stats is used to return a map of various internal stats. This should only
@@ -427,12 +431,13 @@ func (r *Raft) Stats() map[string]string {
 		"last_snapshot_term":  toString(r.getLastSnapshotTerm()),
 		"num_peers":           toString(uint64(len(r.peers))),
 	}
-	if r.lastContact.IsZero() {
+	last := r.LastContact()
+	if last.IsZero() {
 		s["last_contact"] = "never"
 	} else if r.getState() == Leader {
 		s["last_contact"] = "0"
 	} else {
-		s["last_contact"] = fmt.Sprintf("%v", time.Now().Sub(r.lastContact))
+		s["last_contact"] = fmt.Sprintf("%v", time.Now().Sub(last))
 	}
 	return s
 }
@@ -827,7 +832,7 @@ func (r *Raft) checkLeaderLease() time.Duration {
 	var maxDiff time.Duration
 	now := time.Now()
 	for peer, f := range r.leaderState.replState {
-		diff := now.Sub(f.lastContact)
+		diff := now.Sub(f.LastContact())
 		if diff <= r.conf.LeaderLeaseTimeout {
 			contacted++
 			if diff > maxDiff {
@@ -1150,7 +1155,9 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 
 	// Everything went well, set success
 	resp.Success = true
+	r.lastContactLock.Lock()
 	r.lastContact = time.Now()
+	r.lastContactLock.Unlock()
 	return
 }
 
