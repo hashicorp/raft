@@ -1034,14 +1034,16 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	leader = c.Leader()
 
-	// Rejoin
+	// Rejoin. The follower will have a higher term than the leader,
+	// this will cause the leader to step down, and a new round of elections
+	// to take place. We should eventually re-stabilize.
 	future = leader.AddPeer(follower.localAddr)
-	if err := future.Error(); err != nil {
+	if err := future.Error(); err != nil && err != ErrLeadershipLost {
 		t.Fatalf("err: %v", err)
 	}
 
 	// Wait a while
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(40 * time.Millisecond)
 
 	// Other nodes should have fewer peers
 	if peers, _ := leader.peerStore.Peers(); len(peers) != 3 {

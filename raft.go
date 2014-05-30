@@ -61,6 +61,7 @@ type leaderState struct {
 	inflight  *inflight
 	replState map[string]*followerReplication
 	notify    map[*verifyFuture]struct{}
+	stepDown  chan struct{}
 }
 
 // Raft implements a Raft node.
@@ -658,6 +659,7 @@ func (r *Raft) runLeader() {
 	r.leaderState.inflight = newInflight(r.leaderState.commitCh)
 	r.leaderState.replState = make(map[string]*followerReplication)
 	r.leaderState.notify = make(map[*verifyFuture]struct{})
+	r.leaderState.stepDown = make(chan struct{}, 1)
 
 	// Cleanup state on step down
 	defer func() {
@@ -679,6 +681,7 @@ func (r *Raft) runLeader() {
 		r.leaderState.inflight = nil
 		r.leaderState.replState = nil
 		r.leaderState.notify = nil
+		r.leaderState.stepDown = nil
 
 		// If we are stepping down for some reason, no known leader.
 		// We may have stepped down due to an RPC call, which would
@@ -719,6 +722,7 @@ func (r *Raft) startReplication(peer net.Addr) {
 		nextIndex:   lastIdx + 1,
 		lastContact: time.Now(),
 		notifyCh:    make(chan struct{}, 1),
+		stepDown:    r.leaderState.stepDown,
 	}
 	r.leaderState.replState[peer.String()] = s
 	r.goFunc(func() { r.replicate(s) })
@@ -733,6 +737,9 @@ func (r *Raft) leaderLoop() {
 		select {
 		case rpc := <-r.rpcCh:
 			r.processRPC(rpc)
+
+		case <-r.leaderState.stepDown:
+			r.setState(Follower)
 
 		case <-r.leaderState.commitCh:
 			// Get the committed messages
@@ -1178,6 +1185,13 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	}
 	var rpcErr error
 	defer rpc.Respond(resp, rpcErr)
+
+	// Check if we have an existing leader
+	if leader := r.Leader(); leader != nil {
+		r.logger.Printf("[WARN] raft: Rejecting vote from %v since we have a leader: %v",
+			r.trans.DecodePeer(req.Candidate), leader)
+		return
+	}
 
 	// Ignore an older term
 	if req.Term < r.getCurrentTerm() {

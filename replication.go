@@ -39,6 +39,10 @@ type followerReplication struct {
 	notifyCh   chan struct{}
 	notify     []*verifyFuture
 	notifyLock sync.Mutex
+
+	// stepDown is used to indicate to the leader that we
+	// should step down based on information from a follower.
+	stepDown chan struct{}
 }
 
 // notifyAll is used to notify all the waiting verify futures
@@ -175,6 +179,7 @@ START:
 	if resp.Term > req.Term {
 		r.logger.Printf("[ERR] raft: peer %v has newer term, stopping replication", s.peer)
 		s.notifyAll(false) // No longer leader
+		asyncNotifyCh(s.stepDown)
 		return true
 	}
 
@@ -277,6 +282,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	if resp.Term > req.Term {
 		r.logger.Printf("[ERR] raft: peer %v has newer term, stopping replication", s.peer)
 		s.notifyAll(false) // No longer leader
+		asyncNotifyCh(s.stepDown)
 		return true, nil
 	}
 
