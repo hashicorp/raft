@@ -51,6 +51,32 @@ func TestInflight_Cancel(t *testing.T) {
 	}
 }
 
+func TestInflight_StartAll(t *testing.T) {
+	commitCh := make(chan struct{}, 1)
+	in := newInflight(commitCh)
+
+	// Commit a few transaction as being in flight
+	l1 := &logFuture{log: Log{Index: 2}}
+	l1.policy = newMajorityQuorum(5)
+	l2 := &logFuture{log: Log{Index: 3}}
+	l2.policy = newMajorityQuorum(5)
+	l3 := &logFuture{log: Log{Index: 4}}
+	l3.policy = newMajorityQuorum(5)
+
+	// Start all the entries
+	in.StartAll([]*logFuture{l1, l2, l3})
+
+	// Commit ranges
+	in.CommitRange(1, 5)
+	in.CommitRange(1, 4)
+	in.CommitRange(1, 10)
+
+	// Should get 3 back
+	if in.Committed().Len() != 3 {
+		t.Fatalf("expected all 3 to commit")
+	}
+}
+
 func TestInflight_CommitRange(t *testing.T) {
 	commitCh := make(chan struct{}, 1)
 	in := newInflight(commitCh)

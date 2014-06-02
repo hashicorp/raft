@@ -67,7 +67,23 @@ func newInflight(commitCh chan struct{}) *inflight {
 func (i *inflight) Start(l *logFuture) {
 	i.Lock()
 	defer i.Unlock()
+	i.start(l)
+}
 
+// StartAll is used to mark a list of logFuture's as being
+// inflight. It also commits each entry as the leader is
+// assumed to be starting.
+func (i *inflight) StartAll(logs []*logFuture) {
+	i.Lock()
+	defer i.Unlock()
+	for _, l := range logs {
+		i.start(l)
+	}
+}
+
+// start is used to mark a single entry as inflight,
+// must be invoked with the lock held
+func (i *inflight) start(l *logFuture) {
 	idx := l.log.Index
 	i.operations[idx] = l
 
@@ -77,7 +93,6 @@ func (i *inflight) Start(l *logFuture) {
 	if i.minCommit == 0 {
 		i.minCommit = idx
 	}
-
 	i.commit(idx)
 }
 
