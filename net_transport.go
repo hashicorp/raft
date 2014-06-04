@@ -510,7 +510,7 @@ func (n *netPipeline) decodeResponses() {
 		select {
 		case future := <-n.inprogressCh:
 			if timeout > 0 {
-				n.conn.conn.SetDeadline(time.Now().Add(timeout))
+				n.conn.conn.SetReadDeadline(time.Now().Add(timeout))
 			}
 
 			reuse, err := decodeResponse(n.conn, future.resp)
@@ -540,6 +540,11 @@ func (n *netPipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEntr
 		resp: resp,
 	}
 	future.init()
+
+	// Add a send timeout
+	if timeout := n.trans.timeout; timeout > 0 {
+		n.conn.conn.SetWriteDeadline(time.Now().Add(timeout))
+	}
 
 	// Send the RPC
 	if err := sendRPC(n.conn, rpcAppendEntries, future.args); err != nil {
