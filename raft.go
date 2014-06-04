@@ -559,10 +559,12 @@ func (r *Raft) runFollower() {
 			v.respond(ErrNotLeader)
 
 		case <-heartbeatTimer:
+			// Restart the heartbeat timer
+			heartbeatTimer = randomTimeout(r.conf.HeartbeatTimeout)
+
 			// Check if we have had a successful contact
 			lastContact := r.LastContact()
 			if time.Now().Sub(lastContact) < r.conf.HeartbeatTimeout {
-				heartbeatTimer = randomTimeout(r.conf.HeartbeatTimeout)
 				continue
 			}
 
