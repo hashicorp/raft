@@ -81,6 +81,87 @@ func TestNetworkTransport_AppendEntries(t *testing.T) {
 	}
 }
 
+func TestNetworkTransport_AppendEntriesPipeline(t *testing.T) {
+	// Transport 1 is consumer
+	trans1, err := NewTCPTransport("127.0.0.1:0", nil, 2, time.Second, nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	defer trans1.Close()
+	rpcCh := trans1.Consumer()
+
+	// Make the RPC request
+	args := AppendEntriesRequest{
+		Term:         10,
+		Leader:       []byte("cartman"),
+		PrevLogEntry: 100,
+		PrevLogTerm:  4,
+		Entries: []*Log{
+			&Log{
+				Index: 101,
+				Term:  4,
+				Type:  LogNoop,
+			},
+		},
+		LeaderCommitIndex: 90,
+	}
+	resp := AppendEntriesResponse{
+		Term:    4,
+		LastLog: 90,
+		Success: true,
+	}
+
+	// Listen for a request
+	go func() {
+		for i := 0; i < 10; i++ {
+			select {
+			case rpc := <-rpcCh:
+				// Verify the command
+				req := rpc.Command.(*AppendEntriesRequest)
+				if !reflect.DeepEqual(req, &args) {
+					t.Fatalf("command mismatch: %#v %#v", *req, args)
+				}
+				rpc.Respond(&resp, nil)
+
+			case <-time.After(200 * time.Millisecond):
+				t.Fatalf("timeout")
+			}
+		}
+	}()
+
+	// Transport 2 makes outbound request
+	trans2, err := NewTCPTransport("127.0.0.1:0", nil, 2, time.Second, nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	defer trans2.Close()
+
+	pipeline, err := trans2.AppendEntriesPipeline(trans1.LocalAddr())
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	defer pipeline.Close()
+	for i := 0; i < 10; i++ {
+		out := new(AppendEntriesResponse)
+		if _, err := pipeline.AppendEntries(&args, out); err != nil {
+			t.Fatalf("err: %v", err)
+		}
+	}
+
+	respCh := pipeline.Consumer()
+	for i := 0; i < 10; i++ {
+		select {
+		case ready := <-respCh:
+			// Verify the response
+			if !reflect.DeepEqual(&resp, ready.Response()) {
+				t.Fatalf("command mismatch: %#v %#v", &resp, ready.Response())
+			}
+		case <-time.After(200 * time.Millisecond):
+			t.Fatalf("timeout")
+		}
+	}
+}
+
 func TestNetworkTransport_RequestVote(t *testing.T) {
 	// Transport 1 is consumer
 	trans1, err := NewTCPTransport("127.0.0.1:0", nil, 2, time.Second, nil)
