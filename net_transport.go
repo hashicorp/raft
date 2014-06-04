@@ -505,16 +505,27 @@ func newNetPipeline(trans *NetworkTransport, conn *netConn) *netPipeline {
 // decodeResponses is a long running routine that decodes the responses
 // sent on the conection
 func (n *netPipeline) decodeResponses() {
+	timeout := n.trans.timeout
 	for {
 		select {
 		case future := <-n.inprogressCh:
-			_, err := decodeResponse(n.conn, future.resp)
+			if timeout > 0 {
+				n.conn.conn.SetDeadline(time.Now().Add(timeout))
+			}
+
+			reuse, err := decodeResponse(n.conn, future.resp)
 			future.respond(err)
 			select {
 			case n.doneCh <- future:
 			case <-n.shutdownCh:
 				return
 			}
+
+			if !reuse {
+				n.Close()
+				return
+			}
+
 		case <-n.shutdownCh:
 			return
 		}
