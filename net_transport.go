@@ -513,19 +513,13 @@ func (n *netPipeline) decodeResponses() {
 				n.conn.conn.SetReadDeadline(time.Now().Add(timeout))
 			}
 
-			reuse, err := decodeResponse(n.conn, future.resp)
+			_, err := decodeResponse(n.conn, future.resp)
 			future.respond(err)
 			select {
 			case n.doneCh <- future:
 			case <-n.shutdownCh:
 				return
 			}
-
-			if !reuse {
-				n.Close()
-				return
-			}
-
 		case <-n.shutdownCh:
 			return
 		}
