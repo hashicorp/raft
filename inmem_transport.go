@@ -238,7 +238,10 @@ func (i *inmemPipeline) decodeResponses() {
 		case inp := <-i.inprogressCh:
 			select {
 			case rpcResp := <-inp.respCh:
+				// Copy the result back
+				*inp.future.resp = *rpcResp.Response.(*AppendEntriesResponse)
 				inp.future.respond(rpcResp.Error)
+
 				select {
 				case i.doneCh <- inp.future:
 				case <-i.shutdownCh:
