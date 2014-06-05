@@ -274,8 +274,9 @@ func (i *inmemPipeline) decodeResponses() {
 func (i *inmemPipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEntriesResponse) (AppendFuture, error) {
 	// Create a new future
 	future := &appendFuture{
-		args: args,
-		resp: resp,
+		start: time.Now(),
+		args:  args,
+		resp:  resp,
 	}
 	future.init()
 

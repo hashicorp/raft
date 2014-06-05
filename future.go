@@ -146,8 +146,13 @@ func (v *verifyFuture) vote(leader bool) {
 // entries RPC
 type appendFuture struct {
 	deferError
-	args *AppendEntriesRequest
-	resp *AppendEntriesResponse
+	start time.Time
+	args  *AppendEntriesRequest
+	resp  *AppendEntriesResponse
+}
+
+func (a *appendFuture) Start() time.Time {
+	return a.start
 }
 
 func (a *appendFuture) Request() *AppendEntriesRequest {

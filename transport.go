@@ -3,6 +3,7 @@ package raft
 import (
 	"io"
 	"net"
+	"time"
 )
 
 // RPCResponse captures both a response and a potential error
@@ -73,6 +74,7 @@ type AppendPipeline interface {
 // AppendFuture is used to return information about a pipelined AppendEntries request
 type AppendFuture interface {
 	Future
+	Start() time.Time
 	Request() *AppendEntriesRequest
 	Response() *AppendEntriesResponse
 }
