@@ -1066,6 +1066,7 @@ func (r *Raft) processLog(l *Log, future *logFuture, precommit bool) {
 
 					// Replicate up to this index and stop
 					repl.stopCh <- l.Index
+					close(repl.stopCh)
 					toDelete = append(toDelete, repl.peer.String())
 				}
 			}
