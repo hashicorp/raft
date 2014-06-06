@@ -21,12 +21,19 @@ const (
 
 	// DefaultTimeoutScale is the default TimeoutScale in a NetworkTransport.
 	DefaultTimeoutScale = 256 * 1024 // 256KB
+
+	// rpcMaxPipeline controls the maximum number of outstanding
+	// AppendEntries RPC calls
+	rpcMaxPipeline = 128
 )
 
 var (
 	// ErrTransportShutdown is returned when operations on a transport are
 	// invoked after it's been terminated.
 	ErrTransportShutdown = errors.New("transport shutdown")
+
+	// ErrPipelineShutdown is returned when the pipeline is closed
+	ErrPipelineShutdown = errors.New("append pipeline closed")
 )
 
 /*
@@ -88,6 +95,18 @@ type netConn struct {
 
 func (n *netConn) Release() error {
 	return n.conn.Close()
+}
+
+type netPipeline struct {
+	conn  *netConn
+	trans *NetworkTransport
+
+	doneCh       chan AppendFuture
+	inprogressCh chan *appendFuture
+
+	shutdown     bool
+	shutdownCh   chan struct{}
+	shutdownLock sync.Mutex
 }
 
 // NewNetworkTransport creates a new network transport with the given dialer
@@ -212,6 +231,19 @@ func (n *NetworkTransport) returnConn(conn *netConn) {
 	}
 }
 
+// AppendEntriesPipeline returns an interface that can be used to pipeline
+// AppendEntries requests.
+func (n *NetworkTransport) AppendEntriesPipeline(target net.Addr) (AppendPipeline, error) {
+	// Get a connection
+	conn, err := n.getConn(target)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create the pipeline
+	return newNetPipeline(n, conn), nil
+}
+
 // AppendEntries implements the Transport interface.
 func (n *NetworkTransport) AppendEntries(target net.Addr, args *AppendEntriesRequest, resp *AppendEntriesResponse) error {
 	return n.genericRPC(target, rpcAppendEntries, args, resp)
@@ -241,7 +273,11 @@ func (n *NetworkTransport) genericRPC(target net.Addr, rpcType uint8, args inter
 	}
 
 	// Decode the response
-	return n.decodeResponse(conn, resp, true)
+	canReturn, err := decodeResponse(conn, resp)
+	if canReturn {
+		n.returnConn(conn)
+	}
+	return err
 }
 
 // InstallSnapshot implements the Transport interface.
@@ -278,7 +314,8 @@ func (n *NetworkTransport) InstallSnapshot(target net.Addr, args *InstallSnapsho
 	}
 
 	// Decode the response, do not return conn
-	return n.decodeResponse(conn, resp, false)
+	_, err = decodeResponse(conn, resp)
+	return err
 }
 
 // EncodePeer implements the Transport interface.
@@ -408,30 +445,25 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 }
 
 // decodeResponse is used to decode an RPC response and return the conn
-func (n *NetworkTransport) decodeResponse(conn *netConn, resp interface{}, retConn bool) error {
+func decodeResponse(conn *netConn, resp interface{}) (bool, error) {
 	// Decode the error if any
 	var rpcError string
 	if err := conn.dec.Decode(&rpcError); err != nil {
 		conn.Release()
-		return err
+		return false, err
 	}
 
 	// Decode the response
 	if err := conn.dec.Decode(resp); err != nil {
 		conn.Release()
-		return err
-	}
-
-	// Return the conn
-	if retConn {
-		n.returnConn(conn)
+		return false, err
 	}
 
 	// Format an error if any
 	if rpcError != "" {
-		return fmt.Errorf(rpcError)
+		return true, fmt.Errorf(rpcError)
 	}
-	return nil
+	return true, nil
 }
 
 // sendRPC is used to encode and send the RPC
@@ -453,5 +485,94 @@ func sendRPC(conn *netConn, rpcType uint8, args interface{}) error {
 		conn.Release()
 		return err
 	}
+	return nil
+}
+
+// newNetPipeline is used to construct a netPipeline from a given
+// transport and conection
+func newNetPipeline(trans *NetworkTransport, conn *netConn) *netPipeline {
+	n := &netPipeline{
+		conn:         conn,
+		trans:        trans,
+		doneCh:       make(chan AppendFuture, rpcMaxPipeline),
+		inprogressCh: make(chan *appendFuture, rpcMaxPipeline),
+		shutdownCh:   make(chan struct{}),
+	}
+	go n.decodeResponses()
+	return n
+}
+
+// decodeResponses is a long running routine that decodes the responses
+// sent on the conection
+func (n *netPipeline) decodeResponses() {
+	timeout := n.trans.timeout
+	for {
+		select {
+		case future := <-n.inprogressCh:
+			if timeout > 0 {
+				n.conn.conn.SetReadDeadline(time.Now().Add(timeout))
+			}
+
+			_, err := decodeResponse(n.conn, future.resp)
+			future.respond(err)
+			select {
+			case n.doneCh <- future:
+			case <-n.shutdownCh:
+				return
+			}
+		case <-n.shutdownCh:
+			return
+		}
+	}
+}
+
+// AppendEntries is used to pipeline a new append entries request
+func (n *netPipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEntriesResponse) (AppendFuture, error) {
+	// Create a new future
+	future := &appendFuture{
+		start: time.Now(),
+		args:  args,
+		resp:  resp,
+	}
+	future.init()
+
+	// Add a send timeout
+	if timeout := n.trans.timeout; timeout > 0 {
+		n.conn.conn.SetWriteDeadline(time.Now().Add(timeout))
+	}
+
+	// Send the RPC
+	if err := sendRPC(n.conn, rpcAppendEntries, future.args); err != nil {
+		return nil, err
+	}
+
+	// Hand-off for decoding, this can also cause back-pressure
+	// to prevent too many inflight requests
+	select {
+	case n.inprogressCh <- future:
+		return future, nil
+	case <-n.shutdownCh:
+		return nil, ErrPipelineShutdown
+	}
+}
+
+// Consumer returns a channel that can be used to consume complete futures
+func (n *netPipeline) Consumer() <-chan AppendFuture {
+	return n.doneCh
+}
+
+// Closed is used to shutdown the pipeline connection
+func (n *netPipeline) Close() error {
+	n.shutdownLock.Lock()
+	defer n.shutdownLock.Unlock()
+	if n.shutdown {
+		return nil
+	}
+
+	// Release the connection
+	n.conn.Release()
+
+	n.shutdown = true
+	close(n.shutdownCh)
 	return nil
 }

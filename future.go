@@ -141,3 +141,24 @@ func (v *verifyFuture) vote(leader bool) {
 		v.notifyCh = nil
 	}
 }
+
+// appendFuture is used for waiting on a pipelined append
+// entries RPC
+type appendFuture struct {
+	deferError
+	start time.Time
+	args  *AppendEntriesRequest
+	resp  *AppendEntriesResponse
+}
+
+func (a *appendFuture) Start() time.Time {
+	return a.start
+}
+
+func (a *appendFuture) Request() *AppendEntriesRequest {
+	return a.args
+}
+
+func (a *appendFuture) Response() *AppendEntriesResponse {
+	return a.resp
+}
