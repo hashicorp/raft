@@ -462,7 +462,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 
 	// Ensure the term is greater
 	if newLead.getCurrentTerm() <= leader.getCurrentTerm() {
-		t.Fatalf("expected newer term!")
+		t.Fatalf("expected newer term! %d %d", newLead.getCurrentTerm(), leader.getCurrentTerm())
 	}
 
 	// Apply should work not work on old leader
@@ -620,8 +620,8 @@ func TestRaft_ApplyConcurrent(t *testing.T) {
 func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 	// Make the cluster
 	conf := inmemConfig()
-	conf.HeartbeatTimeout = 100 * time.Millisecond
-	conf.ElectionTimeout = 100 * time.Millisecond
+	conf.HeartbeatTimeout = 80 * time.Millisecond
+	conf.ElectionTimeout = 80 * time.Millisecond
 	c := MakeCluster(1, t, conf)
 	defer c.Close()
 
