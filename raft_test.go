@@ -412,7 +412,7 @@ func TestRaft_TripleNode(t *testing.T) {
 	}
 
 	// Wait for replication
-	time.Sleep(3 * time.Millisecond)
+	time.Sleep(30 * time.Millisecond)
 
 	// Check that it is applied to the FSM
 	for _, fsm := range c.fsms {
@@ -440,7 +440,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 	}
 
 	// Wait for replication
-	time.Sleep(3 * time.Millisecond)
+	time.Sleep(30 * time.Millisecond)
 
 	// Disconnect the leader now
 	log.Printf("[INFO] Disconnecting %v", leader)

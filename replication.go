@@ -127,10 +127,8 @@ PIPELINE:
 // If the follower log is behind, we take care to bring them up to date
 func (r *Raft) replicateTo(s *followerReplication, lastIndex uint64) (shouldStop bool) {
 	// Create the base request
-	var l Log
 	var req AppendEntriesRequest
 	var resp AppendEntriesResponse
-	var maxIndex uint64
 	var start time.Time
 START:
 	// Prevent an excessive retry rate on errors
@@ -141,51 +139,11 @@ START:
 		}
 	}
 
-	req = AppendEntriesRequest{
-		Term:              s.currentTerm,
-		Leader:            r.trans.EncodePeer(r.localAddr),
-		LeaderCommitIndex: r.getCommitIndex(),
-	}
-
-	// Get the previous log entry based on the nextIndex.
-	// Guard for the first index, since there is no 0 log entry
-	// Guard against the previous index being a snapshot as well
-	if s.nextIndex == 1 {
-		req.PrevLogEntry = 0
-		req.PrevLogTerm = 0
-
-	} else if (s.nextIndex - 1) == r.getLastSnapshotIndex() {
-		req.PrevLogEntry = r.getLastSnapshotIndex()
-		req.PrevLogTerm = r.getLastSnapshotTerm()
-
-	} else {
-		if err := r.logs.GetLog(s.nextIndex-1, &l); err != nil {
-			if err == ErrLogNotFound {
-				goto SEND_SNAP
-			}
-			r.logger.Printf("[ERR] raft: Failed to get log at index %d: %v",
-				s.nextIndex-1, err)
-			return
-		}
-
-		// Set the previous index and term (0 if nextIndex is 1)
-		req.PrevLogEntry = l.Index
-		req.PrevLogTerm = l.Term
-	}
-
-	// Append up to MaxAppendEntries or up to the lastIndex
-	req.Entries = make([]*Log, 0, r.conf.MaxAppendEntries)
-	maxIndex = min(s.nextIndex+uint64(r.conf.MaxAppendEntries)-1, lastIndex)
-	for i := s.nextIndex; i <= maxIndex; i++ {
-		oldLog := new(Log)
-		if err := r.logs.GetLog(i, oldLog); err != nil {
-			if err == ErrLogNotFound {
-				goto SEND_SNAP
-			}
-			r.logger.Printf("[ERR] raft: Failed to get log at index %d: %v", i, err)
-			return
-		}
-		req.Entries = append(req.Entries, oldLog)
+	// Setup the request
+	if err := r.setupAppendEntries(s, &req, s.nextIndex, lastIndex); err == ErrLogNotFound {
+		goto SEND_SNAP
+	} else if err != nil {
+		return
 	}
 
 	// Make the RPC call
@@ -195,14 +153,11 @@ START:
 		s.failures++
 		return
 	}
-	metrics.MeasureSince([]string{"raft", "replication", "appendEntries", "rpc", s.peer.String()}, start)
-	metrics.IncrCounter([]string{"raft", "replication", "appendEntries", "logs", s.peer.String()}, float32(len(req.Entries)))
+	appendStats(s.peer, start, float32(len(req.Entries)))
 
 	// Check for a newer term, stop running
 	if resp.Term > req.Term {
-		r.logger.Printf("[ERR] raft: peer %v has newer term, stopping replication", s.peer)
-		s.notifyAll(false) // No longer leader
-		asyncNotifyCh(s.stepDown)
+		r.handleStaleTerm(s)
 		return true
 	}
 
@@ -211,20 +166,11 @@ START:
 
 	// Update the s based on success
 	if resp.Success {
-		// Mark any inflight logs as committed
-		s.inflight.CommitRange(s.nextIndex, maxIndex)
+		// Update our replication state
+		updateLastAppended(s, &req)
 
-		// Update the indexes
-		s.matchIndex = maxIndex
-		s.nextIndex = maxIndex + 1
-
-		// Clear any failures
+		// Clear any failures, allow pipelining
 		s.failures = 0
-
-		// Notify still leader
-		s.notifyAll(true)
-
-		// We are now in-sync, enable pipelining
 		s.allowPipeline = true
 	} else {
 		s.nextIndex = max(min(s.nextIndex-1, resp.LastLog+1), 1)
@@ -243,15 +189,9 @@ CHECK_MORE:
 	// SEND_SNAP is used when we fail to get a log, usually because the follower
 	// is too far behind, and we must ship a snapshot down instead
 SEND_SNAP:
-	stop, err := r.sendLatestSnapshot(s)
-
-	// Check if we should stop
-	if stop {
+	if stop, err := r.sendLatestSnapshot(s); stop {
 		return true
-	}
-
-	// Check for an error
-	if err != nil {
+	} else if err != nil {
 		r.logger.Printf("[ERR] raft: Failed to send snapshot to %v: %v", s.peer, err)
 		return
 	}
@@ -306,9 +246,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 
 	// Check for a newer term, stop running
 	if resp.Term > req.Term {
-		r.logger.Printf("[ERR] raft: peer %v has newer term, stopping replication", s.peer)
-		s.notifyAll(false) // No longer leader
-		asyncNotifyCh(s.stepDown)
+		r.handleStaleTerm(s)
 		return true, nil
 	}
 
@@ -398,7 +336,6 @@ func (r *Raft) pipelineReplicate(s *followerReplication) error {
 	// Start pipeline sends at the last good nextIndex
 	nextIndex := s.nextIndex
 
-	// Send data as available
 	shouldStop := false
 SEND:
 	for !shouldStop {
@@ -417,10 +354,8 @@ SEND:
 		}
 	}
 
-	// Stop our decoder
+	// Stop our decoder, and wait for it to finish
 	close(stopCh)
-
-	// Wait for our decoder to finish
 	select {
 	case <-finishCh:
 	case <-r.shutdownCh:
@@ -431,53 +366,9 @@ SEND:
 // pipelineSend is used to send data over a pipeline
 func (r *Raft) pipelineSend(s *followerReplication, p AppendPipeline, nextIdx *uint64, lastIndex uint64) (shouldStop bool) {
 	// Create a new append request
-	req := &AppendEntriesRequest{
-		Term:              s.currentTerm,
-		Leader:            r.trans.EncodePeer(r.localAddr),
-		LeaderCommitIndex: r.getCommitIndex(),
-	}
-
-	// Get the previous log entry based on the nextIndex.
-	// Guard for the first index, since there is no 0 log entry
-	// Guard against the previous index being a snapshot as well
-	nextIndex := *nextIdx
-	if nextIndex == 1 {
-		req.PrevLogEntry = 0
-		req.PrevLogTerm = 0
-
-	} else if (nextIndex - 1) == r.getLastSnapshotIndex() {
-		req.PrevLogEntry = r.getLastSnapshotIndex()
-		req.PrevLogTerm = r.getLastSnapshotTerm()
-
-	} else {
-		var l Log
-		if err := r.logs.GetLog(nextIndex-1, &l); err != nil {
-			if err == ErrLogNotFound {
-				return true
-			}
-			r.logger.Printf("[ERR] raft: Failed to get log at index %d: %v",
-				nextIndex-1, err)
-			return true
-		}
-
-		// Set the previous index and term (0 if nextIndex is 1)
-		req.PrevLogEntry = l.Index
-		req.PrevLogTerm = l.Term
-	}
-
-	// Append up to MaxAppendEntries or up to the lastIndex
-	req.Entries = make([]*Log, 0, r.conf.MaxAppendEntries)
-	maxIndex := min(nextIndex+uint64(r.conf.MaxAppendEntries)-1, lastIndex)
-	for i := nextIndex; i <= maxIndex; i++ {
-		oldLog := new(Log)
-		if err := r.logs.GetLog(i, oldLog); err != nil {
-			if err == ErrLogNotFound {
-				return true
-			}
-			r.logger.Printf("[ERR] raft: Failed to get log at index %d: %v", i, err)
-			return true
-		}
-		req.Entries = append(req.Entries, oldLog)
+	req := new(AppendEntriesRequest)
+	if err := r.setupAppendEntries(s, req, *nextIdx, lastIndex); err != nil {
+		return true
 	}
 
 	// Pipeline the append entries
@@ -486,8 +377,11 @@ func (r *Raft) pipelineSend(s *followerReplication, p AppendPipeline, nextIdx *u
 		return true
 	}
 
-	// Increase the next send log to prevent overlap
-	*nextIdx = maxIndex + 1
+	// Increase the next send log to avoid re-sending old logs
+	if n := len(req.Entries); n > 0 {
+		last := req.Entries[n-1]
+		*nextIdx = last.Index + 1
+	}
 	return false
 }
 
@@ -498,18 +392,12 @@ func (r *Raft) pipelineDecode(s *followerReplication, p AppendPipeline, stopCh, 
 	for {
 		select {
 		case ready := <-respCh:
-			req := ready.Request()
-			resp := ready.Response()
-
-			// Update our metrics
-			metrics.MeasureSince([]string{"raft", "replication", "appendEntries", "rpc", s.peer.String()}, ready.Start())
-			metrics.IncrCounter([]string{"raft", "replication", "appendEntries", "logs", s.peer.String()}, float32(len(req.Entries)))
+			req, resp := ready.Request(), ready.Response()
+			appendStats(s.peer, ready.Start(), float32(len(req.Entries)))
 
 			// Check for a newer term, stop running
 			if resp.Term > req.Term {
-				r.logger.Printf("[ERR] raft: peer %v has newer term, stopping replication", s.peer)
-				s.notifyAll(false) // No longer leader
-				asyncNotifyCh(s.stepDown)
+				r.handleStaleTerm(s)
 				return
 			}
 
@@ -521,21 +409,99 @@ func (r *Raft) pipelineDecode(s *followerReplication, p AppendPipeline, stopCh, 
 				return
 			}
 
-			// Mark any inflight logs as committed
-			if logs := req.Entries; len(logs) > 0 {
-				first := logs[0]
-				last := logs[len(logs)-1]
-				s.inflight.CommitRange(first.Index, last.Index)
-
-				// Update the indexes
-				s.matchIndex = last.Index
-				s.nextIndex = last.Index + 1
-			}
-
-			// Notify still leader
-			s.notifyAll(true)
+			// Update our replication state
+			updateLastAppended(s, req)
 		case <-stopCh:
 			return
 		}
 	}
+}
+
+// setupAppendEntries is used to setup an append entries request
+func (r *Raft) setupAppendEntries(s *followerReplication, req *AppendEntriesRequest, nextIndex, lastIndex uint64) error {
+	req.Term = s.currentTerm
+	req.Leader = r.trans.EncodePeer(r.localAddr)
+	req.LeaderCommitIndex = r.getCommitIndex()
+	if err := r.setPreviousLog(req, nextIndex); err != nil {
+		return err
+	}
+	if err := r.setNewLogs(req, nextIndex, lastIndex); err != nil {
+		return err
+	}
+	return nil
+}
+
+// setPreviousLog is used to setup the PrevLogEntry and PrevLogTerm for an
+// AppendEntriesRequest given the next index to replicate
+func (r *Raft) setPreviousLog(req *AppendEntriesRequest, nextIndex uint64) error {
+	// Guard for the first index, since there is no 0 log entry
+	// Guard against the previous index being a snapshot as well
+	if nextIndex == 1 {
+		req.PrevLogEntry = 0
+		req.PrevLogTerm = 0
+
+	} else if (nextIndex - 1) == r.getLastSnapshotIndex() {
+		req.PrevLogEntry = r.getLastSnapshotIndex()
+		req.PrevLogTerm = r.getLastSnapshotTerm()
+
+	} else {
+		var l Log
+		if err := r.logs.GetLog(nextIndex-1, &l); err != nil {
+			r.logger.Printf("[ERR] raft: Failed to get log at index %d: %v",
+				nextIndex-1, err)
+			return err
+		}
+
+		// Set the previous index and term (0 if nextIndex is 1)
+		req.PrevLogEntry = l.Index
+		req.PrevLogTerm = l.Term
+	}
+	return nil
+}
+
+// setNewLogs is used to setup the logs which should be appended for a request
+func (r *Raft) setNewLogs(req *AppendEntriesRequest, nextIndex, lastIndex uint64) error {
+	// Append up to MaxAppendEntries or up to the lastIndex
+	req.Entries = make([]*Log, 0, r.conf.MaxAppendEntries)
+	maxIndex := min(nextIndex+uint64(r.conf.MaxAppendEntries)-1, lastIndex)
+	for i := nextIndex; i <= maxIndex; i++ {
+		oldLog := new(Log)
+		if err := r.logs.GetLog(i, oldLog); err != nil {
+			r.logger.Printf("[ERR] raft: Failed to get log at index %d: %v", i, err)
+			return err
+		}
+		req.Entries = append(req.Entries, oldLog)
+	}
+	return nil
+}
+
+// appendStats is used to emit stats about an AppendEntries invocation
+func appendStats(peer net.Addr, start time.Time, logs float32) {
+	metrics.MeasureSince([]string{"raft", "replication", "appendEntries", "rpc", peer.String()}, start)
+	metrics.IncrCounter([]string{"raft", "replication", "appendEntries", "logs", peer.String()}, logs)
+}
+
+// handleStaleTerm is used when a follower indicates that we have a stale term
+func (r *Raft) handleStaleTerm(s *followerReplication) {
+	r.logger.Printf("[ERR] raft: peer %v has newer term, stopping replication", s.peer)
+	s.notifyAll(false) // No longer leader
+	asyncNotifyCh(s.stepDown)
+}
+
+// updateLastAppended is used to update follower replication state after a successful
+// AppendEntries RPC
+func updateLastAppended(s *followerReplication, req *AppendEntriesRequest) {
+	// Mark any inflight logs as committed
+	if logs := req.Entries; len(logs) > 0 {
+		first := logs[0]
+		last := logs[len(logs)-1]
+		s.inflight.CommitRange(first.Index, last.Index)
+
+		// Update the indexes
+		s.matchIndex = last.Index
+		s.nextIndex = last.Index + 1
+	}
+
+	// Notify still leader
+	s.notifyAll(true)
 }

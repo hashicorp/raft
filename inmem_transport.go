@@ -287,7 +287,7 @@ func (i *inmemPipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEn
 	}
 
 	// Send the RPC over
-	respCh := make(chan RPCResponse)
+	respCh := make(chan RPCResponse, 1)
 	rpc := RPC{
 		Command:  args,
 		RespChan: respCh,
