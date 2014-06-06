@@ -24,7 +24,7 @@ const (
 
 	// rpcMaxPipeline controls the maximum number of outstanding
 	// AppendEntries RPC calls
-	rpcMaxPipeline = 32
+	rpcMaxPipeline = 128
 )
 
 var (
