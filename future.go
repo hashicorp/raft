@@ -74,6 +74,11 @@ func (l *logFuture) Response() interface{} {
 	return l.response
 }
 
+type peerFuture struct {
+	deferError
+	peers []net.Addr
+}
+
 type shutdownFuture struct {
 	raft *Raft
 }

@@ -330,6 +330,53 @@ func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 	return c
 }
 
+func MakeClusterNoPeers(n int, t *testing.T, conf *Config) *cluster {
+	c := &cluster{}
+
+	// Setup the stores and transports
+	for i := 0; i < n; i++ {
+		dir, err := ioutil.TempDir("", "raft")
+		if err != nil {
+			t.Fatalf("err: %v ", err)
+		}
+		store := NewInmemStore()
+		c.dirs = append(c.dirs, dir)
+		c.stores = append(c.stores, store)
+		c.fsms = append(c.fsms, &MockFSM{})
+
+		dir2, snap := FileSnapTest(t)
+		c.dirs = append(c.dirs, dir2)
+		c.snaps = append(c.snaps, snap)
+
+		_, trans := NewInmemTransport()
+		c.trans = append(c.trans, trans)
+	}
+
+	// Wire the transports together
+	c.FullyConnect()
+
+	// Create all the rafts
+	for i := 0; i < n; i++ {
+		if conf == nil {
+			conf = inmemConfig()
+		}
+
+		logs := c.stores[i]
+		store := c.stores[i]
+		snap := c.snaps[i]
+		trans := c.trans[i]
+		peerStore := &StaticPeers{}
+
+		raft, err := NewRaft(conf, c.fsms[i], logs, store, snap, peerStore, trans)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		c.rafts = append(c.rafts, raft)
+	}
+
+	return c
+}
+
 func TestRaft_StartStop(t *testing.T) {
 	c := MakeCluster(1, t, nil)
 	c.Close()
@@ -1235,5 +1282,31 @@ func TestRaft_VerifyLeader_ParitalConnect(t *testing.T) {
 	// Wait for the leader to step down
 	if err := verify.Error(); err != nil {
 		t.Fatalf("err: %v", err)
+	}
+}
+
+func TestRaft_SettingPeers(t *testing.T) {
+	// Make the cluster
+	c := MakeClusterNoPeers(3, t, nil)
+	defer c.Close()
+
+	peers := make([]net.Addr, 0)
+	for _, v := range c.rafts {
+		peers = append(peers, v.localAddr)
+	}
+
+	for _, v := range c.rafts {
+		future := v.SetPeers(peers)
+		if err := future.Error(); err != nil {
+			t.Fatalf("error setting peers: %v", err)
+		}
+	}
+
+	// Wait a while
+	time.Sleep(20 * time.Millisecond)
+
+	// Should have a new leader
+	if leader := c.Leader(); leader == nil {
+		t.Fatalf("no leader?")
 	}
 }

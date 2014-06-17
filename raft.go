@@ -24,6 +24,10 @@ var (
 	keyLastVoteTerm = []byte("LastVoteTerm")
 	keyLastVoteCand = []byte("LastVoteCand")
 
+	// ErrLeader is returned when an operation can't be completed on a
+	// leader node.
+	ErrLeader = errors.New("node is the leader")
+
 	// ErrNotLeader is returned when an operation can't be completed on a
 	// follower or candidate node.
 	ErrNotLeader = errors.New("node is not the leader")
@@ -112,6 +116,7 @@ type Raft struct {
 	logs LogStore
 
 	// Track our known peers
+	peerCh    chan *peerFuture
 	peers     []net.Addr
 	peerStore PeerStore
 
@@ -197,6 +202,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		localAddr:     localAddr,
 		logger:        log.New(conf.LogOutput, "", log.LstdFlags),
 		logs:          logs,
+		peerCh:        make(chan *peerFuture),
 		peers:         peers,
 		peerStore:     peerStore,
 		rpcCh:         trans.Consumer(),
@@ -353,6 +359,22 @@ func (r *Raft) RemovePeer(peer net.Addr) Future {
 	select {
 	case r.applyCh <- logFuture:
 		return logFuture
+	case <-r.shutdownCh:
+		return errorFuture{ErrRaftShutdown}
+	}
+}
+
+// SetPeers is used to forcebly replace the set of internal peers and
+// the peerstore with the ones specified. This can be considered unsafe.
+func (r *Raft) SetPeers(p []net.Addr) Future {
+	peerFuture := &peerFuture{
+		peers: p,
+	}
+	peerFuture.init()
+
+	select {
+	case r.peerCh <- peerFuture:
+		return peerFuture
 	case <-r.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
 	}
@@ -558,6 +580,11 @@ func (r *Raft) runFollower() {
 			// Reject any operations since we are not the leader
 			v.respond(ErrNotLeader)
 
+		case p := <-r.peerCh:
+			// Set the peers
+			r.peers = ExcludePeer(p.peers, r.localAddr)
+			p.respond(r.peerStore.SetPeers(p.peers))
+
 		case <-heartbeatTimer:
 			// Restart the heartbeat timer
 			heartbeatTimer = randomTimeout(r.conf.HeartbeatTimeout)
@@ -635,6 +662,14 @@ func (r *Raft) runCandidate() {
 		case v := <-r.verifyCh:
 			// Reject any operations since we are not the leader
 			v.respond(ErrNotLeader)
+
+		case p := <-r.peerCh:
+			// Set the peers
+			r.peers = ExcludePeer(p.peers, r.localAddr)
+			p.respond(r.peerStore.SetPeers(p.peers))
+			// Become a follower again
+			r.setState(Follower)
+			return
 
 		case <-electionTimer:
 			// Election failed! Restart the elction. We simply return,
@@ -774,6 +809,9 @@ func (r *Raft) leaderLoop() {
 				delete(r.leaderState.notify, v)
 				v.respond(nil)
 			}
+
+		case p := <-r.peerCh:
+			p.respond(ErrLeader)
 
 		case newLog := <-r.applyCh:
 			// Group commit, gather all the ready commits
