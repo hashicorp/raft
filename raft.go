@@ -358,6 +358,13 @@ func (r *Raft) RemovePeer(peer net.Addr) Future {
 	}
 }
 
+// SetPeers is used to forcebly replace the set of internal peers and
+// the peerstore with the ones specified. This can be considered unsafe.
+func (r *Raft) SetPeers(peers []net.Addr) error {
+	r.peers = peers
+	return r.peerStore.SetPeers(peers)
+}
+
 // Shutdown is used to stop the Raft background routines.
 // This is not a graceful operation. Provides a future that
 // can be used to block until all background routines have exited.
