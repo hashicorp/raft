@@ -332,7 +332,6 @@ func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 
 func MakeClusterNoPeers(n int, t *testing.T, conf *Config) *cluster {
 	c := &cluster{}
-	peers := make([]net.Addr, 0, n)
 
 	// Setup the stores and transports
 	for i := 0; i < n; i++ {
@@ -349,9 +348,8 @@ func MakeClusterNoPeers(n int, t *testing.T, conf *Config) *cluster {
 		c.dirs = append(c.dirs, dir2)
 		c.snaps = append(c.snaps, snap)
 
-		addr, trans := NewInmemTransport()
+		_, trans := NewInmemTransport()
 		c.trans = append(c.trans, trans)
-		peers = append(peers, addr)
 	}
 
 	// Wire the transports together
@@ -1289,36 +1287,26 @@ func TestRaft_VerifyLeader_ParitalConnect(t *testing.T) {
 
 func TestRaft_SettingPeers(t *testing.T) {
 	// Make the cluster
-	c1 := MakeClusterNoPeers(1, t, nil)
-	defer c1.Close()
-
-	c2 := MakeClusterNoPeers(1, t, nil)
-	defer c2.Close()
-
-	c3 := MakeClusterNoPeers(1, t, nil)
-	defer c3.Close()
-
-	r1 := c1.rafts[0]
-	r2 := c2.rafts[0]
-	r3 := c3.rafts[0]
+	c := MakeClusterNoPeers(3, t, nil)
+	defer c.Close()
 
 	peers := make([]net.Addr, 0)
-	peers = append(peers, r1.localAddr, r2.localAddr, r3.localAddr)
+	for _, v := range c.rafts {
+		peers = append(peers, v.localAddr)
+	}
 
-	r1.SetPeers(peers)
-	r2.SetPeers(peers)
-	r3.SetPeers(peers)
-
-	c1.Merge(c2)
-	c1.Merge(c3)
-
-	c1.FullyConnect()
+	for _, v := range c.rafts {
+		future := v.SetPeers(peers)
+		if err := future.Error(); err != nil {
+			t.Fatalf("error setting peers: %v", err)
+		}
+	}
 
 	// Wait a while
 	time.Sleep(20 * time.Millisecond)
 
 	// Should have a new leader
-	if leader := c1.Leader(); leader == nil {
+	if leader := c.Leader(); leader == nil {
 		t.Fatalf("no leader?")
 	}
 }
