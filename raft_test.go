@@ -1237,3 +1237,39 @@ func TestRaft_VerifyLeader_ParitalConnect(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 }
+
+func TestRaft_SettingPeers(t *testing.T) {
+	// Make the cluster
+	c1 := MakeCluster(1, t, nil)
+	defer c1.Close()
+
+	c2 := MakeCluster(1, t, nil)
+	defer c2.Close()
+
+	c3 := MakeCluster(1, t, nil)
+	defer c3.Close()
+
+	r1 := c1.rafts[0]
+	r2 := c2.rafts[0]
+	r3 := c3.rafts[0]
+
+	peers := make([]net.Addr, 0)
+	peers = append(peers, r1.localAddr, r2.localAddr, r3.localAddr)
+
+	r1.SetPeers(peers)
+	r2.SetPeers(peers)
+	r3.SetPeers(peers)
+
+	c1.Merge(c2)
+	c1.Merge(c3)
+
+	c1.FullyConnect()
+
+	// Wait a while
+	time.Sleep(20 * time.Millisecond)
+
+	// Should have a new leader
+	if leader := c1.Leader(); leader == nil {
+		t.Fatalf("no leader?")
+	}
+}

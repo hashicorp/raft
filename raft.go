@@ -582,7 +582,7 @@ func (r *Raft) runFollower() {
 
 		case p := <-r.peerCh:
 			// Set the peers
-			r.peers = p.peers
+			r.peers = ExcludePeer(p.peers, r.localAddr)
 			p.respond(r.peerStore.SetPeers(p.peers))
 
 		case <-heartbeatTimer:
@@ -665,7 +665,7 @@ func (r *Raft) runCandidate() {
 
 		case p := <-r.peerCh:
 			// Set the peers
-			r.peers = p.peers
+			r.peers = ExcludePeer(p.peers, r.localAddr)
 			p.respond(r.peerStore.SetPeers(p.peers))
 			// Become a follower again
 			r.setState(Follower)
