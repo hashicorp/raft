@@ -1246,7 +1246,7 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	verify := leader.VerifyLeader()
 
 	// Wait for the leader to step down
-	if err := verify.Error(); err != ErrNotLeader {
+	if err := verify.Error(); err != ErrNotLeader && err != ErrLeadershipLost {
 		t.Fatalf("err: %v", err)
 	}
 }

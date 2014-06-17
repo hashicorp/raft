@@ -33,8 +33,9 @@ func (e errorFuture) Response() interface{} {
 // deferError can be embedded to allow a future
 // to provide an error in the future
 type deferError struct {
-	err   error
-	errCh chan error
+	err       error
+	errCh     chan error
+	responded bool
 }
 
 func (d *deferError) init() {
@@ -56,8 +57,12 @@ func (d *deferError) respond(err error) {
 	if d.errCh == nil {
 		return
 	}
+	if d.responded {
+		return
+	}
 	d.errCh <- err
 	close(d.errCh)
+	d.responded = true
 }
 
 // logFuture is used to apply a log entry and waits until
