@@ -667,6 +667,9 @@ func (r *Raft) runCandidate() {
 			// Set the peers
 			r.peers = p.peers
 			p.respond(r.peerStore.SetPeers(p.peers))
+			// Become a follower again
+			r.setState(Follower)
+			return
 
 		case <-electionTimer:
 			// Election failed! Restart the elction. We simply return,
