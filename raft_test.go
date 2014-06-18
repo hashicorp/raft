@@ -533,7 +533,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 	}
 
 	// Wait for log replication
-	time.Sleep(10 * time.Millisecond)
+	c.EnsureSame(t)
 
 	// Check two entries are applied to the FSM
 	for _, fsm := range c.fsms {

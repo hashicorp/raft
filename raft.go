@@ -738,8 +738,17 @@ func (r *Raft) runLeader() {
 		r.startReplication(peer)
 	}
 
-	// Dispatch a no-op log first
-	noop := &logFuture{log: Log{Type: LogNoop}}
+	// Dispatch a no-op log first. Instead of LogNoop,
+	// we use a LogAddPeer with our peerset. This acts like
+	// a no-op as well, but when doing an initial bootstrap, ensures
+	// that all nodes share a common peerset.
+	peerSet := append([]net.Addr{r.localAddr}, r.peers...)
+	noop := &logFuture{
+		log: Log{
+			Type: LogAddPeer,
+			Data: encodePeers(peerSet, r.trans),
+		},
+	}
 	r.dispatchLogs([]*logFuture{noop})
 
 	// Sit in the leader loop until we step down
