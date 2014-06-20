@@ -1643,6 +1643,11 @@ func (r *Raft) compactLogs(snapIdx uint64) error {
 		return fmt.Errorf("failed to get first log index: %v", err)
 	}
 
+	// Check if we have enough logs to truncate
+	if r.getLastLogIndex() <= r.conf.TrailingLogs {
+		return nil
+	}
+
 	// Truncate up to the end of the snapshot, or `TrailingLogs`
 	// back from the head, which ever is futher back. This ensures
 	// at least `TrailingLogs` entries, but does not allow logs
