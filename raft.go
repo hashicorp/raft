@@ -1073,26 +1073,10 @@ func (r *Raft) processLog(l *Log, future *logFuture, precommit bool) {
 		return
 
 	case LogAddPeer:
-		peers := decodePeers(l.Data, r.trans)
-		r.logger.Printf("[DEBUG] raft: Node %v updated peer set (add): %v", r.localAddr, peers)
-
-		// Update our peer set
-		r.peers = ExcludePeer(peers, r.localAddr)
-		r.peerStore.SetPeers(peers)
-
-		// Handle replication if we are the leader
-		if r.getState() == Leader {
-			for _, p := range r.peers {
-				if _, ok := r.leaderState.replState[p.String()]; !ok {
-					r.logger.Printf("[INFO] raft: Added peer %v, starting replication", p)
-					r.startReplication(p)
-				}
-			}
-		}
-
+		fallthrough
 	case LogRemovePeer:
 		peers := decodePeers(l.Data, r.trans)
-		r.logger.Printf("[DEBUG] raft: Node %v updated peer set (remove): %v", r.localAddr, peers)
+		r.logger.Printf("[DEBUG] raft: Node %v updated peer set (%v): %v", r.localAddr, l.Type, peers)
 
 		// If the peer set does not include us, remove all other peers
 		removeSelf := !PeerContained(peers, r.localAddr)
@@ -1102,6 +1086,16 @@ func (r *Raft) processLog(l *Log, future *logFuture, precommit bool) {
 		} else {
 			r.peers = ExcludePeer(peers, r.localAddr)
 			r.peerStore.SetPeers(peers)
+		}
+
+		// Handle replication if we are the leader
+		if r.getState() == Leader {
+			for _, p := range r.peers {
+				if _, ok := r.leaderState.replState[p.String()]; !ok {
+					r.logger.Printf("[INFO] raft: Added peer %v, starting replication", p)
+					r.startReplication(p)
+				}
+			}
 		}
 
 		// Stop replication for old nodes
