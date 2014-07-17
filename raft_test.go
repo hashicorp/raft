@@ -965,6 +965,81 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 	}
 }
 
+func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
+	// Make the cluster
+	conf := inmemConfig()
+	conf.TrailingLogs = 10
+	c := MakeCluster(3, t, conf)
+	defer c.Close()
+
+	// Commit a lot of things
+	leader := c.Leader()
+	var future Future
+	for i := 0; i < 100; i++ {
+		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	// Wait for the last future to apply
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Take a snapshot
+	snapFuture := leader.Snapshot()
+	if err := snapFuture.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Shutdown
+	shutdown := leader.Shutdown()
+	if err := shutdown.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Make a seperate cluster
+	c2 := MakeClusterNoPeers(2, t, conf)
+	defer c2.Close()
+
+	// Kill the old lcuster
+	for _, sec := range c.rafts {
+		if sec != leader {
+			sec.Shutdown()
+		}
+	}
+
+	// Change the peer addresses
+	peers := []net.Addr{leader.trans.LocalAddr()}
+	for _, sec := range c2.rafts {
+		peers = append(peers, sec.trans.LocalAddr())
+	}
+
+	// Restart the Raft with new peers
+	r := leader
+	peerStore := &StaticPeers{StaticPeers: peers}
+	r, err := NewRaft(r.conf, r.fsm, r.logs, r.stable,
+		r.snapshots, peerStore, r.trans)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	c.rafts[0] = r
+	c2.rafts = append(c2.rafts, r)
+	c2.trans = append(c2.trans, r.trans.(*InmemTransport))
+	c2.fsms = append(c2.fsms, r.fsm.(*MockFSM))
+	c2.FullyConnect()
+
+	// Wait a while
+	time.Sleep(50 * time.Millisecond)
+
+	// Ensure we elect a leader, and that we replicate
+	// to our new followers
+	c2.EnsureSame(t)
+
+	// We should have restored from the snapshot!
+	if last := r.getLastApplied(); last != 102 {
+		t.Fatalf("bad last: %v", last)
+	}
+}
+
 func TestRaft_AutoSnapshot(t *testing.T) {
 	// Make the cluster
 	conf := inmemConfig()
