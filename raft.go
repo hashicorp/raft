@@ -1079,7 +1079,7 @@ func (r *Raft) processLog(l *Log, future *logFuture, precommit bool) {
 		r.logger.Printf("[DEBUG] raft: Node %v updated peer set (%v): %v", r.localAddr, l.Type, peers)
 
 		// If the peer set does not include us, remove all other peers
-		removeSelf := !PeerContained(peers, r.localAddr)
+		removeSelf := !PeerContained(peers, r.localAddr) && l.Type == LogRemovePeer
 		if removeSelf {
 			r.peers = nil
 			r.peerStore.SetPeers([]net.Addr{r.localAddr})
