@@ -241,6 +241,23 @@ func TestFileSS_Names(t *testing.T) {
 	if time.Now().Sub(when) > time.Millisecond {
 		t.Fatalf("bad: %v", when)
 	}
+
+	// Ensure old-style name works
+	name = "50-100-2006-01-02T15:04:05.999999999Z"
+	term, index, when, err = parseName(name)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if term != 50 {
+		t.Fatalf("bad: %v", index)
+	}
+	if index != 100 {
+		t.Fatalf("bad: %v", index)
+	}
+	expect := time.Date(2006, 01, 02, 15, 04, 05, 0, time.UTC)
+	if diff := when.Sub(expect); diff > time.Second {
+		t.Fatalf("bad: %v %v", when, diff)
+	}
 }
 
 func TestFileSS_Ordering(t *testing.T) {

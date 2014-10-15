@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -116,7 +117,9 @@ func (f *FileSnapshotStore) testPermissions() error {
 
 // snapshotName generate s name for the snapshot
 func snapshotName(term, index uint64) string {
-	return fmt.Sprintf("%d-%d-%s", term, index, time.Now().Format(time.RFC3339Nano))
+	now := time.Now()
+	msec := now.UnixNano() / int64(time.Millisecond)
+	return fmt.Sprintf("%d-%d-%d", term, index, msec)
 }
 
 // parseName parse the components of a name
@@ -126,6 +129,17 @@ func parseName(name string) (uint64, uint64, time.Time, error) {
 	if _, err := fmt.Sscanf(name, "%d-%d-%s", &term, &index, &timeString); err != nil {
 		return 0, 0, time.Time{}, err
 	}
+
+	// Due to a format change, the timeString can either be unix time in
+	// milliseconds, OR it could be RFC3339Nano format
+	unixMsec, err := strconv.ParseInt(timeString, 10, 64)
+	if err == nil {
+		unixNano := unixMsec * int64(time.Millisecond)
+		when := time.Unix(0, unixNano)
+		return term, index, when, nil
+	}
+
+	// Try for the RFC3339Nano format
 	when, err := time.Parse(time.RFC3339Nano, timeString)
 	if err != nil {
 		return 0, 0, time.Time{}, err
