@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ugorji/go/codec"
+	"github.com/hashicorp/go-msgpack/codec"
 )
 
 // MockFSM is an implementation of the FSM interface, and just stores

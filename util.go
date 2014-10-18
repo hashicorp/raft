@@ -9,7 +9,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/ugorji/go/codec"
+	"github.com/hashicorp/go-msgpack/codec"
 )
 
 // randomTimeout returns a value that is between the minVal and 2x minVal
