@@ -841,11 +841,61 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	}
 }
 
+func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
+	// Make a cluster
+	conf := inmemConfig()
+	conf.ShutdownOnRemove = false
+	c := MakeCluster(3, t, conf)
+	defer c.Close()
+
+	// Get the leader
+	leader := c.Leader()
+
+	// Wait until we have 2 followers
+	limit := time.Now().Add(200 * time.Millisecond)
+	var followers []*Raft
+	for time.Now().Before(limit) && len(followers) != 2 {
+		time.Sleep(10 * time.Millisecond)
+		followers = c.GetInState(Follower)
+	}
+	if len(followers) != 2 {
+		t.Fatalf("expected two followers: %v", followers)
+	}
+
+	// Remove the leader
+	leader.RemovePeer(leader.localAddr)
+
+	// Wait a while
+	time.Sleep(20 * time.Millisecond)
+
+	// Should have a new leader
+	newLeader := c.Leader()
+
+	// Wait a bit for log application
+	time.Sleep(20 * time.Millisecond)
+
+	// Other nodes should have fewer peers
+	if peers, _ := newLeader.peerStore.Peers(); len(peers) != 2 {
+		t.Fatalf("too many peers")
+	}
+
+	// Old leader should be a follower
+	if leader.State() != Follower {
+		t.Fatalf("leader should be shutdown")
+	}
+
+	// Old leader should have no peers
+	if peers, _ := leader.peerStore.Peers(); len(peers) != 1 {
+		t.Fatalf("leader should have no peers")
+	}
+}
+
 func TestRaft_RemoveLeader_SplitCluster(t *testing.T) {
 	// Enable operation after a remove
 	conf := inmemConfig()
 	conf.EnableSingleNode = true
 	conf.ShutdownOnRemove = false
+	conf.DisableBootstrapAfterElect = false
 
 	// Make a cluster
 	c := MakeCluster(3, t, conf)

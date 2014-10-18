@@ -32,6 +32,13 @@ type Config struct {
 	// we can become a leader of a cluster containing only this node.
 	ShutdownOnRemove bool
 
+	// DisableBootstrapAfterElect is used to turn off EnableSingleNode
+	// after the node is elected. This is used to prevent self-election
+	// if the node is removed from the Raft cluster via RemovePeer. Setting
+	// it to false will keep the bootstrap mode, allowing the node to self-elect
+	// and potentially bootstrap a seperate cluster.
+	DisableBootstrapAfterElect bool
+
 	// TrailingLogs controls how many logs we leave after a snapshot. This is
 	// used so that we can quickly replay logs on a follower instead of being
 	// forced to send an entire snapshot.
@@ -65,16 +72,17 @@ type Config struct {
 // DefaultConfig returns a Config with usable defaults.
 func DefaultConfig() *Config {
 	return &Config{
-		HeartbeatTimeout:   1000 * time.Millisecond,
-		ElectionTimeout:    1000 * time.Millisecond,
-		CommitTimeout:      50 * time.Millisecond,
-		MaxAppendEntries:   64,
-		ShutdownOnRemove:   true,
-		TrailingLogs:       10240,
-		SnapshotInterval:   120 * time.Second,
-		SnapshotThreshold:  8192,
-		EnableSingleNode:   false,
-		LeaderLeaseTimeout: 500 * time.Millisecond,
+		HeartbeatTimeout:           1000 * time.Millisecond,
+		ElectionTimeout:            1000 * time.Millisecond,
+		CommitTimeout:              50 * time.Millisecond,
+		MaxAppendEntries:           64,
+		ShutdownOnRemove:           true,
+		DisableBootstrapAfterElect: true,
+		TrailingLogs:               10240,
+		SnapshotInterval:           120 * time.Second,
+		SnapshotThreshold:          8192,
+		EnableSingleNode:           false,
+		LeaderLeaseTimeout:         500 * time.Millisecond,
 	}
 }
 

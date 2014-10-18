@@ -751,6 +751,14 @@ func (r *Raft) runLeader() {
 	}
 	r.dispatchLogs([]*logFuture{noop})
 
+	// Disable EnableSingleNode after we've been elected leader.
+	// This is to prevent a split brain in the future, if we are removed
+	// from the cluster and then elect ourself as leader.
+	if r.conf.DisableBootstrapAfterElect && r.conf.EnableSingleNode {
+		r.logger.Printf("[INFO] raft: Disabling EnableSingleNode (bootstrap)")
+		r.conf.EnableSingleNode = false
+	}
+
 	// Sit in the leader loop until we step down
 	r.leaderLoop()
 }
