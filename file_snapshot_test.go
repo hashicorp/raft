@@ -251,8 +251,17 @@ func TestFileSS_BadPerm(t *testing.T) {
 }
 
 func TestFileSS_MissingParentDir(t *testing.T) {
-	_, err := NewFileSnapshotStore("nonexistent/target", 3, nil)
-	defer os.RemoveAll("nonexistent/target")
+	parent, err := ioutil.TempDir("", "raft")
+	if err != nil {
+		t.Fatalf("err: %v ", err)
+	}
+	defer os.RemoveAll(parent)
+
+	dir, err := ioutil.TempDir(parent, "raft")
+	if err != nil {
+		t.Fatalf("err: %v ", err)
+	}
+	_, err = NewFileSnapshotStore(dir, 3, nil)
 	if err != nil {
 		t.Fatalf("should not fail when using non existing parent")
 	}
