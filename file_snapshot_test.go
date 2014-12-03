@@ -36,6 +36,31 @@ func TestFileSnapshotSinkImpl(t *testing.T) {
 	}
 }
 
+func TestFileSS_CreateSnapshotMissingParentDir(t *testing.T) {
+	parent, err := ioutil.TempDir("", "raft")
+	if err != nil {
+		t.Fatalf("err: %v ", err)
+	}
+	defer os.RemoveAll(parent)
+
+	dir, err := ioutil.TempDir(parent, "raft")
+	if err != nil {
+		t.Fatalf("err: %v ", err)
+	}
+
+	snap, err := NewFileSnapshotStore(dir, 3, nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	os.RemoveAll(parent)
+	peers := []byte("all my lovely friends")
+	_, err = snap.Create(10, 3, peers)
+	if err != nil {
+		t.Fatalf("should not fail when using non existing parent")
+	}
+
+}
 func TestFileSS_CreateSnapshot(t *testing.T) {
 	// Create a test dir
 	dir, err := ioutil.TempDir("", "raft")
@@ -222,6 +247,25 @@ func TestFileSS_BadPerm(t *testing.T) {
 	_, err := NewFileSnapshotStore("/", 3, nil)
 	if err == nil {
 		t.Fatalf("should fail to use root")
+	}
+}
+
+func TestFileSS_MissingParentDir(t *testing.T) {
+	parent, err := ioutil.TempDir("", "raft")
+	if err != nil {
+		t.Fatalf("err: %v ", err)
+	}
+	defer os.RemoveAll(parent)
+
+	dir, err := ioutil.TempDir(parent, "raft")
+	if err != nil {
+		t.Fatalf("err: %v ", err)
+	}
+
+	os.RemoveAll(parent)
+	_, err = NewFileSnapshotStore(dir, 3, nil)
+	if err != nil {
+		t.Fatalf("should not fail when using non existing parent")
 	}
 }
 
