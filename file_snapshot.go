@@ -84,7 +84,7 @@ func NewFileSnapshotStore(base string, retain int, logOutput io.Writer) (*FileSn
 
 	// Ensure our path exists
 	path := filepath.Join(base, snapPath)
-	if err := os.Mkdir(path, 0755); err != nil && !os.IsExist(err) {
+	if err := os.MkdirAll(path, 0755); err != nil && !os.IsExist(err) {
 		return nil, fmt.Errorf("snapshot path not accessible: %v", err)
 	}
 
@@ -129,7 +129,7 @@ func (f *FileSnapshotStore) Create(index, term uint64, peers []byte) (SnapshotSi
 	f.logger.Printf("[INFO] snapshot: Creating new snapshot at %s", path)
 
 	// Make the directory
-	if err := os.Mkdir(path, 0755); err != nil {
+	if err := os.MkdirAll(path, 0755); err != nil {
 		f.logger.Printf("[ERR] snapshot: Failed to make snapshot directory: %v", err)
 		return nil, err
 	}
