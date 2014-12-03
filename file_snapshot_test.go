@@ -261,6 +261,8 @@ func TestFileSS_MissingParentDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
+
+	os.RemoveAll(parent)
 	_, err = NewFileSnapshotStore(dir, 3, nil)
 	if err != nil {
 		t.Fatalf("should not fail when using non existing parent")
