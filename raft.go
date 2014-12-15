@@ -465,6 +465,12 @@ func (r *Raft) Stats() map[string]string {
 	return s
 }
 
+// LastIndex returns the last index in stable storage.
+// Either from the last log or from the last snapshot.
+func (r *Raft) LastIndex() uint64 {
+	return r.getLastIndex()
+}
+
 // runFSM is a long running goroutine responsible for applying logs
 // to the FSM. This is done async of other logs since we don't want
 // the FSM to block our internal operations.
