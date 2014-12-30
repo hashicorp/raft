@@ -28,8 +28,8 @@ type FSM interface {
 // It must be safe to invoke FSMSnapshot methods with concurrent
 // calls to Apply
 type FSMSnapshot interface {
-	// Persist should dump all necessary state to the WriteCloser,
-	// and invoke close when finished or call Cancel on error.
+	// Persist should dump all necessary state to the WriteCloser 'sink',
+	// and call sink.Close() when finished or call sink.Cancel() on error.
 	Persist(sink SnapshotSink) error
 
 	// Release is invoked when we are finished with the snapshot
