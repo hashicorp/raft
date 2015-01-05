@@ -54,12 +54,12 @@ type Config struct {
 	// just replay a small set of logs.
 	SnapshotThreshold uint64
 
-	// EnableSingleMode allows for a single node mode of operation. This
+	// EnableSingleNode allows for a single node mode of operation. This
 	// is false by default, which prevents a lone node from electing itself
 	// leader.
 	EnableSingleNode bool
 
-	// LeaderLeaveTimeout is used to control how long the "lease" lasts
+	// LeaderLeaseTimeout is used to control how long the "lease" lasts
 	// for being the leader without being able to contact a quorum
 	// of nodes. If we reach this interval without contact, we will
 	// step down as leader.
