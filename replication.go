@@ -18,6 +18,11 @@ const (
 var (
 	// ErrLogNotFound indicates a given log entry is not available.
 	ErrLogNotFound = errors.New("log not found")
+
+	// ErrPipelineReplicationNotSupported can be returned by the transport to
+	// signal that pipeline replication is not supported in general, and that
+	// no error message should be produced.
+	ErrPipelineReplicationNotSupported = errors.New("pipeline replication not supported")
 )
 
 type followerReplication struct {
@@ -118,7 +123,9 @@ PIPELINE:
 	// is not able to gracefully recover from errors, and so we fall back
 	// to standard mode on failure.
 	if err := r.pipelineReplicate(s); err != nil {
-		r.logger.Printf("[ERR] raft: Failed to start pipeline replication to %s: %s", s.peer, err)
+		if err != ErrPipelineReplicationNotSupported {
+			r.logger.Printf("[ERR] raft: Failed to start pipeline replication to %s: %s", s.peer, err)
+		}
 	}
 	goto RPC
 }
