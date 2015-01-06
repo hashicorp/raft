@@ -943,7 +943,12 @@ func (r *Raft) checkLeaderLease() time.Duration {
 				maxDiff = diff
 			}
 		} else {
-			r.logger.Printf("[WARN] raft: Failed to contact %v in %v", peer, diff)
+			// Log only once at high value, then debug. Otherwise it gets very verbose.
+			if diff <= 2*r.conf.LeaderLeaseTimeout {
+				r.logger.Printf("[WARN] raft: Failed to contact %v in %v", peer, diff)
+			} else {
+				r.logger.Printf("[DEBUG] raft: Failed to contact %v in %v", peer, diff)
+			}
 		}
 		metrics.AddSample([]string{"raft", "leader", "lastContact"}, float32(diff/time.Millisecond))
 	}

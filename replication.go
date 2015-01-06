@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	maxFailureScale = 14
+	maxFailureScale = 12
 	failureWait     = 10 * time.Millisecond
 )
 
