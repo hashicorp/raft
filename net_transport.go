@@ -441,7 +441,6 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 		fn := n.heartbeatFn
 		n.heartbeatFnLock.Unlock()
 		if fn != nil {
-			n.logger.Printf("[REMOVEME] raft-net: Fast-path heartbeat")
 			fn(rpc)
 			goto RESP
 		}
