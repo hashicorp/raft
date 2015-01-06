@@ -227,6 +227,11 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		return nil, err
 	}
 
+	// Setup a heartbeat fast-path to avoid head-of-line
+	// blocking where possible. It MUST be safe for this
+	// to be called concurrently with a blocking RPC.
+	trans.SetHeartbeatHandler(r.processRPC)
+
 	// Start the background work
 	r.goFunc(r.run)
 	r.goFunc(r.runFSM)
