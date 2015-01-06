@@ -61,6 +61,9 @@ type NetworkTransport struct {
 
 	consumeCh chan RPC
 
+	heartbeatFn     func(RPC)
+	heartbeatFnLock sync.Mutex
+
 	logger *log.Logger
 
 	maxPool int
@@ -134,6 +137,15 @@ func NewNetworkTransport(
 	}
 	go trans.listen()
 	return trans
+}
+
+// SetHeartbeatHandler is used to setup a heartbeat handler
+// as a fast-pass. This is to avoid head-of-line blocking from
+// disk IO.
+func (n *NetworkTransport) SetHeartbeatHandler(cb func(rpc RPC)) {
+	n.heartbeatFnLock.Lock()
+	defer n.heartbeatFnLock.Unlock()
+	n.heartbeatFn = cb
 }
 
 // Close is used to stop the network transport
@@ -388,6 +400,7 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 	}
 
 	// Decode the command
+	isHeartbeat := false
 	switch rpcType {
 	case rpcAppendEntries:
 		var req AppendEntriesRequest
@@ -395,6 +408,13 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 			return err
 		}
 		rpc.Command = &req
+
+		// Check if this is a heartbeat
+		if req.Term != 0 && req.Leader != nil &&
+			req.PrevLogEntry == 0 && req.PrevLogTerm == 0 &&
+			len(req.Entries) == 0 && req.LeaderCommitIndex == 0 {
+			isHeartbeat = true
+		}
 
 	case rpcRequestVote:
 		var req RequestVoteRequest
@@ -415,6 +435,18 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 		return fmt.Errorf("unknown rpc type %d", rpcType)
 	}
 
+	// Check for heartbeat fast-path
+	if isHeartbeat {
+		n.heartbeatFnLock.Lock()
+		fn := n.heartbeatFn
+		n.heartbeatFnLock.Unlock()
+		if fn != nil {
+			n.logger.Printf("[REMOVEME] raft-net: Fast-path heartbeat")
+			fn(rpc)
+			goto RESP
+		}
+	}
+
 	// Dispatch the RPC
 	select {
 	case n.consumeCh <- rpc:
@@ -423,6 +455,7 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 	}
 
 	// Wait for response
+RESP:
 	select {
 	case resp := <-respCh:
 		// Send the error first

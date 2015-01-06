@@ -72,6 +72,11 @@ func NewInmemTransport() (*InmemAddr, *InmemTransport) {
 	return addr, trans
 }
 
+// SetHeartbeatHandler is used to set optional fast-path for
+// heartbeats, not supported for this transport.
+func (i *InmemTransport) SetHeartbeatHandler(cb func(RPC)) {
+}
+
 // Consumer implements the Transport interface.
 func (i *InmemTransport) Consumer() <-chan RPC {
 	return i.consumerCh
