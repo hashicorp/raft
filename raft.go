@@ -943,8 +943,8 @@ func (r *Raft) checkLeaderLease() time.Duration {
 				maxDiff = diff
 			}
 		} else {
-			// Log only once at high value, then debug. Otherwise it gets very verbose.
-			if diff <= 2*r.conf.LeaderLeaseTimeout {
+			// Log at least once at high value, then debug. Otherwise it gets very verbose.
+			if diff <= 3*r.conf.LeaderLeaseTimeout {
 				r.logger.Printf("[WARN] raft: Failed to contact %v in %v", peer, diff)
 			} else {
 				r.logger.Printf("[DEBUG] raft: Failed to contact %v in %v", peer, diff)
