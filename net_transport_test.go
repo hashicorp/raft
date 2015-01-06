@@ -16,6 +16,61 @@ func TestNetworkTransport_StartStop(t *testing.T) {
 	trans.Close()
 }
 
+func TestNetworkTransport_Heartbeat_FastPath(t *testing.T) {
+	// Transport 1 is consumer
+	trans1, err := NewTCPTransport("127.0.0.1:0", nil, 2, time.Second, nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	defer trans1.Close()
+
+	// Make the RPC request
+	args := AppendEntriesRequest{
+		Term:   10,
+		Leader: []byte("cartman"),
+	}
+	resp := AppendEntriesResponse{
+		Term:    4,
+		LastLog: 90,
+		Success: true,
+	}
+
+	invoked := false
+	fastpath := func(rpc RPC) {
+		// Verify the command
+		req := rpc.Command.(*AppendEntriesRequest)
+		if !reflect.DeepEqual(req, &args) {
+			t.Fatalf("command mismatch: %#v %#v", *req, args)
+		}
+
+		rpc.Respond(&resp, nil)
+		invoked = true
+	}
+	trans1.SetHeartbeatHandler(fastpath)
+
+	// Transport 2 makes outbound request
+	trans2, err := NewTCPTransport("127.0.0.1:0", nil, 2, time.Second, nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	defer trans2.Close()
+
+	var out AppendEntriesResponse
+	if err := trans2.AppendEntries(trans1.LocalAddr(), &args, &out); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Verify the response
+	if !reflect.DeepEqual(resp, out) {
+		t.Fatalf("command mismatch: %#v %#v", resp, out)
+	}
+
+	// Ensure fast-path is used
+	if !invoked {
+		t.Fatalf("fast-path not used")
+	}
+}
+
 func TestNetworkTransport_AppendEntries(t *testing.T) {
 	// Transport 1 is consumer
 	trans1, err := NewTCPTransport("127.0.0.1:0", nil, 2, time.Second, nil)
