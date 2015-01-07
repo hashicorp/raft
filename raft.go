@@ -230,7 +230,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	// Setup a heartbeat fast-path to avoid head-of-line
 	// blocking where possible. It MUST be safe for this
 	// to be called concurrently with a blocking RPC.
-	trans.SetHeartbeatHandler(r.processRPC)
+	trans.SetHeartbeatHandler(r.processHeartbeat)
 
 	// Start the background work
 	r.goFunc(r.run)
@@ -1174,6 +1174,26 @@ func (r *Raft) processRPC(rpc RPC) {
 		r.installSnapshot(rpc, cmd)
 	default:
 		r.logger.Printf("[ERR] raft: Got unexpected command: %#v", rpc.Command)
+		rpc.Respond(nil, fmt.Errorf("unexpected command"))
+	}
+}
+
+// processHeartbeat is a special handler used just for heartbeat requests
+// so that they can be fast-pathed if a transport supports it
+func (r *Raft) processHeartbeat(rpc RPC) {
+	// Check if we are shutdown, just ignore the RPC
+	select {
+	case <-r.shutdownCh:
+		return
+	default:
+	}
+
+	// Ensure we are only handling a heartbeat
+	switch cmd := rpc.Command.(type) {
+	case *AppendEntriesRequest:
+		r.appendEntries(rpc, cmd)
+	default:
+		r.logger.Printf("[ERR] raft: Expected heartbeat, got command: %#v", rpc.Command)
 		rpc.Respond(nil, fmt.Errorf("unexpected command"))
 	}
 }
