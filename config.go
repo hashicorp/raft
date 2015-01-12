@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// Config provides any necessary configuraiton to
+// Config provides any necessary configuration to
 // the Raft server
 type Config struct {
 	// Time in follower state without a leader before we attempt an election
