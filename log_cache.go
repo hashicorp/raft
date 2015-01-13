@@ -16,7 +16,7 @@ type logCache struct {
 
 func newLogCache(capacity int, logstore LogStore) *logCache {
 	return &logCache{
-		cache: make([]*Log, 0, capacity),
+		cache: make([]*Log, capacity),
 		store: logstore,
 	}
 }
@@ -25,20 +25,17 @@ func (c *logCache) getLogFromCache(logidx uint64) (*Log, bool) {
 	c.l.RLock()
 	defer c.l.RUnlock()
 
-	// Return if we have not seen that log entry yet, or
-	// if it was pushed out of the cache already.
-	if logidx > c.lastlogidx || (c.lastlogidx-logidx) >= uint64(len(c.cache)) {
-		return nil, false
-	}
-
 	// 'last' is the index of the element we cached last,
 	// its raft log index is 'lastlogidx'
 	last := (c.current - 1)
 	m := last - int(c.lastlogidx-logidx)
 
 	// See https://golang.org/issue/448 for why (m % n) is not enough.
-	n := cap(c.cache)
+	n := len(c.cache)
 	log := c.cache[((m%n)+n)%n]
+	if log == nil {
+		return nil, false
+	}
 	// If the index does not match, cacheLog’s expected access pattern was
 	// violated and we need to fall back to reading from the LogStore.
 	return log, log.Index == logidx
@@ -51,13 +48,9 @@ func (c *logCache) cacheLogs(logs []*Log) {
 	defer c.l.Unlock()
 
 	for _, l := range logs {
-		if len(c.cache) < cap(c.cache) {
-			c.cache = append(c.cache, l)
-		} else {
-			c.cache[c.current] = l
-		}
+		c.cache[c.current] = l
 		c.lastlogidx = l.Index
-		c.current = (c.current + 1) % cap(c.cache)
+		c.current = (c.current + 1) % len(c.cache)
 	}
 }
 
@@ -92,7 +85,7 @@ func (c *logCache) DeleteRange(min, max uint64) error {
 
 	c.lastlogidx = 0
 	c.current = 0
-	c.cache = make([]*Log, 0, cap(c.cache))
+	c.cache = make([]*Log, len(c.cache))
 
 	return c.store.DeleteRange(min, max)
 }
