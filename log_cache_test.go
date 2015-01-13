@@ -19,7 +19,7 @@ func TestSingleEntry(t *testing.T) {
 	store := NewInmemStore()
 	c := newLogCache(10, store)
 
-	c.cacheLog(1, &Log{Index: 1})
+	c.cacheLogs([]*Log{&Log{Index: 1}})
 
 	for i := 0; i < 20; i++ {
 		want := (i == 1)
@@ -34,7 +34,7 @@ func TestMultipleEntries(t *testing.T) {
 	c := newLogCache(10, store)
 
 	for i := 0; i < 40; i++ {
-		c.cacheLog(uint64(i), &Log{Index: uint64(i)})
+		c.cacheLogs([]*Log{&Log{Index: uint64(i)}})
 	}
 
 	for i := 0; i < 50; i++ {

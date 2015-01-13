@@ -44,19 +44,21 @@ func (c *logCache) getLogFromCache(logidx uint64) (*Log, bool) {
 	return log, log.Index == logidx
 }
 
-// cacheLog should be called with strictly monotonically increasing logidx
+// cacheLogs should be called with strictly monotonically increasing logidx
 // values, otherwise the cache will not be effective.
-func (c *logCache) cacheLog(logidx uint64, log *Log) {
+func (c *logCache) cacheLogs(logs []*Log) {
 	c.l.Lock()
 	defer c.l.Unlock()
 
-	if len(c.cache) < cap(c.cache) {
-		c.cache = append(c.cache, log)
-	} else {
-		c.cache[c.current] = log
+	for _, l := range logs {
+		if len(c.cache) < cap(c.cache) {
+			c.cache = append(c.cache, l)
+		} else {
+			c.cache[c.current] = l
+		}
+		c.lastlogidx = l.Index
+		c.current = (c.current + 1) % cap(c.cache)
 	}
-	c.lastlogidx = logidx
-	c.current = (c.current + 1) % cap(c.cache)
 }
 
 func (c *logCache) GetLog(logidx uint64, log *Log) error {
@@ -72,9 +74,7 @@ func (c *logCache) StoreLog(log *Log) error {
 }
 
 func (c *logCache) StoreLogs(logs []*Log) error {
-	for _, l := range logs {
-		c.cacheLog(l.Index, l)
-	}
+	c.cacheLogs(logs)
 	return c.store.StoreLogs(logs)
 }
 
