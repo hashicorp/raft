@@ -4,9 +4,9 @@ import (
 	"sync"
 )
 
-// logCache wraps a logstore with a ring buffer providing fast access to the
+// LogCache wraps a logstore with a ring buffer providing fast access to the
 // last n raft log entries.
-type logCache struct {
+type LogCache struct {
 	store      LogStore
 	cache      []*Log
 	current    int
@@ -14,14 +14,14 @@ type logCache struct {
 	l          sync.RWMutex
 }
 
-func newLogCache(capacity int, logstore LogStore) *logCache {
-	return &logCache{
+func NewLogCache(capacity int, logstore LogStore) *LogCache {
+	return &LogCache{
 		cache: make([]*Log, capacity),
 		store: logstore,
 	}
 }
 
-func (c *logCache) getLogFromCache(logidx uint64) (*Log, bool) {
+func (c *LogCache) getLogFromCache(logidx uint64) (*Log, bool) {
 	c.l.RLock()
 	defer c.l.RUnlock()
 
@@ -43,7 +43,7 @@ func (c *logCache) getLogFromCache(logidx uint64) (*Log, bool) {
 
 // cacheLogs should be called with strictly monotonically increasing logidx
 // values, otherwise the cache will not be effective.
-func (c *logCache) cacheLogs(logs []*Log) {
+func (c *LogCache) cacheLogs(logs []*Log) {
 	c.l.Lock()
 	defer c.l.Unlock()
 
@@ -54,7 +54,7 @@ func (c *logCache) cacheLogs(logs []*Log) {
 	}
 }
 
-func (c *logCache) GetLog(logidx uint64, log *Log) error {
+func (c *LogCache) GetLog(logidx uint64, log *Log) error {
 	if cached, ok := c.getLogFromCache(logidx); ok {
 		*log = *cached
 		return nil
@@ -62,24 +62,24 @@ func (c *logCache) GetLog(logidx uint64, log *Log) error {
 	return c.store.GetLog(logidx, log)
 }
 
-func (c *logCache) StoreLog(log *Log) error {
+func (c *LogCache) StoreLog(log *Log) error {
 	return c.StoreLogs([]*Log{log})
 }
 
-func (c *logCache) StoreLogs(logs []*Log) error {
+func (c *LogCache) StoreLogs(logs []*Log) error {
 	c.cacheLogs(logs)
 	return c.store.StoreLogs(logs)
 }
 
-func (c *logCache) FirstIndex() (uint64, error) {
+func (c *LogCache) FirstIndex() (uint64, error) {
 	return c.store.FirstIndex()
 }
 
-func (c *logCache) LastIndex() (uint64, error) {
+func (c *LogCache) LastIndex() (uint64, error) {
 	return c.store.LastIndex()
 }
 
-func (c *logCache) DeleteRange(min, max uint64) error {
+func (c *LogCache) DeleteRange(min, max uint64) error {
 	c.l.Lock()
 	defer c.l.Unlock()
 

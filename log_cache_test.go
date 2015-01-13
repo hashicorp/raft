@@ -6,7 +6,7 @@ import (
 
 func TestEmptyCache(t *testing.T) {
 	store := NewInmemStore()
-	c := newLogCache(10, store)
+	c := NewLogCache(10, store)
 
 	for i := 0; i < 20; i++ {
 		if _, ok := c.getLogFromCache(uint64(i)); ok {
@@ -17,7 +17,7 @@ func TestEmptyCache(t *testing.T) {
 
 func TestSingleEntry(t *testing.T) {
 	store := NewInmemStore()
-	c := newLogCache(10, store)
+	c := NewLogCache(10, store)
 
 	c.cacheLogs([]*Log{&Log{Index: 1}})
 
@@ -31,7 +31,7 @@ func TestSingleEntry(t *testing.T) {
 
 func TestMultipleEntries(t *testing.T) {
 	store := NewInmemStore()
-	c := newLogCache(10, store)
+	c := NewLogCache(10, store)
 
 	for i := 0; i < 40; i++ {
 		c.cacheLogs([]*Log{&Log{Index: uint64(i)}})

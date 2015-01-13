@@ -201,7 +201,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		leaderCh:      make(chan bool),
 		localAddr:     localAddr,
 		logger:        log.New(conf.LogOutput, "", log.LstdFlags),
-		logs:          newLogCache(conf.MaxAppendEntries, logs),
+		logs:          logs,
 		peerCh:        make(chan *peerFuture),
 		peers:         peers,
 		peerStore:     peerStore,
