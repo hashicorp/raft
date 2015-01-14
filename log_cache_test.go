@@ -4,44 +4,85 @@ import (
 	"testing"
 )
 
-func TestEmptyCache(t *testing.T) {
+func TestLogCache(t *testing.T) {
 	store := NewInmemStore()
-	c := NewLogCache(10, store)
+	c, _ := NewLogCache(16, store)
 
-	for i := 0; i < 20; i++ {
-		if _, ok := c.getLogFromCache(uint64(i)); ok {
-			t.Fatalf("getLogFromCache(%d): got true, want false", i)
-		}
-	}
-}
-
-func TestSingleEntry(t *testing.T) {
-	store := NewInmemStore()
-	c := NewLogCache(10, store)
-
-	c.cacheLogs([]*Log{&Log{Index: 1}})
-
-	for i := 0; i < 20; i++ {
-		want := (i == 1)
-		if _, got := c.getLogFromCache(uint64(i)); got != want {
-			t.Fatalf("getLogFromCache(%d): got %v, want %v", i, got, want)
-		}
-	}
-}
-
-func TestMultipleEntries(t *testing.T) {
-	store := NewInmemStore()
-	c := NewLogCache(10, store)
-
-	for i := 0; i < 40; i++ {
-		c.cacheLogs([]*Log{&Log{Index: uint64(i)}})
+	// Insert into the in-mem store
+	for i := 0; i < 32; i++ {
+		log := &Log{Index: uint64(i) + 1}
+		store.StoreLog(log)
 	}
 
-	for i := 0; i < 50; i++ {
-		want := (i >= 30 && i <= 39)
-		if _, got := c.getLogFromCache(uint64(i)); got != want {
-			t.Fatalf("getLogFromCache(%d): got %v, want %v", i, got, want)
-		}
+	// Check the indexes
+	if idx, _ := c.FirstIndex(); idx != 1 {
+		t.Fatalf("bad: %d", idx)
+	}
+	if idx, _ := c.LastIndex(); idx != 32 {
+		t.Fatalf("bad: %d", idx)
 	}
 
+	// Try get log with a miss
+	var out Log
+	err := c.GetLog(1, &out)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if out.Index != 1 {
+		t.Fatalf("bad: %#v", out)
+	}
+
+	// Store logs
+	l1 := &Log{Index: 33}
+	l2 := &Log{Index: 34}
+	err = c.StoreLogs([]*Log{l1, l2})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if idx, _ := c.LastIndex(); idx != 34 {
+		t.Fatalf("bad: %d", idx)
+	}
+
+	// Check that it wrote-through
+	err = store.GetLog(33, &out)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	err = store.GetLog(34, &out)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Delete in the backend
+	err = store.DeleteRange(33, 34)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Should be in the ring buffer
+	err = c.GetLog(33, &out)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	err = c.GetLog(34, &out)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Purge the ring buffer
+	err = c.DeleteRange(33, 34)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Should not be in the ring buffer
+	err = c.GetLog(33, &out)
+	if err != ErrLogNotFound {
+		t.Fatalf("err: %v", err)
+	}
+	err = c.GetLog(34, &out)
+	if err != ErrLogNotFound {
+		t.Fatalf("err: %v", err)
+	}
 }

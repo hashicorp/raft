@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"fmt"
 	"sync"
 )
 
@@ -12,59 +13,36 @@ import (
 type LogCache struct {
 	store LogStore
 
-	cache      []*Log
-	current    int
-	lastLogIdx uint64
-	l          sync.RWMutex
+	cache []*Log
+	l     sync.RWMutex
 }
 
 // NewLogCache is used to create a new LogCache with the
 // given capacity and backend store.
-func NewLogCache(capacity int, store LogStore) *LogCache {
-	return &LogCache{
+func NewLogCache(capacity int, store LogStore) (*LogCache, error) {
+	if capacity <= 0 {
+		return nil, fmt.Errorf("capacity must be positive")
+	}
+	c := &LogCache{
 		store: store,
 		cache: make([]*Log, capacity),
 	}
-}
-
-func (c *LogCache) getLogFromCache(logidx uint64) (*Log, bool) {
-	c.l.RLock()
-	defer c.l.RUnlock()
-
-	// 'last' is the index of the element we cached last,
-	// its raft log index is 'lastLogIdx'
-	last := (c.current - 1)
-	m := last - int(c.lastLogIdx-logidx)
-
-	// See https://golang.org/issue/448 for why (m % n) is not enough.
-	n := len(c.cache)
-	log := c.cache[((m%n)+n)%n]
-	if log == nil {
-		return nil, false
-	}
-	// If the index does not match, cacheLog’s expected access pattern was
-	// violated and we need to fall back to reading from the LogStore.
-	return log, log.Index == logidx
-}
-
-// cacheLogs should be called with strictly monotonically increasing logidx
-// values, otherwise the cache will not be effective.
-func (c *LogCache) cacheLogs(logs []*Log) {
-	c.l.Lock()
-	defer c.l.Unlock()
-
-	for _, l := range logs {
-		c.cache[c.current] = l
-		c.lastLogIdx = l.Index
-		c.current = (c.current + 1) % len(c.cache)
-	}
+	return c, nil
 }
 
 func (c *LogCache) GetLog(idx uint64, log *Log) error {
-	if cached, ok := c.getLogFromCache(idx); ok {
+	// Check the buffer for an entry
+	c.l.RLock()
+	cached := c.cache[idx%uint64(len(c.cache))]
+	c.l.RUnlock()
+
+	// Check if entry is valid
+	if cached != nil && cached.Index == idx {
 		*log = *cached
 		return nil
 	}
+
+	// Forward request on cache miss
 	return c.store.GetLog(idx, log)
 }
 
@@ -73,7 +51,13 @@ func (c *LogCache) StoreLog(log *Log) error {
 }
 
 func (c *LogCache) StoreLogs(logs []*Log) error {
-	c.cacheLogs(logs)
+	// Insert the logs into the ring buffer
+	c.l.Lock()
+	for _, l := range logs {
+		c.cache[l.Index%uint64(len(c.cache))] = l
+	}
+	c.l.Unlock()
+
 	return c.store.StoreLogs(logs)
 }
 
@@ -86,13 +70,10 @@ func (c *LogCache) LastIndex() (uint64, error) {
 }
 
 func (c *LogCache) DeleteRange(min, max uint64) error {
-	c.l.Lock()
-	defer c.l.Unlock()
-
 	// Invalidate the cache on deletes
-	c.lastLogIdx = 0
-	c.current = 0
+	c.l.Lock()
 	c.cache = make([]*Log, len(c.cache))
+	c.l.Unlock()
 
 	return c.store.DeleteRange(min, max)
 }
