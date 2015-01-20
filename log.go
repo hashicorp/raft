@@ -1,7 +1,5 @@
 package raft
 
-import "net"
-
 // LogType describes various types of log entries.
 type LogType uint8
 
@@ -36,7 +34,7 @@ type Log struct {
 
 	// Peer is not exported since it is not transmitted, only used
 	// internally to construct the Data field.
-	peer net.Addr
+	peer string
 }
 
 // LogStore is used to provide an interface for storing

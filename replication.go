@@ -3,7 +3,6 @@ package raft
 import (
 	"errors"
 	"fmt"
-	"net"
 	"sync"
 	"time"
 
@@ -26,7 +25,7 @@ var (
 )
 
 type followerReplication struct {
-	peer     net.Addr
+	peer     string
 	inflight *inflight
 
 	stopCh    chan uint64
@@ -249,7 +248,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 		s.failures++
 		return false, err
 	}
-	metrics.MeasureSince([]string{"raft", "replication", "installSnapshot", s.peer.String()}, start)
+	metrics.MeasureSince([]string{"raft", "replication", "installSnapshot", s.peer}, start)
 
 	// Check for a newer term, stop running
 	if resp.Term > req.Term {
@@ -311,7 +310,7 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 		} else {
 			s.setLastContact()
 			failures = 0
-			metrics.MeasureSince([]string{"raft", "replication", "heartbeat", s.peer.String()}, start)
+			metrics.MeasureSince([]string{"raft", "replication", "heartbeat", s.peer}, start)
 			s.notifyAll(resp.Success)
 		}
 	}
@@ -483,9 +482,9 @@ func (r *Raft) setNewLogs(req *AppendEntriesRequest, nextIndex, lastIndex uint64
 }
 
 // appendStats is used to emit stats about an AppendEntries invocation
-func appendStats(peer net.Addr, start time.Time, logs float32) {
-	metrics.MeasureSince([]string{"raft", "replication", "appendEntries", "rpc", peer.String()}, start)
-	metrics.IncrCounter([]string{"raft", "replication", "appendEntries", "logs", peer.String()}, logs)
+func appendStats(peer string, start time.Time, logs float32) {
+	metrics.MeasureSince([]string{"raft", "replication", "appendEntries", "rpc", peer}, start)
+	metrics.IncrCounter([]string{"raft", "replication", "appendEntries", "logs", peer}, logs)
 }
 
 // handleStaleTerm is used when a follower indicates that we have a stale term

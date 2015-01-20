@@ -1,7 +1,6 @@
 package raft
 
 import (
-	"net"
 	"sync"
 	"time"
 )
@@ -81,7 +80,7 @@ func (l *logFuture) Response() interface{} {
 
 type peerFuture struct {
 	deferError
-	peers []net.Addr
+	peers []string
 }
 
 type shutdownFuture struct {
@@ -108,7 +107,7 @@ type reqSnapshotFuture struct {
 	// snapshot details provided by the FSM runner before responding
 	index    uint64
 	term     uint64
-	peers    []net.Addr
+	peers    []string
 	snapshot FSMSnapshot
 }
 
