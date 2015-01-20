@@ -3,30 +3,14 @@ package raft
 import (
 	"fmt"
 	"io"
-	"net"
 	"sync"
 	"time"
 )
 
-// InmemAddr implements the net.Addr interface.
-type InmemAddr struct {
-	ID string
-}
-
 // NewInmemAddr returns a new in-memory addr with
 // a randomly generate UUID as the ID
-func NewInmemAddr() *InmemAddr {
-	return &InmemAddr{generateUUID()}
-}
-
-// Network implements the net.Addr interface.
-func (ia *InmemAddr) Network() string {
-	return "inmem"
-}
-
-// String implements the net.Addr interface.
-func (ia *InmemAddr) String() string {
-	return ia.ID
+func NewInmemAddr() string {
+	return generateUUID()
 }
 
 // inmemPipeline is used to pipeline requests for the in-mem transport
@@ -53,7 +37,7 @@ type inmemPipelineInflight struct {
 type InmemTransport struct {
 	sync.RWMutex
 	consumerCh chan RPC
-	localAddr  *InmemAddr
+	localAddr  string
 	peers      map[string]*InmemTransport
 	pipelines  []*inmemPipeline
 	timeout    time.Duration
@@ -61,7 +45,7 @@ type InmemTransport struct {
 
 // NewInmemTransport is used to initialize a new transport
 // and generates a random local address.
-func NewInmemTransport() (*InmemAddr, *InmemTransport) {
+func NewInmemTransport() (string, *InmemTransport) {
 	addr := NewInmemAddr()
 	trans := &InmemTransport{
 		consumerCh: make(chan RPC, 16),
@@ -83,20 +67,20 @@ func (i *InmemTransport) Consumer() <-chan RPC {
 }
 
 // LocalAddr implements the Transport interface.
-func (i *InmemTransport) LocalAddr() net.Addr {
+func (i *InmemTransport) LocalAddr() string {
 	return i.localAddr
 }
 
 // AppendEntriesPipeline returns an interface that can be used to pipeline
 // AppendEntries requests.
-func (i *InmemTransport) AppendEntriesPipeline(target net.Addr) (AppendPipeline, error) {
+func (i *InmemTransport) AppendEntriesPipeline(target string) (AppendPipeline, error) {
 	i.RLock()
-	peer, ok := i.peers[target.String()]
+	peer, ok := i.peers[target]
 	i.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("failed to connect to peer: %v", target)
 	}
-	pipeline := newInmemPipeline(i, peer, target.String())
+	pipeline := newInmemPipeline(i, peer, target)
 	i.Lock()
 	i.pipelines = append(i.pipelines, pipeline)
 	i.Unlock()
@@ -104,7 +88,7 @@ func (i *InmemTransport) AppendEntriesPipeline(target net.Addr) (AppendPipeline,
 }
 
 // AppendEntries implements the Transport interface.
-func (i *InmemTransport) AppendEntries(target net.Addr, args *AppendEntriesRequest, resp *AppendEntriesResponse) error {
+func (i *InmemTransport) AppendEntries(target string, args *AppendEntriesRequest, resp *AppendEntriesResponse) error {
 	rpcResp, err := i.makeRPC(target, args, nil, i.timeout)
 	if err != nil {
 		return err
@@ -117,7 +101,7 @@ func (i *InmemTransport) AppendEntries(target net.Addr, args *AppendEntriesReque
 }
 
 // RequestVote implements the Transport interface.
-func (i *InmemTransport) RequestVote(target net.Addr, args *RequestVoteRequest, resp *RequestVoteResponse) error {
+func (i *InmemTransport) RequestVote(target string, args *RequestVoteRequest, resp *RequestVoteResponse) error {
 	rpcResp, err := i.makeRPC(target, args, nil, i.timeout)
 	if err != nil {
 		return err
@@ -130,7 +114,7 @@ func (i *InmemTransport) RequestVote(target net.Addr, args *RequestVoteRequest, 
 }
 
 // InstallSnapshot implements the Transport interface.
-func (i *InmemTransport) InstallSnapshot(target net.Addr, args *InstallSnapshotRequest, resp *InstallSnapshotResponse, data io.Reader) error {
+func (i *InmemTransport) InstallSnapshot(target string, args *InstallSnapshotRequest, resp *InstallSnapshotResponse, data io.Reader) error {
 	rpcResp, err := i.makeRPC(target, args, data, 10*i.timeout)
 	if err != nil {
 		return err
@@ -142,9 +126,9 @@ func (i *InmemTransport) InstallSnapshot(target net.Addr, args *InstallSnapshotR
 	return nil
 }
 
-func (i *InmemTransport) makeRPC(target net.Addr, args interface{}, r io.Reader, timeout time.Duration) (rpcResp RPCResponse, err error) {
+func (i *InmemTransport) makeRPC(target string, args interface{}, r io.Reader, timeout time.Duration) (rpcResp RPCResponse, err error) {
 	i.RLock()
-	peer, ok := i.peers[target.String()]
+	peer, ok := i.peers[target]
 	i.RUnlock()
 
 	if !ok {
@@ -174,34 +158,34 @@ func (i *InmemTransport) makeRPC(target net.Addr, args interface{}, r io.Reader,
 
 // EncodePeer implements the Transport interface. It uses the UUID as the
 // address directly.
-func (i *InmemTransport) EncodePeer(p net.Addr) []byte {
-	return []byte(p.String())
+func (i *InmemTransport) EncodePeer(p string) []byte {
+	return []byte(p)
 }
 
 // DecodePeer implements the Transport interface. It wraps the UUID in an
 // InmemAddr.
-func (i *InmemTransport) DecodePeer(buf []byte) net.Addr {
-	return &InmemAddr{string(buf)}
+func (i *InmemTransport) DecodePeer(buf []byte) string {
+	return string(buf)
 }
 
 // Connect is used to connect this transport to another transport for
 // a given peer name. This allows for local routing.
-func (i *InmemTransport) Connect(peer net.Addr, trans *InmemTransport) {
+func (i *InmemTransport) Connect(peer string, trans *InmemTransport) {
 	i.Lock()
 	defer i.Unlock()
-	i.peers[peer.String()] = trans
+	i.peers[peer] = trans
 }
 
 // Disconnect is used to remove the ability to route to a given peer.
-func (i *InmemTransport) Disconnect(peer net.Addr) {
+func (i *InmemTransport) Disconnect(peer string) {
 	i.Lock()
 	defer i.Unlock()
-	delete(i.peers, peer.String())
+	delete(i.peers, peer)
 
 	// Disconnect any pipelines
 	n := len(i.pipelines)
 	for idx := 0; idx < n; idx++ {
-		if i.pipelines[idx].peerAddr == peer.String() {
+		if i.pipelines[idx].peerAddr == peer {
 			i.pipelines[idx].Close()
 			i.pipelines[idx], i.pipelines[n-1] = i.pipelines[n-1], nil
 			idx--

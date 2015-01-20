@@ -6,7 +6,6 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-	"net"
 	"os"
 	"reflect"
 	"sync"
@@ -156,7 +155,7 @@ func (c *cluster) FullyConnect() {
 	}
 }
 
-func (c *cluster) Disconnect(a net.Addr) {
+func (c *cluster) Disconnect(a string) {
 	log.Printf("[WARN] Disconnecting %v", a)
 	for _, t := range c.trans {
 		if t.localAddr == a {
@@ -167,13 +166,13 @@ func (c *cluster) Disconnect(a net.Addr) {
 	}
 }
 
-func (c *cluster) EnsureLeader(t *testing.T, expect net.Addr) {
+func (c *cluster) EnsureLeader(t *testing.T, expect string) {
 	limit := time.Now().Add(400 * time.Millisecond)
 CHECK:
 	for _, r := range c.rafts {
 		leader := r.Leader()
-		if expect == nil {
-			if leader != nil {
+		if expect == "" {
+			if leader != "" {
 				if time.Now().After(limit) {
 					t.Fatalf("leader %v expected nil", leader)
 				} else {
@@ -181,7 +180,7 @@ CHECK:
 				}
 			}
 		} else {
-			if leader == nil || leader.String() != expect.String() {
+			if leader == "" || leader != expect {
 				if time.Now().After(limit) {
 					t.Fatalf("leader %v expected %v", leader, expect)
 				} else {
@@ -243,11 +242,11 @@ WAIT:
 
 func raftToPeerSet(r *Raft) map[string]struct{} {
 	peers := make(map[string]struct{})
-	peers[r.localAddr.String()] = struct{}{}
+	peers[r.localAddr] = struct{}{}
 
 	raftPeers, _ := r.peerStore.Peers()
 	for _, p := range raftPeers {
-		peers[p.String()] = struct{}{}
+		peers[p] = struct{}{}
 	}
 	return peers
 }
@@ -280,7 +279,7 @@ WAIT:
 
 func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 	c := &cluster{}
-	peers := make([]net.Addr, 0, n)
+	peers := make([]string, 0, n)
 
 	// Setup the stores and transports
 	for i := 0; i < n; i++ {
@@ -1058,7 +1057,7 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	}
 
 	// Change the peer addresses
-	peers := []net.Addr{leader.trans.LocalAddr()}
+	peers := []string{leader.trans.LocalAddr()}
 	for _, sec := range c2.rafts {
 		peers = append(peers, sec.trans.LocalAddr())
 	}
@@ -1415,7 +1414,7 @@ func TestRaft_SettingPeers(t *testing.T) {
 	c := MakeClusterNoPeers(3, t, nil)
 	defer c.Close()
 
-	peers := make([]net.Addr, 0)
+	peers := make([]string, 0)
 	for _, v := range c.rafts {
 		peers = append(peers, v.localAddr)
 	}

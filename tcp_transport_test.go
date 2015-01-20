@@ -18,7 +18,7 @@ func TestTCPTransport_WithAdvertise(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if trans.LocalAddr() != addr {
+	if trans.LocalAddr() != "127.0.0.1:12345" {
 		t.Fatalf("bad: %v", trans.LocalAddr())
 	}
 }

@@ -41,7 +41,7 @@ var (
 NetworkTransport provides a network based transport that can be
 used to communicate with Raft on remote machines. It requires
 an underlying stream layer to provide a stream abstraction, which can
-be simple TCP, TLS, etc. Underlying addresses must be castable to TCPAddr
+be simple TCP, TLS, etc.
 
 This transport is very simple and lightweight. Each RPC request is
 framed by sending a byte that indicates the message type, followed
@@ -88,7 +88,7 @@ type StreamLayer interface {
 }
 
 type netConn struct {
-	target net.Addr
+	target string
 	conn   net.Conn
 	r      *bufio.Reader
 	w      *bufio.Writer
@@ -167,8 +167,8 @@ func (n *NetworkTransport) Consumer() <-chan RPC {
 }
 
 // LocalAddr implements the Transport interface.
-func (n *NetworkTransport) LocalAddr() net.Addr {
-	return n.stream.Addr()
+func (n *NetworkTransport) LocalAddr() string {
+	return n.stream.Addr().String()
 }
 
 // IsShutdown is used to check if the transport is shutdown
@@ -182,12 +182,11 @@ func (n *NetworkTransport) IsShutdown() bool {
 }
 
 // getExistingConn is used to grab a pooled connection
-func (n *NetworkTransport) getPooledConn(target net.Addr) *netConn {
+func (n *NetworkTransport) getPooledConn(target string) *netConn {
 	n.connPoolLock.Lock()
 	defer n.connPoolLock.Unlock()
 
-	key := target.String()
-	conns, ok := n.connPool[key]
+	conns, ok := n.connPool[target]
 	if !ok || len(conns) == 0 {
 		return nil
 	}
@@ -195,19 +194,19 @@ func (n *NetworkTransport) getPooledConn(target net.Addr) *netConn {
 	var conn *netConn
 	num := len(conns)
 	conn, conns[num-1] = conns[num-1], nil
-	n.connPool[key] = conns[:num-1]
+	n.connPool[target] = conns[:num-1]
 	return conn
 }
 
 // getConn is used to get a connection from the pool
-func (n *NetworkTransport) getConn(target net.Addr) (*netConn, error) {
+func (n *NetworkTransport) getConn(target string) (*netConn, error) {
 	// Check for a pooled conn
 	if conn := n.getPooledConn(target); conn != nil {
 		return conn, nil
 	}
 
 	// Dial a new connection
-	conn, err := n.stream.Dial(target.String(), n.timeout)
+	conn, err := n.stream.Dial(target, n.timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +232,7 @@ func (n *NetworkTransport) returnConn(conn *netConn) {
 	n.connPoolLock.Lock()
 	defer n.connPoolLock.Unlock()
 
-	key := conn.target.String()
+	key := conn.target
 	conns, _ := n.connPool[key]
 
 	if !n.IsShutdown() && len(conns) < n.maxPool {
@@ -245,7 +244,7 @@ func (n *NetworkTransport) returnConn(conn *netConn) {
 
 // AppendEntriesPipeline returns an interface that can be used to pipeline
 // AppendEntries requests.
-func (n *NetworkTransport) AppendEntriesPipeline(target net.Addr) (AppendPipeline, error) {
+func (n *NetworkTransport) AppendEntriesPipeline(target string) (AppendPipeline, error) {
 	// Get a connection
 	conn, err := n.getConn(target)
 	if err != nil {
@@ -257,17 +256,17 @@ func (n *NetworkTransport) AppendEntriesPipeline(target net.Addr) (AppendPipelin
 }
 
 // AppendEntries implements the Transport interface.
-func (n *NetworkTransport) AppendEntries(target net.Addr, args *AppendEntriesRequest, resp *AppendEntriesResponse) error {
+func (n *NetworkTransport) AppendEntries(target string, args *AppendEntriesRequest, resp *AppendEntriesResponse) error {
 	return n.genericRPC(target, rpcAppendEntries, args, resp)
 }
 
 // RequestVote implements the Transport interface.
-func (n *NetworkTransport) RequestVote(target net.Addr, args *RequestVoteRequest, resp *RequestVoteResponse) error {
+func (n *NetworkTransport) RequestVote(target string, args *RequestVoteRequest, resp *RequestVoteResponse) error {
 	return n.genericRPC(target, rpcRequestVote, args, resp)
 }
 
 // genericRPC handles a simple request/response RPC
-func (n *NetworkTransport) genericRPC(target net.Addr, rpcType uint8, args interface{}, resp interface{}) error {
+func (n *NetworkTransport) genericRPC(target string, rpcType uint8, args interface{}, resp interface{}) error {
 	// Get a conn
 	conn, err := n.getConn(target)
 	if err != nil {
@@ -293,7 +292,7 @@ func (n *NetworkTransport) genericRPC(target net.Addr, rpcType uint8, args inter
 }
 
 // InstallSnapshot implements the Transport interface.
-func (n *NetworkTransport) InstallSnapshot(target net.Addr, args *InstallSnapshotRequest, resp *InstallSnapshotResponse, data io.Reader) error {
+func (n *NetworkTransport) InstallSnapshot(target string, args *InstallSnapshotRequest, resp *InstallSnapshotResponse, data io.Reader) error {
 	// Get a conn, always close for InstallSnapshot
 	conn, err := n.getConn(target)
 	if err != nil {
@@ -331,17 +330,13 @@ func (n *NetworkTransport) InstallSnapshot(target net.Addr, args *InstallSnapsho
 }
 
 // EncodePeer implements the Transport interface.
-func (n *NetworkTransport) EncodePeer(p net.Addr) []byte {
-	return []byte(p.String())
+func (n *NetworkTransport) EncodePeer(p string) []byte {
+	return []byte(p)
 }
 
 // DecodePeer implements the Transport interface.
-func (n *NetworkTransport) DecodePeer(buf []byte) net.Addr {
-	addr, err := net.ResolveTCPAddr("tcp", string(buf))
-	if err != nil {
-		panic(fmt.Errorf("failed to parse network address: %s", buf))
-	}
-	return addr
+func (n *NetworkTransport) DecodePeer(buf []byte) string {
+	return string(buf)
 }
 
 // listen is used to handling incoming connections

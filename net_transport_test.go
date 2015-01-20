@@ -356,7 +356,7 @@ func TestNetworkTransport_EncodeDecode(t *testing.T) {
 	enc := trans1.EncodePeer(local)
 	dec := trans1.DecodePeer(enc)
 
-	if dec.String() != local.String() {
+	if dec != local {
 		t.Fatalf("enc/dec fail: %v %v", dec, local)
 	}
 }
@@ -443,7 +443,7 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 
 	// Check the conn pool size
 	addr := trans1.LocalAddr()
-	if len(trans2.connPool[addr.String()]) != 3 {
+	if len(trans2.connPool[addr]) != 3 {
 		t.Fatalf("Expected 2 pooled conns!")
 	}
 }

@@ -2,7 +2,6 @@ package raft
 
 import (
 	"io"
-	"net"
 	"time"
 )
 
@@ -32,27 +31,27 @@ type Transport interface {
 	Consumer() <-chan RPC
 
 	// LocalAddr is used to return our local address to distinguish from our peers
-	LocalAddr() net.Addr
+	LocalAddr() string
 
 	// AppendEntriesPipeline returns an interface that can be used to pipeline
 	// AppendEntries requests.
-	AppendEntriesPipeline(target net.Addr) (AppendPipeline, error)
+	AppendEntriesPipeline(target string) (AppendPipeline, error)
 
 	// AppendEntries sends the appropriate RPC to the target node
-	AppendEntries(target net.Addr, args *AppendEntriesRequest, resp *AppendEntriesResponse) error
+	AppendEntries(target string, args *AppendEntriesRequest, resp *AppendEntriesResponse) error
 
 	// RequestVote sends the appropriate RPC to the target node
-	RequestVote(target net.Addr, args *RequestVoteRequest, resp *RequestVoteResponse) error
+	RequestVote(target string, args *RequestVoteRequest, resp *RequestVoteResponse) error
 
 	// InstallSnapshot is used to push a snapshot down to a follower. The data is read from
 	// the ReadCloser and streamed to the client.
-	InstallSnapshot(target net.Addr, args *InstallSnapshotRequest, resp *InstallSnapshotResponse, data io.Reader) error
+	InstallSnapshot(target string, args *InstallSnapshotRequest, resp *InstallSnapshotResponse, data io.Reader) error
 
 	// EncodePeer is used to serialize a peer name
-	EncodePeer(net.Addr) []byte
+	EncodePeer(string) []byte
 
 	// DecodePeer is used to deserialize a peer name
-	DecodePeer([]byte) net.Addr
+	DecodePeer([]byte) string
 
 	// SetHeartbeatHandler is used to setup a heartbeat handler
 	// as a fast-pass. This is to avoid head-of-line blocking from

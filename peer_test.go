@@ -2,7 +2,6 @@ package raft
 
 import (
 	"io/ioutil"
-	"net"
 	"os"
 	"testing"
 )
@@ -29,7 +28,7 @@ func TestJSONPeers(t *testing.T) {
 	}
 
 	// Initialize some peers
-	newPeers := []net.Addr{NewInmemAddr(), NewInmemAddr(), NewInmemAddr()}
+	newPeers := []string{NewInmemAddr(), NewInmemAddr(), NewInmemAddr()}
 	if err := store.SetPeers(newPeers); err != nil {
 		t.Fatalf("err: %v", err)
 	}
