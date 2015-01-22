@@ -158,8 +158,14 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	}
 
 	// Ensure we have a LogOutput
-	if conf.LogOutput == nil {
-		conf.LogOutput = os.Stderr
+	var logger *log.Logger
+	if conf.Logger != nil {
+		logger = conf.Logger
+	} else {
+		if conf.LogOutput == nil {
+			conf.LogOutput = os.Stderr
+		}
+		logger = log.New(conf.LogOutput, "", log.LstdFlags)
 	}
 
 	// Try to restore the current term
@@ -200,7 +206,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		fsmSnapshotCh: make(chan *reqSnapshotFuture),
 		leaderCh:      make(chan bool),
 		localAddr:     localAddr,
-		logger:        log.New(conf.LogOutput, "", log.LstdFlags),
+		logger:        logger,
 		logs:          logs,
 		peerCh:        make(chan *peerFuture),
 		peers:         peers,
