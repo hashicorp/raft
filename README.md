@@ -24,7 +24,7 @@ go version
 
 For complete documentation, see the associated [Godoc](http://godoc.org/github.com/hashicorp/raft).
 
-To prevent complications with cgo, the primary backend `MDBStore` is in a seperate repositoy,
+To prevent complications with cgo, the primary backend `MDBStore` is in a separate repositoy,
 called [raft-mdb](http://github.com/hashicorp/raft-mdb). That is the recommended implementation
 for the `LogStore` and `StableStore`.
 
@@ -79,7 +79,7 @@ of 5 can tolerate 2 node failures. The recommended configuration is to either
 run 3 or 5 raft servers. This maximizes availability without
 greatly sacrificing performance.
 
-In terms of performance, Raft is comprable to Paxos. Assuming stable leadership,
+In terms of performance, Raft is comparable to Paxos. Assuming stable leadership,
 a committing a log entry requires a single round trip to half of the cluster.
 Thus performance is bound by disk I/O and network latency.
 
