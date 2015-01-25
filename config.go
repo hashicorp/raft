@@ -3,6 +3,7 @@ package raft
 import (
 	"fmt"
 	"io"
+	"log"
 	"time"
 )
 
@@ -65,8 +66,13 @@ type Config struct {
 	// step down as leader.
 	LeaderLeaseTimeout time.Duration
 
-	// LogOutput is used as a sink for logs. Defaults to os.Stderr.
+	// LogOutput is used as a sink for logs, unless Logger is specified.
+	// Defaults to os.Stderr.
 	LogOutput io.Writer
+
+	// Logger is a user-provided logger. If nil, a logger writing to LogOutput
+	// is used.
+	Logger *log.Logger
 }
 
 // DefaultConfig returns a Config with usable defaults.
