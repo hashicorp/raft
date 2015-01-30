@@ -19,6 +19,7 @@ func FirstIndex(b *testing.B, store raft.LogStore) {
 	if err := store.StoreLogs(logs); err != nil {
 		b.Fatalf("err: %s", err)
 	}
+	b.ResetTimer()
 
 	// Run FirstIndex a number of times
 	for n := 0; n < b.N; n++ {
@@ -35,6 +36,7 @@ func LastIndex(b *testing.B, store raft.LogStore) {
 	if err := store.StoreLogs(logs); err != nil {
 		b.Fatalf("err: %s", err)
 	}
+	b.ResetTimer()
 
 	// Run LastIndex a number of times
 	for n := 0; n < b.N; n++ {
@@ -51,6 +53,7 @@ func GetLog(b *testing.B, store raft.LogStore) {
 	if err := store.StoreLogs(logs); err != nil {
 		b.Fatalf("err: %s", err)
 	}
+	b.ResetTimer()
 
 	// Run GetLog a number of times
 	for n := 0; n < b.N; n++ {
@@ -71,7 +74,7 @@ func StoreLog(b *testing.B, store raft.LogStore) {
 }
 
 func StoreLogs(b *testing.B, store raft.LogStore) {
-	// Run StoreLog a number of times
+	// Run StoreLogs a number of times
 	for n := 0; n < b.N; n++ {
 		logs := []*raft.Log{
 			&raft.Log{Index: uint64((n * 3) - 2), Data: []byte("data")},
@@ -95,10 +98,11 @@ func DeleteRange(b *testing.B, store raft.LogStore) {
 	if err := store.StoreLogs(logs); err != nil {
 		b.Fatalf("err: %s", err)
 	}
+	b.ResetTimer()
 
 	// Delete a range of the data
-	for n := 0; n < b.N; n++ {
-		if err := store.DeleteRange(uint64(1*n), uint64(3*n)); err != nil {
+	for n := 1; n <= b.N; n++ {
+		if err := store.DeleteRange(uint64(n), uint64(3*n)); err != nil {
 			b.Fatalf("err: %s", err)
 		}
 	}
@@ -120,8 +124,35 @@ func Get(b *testing.B, store raft.StableStore) {
 			b.Fatalf("err: %s", err)
 		}
 	}
+	b.ResetTimer()
 
 	// Run Get a number of times
+	for n := 0; n < b.N; n++ {
+		if _, err := store.Get([]byte{0x05}); err != nil {
+			b.Fatalf("err: %s", err)
+		}
+	}
+}
+
+func SetUint64(b *testing.B, store raft.StableStore) {
+	// Run SetUint64 a number of times
+	for n := 0; n < b.N; n++ {
+		if err := store.SetUint64([]byte{byte(n)}, uint64(n)); err != nil {
+			b.Fatalf("err: %s", err)
+		}
+	}
+}
+
+func GetUint64(b *testing.B, store raft.StableStore) {
+	// Create some fake data
+	for i := 0; i < 10; i++ {
+		if err := store.SetUint64([]byte{byte(i)}, uint64(i)); err != nil {
+			b.Fatalf("err: %s", err)
+		}
+	}
+	b.ResetTimer()
+
+	// Run GetUint64 a number of times
 	for n := 0; n < b.N; n++ {
 		if _, err := store.Get([]byte{0x05}); err != nil {
 			b.Fatalf("err: %s", err)
