@@ -74,13 +74,18 @@ func StoreLog(b *testing.B, store raft.LogStore) {
 }
 
 func StoreLogs(b *testing.B, store raft.LogStore) {
-	// Run StoreLogs a number of times
+	// Run StoreLogs a number of times. We want to set multiple logs each
+	// run, so we create 3 logs with incrementing indexes for each iteration.
 	for n := 0; n < b.N; n++ {
+		b.StopTimer()
+		offset := 3 * (n + 1)
 		logs := []*raft.Log{
-			&raft.Log{Index: uint64((n * 3) - 2), Data: []byte("data")},
-			&raft.Log{Index: uint64((n * 3) - 1), Data: []byte("data")},
-			&raft.Log{Index: uint64(n * 3), Data: []byte("data")},
+			&raft.Log{Index: uint64(offset - 2), Data: []byte("data")},
+			&raft.Log{Index: uint64(offset - 1), Data: []byte("data")},
+			&raft.Log{Index: uint64(offset), Data: []byte("data")},
 		}
+		b.StartTimer()
+
 		if err := store.StoreLogs(logs); err != nil {
 			b.Fatalf("err: %s", err)
 		}
@@ -88,10 +93,14 @@ func StoreLogs(b *testing.B, store raft.LogStore) {
 }
 
 func DeleteRange(b *testing.B, store raft.LogStore) {
-	// Create some fake data
+	// Create some fake data. In this case, we create 3 new log entries for each
+	// test case, and separate them by index in multiples of 10. This allows
+	// some room so that we can test deleting ranges with "extra" logs to
+	// to ensure we stop going to the database once our max index is hit.
 	var logs []*raft.Log
-	for n := 1; n < b.N; n++ {
-		for i := 0; i < 3*n; i++ {
+	for n := 0; n < b.N; n++ {
+		offset := 10 * n
+		for i := offset; i < offset+3; i++ {
 			logs = append(logs, &raft.Log{Index: uint64(i), Data: []byte("data")})
 		}
 	}
@@ -101,8 +110,9 @@ func DeleteRange(b *testing.B, store raft.LogStore) {
 	b.ResetTimer()
 
 	// Delete a range of the data
-	for n := 1; n <= b.N; n++ {
-		if err := store.DeleteRange(uint64(n), uint64(3*n)); err != nil {
+	for n := 0; n < b.N; n++ {
+		offset := 10 * n
+		if err := store.DeleteRange(uint64(offset), uint64(offset+9)); err != nil {
 			b.Fatalf("err: %s", err)
 		}
 	}
