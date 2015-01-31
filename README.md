@@ -28,6 +28,10 @@ To prevent complications with cgo, the primary backend `MDBStore` is in a separa
 called [raft-mdb](http://github.com/hashicorp/raft-mdb). That is the recommended implementation
 for the `LogStore` and `StableStore`.
 
+A pure Go backend using [BoltDB](https://github.com/boltdb/bolt) is also available called
+[raft-boltdb](https://github.com/hashicorp/raft-boltdb). It can also be used as a `LogStore`
+and `StableStore`.
+
 ## Protocol
 
 raft is based on ["Raft: In Search of an Understandable Consensus Algorithm"](https://ramcloud.stanford.edu/wiki/download/attachments/11370504/raft.pdf)
