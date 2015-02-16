@@ -1279,6 +1279,14 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	if last != follower.LastContact() {
 		t.Fatalf("unexpected further contact")
 	}
+
+	// Ensure both have cleared their leader
+	if l := leader.Leader(); l != nil {
+		t.Fatalf("bad: %v", l)
+	}
+	if l := follower.Leader(); l != nil {
+		t.Fatalf("bad: %v", l)
+	}
 }
 
 func TestRaft_Barrier(t *testing.T) {
@@ -1373,6 +1381,11 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	// Wait for the leader to step down
 	if err := verify.Error(); err != ErrNotLeader && err != ErrLeadershipLost {
 		t.Fatalf("err: %v", err)
+	}
+
+	// Ensure the known leader is cleared
+	if l := leader.Leader(); l != nil {
+		t.Fatalf("bad: %v", l)
 	}
 }
 

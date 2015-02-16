@@ -667,8 +667,8 @@ func (r *Raft) runCandidate() {
 			// Check if we've become the leader
 			if grantedVotes >= votesNeeded {
 				r.logger.Printf("[INFO] raft: Election won. Tally: %d", grantedVotes)
-				r.setLeader(r.localAddr)
 				r.setState(Leader)
+				r.setLeader(r.localAddr)
 				return
 			}
 
@@ -1565,6 +1565,14 @@ func (r *Raft) setCurrentTerm(t uint64) {
 		panic(fmt.Errorf("failed to save current term: %v", err))
 	}
 	r.raftState.setCurrentTerm(t)
+}
+
+// setState is used to update the current state. Any state
+// transition causes the known leader to be cleared. This means
+// that leader should be set only after updating the state.
+func (r *Raft) setState(state RaftState) {
+	r.setLeader(nil)
+	r.raftState.setState(state)
 }
 
 // runSnapshots is a long running goroutine used to manage taking
