@@ -1187,6 +1187,8 @@ func (r *Raft) processRPC(rpc RPC) {
 // processHeartbeat is a special handler used just for heartbeat requests
 // so that they can be fast-pathed if a transport supports it
 func (r *Raft) processHeartbeat(rpc RPC) {
+	defer metrics.MeasureSince([]string{"raft", "rpc", "processHeartbeat"}, time.Now())
+
 	// Check if we are shutdown, just ignore the RPC
 	select {
 	case <-r.shutdownCh:
