@@ -1260,6 +1260,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 
 	// Process any new entries
 	if n := len(a.Entries); n > 0 {
+		start := time.Now()
 		first := a.Entries[0]
 		last := a.Entries[n-1]
 
@@ -1282,13 +1283,16 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		// Update the lastLog
 		r.setLastLogIndex(last.Index)
 		r.setLastLogTerm(last.Term)
+		metrics.MeasureSince([]string{"raft", "rpc", "appendEntries", "storeLogs"}, start)
 	}
 
 	// Update the commit index
 	if a.LeaderCommitIndex > 0 && a.LeaderCommitIndex > r.getCommitIndex() {
+		start := time.Now()
 		idx := min(a.LeaderCommitIndex, r.getLastIndex())
 		r.setCommitIndex(idx)
 		r.processLogs(idx, nil)
+		metrics.MeasureSince([]string{"raft", "rpc", "appendEntries", "processLogs"}, start)
 	}
 
 	// Everything went well, set success
