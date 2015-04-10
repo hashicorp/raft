@@ -50,6 +50,10 @@ var (
 	// ErrUnknownPeer is returned when trying to remove a peer from the
 	// configuration that doesn't exist.
 	ErrUnknownPeer = errors.New("peer is unknown")
+
+	// ErrNotFound is returned when an unknown key is requested from
+	// the StableStore.
+	ErrNotFound = errors.New("not found")
 )
 
 // commitTupel is used to send an index that was committed,
@@ -170,7 +174,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 
 	// Try to restore the current term
 	currentTerm, err := stable.GetUint64(keyCurrentTerm)
-	if err != nil && err.Error() != "not found" {
+	if err != nil && err != ErrNotFound {
 		return nil, fmt.Errorf("failed to load current term: %v", err)
 	}
 
@@ -1333,12 +1337,12 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 
 	// Check if we have voted yet
 	lastVoteTerm, err := r.stable.GetUint64(keyLastVoteTerm)
-	if err != nil && err.Error() != "not found" {
+	if err != nil && err != ErrNotFound {
 		r.logger.Printf("[ERR] raft: Failed to get last vote term: %v", err)
 		return
 	}
 	lastVoteCandBytes, err := r.stable.Get(keyLastVoteCand)
-	if err != nil && err.Error() != "not found" {
+	if err != nil && err != ErrNotFound {
 		r.logger.Printf("[ERR] raft: Failed to get last vote candidate: %v", err)
 		return
 	}
