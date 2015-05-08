@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"os"
 	"strconv"
 	"sync"
@@ -97,7 +96,7 @@ type Raft struct {
 	lastContactLock sync.RWMutex
 
 	// Leader is the current cluster leader
-	leader     net.Addr
+	leader     string
 	leaderLock sync.RWMutex
 
 	// leaderCh is used to notify of leadership changes
@@ -107,7 +106,7 @@ type Raft struct {
 	leaderState leaderState
 
 	// Stores our local addr
-	localAddr net.Addr
+	localAddr string
 
 	// Used for our logging
 	logger *log.Logger
@@ -117,7 +116,7 @@ type Raft struct {
 
 	// Track our known peers
 	peerCh    chan *peerFuture
-	peers     []net.Addr
+	peers     []string
 	peerStore PeerStore
 
 	// RPC chan comes from the transport layer
@@ -248,7 +247,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 // Leader is used to return the current leader of the cluster,
 // it may return nil if there is no current leader or the leader
 // is unknown
-func (r *Raft) Leader() net.Addr {
+func (r *Raft) Leader() string {
 	r.leaderLock.RLock()
 	leader := r.leader
 	r.leaderLock.RUnlock()
@@ -256,7 +255,7 @@ func (r *Raft) Leader() net.Addr {
 }
 
 // setLeader is used to modify the current leader of the cluster
-func (r *Raft) setLeader(leader net.Addr) {
+func (r *Raft) setLeader(leader string) {
 	r.leaderLock.Lock()
 	r.leader = leader
 	r.leaderLock.Unlock()
@@ -340,7 +339,7 @@ func (r *Raft) VerifyLeader() Future {
 
 // AddPeer is used to add a new peer into the cluster. This must be
 // run on the leader or it will fail.
-func (r *Raft) AddPeer(peer net.Addr) Future {
+func (r *Raft) AddPeer(peer string) Future {
 	logFuture := &logFuture{
 		log: Log{
 			Type: LogAddPeer,
@@ -359,7 +358,7 @@ func (r *Raft) AddPeer(peer net.Addr) Future {
 // RemovePeer is used to remove a peer from the cluster. If the
 // current leader is being removed, it will cause a new election
 // to occur. This must be run on the leader or it will fail.
-func (r *Raft) RemovePeer(peer net.Addr) Future {
+func (r *Raft) RemovePeer(peer string) Future {
 	logFuture := &logFuture{
 		log: Log{
 			Type: LogRemovePeer,
@@ -377,7 +376,7 @@ func (r *Raft) RemovePeer(peer net.Addr) Future {
 
 // SetPeers is used to forcebly replace the set of internal peers and
 // the peerstore with the ones specified. This can be considered unsafe.
-func (r *Raft) SetPeers(p []net.Addr) Future {
+func (r *Raft) SetPeers(p []string) Future {
 	peerFuture := &peerFuture{
 		peers: p,
 	}
@@ -435,7 +434,7 @@ func (r *Raft) LeaderCh() <-chan bool {
 }
 
 func (r *Raft) String() string {
-	return fmt.Sprintf("Node at %s [%v]", r.localAddr.String(), r.getState())
+	return fmt.Sprintf("Node at %s [%v]", r.localAddr, r.getState())
 }
 
 // LastContact returns the time of last contact by a leader.
@@ -562,7 +561,7 @@ func (r *Raft) run() {
 		select {
 		case <-r.shutdownCh:
 			// Clear the leader to prevent forwarding
-			r.setLeader(nil)
+			r.setLeader("")
 			return
 		default:
 		}
@@ -613,7 +612,7 @@ func (r *Raft) runFollower() {
 			}
 
 			// Heartbeat failed! Transition to the candidate state
-			r.setLeader(nil)
+			r.setLeader("")
 			if len(r.peers) == 0 && !r.conf.EnableSingleNode {
 				if !didWarn {
 					r.logger.Printf("[WARN] raft: EnableSingleNode disabled, and no known peers. Aborting election.")
@@ -742,7 +741,7 @@ func (r *Raft) runLeader() {
 		// provide the leader, so we cannot always nil this out.
 		r.leaderLock.Lock()
 		if r.leader == r.localAddr {
-			r.leader = nil
+			r.leader = ""
 		}
 		r.leaderLock.Unlock()
 
@@ -759,7 +758,7 @@ func (r *Raft) runLeader() {
 	// we use a LogAddPeer with our peerset. This acts like
 	// a no-op as well, but when doing an initial bootstrap, ensures
 	// that all nodes share a common peerset.
-	peerSet := append([]net.Addr{r.localAddr}, r.peers...)
+	peerSet := append([]string{r.localAddr}, r.peers...)
 	noop := &logFuture{
 		log: Log{
 			Type: LogAddPeer,
@@ -781,7 +780,7 @@ func (r *Raft) runLeader() {
 }
 
 // startReplication is a helper to setup state and start async replication to a peer
-func (r *Raft) startReplication(peer net.Addr) {
+func (r *Raft) startReplication(peer string) {
 	lastIdx := r.getLastIndex()
 	s := &followerReplication{
 		peer:        peer,
@@ -795,7 +794,7 @@ func (r *Raft) startReplication(peer net.Addr) {
 		notifyCh:    make(chan struct{}, 1),
 		stepDown:    r.leaderState.stepDown,
 	}
-	r.leaderState.replState[peer.String()] = s
+	r.leaderState.replState[peer] = s
 	r.goFunc(func() { r.replicate(s) })
 	asyncNotifyCh(s.triggerCh)
 }
@@ -983,7 +982,7 @@ func (r *Raft) quorumSize() int {
 func (r *Raft) preparePeerChange(l *logFuture) bool {
 	// Check if this is a known peer
 	p := l.log.peer
-	knownPeer := PeerContained(r.peers, p) || r.localAddr.String() == p.String()
+	knownPeer := PeerContained(r.peers, p) || r.localAddr == p
 
 	// Ignore known peers on add
 	if l.log.Type == LogAddPeer && knownPeer {
@@ -998,11 +997,11 @@ func (r *Raft) preparePeerChange(l *logFuture) bool {
 	}
 
 	// Construct the peer set
-	var peerSet []net.Addr
+	var peerSet []string
 	if l.log.Type == LogAddPeer {
-		peerSet = append([]net.Addr{p, r.localAddr}, r.peers...)
+		peerSet = append([]string{p, r.localAddr}, r.peers...)
 	} else {
-		peerSet = ExcludePeer(append([]net.Addr{r.localAddr}, r.peers...), p)
+		peerSet = ExcludePeer(append([]string{r.localAddr}, r.peers...), p)
 	}
 
 	// Setup the log
@@ -1112,7 +1111,7 @@ func (r *Raft) processLog(l *Log, future *logFuture, precommit bool) {
 		removeSelf := !PeerContained(peers, r.localAddr) && l.Type == LogRemovePeer
 		if removeSelf {
 			r.peers = nil
-			r.peerStore.SetPeers([]net.Addr{r.localAddr})
+			r.peerStore.SetPeers([]string{r.localAddr})
 		} else {
 			r.peers = ExcludePeer(peers, r.localAddr)
 			r.peerStore.SetPeers(peers)
@@ -1121,7 +1120,7 @@ func (r *Raft) processLog(l *Log, future *logFuture, precommit bool) {
 		// Handle replication if we are the leader
 		if r.getState() == Leader {
 			for _, p := range r.peers {
-				if _, ok := r.leaderState.replState[p.String()]; !ok {
+				if _, ok := r.leaderState.replState[p]; !ok {
 					r.logger.Printf("[INFO] raft: Added peer %v, starting replication", p)
 					r.startReplication(p)
 				}
@@ -1138,7 +1137,7 @@ func (r *Raft) processLog(l *Log, future *logFuture, precommit bool) {
 					// Replicate up to this index and stop
 					repl.stopCh <- l.Index
 					close(repl.stopCh)
-					toDelete = append(toDelete, repl.peer.String())
+					toDelete = append(toDelete, repl.peer)
 				}
 			}
 			for _, name := range toDelete {
@@ -1318,7 +1317,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	defer rpc.Respond(resp, rpcErr)
 
 	// Check if we have an existing leader
-	if leader := r.Leader(); leader != nil {
+	if leader := r.Leader(); leader != "" {
 		r.logger.Printf("[WARN] raft: Rejecting vote from %v since we have a leader: %v",
 			r.trans.DecodePeer(req.Candidate), leader)
 		return
@@ -1508,7 +1507,7 @@ func (r *Raft) electSelf() <-chan *RequestVoteResponse {
 	}
 
 	// Construct a function to ask for a vote
-	askPeer := func(peer net.Addr) {
+	askPeer := func(peer string) {
 		r.goFunc(func() {
 			defer metrics.MeasureSince([]string{"raft", "candidate", "electSelf"}, time.Now())
 			resp := new(RequestVoteResponse)
@@ -1577,7 +1576,7 @@ func (r *Raft) setCurrentTerm(t uint64) {
 // transition causes the known leader to be cleared. This means
 // that leader should be set only after updating the state.
 func (r *Raft) setState(state RaftState) {
-	r.setLeader(nil)
+	r.setLeader("")
 	r.raftState.setState(state)
 }
 

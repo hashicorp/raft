@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/rand"
-	"net"
 	"time"
 
 	"github.com/hashicorp/go-msgpack/codec"
@@ -79,10 +78,10 @@ func asyncNotifyBool(ch chan bool, v bool) {
 }
 
 // ExcludePeer is used to exclude a single peer from a list of peers
-func ExcludePeer(peers []net.Addr, peer net.Addr) []net.Addr {
-	otherPeers := make([]net.Addr, 0, len(peers))
+func ExcludePeer(peers []string, peer string) []string {
+	otherPeers := make([]string, 0, len(peers))
 	for _, p := range peers {
-		if p.String() != peer.String() {
+		if p != peer {
 			otherPeers = append(otherPeers, p)
 		}
 	}
@@ -90,9 +89,9 @@ func ExcludePeer(peers []net.Addr, peer net.Addr) []net.Addr {
 }
 
 // PeerContained checks if a given peer is contained in a list
-func PeerContained(peers []net.Addr, peer net.Addr) bool {
+func PeerContained(peers []string, peer string) bool {
 	for _, p := range peers {
-		if p.String() == peer.String() {
+		if p == peer {
 			return true
 		}
 	}
@@ -101,7 +100,7 @@ func PeerContained(peers []net.Addr, peer net.Addr) bool {
 
 // AddUniquePeer is used to add a peer to a list of existing
 // peers only if it is not already contained
-func AddUniquePeer(peers []net.Addr, peer net.Addr) []net.Addr {
+func AddUniquePeer(peers []string, peer string) []string {
 	if PeerContained(peers, peer) {
 		return peers
 	}
@@ -109,7 +108,7 @@ func AddUniquePeer(peers []net.Addr, peer net.Addr) []net.Addr {
 }
 
 // encodePeers is used to serialize a list of peers
-func encodePeers(peers []net.Addr, trans Transport) []byte {
+func encodePeers(peers []string, trans Transport) []byte {
 	// Encode each peer
 	var encPeers [][]byte
 	for _, p := range peers {
@@ -126,7 +125,7 @@ func encodePeers(peers []net.Addr, trans Transport) []byte {
 }
 
 // decodePeers is used to deserialie a list of peers
-func decodePeers(buf []byte, trans Transport) []net.Addr {
+func decodePeers(buf []byte, trans Transport) []string {
 	// Decode the buffer first
 	var encPeers [][]byte
 	if err := decodeMsgPack(buf, &encPeers); err != nil {
@@ -134,7 +133,7 @@ func decodePeers(buf []byte, trans Transport) []net.Addr {
 	}
 
 	// Deserialize each peer
-	var peers []net.Addr
+	var peers []string
 	for _, enc := range encPeers {
 		peers = append(peers, trans.DecodePeer(enc))
 	}

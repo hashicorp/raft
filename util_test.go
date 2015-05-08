@@ -1,7 +1,6 @@
 package raft
 
 import (
-	"net"
 	"reflect"
 	"regexp"
 	"testing"
@@ -106,7 +105,7 @@ func TestAsyncNotify(t *testing.T) {
 }
 
 func TestExcludePeer(t *testing.T) {
-	peers := []net.Addr{NewInmemAddr(), NewInmemAddr(), NewInmemAddr()}
+	peers := []string{NewInmemAddr(), NewInmemAddr(), NewInmemAddr()}
 	peer := peers[2]
 
 	after := ExcludePeer(peers, peer)
@@ -119,7 +118,7 @@ func TestExcludePeer(t *testing.T) {
 }
 
 func TestPeerContained(t *testing.T) {
-	peers := []net.Addr{NewInmemAddr(), NewInmemAddr(), NewInmemAddr()}
+	peers := []string{NewInmemAddr(), NewInmemAddr(), NewInmemAddr()}
 
 	if !PeerContained(peers, peers[2]) {
 		t.Fatalf("Expect contained")
@@ -130,7 +129,7 @@ func TestPeerContained(t *testing.T) {
 }
 
 func TestAddUniquePeer(t *testing.T) {
-	peers := []net.Addr{NewInmemAddr(), NewInmemAddr(), NewInmemAddr()}
+	peers := []string{NewInmemAddr(), NewInmemAddr(), NewInmemAddr()}
 	after := AddUniquePeer(peers, peers[2])
 	if !reflect.DeepEqual(after, peers) {
 		t.Fatalf("unexpected append")
@@ -142,7 +141,7 @@ func TestAddUniquePeer(t *testing.T) {
 }
 
 func TestEncodeDecodePeers(t *testing.T) {
-	peers := []net.Addr{NewInmemAddr(), NewInmemAddr(), NewInmemAddr()}
+	peers := []string{NewInmemAddr(), NewInmemAddr(), NewInmemAddr()}
 	_, trans := NewInmemTransport()
 
 	// Try to encode/decode

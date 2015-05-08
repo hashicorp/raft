@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"io/ioutil"
-	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -21,21 +20,21 @@ const (
 // since consensus is impossible.
 type PeerStore interface {
 	// Peers returns the list of known peers.
-	Peers() ([]net.Addr, error)
+	Peers() ([]string, error)
 
 	// SetPeers sets the list of known peers. This is invoked when a peer is
 	// added or removed.
-	SetPeers([]net.Addr) error
+	SetPeers([]string) error
 }
 
 // StaticPeers is used to provide a static list of peers.
 type StaticPeers struct {
-	StaticPeers []net.Addr
+	StaticPeers []string
 	l           sync.Mutex
 }
 
 // Peers implements the PeerStore interface.
-func (s *StaticPeers) Peers() ([]net.Addr, error) {
+func (s *StaticPeers) Peers() ([]string, error) {
 	s.l.Lock()
 	peers := s.StaticPeers
 	s.l.Unlock()
@@ -43,7 +42,7 @@ func (s *StaticPeers) Peers() ([]net.Addr, error) {
 }
 
 // SetPeers implements the PeerStore interface.
-func (s *StaticPeers) SetPeers(p []net.Addr) error {
+func (s *StaticPeers) SetPeers(p []string) error {
 	s.l.Lock()
 	s.StaticPeers = p
 	s.l.Unlock()
@@ -70,7 +69,7 @@ func NewJSONPeers(base string, trans Transport) *JSONPeers {
 }
 
 // Peers implements the PeerStore interface.
-func (j *JSONPeers) Peers() ([]net.Addr, error) {
+func (j *JSONPeers) Peers() ([]string, error) {
 	j.l.Lock()
 	defer j.l.Unlock()
 
@@ -93,7 +92,7 @@ func (j *JSONPeers) Peers() ([]net.Addr, error) {
 	}
 
 	// Deserialize each peer
-	var peers []net.Addr
+	var peers []string
 	for _, p := range peerSet {
 		peers = append(peers, j.trans.DecodePeer([]byte(p)))
 	}
@@ -101,7 +100,7 @@ func (j *JSONPeers) Peers() ([]net.Addr, error) {
 }
 
 // SetPeers implements the PeerStore interface.
-func (j *JSONPeers) SetPeers(peers []net.Addr) error {
+func (j *JSONPeers) SetPeers(peers []string) error {
 	j.l.Lock()
 	defer j.l.Unlock()
 
