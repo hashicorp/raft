@@ -1576,7 +1576,7 @@ func (r *Raft) setCurrentTerm(t uint64) {
 // transition causes the known leader to be cleared. This means
 // that leader should be set only after updating the state.
 func (r *Raft) setState(state RaftState) {
-	r.setLeader(nil)
+	r.setLeader("")
 	r.raftState.setState(state)
 }
 

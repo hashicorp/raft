@@ -1280,10 +1280,10 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	}
 
 	// Ensure both have cleared their leader
-	if l := leader.Leader(); l != nil {
+	if l := leader.Leader(); l != "" {
 		t.Fatalf("bad: %v", l)
 	}
-	if l := follower.Leader(); l != nil {
+	if l := follower.Leader(); l != "" {
 		t.Fatalf("bad: %v", l)
 	}
 }
@@ -1383,7 +1383,7 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	}
 
 	// Ensure the known leader is cleared
-	if l := leader.Leader(); l != nil {
+	if l := leader.Leader(); l != "" {
 		t.Fatalf("bad: %v", l)
 	}
 }
