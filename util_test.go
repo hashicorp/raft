@@ -62,7 +62,7 @@ func TestGenerateUUID(t *testing.T) {
 		}
 
 		matched, err := regexp.MatchString(
-			"[\\da-f]{8}-[\\da-f]{4}-[\\da-f]{4}-[\\da-f]{4}-[\\da-f]{12}", id)
+			`[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}`, id)
 		if !matched || err != nil {
 			t.Fatalf("expected match %s %v %s", id, matched, err)
 		}
