@@ -1215,7 +1215,9 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		Success: false,
 	}
 	var rpcErr error
-	defer rpc.Respond(resp, rpcErr)
+	defer func() {
+		rpc.Respond(resp, rpcErr)
+	}()
 
 	// Ignore an older term
 	if a.Term < r.getCurrentTerm() {
@@ -1314,7 +1316,9 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 		Granted: false,
 	}
 	var rpcErr error
-	defer rpc.Respond(resp, rpcErr)
+	defer func() {
+		rpc.Respond(resp, rpcErr)
+	}()
 
 	// Check if we have an existing leader
 	if leader := r.Leader(); leader != "" {
@@ -1393,7 +1397,9 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 		Success: false,
 	}
 	var rpcErr error
-	defer rpc.Respond(resp, rpcErr)
+	defer func() {
+		rpc.Respond(resp, rpcErr)
+	}()
 
 	// Ignore an older term
 	if req.Term < r.getCurrentTerm() {
