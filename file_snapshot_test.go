@@ -5,6 +5,7 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"runtime"
 	"testing"
 )
 
@@ -243,10 +244,30 @@ func TestFileSS_Retention(t *testing.T) {
 }
 
 func TestFileSS_BadPerm(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping file permission test on windows")
+	}
+
+	// Create a temp dir
+	dir1, err := ioutil.TempDir("", "raft")
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+	defer os.RemoveAll(dir1)
+
+	// Create a sub dir and remove all permissions
+	dir2, err := ioutil.TempDir(dir1, "badperm")
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+	if err := os.Chmod(dir2, 000); err != nil {
+		t.Fatalf("err: %s", err)
+	}
+	defer os.Chmod(dir2, 777) // Set perms back for delete
+
 	// Should fail
-	_, err := NewFileSnapshotStore("/", 3, nil)
-	if err == nil {
-		t.Fatalf("should fail to use root")
+	if _, err := NewFileSnapshotStore(dir2, 3, nil); err == nil {
+		t.Fatalf("should fail to use dir with bad perms")
 	}
 }
 
