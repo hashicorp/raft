@@ -51,14 +51,14 @@ var (
 	ErrUnknownPeer = errors.New("peer is unknown")
 )
 
-// commitTupel is used to send an index that was committed,
-// with an optional associated future that should be invoked
+// commitTuple is used to send an index that was committed,
+// with an optional associated future that should be invoked.
 type commitTuple struct {
 	log    *Log
 	future *logFuture
 }
 
-// leaderState is state that is used while we are a leader
+// leaderState is state that is used while we are a leader.
 type leaderState struct {
 	commitCh  chan struct{}
 	inflight  *inflight
@@ -91,7 +91,7 @@ type Raft struct {
 	fsmSnapshotCh chan *reqSnapshotFuture
 
 	// lastContact is the last time we had contact from the
-	// leader node. This can be used to guage staleness.
+	// leader node. This can be used to gauge staleness.
 	lastContact     time.Time
 	lastContactLock sync.RWMutex
 
@@ -244,9 +244,9 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	return r, nil
 }
 
-// Leader is used to return the current leader of the cluster,
-// it may return nil if there is no current leader or the leader
-// is unknown
+// Leader is used to return the current leader of the cluster.
+// It may return empty string if there is no current leader
+// or the leader is unknown.
 func (r *Raft) Leader() string {
 	r.leaderLock.RLock()
 	leader := r.leader
@@ -374,7 +374,7 @@ func (r *Raft) RemovePeer(peer string) Future {
 	}
 }
 
-// SetPeers is used to forcebly replace the set of internal peers and
+// SetPeers is used to forcibly replace the set of internal peers and
 // the peerstore with the ones specified. This can be considered unsafe.
 func (r *Raft) SetPeers(p []string) Future {
 	peerFuture := &peerFuture{
@@ -406,7 +406,7 @@ func (r *Raft) Shutdown() Future {
 	return &shutdownFuture{r}
 }
 
-// Snapshot is used to manually force Raft to take a snapshot
+// Snapshot is used to manually force Raft to take a snapshot.
 // Returns a future that can be used to block until complete.
 func (r *Raft) Snapshot() Future {
 	snapFuture := &snapshotFuture{}
@@ -420,7 +420,7 @@ func (r *Raft) Snapshot() Future {
 
 }
 
-// State is used to return the state raft is currently in
+// State is used to return the current raft state.
 func (r *Raft) State() RaftState {
 	return r.getState()
 }
@@ -447,7 +447,7 @@ func (r *Raft) LastContact() time.Time {
 }
 
 // Stats is used to return a map of various internal stats. This should only
-// be used for informative purposes or debugging
+// be used for informative purposes or debugging.
 func (r *Raft) Stats() map[string]string {
 	toString := func(v uint64) string {
 		return strconv.FormatUint(v, 10)
@@ -475,8 +475,8 @@ func (r *Raft) Stats() map[string]string {
 	return s
 }
 
-// LastIndex returns the last index in stable storage.
-// Either from the last log or from the last snapshot.
+// LastIndex returns the last index in stable storage,
+// either from the last log or from the last snapshot.
 func (r *Raft) LastIndex() uint64 {
 	return r.getLastIndex()
 }
@@ -554,7 +554,7 @@ func (r *Raft) runFSM() {
 	}
 }
 
-// run is a long running goroutine that runs the Raft FSM
+// run is a long running goroutine that runs the Raft FSM.
 func (r *Raft) run() {
 	for {
 		// Check if we are doing a shutdown
@@ -578,7 +578,7 @@ func (r *Raft) run() {
 	}
 }
 
-// runFollower runs the FSM for a follower
+// runFollower runs the FSM for a follower.
 func (r *Raft) runFollower() {
 	didWarn := false
 	r.logger.Printf("[INFO] raft: %v entering Follower state", r)
@@ -630,7 +630,7 @@ func (r *Raft) runFollower() {
 	}
 }
 
-// runCandidate runs the FSM for a candidate
+// runCandidate runs the FSM for a candidate.
 func (r *Raft) runCandidate() {
 	r.logger.Printf("[INFO] raft: %v entering Candidate state", r)
 
@@ -688,7 +688,7 @@ func (r *Raft) runCandidate() {
 			return
 
 		case <-electionTimer:
-			// Election failed! Restart the elction. We simply return,
+			// Election failed! Restart the election. We simply return,
 			// which will kick us back into runCandidate
 			r.logger.Printf("[WARN] raft: Election timeout reached, restarting election")
 			return
@@ -700,7 +700,7 @@ func (r *Raft) runCandidate() {
 }
 
 // runLeader runs the FSM for a leader. Do the setup here and drop into
-// the leaderLoop for the hot loop
+// the leaderLoop for the hot loop.
 func (r *Raft) runLeader() {
 	r.logger.Printf("[INFO] raft: %v entering Leader state", r)
 
@@ -724,7 +724,7 @@ func (r *Raft) runLeader() {
 		// Cancel inflight requests
 		r.leaderState.inflight.Cancel(ErrLeadershipLost)
 
-		// Respond to any pending verify requets
+		// Respond to any pending verify requests
 		for future := range r.leaderState.notify {
 			future.respond(ErrLeadershipLost)
 		}
@@ -738,7 +738,7 @@ func (r *Raft) runLeader() {
 
 		// If we are stepping down for some reason, no known leader.
 		// We may have stepped down due to an RPC call, which would
-		// provide the leader, so we cannot always nil this out.
+		// provide the leader, so we cannot always blank this out.
 		r.leaderLock.Lock()
 		if r.leader == r.localAddr {
 			r.leader = ""
@@ -779,7 +779,7 @@ func (r *Raft) runLeader() {
 	r.leaderLoop()
 }
 
-// startReplication is a helper to setup state and start async replication to a peer
+// startReplication is a helper to setup state and start async replication to a peer.
 func (r *Raft) startReplication(peer string) {
 	lastIdx := r.getLastIndex()
 	s := &followerReplication{
@@ -799,8 +799,8 @@ func (r *Raft) startReplication(peer string) {
 	asyncNotifyCh(s.triggerCh)
 }
 
-// leaderLoop is the hot loop for a leader, it is invoked
-// after all the various leader setup is done
+// leaderLoop is the hot loop for a leader. It is invoked
+// after all the various leader setup is done.
 func (r *Raft) leaderLoop() {
 	lease := time.After(r.conf.LeaderLeaseTimeout)
 	for r.getState() == Leader {
@@ -937,7 +937,7 @@ func (r *Raft) verifyLeader(v *verifyFuture) {
 // checkLeaderLease is used to check if we can contact a quorum of nodes
 // within the last leader lease interval. If not, we need to step down,
 // as we may have lost connectivity. Returns the maximum duration without
-// contact
+// contact.
 func (r *Raft) checkLeaderLease() time.Duration {
 	// Track contacted nodes, we can always contact ourself
 	contacted := 1
@@ -1010,7 +1010,7 @@ func (r *Raft) preparePeerChange(l *logFuture) bool {
 }
 
 // dispatchLog is called to push a log to disk, mark it
-// as inflight and begin replication of it
+// as inflight and begin replication of it.
 func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 	now := time.Now()
 	defer metrics.MeasureSince([]string{"raft", "leader", "dispatchLog"}, now)
@@ -1051,7 +1051,7 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 }
 
 // processLogs is used to process all the logs from the lastApplied
-// up to the given index
+// up to the given index.
 func (r *Raft) processLogs(index uint64, future *logFuture) {
 	// Reject logs we've applied already
 	lastApplied := r.getLastApplied()
@@ -1060,7 +1060,7 @@ func (r *Raft) processLogs(index uint64, future *logFuture) {
 		return
 	}
 
-	// Apply all the preceeding logs
+	// Apply all the preceding logs
 	for idx := r.getLastApplied() + 1; idx <= index; idx++ {
 		// Get the log, either from the future or from our log store
 		if future != nil && future.log.Index == idx {
@@ -1080,7 +1080,7 @@ func (r *Raft) processLogs(index uint64, future *logFuture) {
 	}
 }
 
-// processLog is invoked to process the application of a single committed log
+// processLog is invoked to process the application of a single committed log.
 func (r *Raft) processLog(l *Log, future *logFuture, precommit bool) {
 	switch l.Type {
 	case LogBarrier:
@@ -1168,7 +1168,7 @@ func (r *Raft) processLog(l *Log, future *logFuture, precommit bool) {
 	}
 }
 
-// processRPC is called to handle an incoming RPC request
+// processRPC is called to handle an incoming RPC request.
 func (r *Raft) processRPC(rpc RPC) {
 	switch cmd := rpc.Command.(type) {
 	case *AppendEntriesRequest:
@@ -1184,7 +1184,7 @@ func (r *Raft) processRPC(rpc RPC) {
 }
 
 // processHeartbeat is a special handler used just for heartbeat requests
-// so that they can be fast-pathed if a transport supports it
+// so that they can be fast-pathed if a transport supports it.
 func (r *Raft) processHeartbeat(rpc RPC) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "processHeartbeat"}, time.Now())
 
@@ -1205,7 +1205,7 @@ func (r *Raft) processHeartbeat(rpc RPC) {
 	}
 }
 
-// appendEntries is invoked when we get an append entries RPC call
+// appendEntries is invoked when we get an append entries RPC call.
 func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "appendEntries"}, time.Now())
 	// Setup a response
@@ -1306,7 +1306,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	return
 }
 
-// requestVote is invoked when we get an request vote RPC call
+// requestVote is invoked when we get an request vote RPC call.
 func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "requestVote"}, time.Now())
 	// Setup a response
@@ -1558,7 +1558,7 @@ func (r *Raft) electSelf() <-chan *RequestVoteResponse {
 	return respCh
 }
 
-// persistVote is used to persist our vote for safety
+// persistVote is used to persist our vote for safety.
 func (r *Raft) persistVote(term uint64, candidate []byte) error {
 	if err := r.stable.SetUint64(keyLastVoteTerm, term); err != nil {
 		return err
@@ -1569,7 +1569,7 @@ func (r *Raft) persistVote(term uint64, candidate []byte) error {
 	return nil
 }
 
-// setCurrentTerm is used to set the current term in a durable manner
+// setCurrentTerm is used to set the current term in a durable manner.
 func (r *Raft) setCurrentTerm(t uint64) {
 	// Persist to disk first
 	if err := r.stable.SetUint64(keyCurrentTerm, t); err != nil {
@@ -1618,7 +1618,7 @@ func (r *Raft) runSnapshots() {
 }
 
 // shouldSnapshot checks if we meet the conditions to take
-// a new snapshot
+// a new snapshot.
 func (r *Raft) shouldSnapshot() bool {
 	// Check the last snapshot index
 	lastSnap := r.getLastSnapshotIndex()
@@ -1635,7 +1635,7 @@ func (r *Raft) shouldSnapshot() bool {
 	return delta >= r.conf.SnapshotThreshold
 }
 
-// takeSnapshot is used to take a new snapshot
+// takeSnapshot is used to take a new snapshot.
 func (r *Raft) takeSnapshot() error {
 	defer metrics.MeasureSince([]string{"raft", "snapshot", "takeSnapshot"}, time.Now())
 	// Create a snapshot request
@@ -1697,7 +1697,7 @@ func (r *Raft) takeSnapshot() error {
 }
 
 // compactLogs takes the last inclusive index of a snapshot
-// and trims the logs that are no longer needed
+// and trims the logs that are no longer needed.
 func (r *Raft) compactLogs(snapIdx uint64) error {
 	defer metrics.MeasureSince([]string{"raft", "compactLogs"}, time.Now())
 	// Determine log ranges to compact
@@ -1712,7 +1712,7 @@ func (r *Raft) compactLogs(snapIdx uint64) error {
 	}
 
 	// Truncate up to the end of the snapshot, or `TrailingLogs`
-	// back from the head, which ever is futher back. This ensures
+	// back from the head, which ever is further back. This ensures
 	// at least `TrailingLogs` entries, but does not allow logs
 	// after the snapshot to be removed.
 	maxLog := min(snapIdx, r.getLastLogIndex()-r.conf.TrailingLogs)
