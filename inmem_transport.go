@@ -8,12 +8,12 @@ import (
 )
 
 // NewInmemAddr returns a new in-memory addr with
-// a randomly generate UUID as the ID
+// a randomly generate UUID as the ID.
 func NewInmemAddr() string {
 	return generateUUID()
 }
 
-// inmemPipeline is used to pipeline requests for the in-mem transport
+// inmemPipeline is used to pipeline requests for the in-mem transport.
 type inmemPipeline struct {
 	trans    *InmemTransport
 	peer     *InmemTransport

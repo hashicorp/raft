@@ -14,8 +14,8 @@ const (
 )
 
 // PeerStore provides an interface for persistent storage and
-// retrieval of peers. We use a seperate interface than StableStore
-// since the peers may need to be editted by a human operator. For example,
+// retrieval of peers. We use a separate interface than StableStore
+// since the peers may need to be edited by a human operator. For example,
 // in a two node cluster, the failure of either node requires human intervention
 // since consensus is impossible.
 type PeerStore interface {
@@ -58,7 +58,7 @@ type JSONPeers struct {
 }
 
 // NewJSONPeers creates a new JSONPeers store. Requires a transport
-// to handle the serialization of network addresses
+// to handle the serialization of network addresses.
 func NewJSONPeers(base string, trans Transport) *JSONPeers {
 	path := filepath.Join(base, jsonPeerPath)
 	store := &JSONPeers{

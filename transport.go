@@ -5,13 +5,13 @@ import (
 	"time"
 )
 
-// RPCResponse captures both a response and a potential error
+// RPCResponse captures both a response and a potential error.
 type RPCResponse struct {
 	Response interface{}
 	Error    error
 }
 
-// RPC has a command, and provides a Reponse mechanism
+// RPC has a command, and provides a response mechanism.
 type RPC struct {
 	Command  interface{}
 	Reader   io.Reader // Set only for InstallSnapshot
@@ -24,33 +24,33 @@ func (r *RPC) Respond(resp interface{}, err error) {
 }
 
 // Transport provides an interface for network transports
-// to allow Raft to communicate with other nodes
+// to allow Raft to communicate with other nodes.
 type Transport interface {
 	// Consumer returns a channel that can be used to
 	// consume and respond to RPC requests.
 	Consumer() <-chan RPC
 
-	// LocalAddr is used to return our local address to distinguish from our peers
+	// LocalAddr is used to return our local address to distinguish from our peers.
 	LocalAddr() string
 
 	// AppendEntriesPipeline returns an interface that can be used to pipeline
 	// AppendEntries requests.
 	AppendEntriesPipeline(target string) (AppendPipeline, error)
 
-	// AppendEntries sends the appropriate RPC to the target node
+	// AppendEntries sends the appropriate RPC to the target node.
 	AppendEntries(target string, args *AppendEntriesRequest, resp *AppendEntriesResponse) error
 
-	// RequestVote sends the appropriate RPC to the target node
+	// RequestVote sends the appropriate RPC to the target node.
 	RequestVote(target string, args *RequestVoteRequest, resp *RequestVoteResponse) error
 
 	// InstallSnapshot is used to push a snapshot down to a follower. The data is read from
 	// the ReadCloser and streamed to the client.
 	InstallSnapshot(target string, args *InstallSnapshotRequest, resp *InstallSnapshotResponse, data io.Reader) error
 
-	// EncodePeer is used to serialize a peer name
+	// EncodePeer is used to serialize a peer name.
 	EncodePeer(string) []byte
 
-	// DecodePeer is used to deserialize a peer name
+	// DecodePeer is used to deserialize a peer name.
 	DecodePeer([]byte) string
 
 	// SetHeartbeatHandler is used to setup a heartbeat handler
@@ -69,14 +69,14 @@ type AppendPipeline interface {
 	AppendEntries(args *AppendEntriesRequest, resp *AppendEntriesResponse) (AppendFuture, error)
 
 	// Consumer returns a channel that can be used to consume
-	// response futures when they are ready
+	// response futures when they are ready.
 	Consumer() <-chan AppendFuture
 
 	// Closes pipeline and cancels all inflight RPCs
 	Close() error
 }
 
-// AppendFuture is used to return information about a pipelined AppendEntries request
+// AppendFuture is used to return information about a pipelined AppendEntries request.
 type AppendFuture interface {
 	Future
 	Start() time.Time

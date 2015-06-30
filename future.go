@@ -5,18 +5,18 @@ import (
 	"time"
 )
 
-// Future is used to represent an action that may occur in the future
+// Future is used to represent an action that may occur in the future.
 type Future interface {
 	Error() error
 }
 
-// ApplyFuture is used for Apply() and can returns the FSM response
+// ApplyFuture is used for Apply() and can returns the FSM response.
 type ApplyFuture interface {
 	Future
 	Response() interface{}
 }
 
-// errorFuture is used to return a static error
+// errorFuture is used to return a static error.
 type errorFuture struct {
 	err error
 }
@@ -30,7 +30,7 @@ func (e errorFuture) Response() interface{} {
 }
 
 // deferError can be embedded to allow a future
-// to provide an error in the future
+// to provide an error in the future.
 type deferError struct {
 	err       error
 	errCh     chan error
@@ -65,7 +65,7 @@ func (d *deferError) respond(err error) {
 }
 
 // logFuture is used to apply a log entry and waits until
-// the log is considered committed
+// the log is considered committed.
 type logFuture struct {
 	deferError
 	log      Log
@@ -94,13 +94,13 @@ func (s *shutdownFuture) Error() error {
 	return nil
 }
 
-// snapshotFuture is used for waiting on a snapshot to complete
+// snapshotFuture is used for waiting on a snapshot to complete.
 type snapshotFuture struct {
 	deferError
 }
 
 // reqSnapshotFuture is used for requesting a snapshot start.
-// It is only used internally
+// It is only used internally.
 type reqSnapshotFuture struct {
 	deferError
 
@@ -129,7 +129,7 @@ type verifyFuture struct {
 }
 
 // vote is used to respond to a verifyFuture.
-// This may block when responding on the notifyCh
+// This may block when responding on the notifyCh.
 func (v *verifyFuture) vote(leader bool) {
 	v.voteLock.Lock()
 	defer v.voteLock.Unlock()
@@ -152,7 +152,7 @@ func (v *verifyFuture) vote(leader bool) {
 }
 
 // appendFuture is used for waiting on a pipelined append
-// entries RPC
+// entries RPC.
 type appendFuture struct {
 	deferError
 	start time.Time

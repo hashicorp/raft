@@ -25,7 +25,7 @@ func TestInflight_StartCommit(t *testing.T) {
 		t.Fatalf("should be commited")
 	}
 
-	// Already commited but should work anyways
+	// Already committed but should work anyways
 	in.Commit(1)
 }
 

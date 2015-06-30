@@ -17,7 +17,7 @@ import (
 )
 
 // MockFSM is an implementation of the FSM interface, and just stores
-// the logs sequentially
+// the logs sequentially.
 type MockFSM struct {
 	sync.Mutex
 	logs [][]byte
@@ -1045,11 +1045,11 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 
-	// Make a seperate cluster
+	// Make a separate cluster
 	c2 := MakeClusterNoPeers(2, t, conf)
 	defer c2.Close()
 
-	// Kill the old lcuster
+	// Kill the old cluster
 	for _, sec := range c.rafts {
 		if sec != leader {
 			sec.Shutdown()

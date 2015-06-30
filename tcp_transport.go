@@ -33,7 +33,7 @@ func NewTCPTransport(
 		return nil, err
 	}
 
-	// Create steram
+	// Create stream
 	stream := &TCPStreamLayer{
 		advertise: advertise,
 		listener:  list.(*net.TCPListener),

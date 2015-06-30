@@ -5,9 +5,9 @@ import (
 )
 
 // FSM provides an interface that can be implemented by
-// clients to make use of the replicated log
+// clients to make use of the replicated log.
 type FSM interface {
-	// Apply log is invoked once a log entry is commited
+	// Apply log is invoked once a log entry is committed.
 	Apply(*Log) interface{}
 
 	// Snapshot is used to support log compaction. This call should
@@ -26,12 +26,12 @@ type FSM interface {
 
 // FSMSnapshot is returned by an FSM in response to a Snapshot
 // It must be safe to invoke FSMSnapshot methods with concurrent
-// calls to Apply
+// calls to Apply.
 type FSMSnapshot interface {
 	// Persist should dump all necessary state to the WriteCloser 'sink',
 	// and call sink.Close() when finished or call sink.Cancel() on error.
 	Persist(sink SnapshotSink) error
 
-	// Release is invoked when we are finished with the snapshot
+	// Release is invoked when we are finished with the snapshot.
 	Release()
 }
