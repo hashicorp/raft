@@ -6,7 +6,7 @@ import (
 )
 
 // QuorumPolicy allows individual logFutures to have different
-// commitment rules while still using the inflight mechanism
+// commitment rules while still using the inflight mechanism.
 type quorumPolicy interface {
 	// Checks if a commit from a given peer is enough to
 	// satisfy the commitment rules
@@ -17,7 +17,7 @@ type quorumPolicy interface {
 }
 
 // MajorityQuorum is used by Apply transactions and requires
-// a simple majority of nodes
+// a simple majority of nodes.
 type majorityQuorum struct {
 	count       int
 	votesNeeded int
@@ -37,7 +37,7 @@ func (m *majorityQuorum) IsCommitted() bool {
 	return m.count >= m.votesNeeded
 }
 
-// Inflight is used to track operations that are still in-flight
+// Inflight is used to track operations that are still in-flight.
 type inflight struct {
 	sync.Mutex
 	committed  *list.List
@@ -49,7 +49,7 @@ type inflight struct {
 }
 
 // NewInflight returns an inflight struct that notifies
-// the provided channel when logs are finished commiting.
+// the provided channel when logs are finished committing.
 func newInflight(commitCh chan struct{}) *inflight {
 	return &inflight{
 		committed:  list.New(),
@@ -82,7 +82,7 @@ func (i *inflight) StartAll(logs []*logFuture) {
 }
 
 // start is used to mark a single entry as inflight,
-// must be invoked with the lock held
+// must be invoked with the lock held.
 func (i *inflight) start(l *logFuture) {
 	idx := l.log.Index
 	i.operations[idx] = l
@@ -131,7 +131,7 @@ func (i *inflight) Cancel(err error) {
 	i.maxCommit = 0
 }
 
-// Committed returns all the committed operations in order
+// Committed returns all the committed operations in order.
 func (i *inflight) Committed() (l *list.List) {
 	i.Lock()
 	l, i.committed = i.committed, list.New()
@@ -140,15 +140,15 @@ func (i *inflight) Committed() (l *list.List) {
 }
 
 // Commit is used by leader replication routines to indicate that
-// a follower was finished commiting a log to disk.
+// a follower was finished committing a log to disk.
 func (i *inflight) Commit(index uint64) {
 	i.Lock()
 	defer i.Unlock()
 	i.commit(index)
 }
 
-// CommitRange is used to commit a range of indexes inclusively
-// It optimized to avoid commits for indexes that are not tracked
+// CommitRange is used to commit a range of indexes inclusively.
+// It optimized to avoid commits for indexes that are not tracked.
 func (i *inflight) CommitRange(minIndex, maxIndex uint64) {
 	i.Lock()
 	defer i.Unlock()
@@ -166,7 +166,7 @@ func (i *inflight) CommitRange(minIndex, maxIndex uint64) {
 func (i *inflight) commit(index uint64) {
 	op, ok := i.operations[index]
 	if !ok {
-		// Ignore if not in the map, as it may be commited already
+		// Ignore if not in the map, as it may be committed already
 		return
 	}
 

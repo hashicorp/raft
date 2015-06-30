@@ -23,7 +23,7 @@ const (
 	DefaultTimeoutScale = 256 * 1024 // 256KB
 
 	// rpcMaxPipeline controls the maximum number of outstanding
-	// AppendEntries RPC calls
+	// AppendEntries RPC calls.
 	rpcMaxPipeline = 128
 )
 
@@ -32,7 +32,7 @@ var (
 	// invoked after it's been terminated.
 	ErrTransportShutdown = errors.New("transport shutdown")
 
-	// ErrPipelineShutdown is returned when the pipeline is closed
+	// ErrPipelineShutdown is returned when the pipeline is closed.
 	ErrPipelineShutdown = errors.New("append pipeline closed")
 )
 
@@ -79,7 +79,7 @@ type NetworkTransport struct {
 }
 
 // StreamLayer is used with the NetworkTransport to provide
-// the low level stream abstraction
+// the low level stream abstraction.
 type StreamLayer interface {
 	net.Listener
 
@@ -171,7 +171,7 @@ func (n *NetworkTransport) LocalAddr() string {
 	return n.stream.Addr().String()
 }
 
-// IsShutdown is used to check if the transport is shutdown
+// IsShutdown is used to check if the transport is shutdown.
 func (n *NetworkTransport) IsShutdown() bool {
 	select {
 	case <-n.shutdownCh:
@@ -181,7 +181,7 @@ func (n *NetworkTransport) IsShutdown() bool {
 	}
 }
 
-// getExistingConn is used to grab a pooled connection
+// getExistingConn is used to grab a pooled connection.
 func (n *NetworkTransport) getPooledConn(target string) *netConn {
 	n.connPoolLock.Lock()
 	defer n.connPoolLock.Unlock()
@@ -198,7 +198,7 @@ func (n *NetworkTransport) getPooledConn(target string) *netConn {
 	return conn
 }
 
-// getConn is used to get a connection from the pool
+// getConn is used to get a connection from the pool.
 func (n *NetworkTransport) getConn(target string) (*netConn, error) {
 	// Check for a pooled conn
 	if conn := n.getPooledConn(target); conn != nil {
@@ -227,7 +227,7 @@ func (n *NetworkTransport) getConn(target string) (*netConn, error) {
 	return netConn, nil
 }
 
-// returnConn returns a connection back to the pool
+// returnConn returns a connection back to the pool.
 func (n *NetworkTransport) returnConn(conn *netConn) {
 	n.connPoolLock.Lock()
 	defer n.connPoolLock.Unlock()
@@ -265,7 +265,7 @@ func (n *NetworkTransport) RequestVote(target string, args *RequestVoteRequest, 
 	return n.genericRPC(target, rpcRequestVote, args, resp)
 }
 
-// genericRPC handles a simple request/response RPC
+// genericRPC handles a simple request/response RPC.
 func (n *NetworkTransport) genericRPC(target string, rpcType uint8, args interface{}, resp interface{}) error {
 	// Get a conn
 	conn, err := n.getConn(target)
@@ -358,7 +358,7 @@ func (n *NetworkTransport) listen() {
 	}
 }
 
-// handleConn is used to handle an inbound connection for its lifespan
+// handleConn is used to handle an inbound connection for its lifespan.
 func (n *NetworkTransport) handleConn(conn net.Conn) {
 	defer conn.Close()
 	r := bufio.NewReader(conn)
@@ -380,7 +380,7 @@ func (n *NetworkTransport) handleConn(conn net.Conn) {
 	}
 }
 
-// handleCommand is used to decode and dispatch a single command
+// handleCommand is used to decode and dispatch a single command.
 func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, enc *codec.Encoder) error {
 	// Get the rpc type
 	rpcType, err := r.ReadByte()
@@ -471,7 +471,7 @@ RESP:
 	return nil
 }
 
-// decodeResponse is used to decode an RPC response and return the conn
+// decodeResponse is used to decode an RPC response and return the conn.
 func decodeResponse(conn *netConn, resp interface{}) (bool, error) {
 	// Decode the error if any
 	var rpcError string
@@ -493,7 +493,7 @@ func decodeResponse(conn *netConn, resp interface{}) (bool, error) {
 	return true, nil
 }
 
-// sendRPC is used to encode and send the RPC
+// sendRPC is used to encode and send the RPC.
 func sendRPC(conn *netConn, rpcType uint8, args interface{}) error {
 	// Write the request type
 	if err := conn.w.WriteByte(rpcType); err != nil {
@@ -516,7 +516,7 @@ func sendRPC(conn *netConn, rpcType uint8, args interface{}) error {
 }
 
 // newNetPipeline is used to construct a netPipeline from a given
-// transport and conection
+// transport and connection.
 func newNetPipeline(trans *NetworkTransport, conn *netConn) *netPipeline {
 	n := &netPipeline{
 		conn:         conn,
@@ -530,7 +530,7 @@ func newNetPipeline(trans *NetworkTransport, conn *netConn) *netPipeline {
 }
 
 // decodeResponses is a long running routine that decodes the responses
-// sent on the conection
+// sent on the connection.
 func (n *netPipeline) decodeResponses() {
 	timeout := n.trans.timeout
 	for {
@@ -553,7 +553,7 @@ func (n *netPipeline) decodeResponses() {
 	}
 }
 
-// AppendEntries is used to pipeline a new append entries request
+// AppendEntries is used to pipeline a new append entries request.
 func (n *netPipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEntriesResponse) (AppendFuture, error) {
 	// Create a new future
 	future := &appendFuture{
@@ -583,12 +583,12 @@ func (n *netPipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEntr
 	}
 }
 
-// Consumer returns a channel that can be used to consume complete futures
+// Consumer returns a channel that can be used to consume complete futures.
 func (n *netPipeline) Consumer() <-chan AppendFuture {
 	return n.doneCh
 }
 
-// Closed is used to shutdown the pipeline connection
+// Closed is used to shutdown the pipeline connection.
 func (n *netPipeline) Close() error {
 	n.shutdownLock.Lock()
 	defer n.shutdownLock.Unlock()

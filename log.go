@@ -16,7 +16,7 @@ const (
 	// LogRemovePeer is used to remove an existing peer.
 	LogRemovePeer
 
-	// LogBarrier is used to ensure all preceeding operations have been
+	// LogBarrier is used to ensure all preceding operations have been
 	// applied to the FSM. It is similar to LogNoop, but instead of returning
 	// once committed, it only returns once the FSM manager acks it. Otherwise
 	// it is possible there are operations committed but not yet applied to
@@ -38,7 +38,7 @@ type Log struct {
 }
 
 // LogStore is used to provide an interface for storing
-// and retrieving logs in a durable fashion
+// and retrieving logs in a durable fashion.
 type LogStore interface {
 	// Returns the first index written. 0 for no entries.
 	FirstIndex() (uint64, error)
@@ -46,13 +46,13 @@ type LogStore interface {
 	// Returns the last index written. 0 for no entries.
 	LastIndex() (uint64, error)
 
-	// Gets a log entry at a given index
+	// Gets a log entry at a given index.
 	GetLog(index uint64, log *Log) error
 
-	// Stores a log entry
+	// Stores a log entry.
 	StoreLog(log *Log) error
 
-	// Stores multiple log entries
+	// Stores multiple log entries.
 	StoreLogs(logs []*Log) error
 
 	// Deletes a range of log entries. The range is inclusive.

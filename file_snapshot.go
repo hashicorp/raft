@@ -50,7 +50,7 @@ type FileSnapshotSink struct {
 }
 
 // fileSnapshotMeta is stored on disk. We also put a CRC
-// on disk so that we can verify the snapshot
+// on disk so that we can verify the snapshot.
 type fileSnapshotMeta struct {
 	SnapshotMeta
 	CRC []byte
@@ -102,7 +102,7 @@ func NewFileSnapshotStore(base string, retain int, logOutput io.Writer) (*FileSn
 	return store, nil
 }
 
-// testPermissions tries to touch a file in our path to see if it works
+// testPermissions tries to touch a file in our path to see if it works.
 func (f *FileSnapshotStore) testPermissions() error {
 	path := filepath.Join(f.path, testPath)
 	fh, err := os.Create(path)
@@ -114,7 +114,7 @@ func (f *FileSnapshotStore) testPermissions() error {
 	return nil
 }
 
-// snapshotName generate s name for the snapshot
+// snapshotName generates a name for the snapshot.
 func snapshotName(term, index uint64) string {
 	now := time.Now()
 	msec := now.UnixNano() / int64(time.Millisecond)
@@ -195,7 +195,7 @@ func (f *FileSnapshotStore) List() ([]*SnapshotMeta, error) {
 	return snapMeta, nil
 }
 
-// getSnapshots returns all the known snapshots
+// getSnapshots returns all the known snapshots.
 func (f *FileSnapshotStore) getSnapshots() ([]*fileSnapshotMeta, error) {
 	// Get the eligible snapshots
 	snapshots, err := ioutil.ReadDir(f.path)
@@ -337,12 +337,12 @@ func (s *FileSnapshotSink) ID() string {
 }
 
 // Write is used to append to the state file. We write to the
-// buffered IO object to reduce the amount of context switches
+// buffered IO object to reduce the amount of context switches.
 func (s *FileSnapshotSink) Write(b []byte) (int, error) {
 	return s.buffered.Write(b)
 }
 
-// Close is used to indicate a successful end
+// Close is used to indicate a successful end.
 func (s *FileSnapshotSink) Close() error {
 	// Make sure close is idempotent
 	if s.closed {
@@ -374,7 +374,7 @@ func (s *FileSnapshotSink) Close() error {
 	return nil
 }
 
-// Cancel is used to indicate an unsuccessful end
+// Cancel is used to indicate an unsuccessful end.
 func (s *FileSnapshotSink) Cancel() error {
 	// Make sure close is idempotent
 	if s.closed {
@@ -392,7 +392,7 @@ func (s *FileSnapshotSink) Cancel() error {
 	return os.RemoveAll(s.dir)
 }
 
-// finalize is used to close all of our resources
+// finalize is used to close all of our resources.
 func (s *FileSnapshotSink) finalize() error {
 	// Flush any remaining data
 	if err := s.buffered.Flush(); err != nil {
@@ -418,7 +418,7 @@ func (s *FileSnapshotSink) finalize() error {
 	return nil
 }
 
-// writeMeta is used to write out the metadata we have
+// writeMeta is used to write out the metadata we have.
 func (s *FileSnapshotSink) writeMeta() error {
 	// Open the meta file
 	metaPath := filepath.Join(s.dir, metaFilePath)
@@ -440,7 +440,7 @@ func (s *FileSnapshotSink) writeMeta() error {
 	return nil
 }
 
-// Implement the sort interface for []*fileSnapshotMeta
+// Implement the sort interface for []*fileSnapshotMeta.
 func (s snapMetaSlice) Len() int {
 	return len(s)
 }

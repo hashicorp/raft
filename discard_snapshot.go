@@ -5,7 +5,7 @@ import (
 	"io"
 )
 
-// DiscardSnapshotStore is used to succesfully snapshot while
+// DiscardSnapshotStore is used to successfully snapshot while
 // always discarding the snapshot. This is useful for when the
 // log should be truncated but no snapshot should be retained.
 // This should never be used for production use, and is only
@@ -14,7 +14,7 @@ type DiscardSnapshotStore struct{}
 
 type DiscardSnapshotSink struct{}
 
-// NewDiscardSnapshotStore is used to create a new DiscardSnapshotStore
+// NewDiscardSnapshotStore is used to create a new DiscardSnapshotStore.
 func NewDiscardSnapshotStore() *DiscardSnapshotStore {
 	return &DiscardSnapshotStore{}
 }

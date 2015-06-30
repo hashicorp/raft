@@ -10,10 +10,10 @@ import (
 // Config provides any necessary configuration to
 // the Raft server
 type Config struct {
-	// Time in follower state without a leader before we attempt an election
+	// Time in follower state without a leader before we attempt an election.
 	HeartbeatTimeout time.Duration
 
-	// Time in candidate state without a leader before we attempt an election
+	// Time in candidate state without a leader before we attempt an election.
 	ElectionTimeout time.Duration
 
 	// Time without an Apply() operation before we heartbeat to ensure
@@ -24,7 +24,7 @@ type Config struct {
 	// MaxAppendEntries controls the maximum number of append entries
 	// to send at once. We want to strike a balance between efficiency
 	// and avoiding waste if the follower is going to reject because of
-	// an inconsistent log
+	// an inconsistent log.
 	MaxAppendEntries int
 
 	// If we are a member of a cluster, and RemovePeer is invoked for the
@@ -37,7 +37,7 @@ type Config struct {
 	// after the node is elected. This is used to prevent self-election
 	// if the node is removed from the Raft cluster via RemovePeer. Setting
 	// it to false will keep the bootstrap mode, allowing the node to self-elect
-	// and potentially bootstrap a seperate cluster.
+	// and potentially bootstrap a separate cluster.
 	DisableBootstrapAfterElect bool
 
 	// TrailingLogs controls how many logs we leave after a snapshot. This is
@@ -47,7 +47,7 @@ type Config struct {
 
 	// SnapshotInterval controls how often we check if we should perform a snapshot.
 	// We randomly stagger between this value and 2x this value to avoid the entire
-	// cluster from performing a snapshot at once
+	// cluster from performing a snapshot at once.
 	SnapshotInterval time.Duration
 
 	// SnapshotThreshold controls how many outstanding logs there must be before
@@ -56,7 +56,7 @@ type Config struct {
 	SnapshotThreshold uint64
 
 	// EnableSingleNode allows for a single node mode of operation. This
-	// is false by default, which prevents a lone node from electing itself
+	// is false by default, which prevents a lone node from electing itself.
 	// leader.
 	EnableSingleNode bool
 

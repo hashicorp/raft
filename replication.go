@@ -49,12 +49,12 @@ type followerReplication struct {
 	stepDown chan struct{}
 
 	// allowPipeline is used to control it seems like
-	// pipeline replication should be enabled
+	// pipeline replication should be enabled.
 	allowPipeline bool
 }
 
 // notifyAll is used to notify all the waiting verify futures
-// if the follower believes we are still the leader
+// if the follower believes we are still the leader.
 func (s *followerReplication) notifyAll(leader bool) {
 	// Clear the waiting notifies minimizing lock time
 	s.notifyLock.Lock()
@@ -68,7 +68,7 @@ func (s *followerReplication) notifyAll(leader bool) {
 	}
 }
 
-// LastContact returns the time of last contact
+// LastContact returns the time of last contact.
 func (s *followerReplication) LastContact() time.Time {
 	s.lastContactLock.RLock()
 	last := s.lastContact
@@ -76,7 +76,7 @@ func (s *followerReplication) LastContact() time.Time {
 	return last
 }
 
-// setLastContact sets the last contact to the current time
+// setLastContact sets the last contact to the current time.
 func (s *followerReplication) setLastContact() {
 	s.lastContactLock.Lock()
 	s.lastContact = time.Now()
@@ -84,7 +84,7 @@ func (s *followerReplication) setLastContact() {
 }
 
 // replicate is a long running routine that is used to manage
-// the process of replicating logs to our followers
+// the process of replicating logs to our followers.
 func (r *Raft) replicate(s *followerReplication) {
 	// Start an async heartbeating routing
 	stopHeartbeat := make(chan struct{})
@@ -130,7 +130,7 @@ PIPELINE:
 }
 
 // replicateTo is used to replicate the logs up to a given last index.
-// If the follower log is behind, we take care to bring them up to date
+// If the follower log is behind, we take care to bring them up to date.
 func (r *Raft) replicateTo(s *followerReplication, lastIndex uint64) (shouldStop bool) {
 	// Create the base request
 	var req AppendEntriesRequest
@@ -170,7 +170,7 @@ START:
 	// Update the last contact
 	s.setLastContact()
 
-	// Update the s based on success
+	// Update s based on success
 	if resp.Success {
 		// Update our replication state
 		updateLastAppended(s, &req)
@@ -207,7 +207,7 @@ SEND_SNAP:
 }
 
 // sendLatestSnapshot is used to send the latest snapshot we have
-// down to our follower
+// down to our follower.
 func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	// Get the snapshots
 	snapshots, err := r.snapshots.List()
@@ -280,9 +280,9 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	return false, nil
 }
 
-// hearbeat is used to periodically invoke AppendEntries on a peer
+// heartbeat is used to periodically invoke AppendEntries on a peer
 // to ensure they don't time out. This is done async of replicate(),
-// since that routine could potentially be blocked on disk IO
+// since that routine could potentially be blocked on disk IO.
 func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 	var failures uint64
 	req := AppendEntriesRequest{
@@ -316,7 +316,7 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 	}
 }
 
-// pipelineReplicate is used when we have syncronized our state with the follower,
+// pipelineReplicate is used when we have synchronized our state with the follower,
 // and want to switch to a higher performance pipeline mode of replication.
 // We only pipeline AppendEntries commands, and if we ever hit an error, we fall
 // back to the standard replication which can handle more complex situations.
@@ -369,7 +369,7 @@ SEND:
 	return nil
 }
 
-// pipelineSend is used to send data over a pipeline
+// pipelineSend is used to send data over a pipeline.
 func (r *Raft) pipelineSend(s *followerReplication, p AppendPipeline, nextIdx *uint64, lastIndex uint64) (shouldStop bool) {
 	// Create a new append request
 	req := new(AppendEntriesRequest)
@@ -391,7 +391,7 @@ func (r *Raft) pipelineSend(s *followerReplication, p AppendPipeline, nextIdx *u
 	return false
 }
 
-// pipelineDecode is used to decode the responses of pipelined requests
+// pipelineDecode is used to decode the responses of pipelined requests.
 func (r *Raft) pipelineDecode(s *followerReplication, p AppendPipeline, stopCh, finishCh chan struct{}) {
 	defer close(finishCh)
 	respCh := p.Consumer()
@@ -423,7 +423,7 @@ func (r *Raft) pipelineDecode(s *followerReplication, p AppendPipeline, stopCh, 
 	}
 }
 
-// setupAppendEntries is used to setup an append entries request
+// setupAppendEntries is used to setup an append entries request.
 func (r *Raft) setupAppendEntries(s *followerReplication, req *AppendEntriesRequest, nextIndex, lastIndex uint64) error {
 	req.Term = s.currentTerm
 	req.Leader = r.trans.EncodePeer(r.localAddr)
@@ -438,7 +438,7 @@ func (r *Raft) setupAppendEntries(s *followerReplication, req *AppendEntriesRequ
 }
 
 // setPreviousLog is used to setup the PrevLogEntry and PrevLogTerm for an
-// AppendEntriesRequest given the next index to replicate
+// AppendEntriesRequest given the next index to replicate.
 func (r *Raft) setPreviousLog(req *AppendEntriesRequest, nextIndex uint64) error {
 	// Guard for the first index, since there is no 0 log entry
 	// Guard against the previous index being a snapshot as well
@@ -465,7 +465,7 @@ func (r *Raft) setPreviousLog(req *AppendEntriesRequest, nextIndex uint64) error
 	return nil
 }
 
-// setNewLogs is used to setup the logs which should be appended for a request
+// setNewLogs is used to setup the logs which should be appended for a request.
 func (r *Raft) setNewLogs(req *AppendEntriesRequest, nextIndex, lastIndex uint64) error {
 	// Append up to MaxAppendEntries or up to the lastIndex
 	req.Entries = make([]*Log, 0, r.conf.MaxAppendEntries)
@@ -481,13 +481,13 @@ func (r *Raft) setNewLogs(req *AppendEntriesRequest, nextIndex, lastIndex uint64
 	return nil
 }
 
-// appendStats is used to emit stats about an AppendEntries invocation
+// appendStats is used to emit stats about an AppendEntries invocation.
 func appendStats(peer string, start time.Time, logs float32) {
 	metrics.MeasureSince([]string{"raft", "replication", "appendEntries", "rpc", peer}, start)
 	metrics.IncrCounter([]string{"raft", "replication", "appendEntries", "logs", peer}, logs)
 }
 
-// handleStaleTerm is used when a follower indicates that we have a stale term
+// handleStaleTerm is used when a follower indicates that we have a stale term.
 func (r *Raft) handleStaleTerm(s *followerReplication) {
 	r.logger.Printf("[ERR] raft: peer %v has newer term, stopping replication", s.peer)
 	s.notifyAll(false) // No longer leader

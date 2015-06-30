@@ -39,7 +39,7 @@ func (s RaftState) String() string {
 
 // raftState is used to maintain various state variables
 // and provides an interface to set/get the variables in a
-// thread safe manner
+// thread safe manner.
 type raftState struct {
 	// The current term, cache of StableStore
 	currentTerm uint64
@@ -48,7 +48,7 @@ type raftState struct {
 	LastLogIndex uint64
 	LastLogTerm  uint64
 
-	// Highest commited log entry
+	// Highest committed log entry
 	commitIndex uint64
 
 	// Last applied log to the FSM
@@ -154,13 +154,13 @@ func (r *raftState) goFunc(f func()) {
 }
 
 // getLastIndex returns the last index in stable storage.
-// Either from the last log or from the last snapshot
+// Either from the last log or from the last snapshot.
 func (r *raftState) getLastIndex() uint64 {
 	return max(r.getLastLogIndex(), r.getLastSnapshotIndex())
 }
 
 // getLastEntry returns the last index and term in stable storage.
-// Either from the last log or from the last snapshot
+// Either from the last log or from the last snapshot.
 func (r *raftState) getLastEntry() (uint64, uint64) {
 	if r.getLastLogIndex() >= r.getLastSnapshotIndex() {
 		return r.getLastLogIndex(), r.getLastLogTerm()

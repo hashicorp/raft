@@ -11,7 +11,7 @@ import (
 	"github.com/hashicorp/go-msgpack/codec"
 )
 
-// randomTimeout returns a value that is between the minVal and 2x minVal
+// randomTimeout returns a value that is between the minVal and 2x minVal.
 func randomTimeout(minVal time.Duration) <-chan time.Time {
 	if minVal == 0 {
 		return nil
@@ -36,7 +36,7 @@ func max(a, b uint64) uint64 {
 	return b
 }
 
-// generateUUID is used to generate a random UUID
+// generateUUID is used to generate a random UUID.
 func generateUUID() string {
 	buf := make([]byte, 16)
 	if _, err := crand.Read(buf); err != nil {
@@ -60,7 +60,7 @@ func asyncNotify(chans []chan struct{}) {
 }
 
 // asyncNotifyCh is used to do an async channel send
-// to a singel channel without blocking.
+// to a single channel without blocking.
 func asyncNotifyCh(ch chan struct{}) {
 	select {
 	case ch <- struct{}{}:
@@ -69,7 +69,7 @@ func asyncNotifyCh(ch chan struct{}) {
 }
 
 // asyncNotifyBool is used to do an async notification
-// on a bool channel
+// on a bool channel.
 func asyncNotifyBool(ch chan bool, v bool) {
 	select {
 	case ch <- v:
@@ -77,7 +77,7 @@ func asyncNotifyBool(ch chan bool, v bool) {
 	}
 }
 
-// ExcludePeer is used to exclude a single peer from a list of peers
+// ExcludePeer is used to exclude a single peer from a list of peers.
 func ExcludePeer(peers []string, peer string) []string {
 	otherPeers := make([]string, 0, len(peers))
 	for _, p := range peers {
@@ -88,7 +88,7 @@ func ExcludePeer(peers []string, peer string) []string {
 	return otherPeers
 }
 
-// PeerContained checks if a given peer is contained in a list
+// PeerContained checks if a given peer is contained in a list.
 func PeerContained(peers []string, peer string) bool {
 	for _, p := range peers {
 		if p == peer {
@@ -99,7 +99,7 @@ func PeerContained(peers []string, peer string) bool {
 }
 
 // AddUniquePeer is used to add a peer to a list of existing
-// peers only if it is not already contained
+// peers only if it is not already contained.
 func AddUniquePeer(peers []string, peer string) []string {
 	if PeerContained(peers, peer) {
 		return peers
@@ -107,7 +107,7 @@ func AddUniquePeer(peers []string, peer string) []string {
 	return append(peers, peer)
 }
 
-// encodePeers is used to serialize a list of peers
+// encodePeers is used to serialize a list of peers.
 func encodePeers(peers []string, trans Transport) []byte {
 	// Encode each peer
 	var encPeers [][]byte
@@ -124,7 +124,7 @@ func encodePeers(peers []string, trans Transport) []byte {
 	return buf.Bytes()
 }
 
-// decodePeers is used to deserialie a list of peers
+// decodePeers is used to deserialize a list of peers.
 func decodePeers(buf []byte, trans Transport) []string {
 	// Decode the buffer first
 	var encPeers [][]byte
@@ -141,7 +141,7 @@ func decodePeers(buf []byte, trans Transport) []string {
 	return peers
 }
 
-// Decode reverses the encode operation on a byte slice input
+// Decode reverses the encode operation on a byte slice input.
 func decodeMsgPack(buf []byte, out interface{}) error {
 	r := bytes.NewBuffer(buf)
 	hd := codec.MsgpackHandle{}
@@ -149,7 +149,7 @@ func decodeMsgPack(buf []byte, out interface{}) error {
 	return dec.Decode(out)
 }
 
-// Encode writes an encoded object to a new bytes buffer
+// Encode writes an encoded object to a new bytes buffer.
 func encodeMsgPack(in interface{}) (*bytes.Buffer, error) {
 	buf := bytes.NewBuffer(nil)
 	hd := codec.MsgpackHandle{}
@@ -158,12 +158,12 @@ func encodeMsgPack(in interface{}) (*bytes.Buffer, error) {
 	return buf, err
 }
 
-// Converts bytes to an integer
+// Converts bytes to an integer.
 func bytesToUint64(b []byte) uint64 {
 	return binary.BigEndian.Uint64(b)
 }
 
-// Converts a uint to a byte slice
+// Converts a uint64 to a byte slice.
 func uint64ToBytes(u uint64) []byte {
 	buf := make([]byte, 8)
 	binary.BigEndian.PutUint64(buf, u)

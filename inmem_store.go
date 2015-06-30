@@ -16,7 +16,7 @@ type InmemStore struct {
 	kvInt     map[string]uint64
 }
 
-// NewInmemStore returns a new inmemory backend. Do not ever
+// NewInmemStore returns a new in-memory backend. Do not ever
 // use for production. Only for testing.
 func NewInmemStore() *InmemStore {
 	i := &InmemStore{

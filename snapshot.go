@@ -4,7 +4,7 @@ import (
 	"io"
 )
 
-// SnapshotMeta is for meta data of a snaphot.
+// SnapshotMeta is for metadata of a snapshot.
 type SnapshotMeta struct {
 	ID    string // ID is opaque to the store, and is used for opening
 	Index uint64
@@ -19,7 +19,7 @@ type SnapshotMeta struct {
 // without steaming from the leader.
 type SnapshotStore interface {
 	// Create is used to begin a snapshot at a given index and term,
-	// with the current peer set already encoded
+	// with the current peer set already encoded.
 	Create(index, term uint64, peers []byte) (SnapshotSink, error)
 
 	// List is used to list the available snapshots in the store.
@@ -32,7 +32,7 @@ type SnapshotStore interface {
 }
 
 // SnapshotSink is returned by StartSnapshot. The FSM will Write state
-// to the sink and call Close on completion. On error, Cancel will be invoked
+// to the sink and call Close on completion. On error, Cancel will be invoked.
 type SnapshotSink interface {
 	io.WriteCloser
 	ID() string
