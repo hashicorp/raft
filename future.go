@@ -14,6 +14,7 @@ type Future interface {
 type ApplyFuture interface {
 	Future
 	Response() interface{}
+	Index() uint64
 }
 
 // errorFuture is used to return a static error.
@@ -27,6 +28,10 @@ func (e errorFuture) Error() error {
 
 func (e errorFuture) Response() interface{} {
 	return nil
+}
+
+func (e errorFuture) Index() uint64 {
+	return 0
 }
 
 // deferError can be embedded to allow a future
@@ -76,6 +81,10 @@ type logFuture struct {
 
 func (l *logFuture) Response() interface{} {
 	return l.response
+}
+
+func (l *logFuture) Index() uint64 {
+	return l.log.Index
 }
 
 type peerFuture struct {

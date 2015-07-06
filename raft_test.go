@@ -436,6 +436,11 @@ func TestRaft_SingleNode(t *testing.T) {
 		t.Fatalf("bad response: %v", future.Response())
 	}
 
+	// Check the index
+	if idx := future.Index(); idx == 0 {
+		t.Fatalf("bad index: %d", idx)
+	}
+
 	// Check that it is applied to the FSM
 	if len(c.fsms[0].logs) != 1 {
 		t.Fatalf("did not apply to FSM!")
