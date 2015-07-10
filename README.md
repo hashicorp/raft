@@ -84,6 +84,6 @@ run 3 or 5 raft servers. This maximizes availability without
 greatly sacrificing performance.
 
 In terms of performance, Raft is comparable to Paxos. Assuming stable leadership,
-a committing a log entry requires a single round trip to half of the cluster.
+committing a log entry requires a single round trip to half of the cluster.
 Thus performance is bound by disk I/O and network latency.
 
