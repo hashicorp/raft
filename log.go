@@ -32,7 +32,7 @@ type Log struct {
 	Type  LogType
 	Data  []byte
 
-	// Peer is not exported since it is not transmitted, only used
+	// peer is not exported since it is not transmitted, only used
 	// internally to construct the Data field.
 	peer string
 }
