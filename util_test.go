@@ -22,6 +22,17 @@ func TestRandomTimeout(t *testing.T) {
 	}
 }
 
+func TestNewSeed(t *testing.T) {
+	vals := make(map[int64]bool)
+	for i := 0; i < 1000; i++ {
+		seed := newSeed()
+		if _, exists := vals[seed]; exists {
+			t.Fatal("newSeed() return a value it'd previously returned")
+		}
+		vals[seed] = true
+	}
+}
+
 func TestRandomTimeout_NoTime(t *testing.T) {
 	timeout := randomTimeout(0)
 	if timeout != nil {
