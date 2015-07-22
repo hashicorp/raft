@@ -15,6 +15,8 @@ import (
 
 var rnd = rand.New(rand.NewSource(newSeed()))
 
+// returns an int64 from a crypto random source
+// can be used to seed a source for a math/rand.
 func newSeed() int64 {
 	r, err := crand.Int(crand.Reader, big.NewInt(math.MaxInt64))
 	if err != nil {
