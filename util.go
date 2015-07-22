@@ -5,6 +5,7 @@ import (
 	crand "crypto/rand"
 	"encoding/binary"
 	"fmt"
+	"math"
 	"math/big"
 	"math/rand"
 	"time"
@@ -15,7 +16,7 @@ import (
 var rnd = rand.New(rand.NewSource(newSeed()))
 
 func newSeed() int64 {
-	r, err := crand.Int(crand.Reader, big.NewInt(2^63))
+	r, err := crand.Int(crand.Reader, big.NewInt(math.MaxInt64))
 	if err != nil {
 		panic(fmt.Errorf("failed to read random bytes: %v", err))
 	}
