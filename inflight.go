@@ -148,7 +148,7 @@ func (i *inflight) Commit(index uint64) {
 }
 
 // CommitRange is used to commit a range of indexes inclusively.
-// It optimized to avoid commits for indexes that are not tracked.
+// It is optimized to avoid commits for indexes that are not tracked.
 func (i *inflight) CommitRange(minIndex, maxIndex uint64) {
 	i.Lock()
 	defer i.Unlock()

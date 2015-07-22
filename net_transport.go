@@ -148,7 +148,7 @@ func (n *NetworkTransport) SetHeartbeatHandler(cb func(rpc RPC)) {
 	n.heartbeatFn = cb
 }
 
-// Close is used to stop the network transport
+// Close is used to stop the network transport.
 func (n *NetworkTransport) Close() error {
 	n.shutdownLock.Lock()
 	defer n.shutdownLock.Unlock()
@@ -339,7 +339,7 @@ func (n *NetworkTransport) DecodePeer(buf []byte) string {
 	return string(buf)
 }
 
-// listen is used to handling incoming connections
+// listen is used to handling incoming connections.
 func (n *NetworkTransport) listen() {
 	for {
 		// Accept incoming connections
@@ -471,7 +471,8 @@ RESP:
 	return nil
 }
 
-// decodeResponse is used to decode an RPC response and return the conn.
+// decodeResponse is used to decode an RPC response and reports whether
+// the connection can be reused.
 func decodeResponse(conn *netConn, resp interface{}) (bool, error) {
 	// Decode the error if any
 	var rpcError string

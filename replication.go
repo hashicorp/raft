@@ -495,7 +495,7 @@ func (r *Raft) handleStaleTerm(s *followerReplication) {
 }
 
 // updateLastAppended is used to update follower replication state after a successful
-// AppendEntries RPC
+// AppendEntries RPC.
 func updateLastAppended(s *followerReplication, req *AppendEntriesRequest) {
 	// Mark any inflight logs as committed
 	if logs := req.Entries; len(logs) > 0 {
