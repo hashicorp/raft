@@ -13,7 +13,10 @@ import (
 	"github.com/hashicorp/go-msgpack/codec"
 )
 
-var rnd = rand.New(rand.NewSource(newSeed()))
+func init() {
+	// Ensure we use a high-entropy seed for the psuedo-random generator
+	rand.Seed(newSeed())
+}
 
 // returns an int64 from a crypto random source
 // can be used to seed a source for a math/rand.
@@ -30,7 +33,7 @@ func randomTimeout(minVal time.Duration) <-chan time.Time {
 	if minVal == 0 {
 		return nil
 	}
-	extra := (time.Duration(rnd.Int63()) % minVal)
+	extra := (time.Duration(rand.Int63()) % minVal)
 	return time.After(minVal + extra)
 }
 
