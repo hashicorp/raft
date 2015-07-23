@@ -13,8 +13,6 @@ import (
 	"github.com/hashicorp/go-msgpack/codec"
 )
 
-var rnd = rand.New(rand.NewSource(newSeed()))
-
 // returns an int64 from a crypto random source
 // can be used to seed a source for a math/rand.
 func newSeed() int64 {
@@ -30,6 +28,7 @@ func randomTimeout(minVal time.Duration) <-chan time.Time {
 	if minVal == 0 {
 		return nil
 	}
+	rnd := rand.New(rand.NewSource(newSeed()))
 	extra := (time.Duration(rnd.Int63()) % minVal)
 	return time.After(minVal + extra)
 }

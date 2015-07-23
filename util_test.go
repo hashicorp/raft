@@ -1,8 +1,10 @@
 package raft
 
 import (
+	"errors"
 	"reflect"
 	"regexp"
+	"sync"
 	"testing"
 	"time"
 )
@@ -19,6 +21,41 @@ func TestRandomTimeout(t *testing.T) {
 		}
 	case <-time.After(3 * time.Millisecond):
 		t.Fatalf("timeout")
+	}
+}
+
+func TestRandomTimeoutConcurrent(t *testing.T) {
+	const cnt = 1000
+	var wg sync.WaitGroup
+	wg.Add(cnt)
+	begin := make(chan struct{})
+	errch := make(chan error, cnt)
+
+	for i := 0; i < cnt; i++ {
+		go func() {
+			defer wg.Done()
+			start := time.Now()
+			timeout := randomTimeout(time.Millisecond)
+
+			select {
+			case <-timeout:
+				diff := time.Now().Sub(start)
+				if diff < time.Millisecond {
+					errch <- errors.New("fired early")
+				}
+			case <-time.After(100 * time.Millisecond):
+				errch <- errors.New("timeout")
+			}
+		}()
+	}
+
+	close(begin)
+	wg.Wait()
+
+	select {
+	case err := <-errch:
+		t.Fatal(err)
+	case <-time.After(time.Millisecond):
 	}
 }
 
