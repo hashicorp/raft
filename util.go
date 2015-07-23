@@ -8,11 +8,13 @@ import (
 	"math"
 	"math/big"
 	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/go-msgpack/codec"
 )
 
+var rndmu sync.Mutex
 var rnd = rand.New(rand.NewSource(newSeed()))
 
 // returns an int64 from a crypto random source
@@ -27,6 +29,8 @@ func newSeed() int64 {
 
 // randomTimeout returns a value that is between the minVal and 2x minVal.
 func randomTimeout(minVal time.Duration) <-chan time.Time {
+	rndmu.Lock()
+	defer rndmu.Unlock()
 	if minVal == 0 {
 		return nil
 	}
