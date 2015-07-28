@@ -481,6 +481,14 @@ func (r *Raft) LastIndex() uint64 {
 	return r.getLastIndex()
 }
 
+// AppliedIndex returns the last index applied to the FSM.
+// This is generally lagging behind the last index, especially
+// for indexes that are persisted but have not yet been considered
+// committed by the leader.
+func (r *Raft) AppliedIndex() uint64 {
+	return r.getLastApplied()
+}
+
 // runFSM is a long running goroutine responsible for applying logs
 // to the FSM. This is done async of other logs since we don't want
 // the FSM to block our internal operations.
