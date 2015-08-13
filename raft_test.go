@@ -1124,6 +1124,35 @@ func TestRaft_AutoSnapshot(t *testing.T) {
 	}
 }
 
+func TestRaft_ManualSnapshot(t *testing.T) {
+    // Make the cluster
+	conf := inmemConfig()
+	conf.SnapshotThreshold = 50
+	conf.TrailingLogs = 10
+	c := MakeCluster(1, t, conf)
+	defer c.Close()
+	
+	leader := c.Leader()
+	// with nothing commited, asking for a snapshot should return an error
+	ssErr := leader.Snapshot().Error()
+	if ssErr != ErrNothingNewToSnapshot {
+	    t.Errorf("Attempt to manualy create snapshot should of errored because there's nothing to do: %v", ssErr)
+	}
+	// commit some things
+	var future Future
+	for i := 0; i < 10; i++ {
+		future = leader.Apply([]byte(fmt.Sprintf("test %d", i)), 0)
+	}
+	if err := future.Error(); err != nil {
+		t.Fatalf("Error Apply new log entries: %v", err)
+	}
+	// now we should be able to ask for a snapshot without getting an error
+	ssErr = leader.Snapshot().Error()
+	if ssErr != nil {
+		t.Errorf("Request for Snapshot failed: %v", ssErr)
+	}
+}
+
 func TestRaft_SendSnapshotFollower(t *testing.T) {
 	// Make the cluster
 	conf := inmemConfig()
@@ -1153,7 +1182,8 @@ func TestRaft_SendSnapshotFollower(t *testing.T) {
 	// Snapshot, this will truncate logs!
 	for _, r := range c.rafts {
 		future = r.Snapshot()
-		if err := future.Error(); err != nil {
+		// the disconnected node will have nothing to snapshot, so that's expected
+		if err := future.Error(); err != nil && err != ErrNothingNewToSnapshot {
 			t.Fatalf("err: %v", err)
 		}
 	}
