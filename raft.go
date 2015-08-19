@@ -49,6 +49,10 @@ var (
 	// ErrUnknownPeer is returned when trying to remove a peer from the
 	// configuration that doesn't exist.
 	ErrUnknownPeer = errors.New("peer is unknown")
+	
+	// ErrNothingNewToSnapshot is returned when trying to create a snapshot
+	// but there's nothing new commited to the FSM since we started.
+	ErrNothingNewToSnapshot = errors.New("Nothing new to snapshot")
 )
 
 // commitTuple is used to send an index that was committed,
@@ -520,10 +524,16 @@ func (r *Raft) runFSM() {
 			req.respond(nil)
 
 		case req := <-r.fsmSnapshotCh:
+		    // Is there something to snapshot?
+		    if lastIndex == 0 {
+				req.respond(ErrNothingNewToSnapshot)
+				continue
+		    }
 			// Get our peers
 			peers, err := r.peerStore.Peers()
 			if err != nil {
 				req.respond(err)
+				continue
 			}
 
 			// Start a snapshot
@@ -1659,7 +1669,10 @@ func (r *Raft) takeSnapshot() error {
 
 	// Wait until we get a response
 	if err := req.Error(); err != nil {
-		return fmt.Errorf("failed to start snapshot: %v", err)
+		if err != ErrNothingNewToSnapshot {
+			err = fmt.Errorf("failed to start snapshot: %v", err)
+		}
+		return err
 	}
 	defer req.snapshot.Release()
 
