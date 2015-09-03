@@ -48,7 +48,7 @@ func MakeRaft(t *testing.T, conf *Config) *RaftEnv {
 
 	// Set the config
 	if conf == nil {
-		conf = inmemConfig()
+		conf = inmemConfig(t)
 	}
 	env.conf = conf
 
