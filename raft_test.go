@@ -99,6 +99,7 @@ type cluster struct {
 	snaps  []*FileSnapshotStore
 	trans  []*InmemTransport
 	rafts  []*Raft
+	t      *testing.T
 }
 
 func (c *cluster) Merge(other *cluster) {
@@ -159,8 +160,27 @@ func (c *cluster) Leader() *Raft {
 	return leaders[0]
 }
 
+// Waits for there to be cluster size -1 followers, and then returns them
+// If you just wait for a Leader sometimes you can get timing scenarios
+// where a 2nd node starts an election just as the first leader was elected
+// so even though you waited on the leader, it might become not leader soon
+// by waiting on the followers you can be in a more stable state
+func (c *cluster) Followers() []*Raft {
+	expFollowers := len(c.rafts) - 1
+	followers := c.GetInState(Follower)
+	limit := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(limit) && len(followers) != expFollowers {
+		time.Sleep(time.Millisecond)
+		followers = c.GetInState(Follower)
+	}
+	if len(followers) != expFollowers {
+		c.t.Fatalf("timeout waiting for %d followers (followers are %v)", expFollowers, followers)
+	}
+	return followers
+}
+
 func (c *cluster) FullyConnect() {
-	log.Printf("[WARN] Fully Connecting")
+	c.t.Logf("[WARN] Fully Connecting")
 	for i, t1 := range c.trans {
 		for j, t2 := range c.trans {
 			if i != j {
@@ -172,7 +192,7 @@ func (c *cluster) FullyConnect() {
 }
 
 func (c *cluster) Disconnect(a string) {
-	log.Printf("[WARN] Disconnecting %v", a)
+	c.t.Logf("[WARN] Disconnecting %v", a)
 	for _, t := range c.trans {
 		if t.localAddr == a {
 			t.DisconnectAll()
@@ -295,6 +315,7 @@ WAIT:
 
 func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 	c := &cluster{}
+	c.t = t
 	peers := make([]string, 0, n)
 
 	// Setup the stores and transports
@@ -347,7 +368,7 @@ func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 
 func MakeClusterNoPeers(n int, t *testing.T, conf *Config) *cluster {
 	c := &cluster{}
-
+	c.t = t
 	// Setup the stores and transports
 	for i := 0; i < n; i++ {
 		dir, err := ioutil.TempDir("", "raft")
@@ -469,6 +490,7 @@ func TestRaft_TripleNode(t *testing.T) {
 	defer c.Close()
 
 	// Should be one leader
+	c.Followers()
 	leader := c.Leader()
 	c.EnsureLeader(t, leader.localAddr)
 
@@ -510,11 +532,12 @@ func TestRaft_LeaderFail(t *testing.T) {
 	time.Sleep(30 * time.Millisecond)
 
 	// Disconnect the leader now
-	log.Printf("[INFO] Disconnecting %v", leader)
+	t.Logf("[INFO] Disconnecting %v", leader)
+	leaderTerm := leader.getCurrentTerm()
 	c.Disconnect(leader.localAddr)
 
 	// Wait for new leader
-	limit := time.Now().Add(200 * time.Millisecond)
+	limit := time.Now().Add(300 * time.Millisecond)
 	var newLead *Raft
 	for time.Now().Before(limit) && newLead == nil {
 		time.Sleep(10 * time.Millisecond)
@@ -528,8 +551,8 @@ func TestRaft_LeaderFail(t *testing.T) {
 	}
 
 	// Ensure the term is greater
-	if newLead.getCurrentTerm() <= leader.getCurrentTerm() {
-		t.Fatalf("expected newer term! %d %d", newLead.getCurrentTerm(), leader.getCurrentTerm())
+	if newLead.getCurrentTerm() <= leaderTerm {
+		t.Fatalf("expected newer term! %d %d (%v, %v)", newLead.getCurrentTerm(), leaderTerm, newLead, leader)
 	}
 
 	// Apply should work not work on old leader
@@ -544,7 +567,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 	}
 
 	// Reconnect the networks
-	log.Printf("[INFO] Reconnecting %v", leader)
+	t.Logf("[INFO] Reconnecting %v", leader)
 	c.FullyConnect()
 
 	// Future1 should fail
@@ -578,7 +601,7 @@ func TestRaft_BehindFollower(t *testing.T) {
 
 	// Disconnect one follower
 	leader := c.Leader()
-	followers := c.GetInState(Follower)
+	followers := c.Followers()
 	behind := followers[0]
 	c.Disconnect(behind.localAddr)
 
@@ -592,7 +615,7 @@ func TestRaft_BehindFollower(t *testing.T) {
 	if err := future.Error(); err != nil {
 		t.Fatalf("err: %v", err)
 	} else {
-		log.Printf("[INFO] Finished apply without behind follower")
+		t.Logf("[INFO] Finished apply without behind follower")
 	}
 
 	// Check that we have a non zero last contact
@@ -697,7 +720,7 @@ func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 
 	// Enough enqueues should cause at least one timeout...
 	var didTimeout int32 = 0
-	for i := 0; i < 200; i++ {
+	for i := 0; (i < 400) && (atomic.LoadInt32(&didTimeout) == 0); i++ {
 		go func(i int) {
 			future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), time.Microsecond)
 			if future.Error() == ErrEnqueueTimeout {
@@ -727,7 +750,7 @@ func TestRaft_JoinNode(t *testing.T) {
 	if err := future.Error(); err != nil {
 		t.Fatalf("err: %v", err)
 	} else {
-		log.Printf("[INFO] Applied log")
+		t.Logf("[INFO] Applied log")
 	}
 
 	// Make a new cluster of 1
@@ -785,7 +808,7 @@ func TestRaft_RemoveFollower(t *testing.T) {
 	leader := c.Leader()
 
 	// Wait until we have 2 followers
-	limit := time.Now().Add(200 * time.Millisecond)
+	limit := time.Now().Add(300 * time.Millisecond)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
 		time.Sleep(10 * time.Millisecond)
@@ -869,18 +892,8 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	defer c.Close()
 
 	// Get the leader
+	c.Followers()
 	leader := c.Leader()
-
-	// Wait until we have 2 followers
-	limit := time.Now().Add(200 * time.Millisecond)
-	var followers []*Raft
-	for time.Now().Before(limit) && len(followers) != 2 {
-		time.Sleep(10 * time.Millisecond)
-		followers = c.GetInState(Follower)
-	}
-	if len(followers) != 2 {
-		t.Fatalf("expected two followers: %v", followers)
-	}
 
 	// Remove the leader
 	leader.RemovePeer(leader.localAddr)
@@ -922,13 +935,14 @@ func TestRaft_RemoveLeader_SplitCluster(t *testing.T) {
 	defer c.Close()
 
 	// Get the leader
+	c.Followers()
 	leader := c.Leader()
 
 	// Remove the leader
 	leader.RemovePeer(leader.localAddr)
 
 	// Wait until we have 2 leaders
-	limit := time.Now().Add(200 * time.Millisecond)
+	limit := time.Now().Add(300 * time.Millisecond)
 	var leaders []*Raft
 	for time.Now().Before(limit) && len(leaders) != 2 {
 		time.Sleep(10 * time.Millisecond)
@@ -1192,7 +1206,7 @@ func TestRaft_SendSnapshotFollower(t *testing.T) {
 	if err := future.Error(); err != nil {
 		t.Fatalf("err: %v", err)
 	} else {
-		log.Printf("[INFO] Finished apply without behind follower")
+		t.Logf("[INFO] Finished apply without behind follower")
 	}
 
 	// Snapshot, this will truncate logs!
@@ -1323,7 +1337,7 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 
 	// Verify no further contact
 	last := follower.LastContact()
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(110 * time.Millisecond)
 
 	// Check that last contact has not changed
 	if last != follower.LastContact() {
@@ -1411,15 +1425,7 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	leader := c.Leader()
 
 	// Wait until we have a followers
-	limit := time.Now().Add(200 * time.Millisecond)
-	var followers []*Raft
-	for time.Now().Before(limit) && len(followers) != 1 {
-		time.Sleep(10 * time.Millisecond)
-		followers = c.GetInState(Follower)
-	}
-	if len(followers) != 1 {
-		t.Fatalf("expected a followers: %v", followers)
-	}
+	followers := c.Followers()
 
 	// Force follower to different term
 	follower := followers[0]
