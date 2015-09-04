@@ -520,6 +520,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 	defer c.Close()
 
 	// Should be one leader
+	c.Followers()
 	leader := c.Leader()
 
 	// Should be able to apply
@@ -720,13 +721,17 @@ func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 
 	// Enough enqueues should cause at least one timeout...
 	var didTimeout int32 = 0
-	for i := 0; (i < 400) && (atomic.LoadInt32(&didTimeout) == 0); i++ {
+	for i := 0; (i < 500) && (atomic.LoadInt32(&didTimeout) == 0); i++ {
 		go func(i int) {
 			future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), time.Microsecond)
 			if future.Error() == ErrEnqueueTimeout {
 				atomic.StoreInt32(&didTimeout, 1)
 			}
 		}(i)
+		// give the leaderloop some otherthings to do in order to increase the odds of a timeout
+		if i%5 == 0 {
+			leader.VerifyLeader()
+		}
 	}
 
 	// Wait
@@ -1191,12 +1196,12 @@ func TestRaft_SendSnapshotFollower(t *testing.T) {
 	defer c.Close()
 
 	// Disconnect one follower
-	followers := c.GetInState(Follower)
+	followers := c.Followers()
+	leader := c.Leader()
 	behind := followers[0]
 	c.Disconnect(behind.localAddr)
 
 	// Commit a lot of things
-	leader := c.Leader()
 	var future Future
 	for i := 0; i < 100; i++ {
 		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
