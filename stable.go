@@ -9,7 +9,7 @@ type StableStore interface {
 	Get(key []byte) ([]byte, error)
 
 	SetUint64(key []byte, val uint64) error
-	
+
 	// GetUint64 returns the uint64 value for key, or 0 if key was not found.
 	GetUint64(key []byte) (uint64, error)
 }

@@ -73,7 +73,7 @@ func inmemConfig(t *testing.T) *Config {
 	conf.ElectionTimeout = 50 * time.Millisecond
 	conf.LeaderLeaseTimeout = 50 * time.Millisecond
 	conf.CommitTimeout = time.Millisecond
-	conf.Logger = log.New(&testLoggerAdapter{t}, "", 0)
+	conf.Logger = newTestLogger(t)
 	return conf
 }
 
@@ -90,6 +90,10 @@ func (a *testLoggerAdapter) Write(d []byte) (int, error) {
 	}
 	a.t.Log(string(d))
 	return len(d), nil
+}
+
+func newTestLogger(t *testing.T) *log.Logger {
+	return log.New(&testLoggerAdapter{t}, "", 0)
 }
 
 type cluster struct {
@@ -1322,7 +1326,7 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 
 	// Disconnect the follower now
 	follower := followers[0]
-	log.Printf("[INFO] Disconnecting %v", follower)
+	t.Logf("[INFO] Disconnecting %v", follower)
 	c.Disconnect(follower.localAddr)
 
 	// Watch the leaderCh
@@ -1472,7 +1476,7 @@ func TestRaft_VerifyLeader_ParitalConnect(t *testing.T) {
 
 	// Force partial disconnect
 	follower := followers[0]
-	log.Printf("[INFO] Disconnecting %v", follower)
+	t.Logf("[INFO] Disconnecting %v", follower)
 	c.Disconnect(follower.localAddr)
 
 	// Verify we are leader
