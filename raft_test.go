@@ -1509,3 +1509,47 @@ func TestRaft_SettingPeers(t *testing.T) {
 		t.Fatalf("no leader?")
 	}
 }
+
+func TestRaft_StartAsLeader(t *testing.T) {
+	conf := inmemConfig(t)
+	conf.StartAsLeader = true
+	c := MakeCluster(1, t, conf)
+	defer c.Close()
+	raft := c.rafts[0]
+
+	// Watch leaderCh for change
+	select {
+	case v := <-raft.LeaderCh():
+		if !v {
+			t.Fatalf("should become leader")
+		}
+	case <-time.After(5 * time.Millisecond):
+		t.Fatalf("timeout becoming leader")
+	}
+
+	// Should be leader
+	if s := raft.State(); s != Leader {
+		t.Fatalf("expected leader: %v", s)
+	}
+
+	// Should be able to apply
+	future := raft.Apply([]byte("test"), time.Millisecond)
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Check the response
+	if future.Response().(int) != 1 {
+		t.Fatalf("bad response: %v", future.Response())
+	}
+
+	// Check the index
+	if idx := future.Index(); idx == 0 {
+		t.Fatalf("bad index: %d", idx)
+	}
+
+	// Check that it is applied to the FSM
+	if len(c.fsms[0].logs) != 1 {
+		t.Fatalf("did not apply to FSM!")
+	}
+}
