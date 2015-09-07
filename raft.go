@@ -733,6 +733,14 @@ func (r *Raft) runLeader() {
 	// Notify that we are the leader
 	asyncNotifyBool(r.leaderCh, true)
 
+	// Push to the notify channel if given
+	if notify := r.conf.NotifyCh; notify != nil {
+		select {
+		case notify <- true:
+		case <-r.shutdownCh:
+		}
+	}
+
 	// Setup leader state
 	r.leaderState.commitCh = make(chan struct{}, 1)
 	r.leaderState.inflight = newInflight(r.leaderState.commitCh)
@@ -773,6 +781,14 @@ func (r *Raft) runLeader() {
 
 		// Notify that we are not the leader
 		asyncNotifyBool(r.leaderCh, false)
+
+		// Push to the notify channel if given
+		if notify := r.conf.NotifyCh; notify != nil {
+			select {
+			case notify <- false:
+			case <-r.shutdownCh:
+			}
+		}
 	}()
 
 	// Start a replication routine for each peer

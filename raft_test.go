@@ -1553,3 +1553,34 @@ func TestRaft_StartAsLeader(t *testing.T) {
 		t.Fatalf("did not apply to FSM!")
 	}
 }
+
+func TestRaft_NotifyCh(t *testing.T) {
+	ch := make(chan bool, 1)
+	conf := inmemConfig(t)
+	conf.NotifyCh = ch
+	c := MakeCluster(1, t, conf)
+	defer c.Close()
+
+	// Watch leaderCh for change
+	select {
+	case v := <-ch:
+		if !v {
+			t.Fatalf("should become leader")
+		}
+	case <-time.After(conf.HeartbeatTimeout * 3):
+		t.Fatalf("timeout becoming leader")
+	}
+
+	// Close the cluster
+	c.Close()
+
+	// Watch leaderCh for change
+	select {
+	case v := <-ch:
+		if v {
+			t.Fatalf("should step down as leader")
+		}
+	case <-time.After(conf.HeartbeatTimeout * 3):
+		t.Fatalf("timeout becoming leader")
+	}
+}
