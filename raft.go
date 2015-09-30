@@ -1173,12 +1173,12 @@ func (r *Raft) processLog(l *Log, future *logFuture, precommit bool) {
 		if r.getState() == Leader && !precommit {
 			var toDelete []string
 			for _, repl := range r.leaderState.replState {
-					r.logger.Printf("[INFO] raft: Removed peer %v, stopping replication (Index: %d)", repl.peer, l.Index)
+				r.logger.Printf("[INFO] raft: Removed peer %v, stopping replication (Index: %d)", repl.peer, l.Index)
 
-					// Replicate up to this index and stop
-					repl.stopCh <- l.Index
-					close(repl.stopCh)
-					toDelete = append(toDelete, repl.peer)
+				// Replicate up to this index and stop
+				repl.stopCh <- l.Index
+				close(repl.stopCh)
+				toDelete = append(toDelete, repl.peer)
 			}
 			for _, name := range toDelete {
 				delete(r.leaderState.replState, name)
