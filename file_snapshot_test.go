@@ -16,7 +16,7 @@ func FileSnapTest(t *testing.T) (string, *FileSnapshotStore) {
 		t.Fatalf("err: %v ", err)
 	}
 
-	snap, err := NewFileSnapshotStore(dir, 3, nil)
+	snap, err := NewFileSnapshotStoreWithLogger(dir, 3, newTestLogger(t))
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestFileSS_CreateSnapshotMissingParentDir(t *testing.T) {
 		t.Fatalf("err: %v ", err)
 	}
 
-	snap, err := NewFileSnapshotStore(dir, 3, nil)
+	snap, err := NewFileSnapshotStoreWithLogger(dir, 3, newTestLogger(t))
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestFileSS_CreateSnapshot(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	snap, err := NewFileSnapshotStore(dir, 3, nil)
+	snap, err := NewFileSnapshotStoreWithLogger(dir, 3, newTestLogger(t))
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestFileSS_CancelSnapshot(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	snap, err := NewFileSnapshotStore(dir, 3, nil)
+	snap, err := NewFileSnapshotStoreWithLogger(dir, 3, newTestLogger(t))
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestFileSS_Retention(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	snap, err := NewFileSnapshotStore(dir, 2, nil)
+	snap, err := NewFileSnapshotStoreWithLogger(dir, 2, newTestLogger(t))
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -298,7 +298,7 @@ func TestFileSS_Ordering(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	snap, err := NewFileSnapshotStore(dir, 3, nil)
+	snap, err := NewFileSnapshotStoreWithLogger(dir, 3, newTestLogger(t))
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}

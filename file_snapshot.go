@@ -71,15 +71,15 @@ func (b *bufferedFile) Close() error {
 	return b.fh.Close()
 }
 
-// NewFileSnapshotStore creates a new FileSnapshotStore based
+// NewFileSnapshotStoreWithLogger creates a new FileSnapshotStore based
 // on a base directory. The `retain` parameter controls how many
 // snapshots are retained. Must be at least 1.
-func NewFileSnapshotStore(base string, retain int, logOutput io.Writer) (*FileSnapshotStore, error) {
+func NewFileSnapshotStoreWithLogger(base string, retain int, logger *log.Logger) (*FileSnapshotStore, error) {
 	if retain < 1 {
 		return nil, fmt.Errorf("must retain at least one snapshot")
 	}
-	if logOutput == nil {
-		logOutput = os.Stderr
+	if logger == nil {
+		logger = log.New(os.Stderr, "", log.LstdFlags)
 	}
 
 	// Ensure our path exists
@@ -92,7 +92,7 @@ func NewFileSnapshotStore(base string, retain int, logOutput io.Writer) (*FileSn
 	store := &FileSnapshotStore{
 		path:   path,
 		retain: retain,
-		logger: log.New(logOutput, "", log.LstdFlags),
+		logger: logger,
 	}
 
 	// Do a permissions test
@@ -100,6 +100,16 @@ func NewFileSnapshotStore(base string, retain int, logOutput io.Writer) (*FileSn
 		return nil, fmt.Errorf("permissions test failed: %v", err)
 	}
 	return store, nil
+}
+
+// NewFileSnapshotStore creates a new FileSnapshotStore based
+// on a base directory. The `retain` parameter controls how many
+// snapshots are retained. Must be at least 1.
+func NewFileSnapshotStore(base string, retain int, logOutput io.Writer) (*FileSnapshotStore, error) {
+	if logOutput == nil {
+		logOutput = os.Stderr
+	}
+	return NewFileSnapshotStoreWithLogger(base, retain, log.New(logOutput, "", log.LstdFlags))
 }
 
 // testPermissions tries to touch a file in our path to see if it works.
