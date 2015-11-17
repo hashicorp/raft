@@ -608,6 +608,7 @@ func (r *Raft) run() {
 func (r *Raft) runFollower() {
 	didWarn := false
 	r.logger.Printf("[INFO] raft: %v entering Follower state", r)
+	metrics.IncrCounter([]string{"raft", "state", "follower"}, 1)
 	heartbeatTimer := randomTimeout(r.conf.HeartbeatTimeout)
 	for {
 		select {
@@ -646,6 +647,8 @@ func (r *Raft) runFollower() {
 				}
 			} else {
 				r.logger.Printf("[WARN] raft: Heartbeat timeout reached, starting election")
+
+				metrics.IncrCounter([]string{"raft", "transition", "heartbeat_timout"}, 1)
 				r.setState(Candidate)
 				return
 			}
@@ -659,6 +662,7 @@ func (r *Raft) runFollower() {
 // runCandidate runs the FSM for a candidate.
 func (r *Raft) runCandidate() {
 	r.logger.Printf("[INFO] raft: %v entering Candidate state", r)
+	metrics.IncrCounter([]string{"raft", "state", "candidate"}, 1)
 
 	// Start vote for us, and set a timeout
 	voteCh := r.electSelf()
@@ -729,6 +733,7 @@ func (r *Raft) runCandidate() {
 // the leaderLoop for the hot loop.
 func (r *Raft) runLeader() {
 	r.logger.Printf("[INFO] raft: %v entering Leader state", r)
+	metrics.IncrCounter([]string{"raft", "state", "leader"}, 1)
 
 	// Notify that we are the leader
 	asyncNotifyBool(r.leaderCh, true)
@@ -1010,6 +1015,7 @@ func (r *Raft) checkLeaderLease() time.Duration {
 	if contacted < quorum {
 		r.logger.Printf("[WARN] raft: Failed to contact quorum of nodes, stepping down")
 		r.setState(Follower)
+		metrics.IncrCounter([]string{"raft", "transition", "leader_lease_timeout"}, 1)
 	}
 	return maxDiff
 }
