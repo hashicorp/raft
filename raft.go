@@ -411,6 +411,7 @@ func (r *Raft) Shutdown() Future {
 	if !r.shutdown {
 		close(r.shutdownCh)
 		r.shutdown = true
+		r.trans.Close()
 		r.setState(Shutdown)
 	}
 

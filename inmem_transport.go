@@ -208,6 +208,11 @@ func (i *InmemTransport) DisconnectAll() {
 	i.pipelines = nil
 }
 
+func (i *InmemTransport) Close() error {
+	i.DisconnectAll()
+	return nil
+}
+
 func newInmemPipeline(trans *InmemTransport, peer *InmemTransport, addr string) *inmemPipeline {
 	i := &inmemPipeline{
 		trans:        trans,
