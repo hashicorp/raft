@@ -1258,9 +1258,10 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "appendEntries"}, time.Now())
 	// Setup a response
 	resp := &AppendEntriesResponse{
-		Term:    r.getCurrentTerm(),
-		LastLog: r.getLastIndex(),
-		Success: false,
+		Term:           r.getCurrentTerm(),
+		LastLog:        r.getLastIndex(),
+		Success:        false,
+		NoRetryBackoff: false,
 	}
 	var rpcErr error
 	defer func() {
@@ -1297,6 +1298,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 			if err := r.logs.GetLog(a.PrevLogEntry, &prevLog); err != nil {
 				r.logger.Printf("[WARN] raft: Failed to get previous log: %d %v (last: %d)",
 					a.PrevLogEntry, err, lastIdx)
+				resp.NoRetryBackoff = true
 				return
 			}
 			prevLogTerm = prevLog.Term
@@ -1305,6 +1307,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		if a.PrevLogTerm != prevLogTerm {
 			r.logger.Printf("[WARN] raft: Previous log term mis-match: ours: %d remote: %d",
 				prevLogTerm, a.PrevLogTerm)
+			resp.NoRetryBackoff = true
 			return
 		}
 	}
