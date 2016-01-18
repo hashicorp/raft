@@ -906,7 +906,7 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 
 	// Remove the leader
 	var removeFuture Future
-	for i := byte(0) ; i < 100; i++ {
+	for i := byte(0); i < 100; i++ {
 		leader.Apply([]byte{i}, 0)
 		if i == 80 {
 			removeFuture = leader.RemovePeer(leader.localAddr)
@@ -916,7 +916,7 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	if err := removeFuture.Error(); err != nil {
 		t.Fatalf("RemovePeer failed with error %v", err)
 	}
-	
+
 	// Wait a while
 	time.Sleep(20 * time.Millisecond)
 
@@ -940,7 +940,7 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	if peers, _ := leader.peerStore.Peers(); len(peers) != 1 {
 		t.Fatalf("leader should have no peers")
 	}
-	
+
 	// Other nodes should have the same state
 	c.EnsureSame(t)
 }
