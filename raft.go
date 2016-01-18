@@ -690,7 +690,7 @@ func (r *Raft) runCandidate() {
 			// Check if the vote is granted
 			if vote.Granted {
 				grantedVotes++
-				r.logger.Printf("[DEBUG] raft: Vote granted. Tally: %d", grantedVotes)
+				r.logger.Printf("[DEBUG] raft: Vote granted from %s. Tally: %d", vote.voter, grantedVotes)
 			}
 
 			// Check if we've become the leader
@@ -1540,13 +1540,18 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	return
 }
 
+type voteResult struct {
+	RequestVoteResponse
+	voter string
+}
+
 // electSelf is used to send a RequestVote RPC to all peers,
 // and vote for ourself. This has the side affecting of incrementing
 // the current term. The response channel returned is used to wait
 // for all the responses (including a vote for ourself).
-func (r *Raft) electSelf() <-chan *RequestVoteResponse {
+func (r *Raft) electSelf() <-chan *voteResult {
 	// Create a response channel
-	respCh := make(chan *RequestVoteResponse, len(r.peers)+1)
+	respCh := make(chan *voteResult, len(r.peers)+1)
 
 	// Increment the term
 	r.setCurrentTerm(r.getCurrentTerm() + 1)
@@ -1564,8 +1569,8 @@ func (r *Raft) electSelf() <-chan *RequestVoteResponse {
 	askPeer := func(peer string) {
 		r.goFunc(func() {
 			defer metrics.MeasureSince([]string{"raft", "candidate", "electSelf"}, time.Now())
-			resp := new(RequestVoteResponse)
-			err := r.trans.RequestVote(peer, req, resp)
+			resp := &voteResult{voter: peer}
+			err := r.trans.RequestVote(peer, req, &resp.RequestVoteResponse)
 			if err != nil {
 				r.logger.Printf("[ERR] raft: Failed to make RequestVote RPC to %v: %v", peer, err)
 				resp.Term = req.Term
@@ -1599,9 +1604,12 @@ func (r *Raft) electSelf() <-chan *RequestVoteResponse {
 	}
 
 	// Include our own vote
-	respCh <- &RequestVoteResponse{
-		Term:    req.Term,
-		Granted: true,
+	respCh <- &voteResult{
+		RequestVoteResponse: RequestVoteResponse{
+			Term:    req.Term,
+			Granted: true,
+		},
+		voter: r.localAddr,
 	}
 	return respCh
 }
