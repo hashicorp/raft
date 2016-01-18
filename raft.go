@@ -918,7 +918,7 @@ func (r *Raft) leaderLoop() {
 			for i := 0; i < n; i++ {
 				// Fail all future transactions once stepDown is on
 				if stepDown {
-					ready[i].respond(ErrLeadershipLost)
+					ready[i].respond(ErrNotLeader)
 					ready[i], ready[n-1] = ready[n-1], nil
 					n--
 					i--

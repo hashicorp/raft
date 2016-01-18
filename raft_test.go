@@ -912,7 +912,7 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 			removeFuture = leader.RemovePeer(leader.localAddr)
 		}
 		if i > 80 {
-			if err := future.Error(); err == nil || (err != ErrLeadershipLost && err != ErrNotLeader) {
+			if err := future.Error(); err == nil || err != ErrNotLeader {
 				t.Fatalf("err: %v, future entries should fail", err)
 			}
 		}
