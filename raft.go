@@ -1183,9 +1183,18 @@ func (r *Raft) processLog(l *Log, future *logFuture, precommit bool) (stepDown b
 		// If the peer set does not include us, remove all other peers
 		removeSelf := !PeerContained(peers, r.localAddr) && l.Type == LogRemovePeer
 		if removeSelf {
-			r.peers = nil
-			r.peerStore.SetPeers([]string{r.localAddr})
+			// Mark that this operation will cause us to step down as
+			// leader. This prevents the future logs from being Applied
+			// from this leader.
 			stepDown = true
+
+			// We only modify the peers after the commit, otherwise we
+			// would be using a quorum size of 1 for the RemovePeer operation.
+			// This is used with the stepDown guard to prevent any other logs.
+			if !precommit {
+				r.peers = nil
+				r.peerStore.SetPeers([]string{r.localAddr})
+			}
 		} else {
 			r.peers = ExcludePeer(peers, r.localAddr)
 			r.peerStore.SetPeers(peers)
