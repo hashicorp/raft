@@ -251,7 +251,7 @@ CHECK:
 		if len(first.logs) != len(fsm.logs) {
 			fsm.Unlock()
 			if time.Now().After(limit) {
-				t.Fatalf("length mismatch: %d %d",
+				t.Fatalf("FSM log length mismatch: %d %d",
 					len(first.logs), len(fsm.logs))
 			} else {
 				goto WAIT
@@ -905,8 +905,18 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	leader := c.Leader()
 
 	// Remove the leader
-	leader.RemovePeer(leader.localAddr)
+	var removeFuture Future
+	for i := byte(0) ; i < 100; i++ {
+		leader.Apply([]byte{i}, 0)
+		if i == 80 {
+			removeFuture = leader.RemovePeer(leader.localAddr)
+		}
+	}
 
+	if err := removeFuture.Error(); err != nil {
+		t.Fatalf("RemovePeer failed with error %v", err)
+	}
+	
 	// Wait a while
 	time.Sleep(20 * time.Millisecond)
 
@@ -930,6 +940,9 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	if peers, _ := leader.peerStore.Peers(); len(peers) != 1 {
 		t.Fatalf("leader should have no peers")
 	}
+	
+	// Other nodes should have the same state
+	c.EnsureSame(t)
 }
 
 func TestRaft_RemoveLeader_SplitCluster(t *testing.T) {
