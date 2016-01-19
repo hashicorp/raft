@@ -206,6 +206,15 @@ func (c *cluster) Disconnect(a string) {
 	}
 }
 
+func (c *cluster) IndexOf(r *Raft) int {
+	for i, n := range c.rafts {
+		if n == r {
+			return i
+		}
+	}
+	return -1
+}
+
 func (c *cluster) EnsureLeader(t *testing.T, expect string) {
 	limit := time.Now().Add(400 * time.Millisecond)
 CHECK:
@@ -1589,7 +1598,7 @@ func TestRaft_NotifyCh(t *testing.T) {
 		if !v {
 			t.Fatalf("should become leader")
 		}
-	case <-time.After(conf.HeartbeatTimeout * 3):
+	case <-time.After(conf.HeartbeatTimeout * 6):
 		t.Fatalf("timeout becoming leader")
 	}
 
@@ -1602,7 +1611,38 @@ func TestRaft_NotifyCh(t *testing.T) {
 		if v {
 			t.Fatalf("should step down as leader")
 		}
-	case <-time.After(conf.HeartbeatTimeout * 3):
+	case <-time.After(conf.HeartbeatTimeout * 6):
 		t.Fatalf("timeout becoming leader")
+	}
+}
+
+func TestRaft_Voting(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+	followers := c.Followers()
+	ldr := c.Leader()
+	ldrT := c.trans[c.IndexOf(ldr)]
+
+	reqVote := RequestVoteRequest{
+		Term:         42,
+		Candidate:    ldrT.EncodePeer(ldr.localAddr),
+		LastLogIndex: ldr.LastIndex(),
+		LastLogTerm:  1,
+	}
+	// a follower that thinks there's a leader should vote for that leader.
+	var resp RequestVoteResponse
+	if err := ldrT.RequestVote(followers[0].localAddr, &reqVote, &resp); err != nil {
+		t.Fatalf("RequestVote RPC failed %v", err)
+	}
+	if !resp.Granted {
+		t.Fatalf("expected vote to be granted, but wasn't %+v", resp)
+	}
+	// a follow that thinks there's a leader shouldn't vote for a different candidate
+	reqVote.Candidate = ldrT.EncodePeer(followers[0].localAddr)
+	if err := ldrT.RequestVote(followers[1].localAddr, &reqVote, &resp); err != nil {
+		t.Fatalf("RequestVote RPC failed %v", err)
+	}
+	if resp.Granted {
+		t.Fatalf("expected vote not to be granted, but was %+v", resp)
 	}
 }

@@ -1407,10 +1407,11 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 		rpc.Respond(resp, rpcErr)
 	}()
 
-	// Check if we have an existing leader
-	if leader := r.Leader(); leader != "" {
-		r.logger.Printf("[WARN] raft: Rejecting vote from %v since we have a leader: %v",
-			r.trans.DecodePeer(req.Candidate), leader)
+	// Check if we have an existing leader [who's not the candidate]
+	candidate := r.trans.DecodePeer(req.Candidate)
+	if leader := r.Leader(); leader != "" && leader != candidate {
+		r.logger.Printf("[WARN] raft: Rejecting vote request from %v since we have a leader: %v",
+			candidate, leader)
 		return
 	}
 
@@ -1452,14 +1453,14 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// Reject if their term is older
 	lastIdx, lastTerm := r.getLastEntry()
 	if lastTerm > req.LastLogTerm {
-		r.logger.Printf("[WARN] raft: Rejecting vote from %v since our last term is greater (%d, %d)",
-			r.trans.DecodePeer(req.Candidate), lastTerm, req.LastLogTerm)
+		r.logger.Printf("[WARN] raft: Rejecting vote request from %v since our last term is greater (%d, %d)",
+			candidate, lastTerm, req.LastLogTerm)
 		return
 	}
 
 	if lastIdx > req.LastLogIndex {
-		r.logger.Printf("[WARN] raft: Rejecting vote from %v since our last index is greater (%d, %d)",
-			r.trans.DecodePeer(req.Candidate), lastIdx, req.LastLogIndex)
+		r.logger.Printf("[WARN] raft: Rejecting vote request from %v since our last index is greater (%d, %d)",
+			candidate, lastIdx, req.LastLogIndex)
 		return
 	}
 
