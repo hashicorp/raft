@@ -907,9 +907,14 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	// Remove the leader
 	var removeFuture Future
 	for i := byte(0); i < 100; i++ {
-		leader.Apply([]byte{i}, 0)
+		future := leader.Apply([]byte{i}, 0)
 		if i == 80 {
 			removeFuture = leader.RemovePeer(leader.localAddr)
+		}
+		if i > 80 {
+			if err := future.Error(); err == nil || err != ErrNotLeader {
+				t.Fatalf("err: %v, future entries should fail", err)
+			}
 		}
 	}
 
