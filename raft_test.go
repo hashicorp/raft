@@ -1366,6 +1366,11 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 		t.Fatalf("timeout stepping down as leader")
 	}
 
+	// Ensure the last contact of the leader is non-zero
+	if leader.LastContact().IsZero() {
+		t.Fatalf("expected non-zero contact time")
+	}
+
 	// Should be no leaders
 	if len(c.GetInState(Leader)) != 0 {
 		t.Fatalf("expected step down")
@@ -1612,7 +1617,7 @@ func TestRaft_NotifyCh(t *testing.T) {
 			t.Fatalf("should step down as leader")
 		}
 	case <-time.After(conf.HeartbeatTimeout * 6):
-		t.Fatalf("timeout becoming leader")
+		t.Fatalf("timeout on step down as leader")
 	}
 }
 
