@@ -58,6 +58,9 @@ type Transport interface {
 	// disk IO. If a Transport does not support this, it can simply
 	// ignore the call, and push the heartbeat onto the Consumer channel.
 	SetHeartbeatHandler(cb func(rpc RPC))
+
+	// Close shuts down the transport
+	Close() error
 }
 
 // AppendPipeline is used for pipelining AppendEntries requests. It is used
