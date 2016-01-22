@@ -755,6 +755,13 @@ func (r *Raft) runLeader() {
 
 	// Cleanup state on step down
 	defer func() {
+		// Since we were the leader previously, we update our
+		// last contact time when we step down, so that we are not
+		// reporting a last contact time from before we were the
+		// leader. Otherwise, to a client it would seem our data
+		// is extremely stale.
+		r.setLastContact()
+
 		// Stop replication
 		for _, p := range r.leaderState.replState {
 			close(p.stopCh)
@@ -792,6 +799,11 @@ func (r *Raft) runLeader() {
 			select {
 			case notify <- false:
 			case <-r.shutdownCh:
+				// On shutdown, make a best effort but do not block
+				select {
+				case notify <- false:
+				default:
+				}
 			}
 		}
 	}()
@@ -1387,9 +1399,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 
 	// Everything went well, set success
 	resp.Success = true
-	r.lastContactLock.Lock()
-	r.lastContact = time.Now()
-	r.lastContactLock.Unlock()
+	r.setLastContact()
 	return
 }
 
@@ -1574,10 +1584,15 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 
 	r.logger.Printf("[INFO] raft: Installed remote snapshot")
 	resp.Success = true
+	r.setLastContact()
+	return
+}
+
+// setLastContact is used to set the last contact time to now
+func (r *Raft) setLastContact() {
 	r.lastContactLock.Lock()
 	r.lastContact = time.Now()
 	r.lastContactLock.Unlock()
-	return
 }
 
 type voteResult struct {
