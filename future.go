@@ -74,7 +74,6 @@ func (d *deferError) respond(err error) {
 type logFuture struct {
 	deferError
 	log      Log
-	policy   quorumPolicy
 	response interface{}
 	dispatch time.Time
 }
