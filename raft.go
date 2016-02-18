@@ -2,6 +2,7 @@ package raft
 
 import (
 	"bytes"
+	"container/list"
 	"errors"
 	"fmt"
 	"io"
@@ -64,11 +65,12 @@ type commitTuple struct {
 
 // leaderState is state that is used while we are a leader.
 type leaderState struct {
-	commitCh  chan struct{}
-	inflight  *inflight
-	replState map[string]*followerReplication
-	notify    map[*verifyFuture]struct{}
-	stepDown  chan struct{}
+	commitCh   chan struct{}
+	commitment *commitment
+	inflight   *list.List // list of logFuture in log index order
+	replState  map[string]*followerReplication
+	notify     map[*verifyFuture]struct{}
+	stepDown   chan struct{}
 }
 
 // Raft implements a Raft node.
@@ -750,7 +752,10 @@ func (r *Raft) runLeader() {
 
 	// Setup leader state
 	r.leaderState.commitCh = make(chan struct{}, 1)
-	r.leaderState.inflight = newInflight(r.leaderState.commitCh)
+	r.leaderState.commitment = newCommitment(r.leaderState.commitCh,
+		append([]string{r.localAddr}, r.peers...),
+		r.getLastIndex()+1)
+	r.leaderState.inflight = list.New()
 	r.leaderState.replState = make(map[string]*followerReplication)
 	r.leaderState.notify = make(map[*verifyFuture]struct{})
 	r.leaderState.stepDown = make(chan struct{}, 1)
@@ -769,8 +774,10 @@ func (r *Raft) runLeader() {
 			close(p.stopCh)
 		}
 
-		// Cancel inflight requests
-		r.leaderState.inflight.Cancel(ErrLeadershipLost)
+		// Respond to all inflight operations
+		for e := r.leaderState.inflight.Front(); e != nil; e = e.Next() {
+			e.Value.(*logFuture).respond(ErrLeadershipLost)
+		}
 
 		// Respond to any pending verify requests
 		for future := range r.leaderState.notify {
@@ -779,6 +786,7 @@ func (r *Raft) runLeader() {
 
 		// Clear all the state
 		r.leaderState.commitCh = nil
+		r.leaderState.commitment = nil
 		r.leaderState.inflight = nil
 		r.leaderState.replState = nil
 		r.leaderState.notify = nil
@@ -845,11 +853,10 @@ func (r *Raft) startReplication(peer string) {
 	lastIdx := r.getLastIndex()
 	s := &followerReplication{
 		peer:        peer,
-		inflight:    r.leaderState.inflight,
+		commitment:  r.leaderState.commitment,
 		stopCh:      make(chan uint64, 1),
 		triggerCh:   make(chan struct{}, 1),
 		currentTerm: r.getCurrentTerm(),
-		matchIndex:  0,
 		nextIndex:   lastIdx + 1,
 		lastContact: time.Now(),
 		notifyCh:    make(chan struct{}, 1),
@@ -863,6 +870,7 @@ func (r *Raft) startReplication(peer string) {
 // leaderLoop is the hot loop for a leader. It is invoked
 // after all the various leader setup is done.
 func (r *Raft) leaderLoop() {
+	// TODO: reconsider
 	// stepDown is used to track if there is an inflight log that
 	// would cause us to lose leadership (specifically a RemovePeer of
 	// ourselves). If this is the case, we must not allow any logs to
@@ -881,17 +889,23 @@ func (r *Raft) leaderLoop() {
 			r.setState(Follower)
 
 		case <-r.leaderState.commitCh:
-			// Get the committed messages
-			committed := r.leaderState.inflight.Committed()
-			for e := committed.Front(); e != nil; e = e.Next() {
-				// Measure the commit time
+			// Process the newly committed entries
+			commitIndex := r.leaderState.commitment.getCommitIndex()
+			r.setCommitIndex(commitIndex)
+			for {
+				e := r.leaderState.inflight.Front()
+				if e == nil {
+					break
+				}
 				commitLog := e.Value.(*logFuture)
-				metrics.MeasureSince([]string{"raft", "commitTime"}, commitLog.dispatch)
-
-				// Increment the commit index
 				idx := commitLog.log.Index
-				r.setCommitIndex(idx)
+				if idx > commitIndex {
+					break
+				}
+				// Measure the commit time
+				metrics.MeasureSince([]string{"raft", "commitTime"}, commitLog.dispatch)
 				r.processLogs(idx, commitLog)
+				r.leaderState.inflight.Remove(e)
 			}
 
 		case v := <-r.verifyCh:
@@ -961,6 +975,9 @@ func (r *Raft) leaderLoop() {
 				// behavior.
 				if ok := r.processLog(&log.log, nil, true); ok {
 					stepDown = true
+					r.leaderState.commitment.setVoters(r.peers)
+				} else {
+					r.leaderState.commitment.setVoters(append([]string{r.localAddr}, r.peers...))
 				}
 			}
 
@@ -1107,10 +1124,11 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 
 	for idx, applyLog := range applyLogs {
 		applyLog.dispatch = now
-		applyLog.log.Index = lastIndex + uint64(idx) + 1
+		lastIndex++
+		applyLog.log.Index = lastIndex
 		applyLog.log.Term = term
-		applyLog.policy = newMajorityQuorum(len(r.peers) + 1)
 		logs[idx] = &applyLog.log
+		r.leaderState.inflight.PushBack(applyLog)
 	}
 
 	// Write the log entry locally
@@ -1122,12 +1140,10 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 		r.setState(Follower)
 		return
 	}
-
-	// Add this to the inflight logs, commit
-	r.leaderState.inflight.StartAll(applyLogs)
+	r.leaderState.commitment.match(r.localAddr, lastIndex)
 
 	// Update the last log since it's on disk now
-	r.setLastLogIndex(lastIndex + uint64(len(applyLogs)))
+	r.setLastLogIndex(lastIndex)
 	r.setLastLogTerm(term)
 
 	// Notify the replicators of the new log
