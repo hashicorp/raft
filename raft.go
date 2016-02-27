@@ -1369,7 +1369,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		last := a.Entries[n-1]
 
 		// Delete any conflicting entries
-		lastLogIdx, _ := r.getLastLog()
+		lastLogIdx := r.getLastLogIndexOnly()
 		if first.Index <= lastLogIdx {
 			r.logger.Printf("[WARN] raft: Clearing log suffix from %d to %d", first.Index, lastLogIdx)
 			if err := r.logs.DeleteRange(first.Index, lastLogIdx); err != nil {
@@ -1821,7 +1821,7 @@ func (r *Raft) compactLogs(snapIdx uint64) error {
 	}
 
 	// Check if we have enough logs to truncate
-	lastLogIdx, _ := r.getLastLog()
+	lastLogIdx := r.getLastLogIndexOnly()
 	if lastLogIdx <= r.conf.TrailingLogs {
 		return nil
 	}
