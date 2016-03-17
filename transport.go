@@ -60,6 +60,13 @@ type Transport interface {
 	SetHeartbeatHandler(cb func(rpc RPC))
 }
 
+// Close() lives in a separate interface as unfortunately it wasn't in the
+// original interface specification.
+type WithClose interface {
+	// Permanently close a transport, stop all go-routines etc
+	Close() error
+}
+
 // AppendPipeline is used for pipelining AppendEntries requests. It is used
 // to increase the replication throughput by masking latency and better
 // utilizing bandwidth.
