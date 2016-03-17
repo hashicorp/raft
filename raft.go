@@ -1468,7 +1468,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 		return
 	}
 
-	if lastIdx > req.LastLogIndex {
+	if lastTerm == req.LastLogTerm && lastIdx > req.LastLogIndex {
 		r.logger.Printf("[WARN] raft: Rejecting vote request from %v since our last index is greater (%d, %d)",
 			candidate, lastIdx, req.LastLogIndex)
 		return
