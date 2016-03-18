@@ -451,7 +451,10 @@ func TestRaft_AfterShutdown(t *testing.T) {
 	}
 
 	// Should be idempotent
-	raft.Shutdown()
+	if f := raft.Shutdown(); f.Error() != nil {
+		t.Fatalf("shutdown should be idempotent")
+	}
+
 }
 
 func TestRaft_SingleNode(t *testing.T) {
