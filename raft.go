@@ -412,9 +412,11 @@ func (r *Raft) Shutdown() Future {
 		close(r.shutdownCh)
 		r.shutdown = true
 		r.setState(Shutdown)
+		return &shutdownFuture{r}
 	}
 
-	return &shutdownFuture{r}
+	// avoid closing transport twice
+	return &shutdownFuture{nil}
 }
 
 // Snapshot is used to manually force Raft to take a snapshot.
