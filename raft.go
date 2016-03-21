@@ -754,7 +754,7 @@ func (r *Raft) runLeader() {
 	r.leaderState.commitCh = make(chan struct{}, 1)
 	r.leaderState.commitment = newCommitment(r.leaderState.commitCh,
 		append([]string{r.localAddr}, r.peers...),
-		r.getLastIndex()+1)
+		/* first index that may be committed in this term: */ r.getLastIndex()+1)
 	r.leaderState.inflight = list.New()
 	r.leaderState.replState = make(map[string]*followerReplication)
 	r.leaderState.notify = make(map[*verifyFuture]struct{})
