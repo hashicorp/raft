@@ -84,15 +84,14 @@ func (c *commitment) recalculate() {
 	if len(c.matchIndexes) == 0 {
 		return
 	}
-	var quorumMatchIndex uint64
-	{
-		matched := make([]uint64, 0, len(c.matchIndexes))
-		for _, idx := range c.matchIndexes {
-			matched = append(matched, idx)
-		}
-		sort.Sort(uint64Slice(matched))
-		quorumMatchIndex = matched[(len(matched)-1)/2]
+
+	matched := make([]uint64, 0, len(c.matchIndexes))
+	for _, idx := range c.matchIndexes {
+		matched = append(matched, idx)
 	}
+	sort.Sort(uint64Slice(matched))
+	quorumMatchIndex := matched[(len(matched)-1)/2]
+
 	if quorumMatchIndex > c.commitIndex && quorumMatchIndex >= c.startIndex {
 		c.commitIndex = quorumMatchIndex
 		asyncNotifyCh(c.commitCh)
