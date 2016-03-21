@@ -9,7 +9,9 @@ import (
 )
 
 const (
-	TT_INMEM = iota
+	TT_INMEM         = iota
+	TT_INMEMDATAGRAM = iota
+	TT_UNIXGRAM      = iota
 	TT_MAX
 )
 
@@ -19,6 +21,10 @@ func NewTestTransport(ttype int, addr string) (string, LoopbackTransport) {
 	switch ttype {
 	case TT_INMEM:
 		addr, lt = NewInmemTransport(addr)
+	case TT_INMEMDATAGRAM:
+		addr, lt = NewInmemDatagramTransport(addr)
+	case TT_UNIXGRAM:
+		addr, lt, err = NewUnixgramTransport(addr)
 		if err != nil {
 			panic(fmt.Sprintf("Cannot create NewInmemUnixgramTransport: %v", err))
 		}
@@ -84,6 +90,90 @@ func TestTransport_AppendEntries(t *testing.T) {
 		// Transport 2 makes outbound request
 		addr2, trans2 := NewTestTransport(ttype, "")
 		defer trans2.Close()
+
+		trans1.Connect(addr2, trans2)
+		trans2.Connect(addr1, trans1)
+
+		var out AppendEntriesResponse
+		if err := trans2.AppendEntries(trans1.LocalAddr(), &args, &out); err != nil {
+			t.Fatalf("err: %v", err)
+		}
+
+		// Verify the response
+		if !reflect.DeepEqual(resp, out) {
+			t.Fatalf("command mismatch: %#v %#v", resp, out)
+		}
+	}
+}
+
+func setMaxSize(tr LoopbackTransport) bool {
+	if dt, ok := tr.(*PacketConnTransport); !ok {
+		return false
+	} else {
+		if rpc, ok := dt.rpc.(*PacketConnRPC); !ok {
+			return false
+		} else {
+			rpc.MaxSize = 3 // stupidly small maximum size
+		}
+	}
+	return true
+}
+
+func TestTransport_AppendEntriesFragmented(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		addr1, trans1 := NewTestTransport(ttype, "")
+		defer trans1.Close()
+
+		if !setMaxSize(trans1) {
+			continue
+		}
+
+		rpcCh := trans1.Consumer()
+
+		// Make the RPC request
+		args := AppendEntriesRequest{
+			Term:         10,
+			Leader:       []byte("cartman"),
+			PrevLogEntry: 100,
+			PrevLogTerm:  4,
+			Entries: []*Log{
+				&Log{
+					Index: 101,
+					Term:  4,
+					Type:  LogNoop,
+				},
+			},
+			LeaderCommitIndex: 90,
+		}
+		resp := AppendEntriesResponse{
+			Term:    4,
+			LastLog: 90,
+			Success: true,
+		}
+
+		// Listen for a request
+		go func() {
+			select {
+			case rpc := <-rpcCh:
+				// Verify the command
+				req := rpc.Command.(*AppendEntriesRequest)
+				if !reflect.DeepEqual(req, &args) {
+					t.Fatalf("command mismatch: %#v %#v", *req, args)
+				}
+				rpc.Respond(&resp, nil)
+
+			case <-time.After(200 * time.Millisecond):
+				t.Fatalf("timeout")
+			}
+		}()
+
+		// Transport 2 makes outbound request
+		addr2, trans2 := NewTestTransport(ttype, "")
+		defer trans2.Close()
+
+		if !setMaxSize(trans2) {
+			continue
+		}
 
 		trans1.Connect(addr2, trans2)
 		trans2.Connect(addr1, trans1)

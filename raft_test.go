@@ -16,6 +16,11 @@ import (
 	"github.com/hashicorp/go-msgpack/codec"
 )
 
+// all internal timings are based from this scale
+var (
+	inmemHeartbeatTimeout = 50 * time.Millisecond
+)
+
 // MockFSM is an implementation of the FSM interface, and just stores
 // the logs sequentially.
 type MockFSM struct {
@@ -69,9 +74,9 @@ func (m *MockSnapshot) Release() {
 // Return configurations optimized for in-memory
 func inmemConfig(t *testing.T) *Config {
 	conf := DefaultConfig()
-	conf.HeartbeatTimeout = 50 * time.Millisecond
-	conf.ElectionTimeout = 50 * time.Millisecond
-	conf.LeaderLeaseTimeout = 50 * time.Millisecond
+	conf.HeartbeatTimeout = inmemHeartbeatTimeout
+	conf.ElectionTimeout = inmemHeartbeatTimeout
+	conf.LeaderLeaseTimeout = inmemHeartbeatTimeout
 	conf.CommitTimeout = time.Millisecond
 	conf.Logger = newTestLogger(t)
 	return conf
@@ -122,7 +127,7 @@ func (c *cluster) Close() {
 	}
 
 	// Wait for shutdown
-	timer := time.AfterFunc(200*time.Millisecond, func() {
+	timer := time.AfterFunc(inmemHeartbeatTimeout*4, func() {
 		panic("timed out waiting for shutdown")
 	})
 
@@ -149,7 +154,7 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 }
 
 func (c *cluster) Leader() *Raft {
-	timeout := time.AfterFunc(400*time.Millisecond, func() {
+	timeout := time.AfterFunc(inmemHeartbeatTimeout*8, func() {
 		panic("timeout waiting for leader")
 	})
 	defer timeout.Stop()
@@ -172,7 +177,7 @@ func (c *cluster) Leader() *Raft {
 func (c *cluster) Followers() []*Raft {
 	expFollowers := len(c.rafts) - 1
 	followers := c.GetInState(Follower)
-	limit := time.Now().Add(200 * time.Millisecond)
+	limit := time.Now().Add(inmemHeartbeatTimeout * 4)
 	for time.Now().Before(limit) && len(followers) != expFollowers {
 		time.Sleep(time.Millisecond)
 		followers = c.GetInState(Follower)
@@ -216,7 +221,7 @@ func (c *cluster) IndexOf(r *Raft) int {
 }
 
 func (c *cluster) EnsureLeader(t *testing.T, expect string) {
-	limit := time.Now().Add(400 * time.Millisecond)
+	limit := time.Now().Add(inmemHeartbeatTimeout * 8)
 CHECK:
 	for _, r := range c.rafts {
 		leader := r.Leader()
@@ -246,7 +251,7 @@ WAIT:
 }
 
 func (c *cluster) EnsureSame(t *testing.T) {
-	limit := time.Now().Add(400 * time.Millisecond)
+	limit := time.Now().Add(inmemHeartbeatTimeout * 8)
 	first := c.fsms[0]
 
 CHECK:
@@ -301,7 +306,7 @@ func raftToPeerSet(r *Raft) map[string]struct{} {
 }
 
 func (c *cluster) EnsureSamePeers(t *testing.T) {
-	limit := time.Now().Add(400 * time.Millisecond)
+	limit := time.Now().Add(inmemHeartbeatTimeout * 8)
 	peerSet := raftToPeerSet(c.rafts[0])
 
 CHECK:
@@ -326,7 +331,7 @@ WAIT:
 	goto CHECK
 }
 
-func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
+func MakeCluster(n int, t *testing.T, conf *Config, ttype int) *cluster {
 	c := &cluster{}
 	c.t = t
 	peers := make([]string, 0, n)
@@ -346,7 +351,7 @@ func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 		c.dirs = append(c.dirs, dir2)
 		c.snaps = append(c.snaps, snap)
 
-		addr, trans := NewInmemTransport("")
+		addr, trans := NewTestTransport(ttype, "")
 		c.trans = append(c.trans, trans)
 		peers = append(peers, addr)
 	}
@@ -379,7 +384,7 @@ func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 	return c
 }
 
-func MakeClusterNoPeers(n int, t *testing.T, conf *Config) *cluster {
+func MakeClusterNoPeers(n int, t *testing.T, conf *Config, ttype int) *cluster {
 	c := &cluster{}
 	c.t = t
 	// Setup the stores and transports
@@ -397,7 +402,7 @@ func MakeClusterNoPeers(n int, t *testing.T, conf *Config) *cluster {
 		c.dirs = append(c.dirs, dir2)
 		c.snaps = append(c.snaps, snap)
 
-		_, trans := NewInmemTransport("")
+		_, trans := NewTestTransport(ttype, "")
 		c.trans = append(c.trans, trans)
 	}
 
@@ -427,12 +432,20 @@ func MakeClusterNoPeers(n int, t *testing.T, conf *Config) *cluster {
 }
 
 func TestRaft_StartStop(t *testing.T) {
-	c := MakeCluster(1, t, nil)
-	c.Close()
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		c := MakeCluster(1, t, nil, ttype)
+		c.Close()
+	}
 }
 
 func TestRaft_AfterShutdown(t *testing.T) {
-	c := MakeCluster(1, t, nil)
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_AfterShutdown(t, ttype)
+	}
+}
+
+func testRaft_AfterShutdown(t *testing.T, ttype int) {
+	c := MakeCluster(1, t, nil, ttype)
 	c.Close()
 	raft := c.rafts[0]
 
@@ -458,8 +471,14 @@ func TestRaft_AfterShutdown(t *testing.T) {
 }
 
 func TestRaft_SingleNode(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_SingleNode(t, ttype)
+	}
+}
+
+func testRaft_SingleNode(t *testing.T, ttype int) {
 	conf := inmemConfig(t)
-	c := MakeCluster(1, t, conf)
+	c := MakeCluster(1, t, conf, ttype)
 	defer c.Close()
 	raft := c.rafts[0]
 
@@ -501,8 +520,14 @@ func TestRaft_SingleNode(t *testing.T) {
 }
 
 func TestRaft_TripleNode(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_TripleNode(t, ttype)
+	}
+}
+
+func testRaft_TripleNode(t *testing.T, ttype int) {
 	// Make the cluster
-	c := MakeCluster(3, t, nil)
+	c := MakeCluster(3, t, nil, ttype)
 	defer c.Close()
 
 	// Should be one leader
@@ -517,7 +542,7 @@ func TestRaft_TripleNode(t *testing.T) {
 	}
 
 	// Wait for replication
-	time.Sleep(30 * time.Millisecond)
+	time.Sleep(inmemHeartbeatTimeout)
 
 	// Check that it is applied to the FSM
 	for _, fsm := range c.fsms {
@@ -531,8 +556,14 @@ func TestRaft_TripleNode(t *testing.T) {
 }
 
 func TestRaft_LeaderFail(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_LeaderFail(t, ttype)
+	}
+}
+
+func testRaft_LeaderFail(t *testing.T, ttype int) {
 	// Make the cluster
-	c := MakeCluster(3, t, nil)
+	c := MakeCluster(3, t, nil, ttype)
 	defer c.Close()
 
 	// Should be one leader
@@ -546,7 +577,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 	}
 
 	// Wait for replication
-	time.Sleep(30 * time.Millisecond)
+	time.Sleep(inmemHeartbeatTimeout)
 
 	// Disconnect the leader now
 	t.Logf("[INFO] Disconnecting %v", leader)
@@ -554,7 +585,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 	c.Disconnect(leader.localAddr)
 
 	// Wait for new leader
-	limit := time.Now().Add(300 * time.Millisecond)
+	limit := time.Now().Add(inmemHeartbeatTimeout * 6)
 	var newLead *Raft
 	for time.Now().Before(limit) && newLead == nil {
 		time.Sleep(10 * time.Millisecond)
@@ -612,8 +643,14 @@ func TestRaft_LeaderFail(t *testing.T) {
 }
 
 func TestRaft_BehindFollower(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_BehindFollower(t, ttype)
+	}
+}
+
+func testRaft_BehindFollower(t *testing.T, ttype int) {
 	// Make the cluster
-	c := MakeCluster(3, t, nil)
+	c := MakeCluster(3, t, nil, ttype)
 	defer c.Close()
 
 	// Disconnect one follower
@@ -652,13 +689,19 @@ func TestRaft_BehindFollower(t *testing.T) {
 }
 
 func TestRaft_ApplyNonLeader(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_ApplyNonLeader(t, ttype)
+	}
+}
+
+func testRaft_ApplyNonLeader(t *testing.T, ttype int) {
 	// Make the cluster
-	c := MakeCluster(3, t, nil)
+	c := MakeCluster(3, t, nil, ttype)
 	defer c.Close()
 
 	// Wait for a leader
 	c.Leader()
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(inmemHeartbeatTimeout)
 
 	// Try to apply to them
 	followers := c.GetInState(Follower)
@@ -681,11 +724,17 @@ func TestRaft_ApplyNonLeader(t *testing.T) {
 }
 
 func TestRaft_ApplyConcurrent(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_ApplyConcurrent(t, ttype)
+	}
+}
+
+func testRaft_ApplyConcurrent(t *testing.T, ttype int) {
 	// Make the cluster
 	conf := inmemConfig(t)
-	conf.HeartbeatTimeout = 80 * time.Millisecond
-	conf.ElectionTimeout = 80 * time.Millisecond
-	c := MakeCluster(3, t, conf)
+	conf.HeartbeatTimeout = inmemHeartbeatTimeout * 2
+	conf.ElectionTimeout = inmemHeartbeatTimeout * 2
+	c := MakeCluster(3, t, conf, ttype)
 	defer c.Close()
 
 	// Wait for a leader
@@ -725,11 +774,17 @@ func TestRaft_ApplyConcurrent(t *testing.T) {
 }
 
 func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_ApplyConcurrent_Timeout(t, ttype)
+	}
+}
+
+func testRaft_ApplyConcurrent_Timeout(t *testing.T, ttype int) {
 	// Make the cluster
 	conf := inmemConfig(t)
-	conf.HeartbeatTimeout = 80 * time.Millisecond
-	conf.ElectionTimeout = 80 * time.Millisecond
-	c := MakeCluster(1, t, conf)
+	conf.HeartbeatTimeout = inmemHeartbeatTimeout
+	conf.ElectionTimeout = inmemHeartbeatTimeout
+	c := MakeCluster(1, t, conf, ttype)
 	defer c.Close()
 
 	// Wait for a leader
@@ -751,7 +806,7 @@ func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 	}
 
 	// Wait
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(inmemHeartbeatTimeout)
 
 	// Some should have failed
 	if atomic.LoadInt32(&didTimeout) == 0 {
@@ -760,8 +815,14 @@ func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 }
 
 func TestRaft_JoinNode(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_JoinNode(t, ttype)
+	}
+}
+
+func testRaft_JoinNode(t *testing.T, ttype int) {
 	// Make a cluster
-	c := MakeCluster(2, t, nil)
+	c := MakeCluster(2, t, nil, ttype)
 	defer c.Close()
 
 	// Apply a log to this cluster to ensure it is 'newer'
@@ -775,14 +836,14 @@ func TestRaft_JoinNode(t *testing.T) {
 	}
 
 	// Make a new cluster of 1
-	c1 := MakeCluster(1, t, nil)
+	c1 := MakeCluster(1, t, nil, ttype)
 
 	// Merge clusters
 	c.Merge(c1)
 	c.FullyConnect()
 
 	// Wait until we have 2 leaders
-	limit := time.Now().Add(200 * time.Millisecond)
+	limit := time.Now().Add(inmemHeartbeatTimeout * 5)
 	var leaders []*Raft
 	for time.Now().Before(limit) && len(leaders) != 2 {
 		time.Sleep(10 * time.Millisecond)
@@ -799,7 +860,7 @@ func TestRaft_JoinNode(t *testing.T) {
 	}
 
 	// Wait until we have 2 followers
-	limit = time.Now().Add(200 * time.Millisecond)
+	limit = time.Now().Add(inmemHeartbeatTimeout * 5)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
 		time.Sleep(10 * time.Millisecond)
@@ -821,15 +882,21 @@ func TestRaft_JoinNode(t *testing.T) {
 }
 
 func TestRaft_RemoveFollower(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_RemoveFollower(t, ttype)
+	}
+}
+
+func testRaft_RemoveFollower(t *testing.T, ttype int) {
 	// Make a cluster
-	c := MakeCluster(3, t, nil)
+	c := MakeCluster(3, t, nil, ttype)
 	defer c.Close()
 
 	// Get the leader
 	leader := c.Leader()
 
 	// Wait until we have 2 followers
-	limit := time.Now().Add(300 * time.Millisecond)
+	limit := time.Now().Add(inmemHeartbeatTimeout * 6)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
 		time.Sleep(10 * time.Millisecond)
@@ -847,7 +914,7 @@ func TestRaft_RemoveFollower(t *testing.T) {
 	}
 
 	// Wait a while
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(inmemHeartbeatTimeout)
 
 	// Other nodes should have fewer peers
 	if peers, _ := leader.peerStore.Peers(); len(peers) != 2 {
@@ -859,15 +926,21 @@ func TestRaft_RemoveFollower(t *testing.T) {
 }
 
 func TestRaft_RemoveLeader(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_RemoveLeader(t, ttype)
+	}
+}
+
+func testRaft_RemoveLeader(t *testing.T, ttype int) {
 	// Make a cluster
-	c := MakeCluster(3, t, nil)
+	c := MakeCluster(3, t, nil, ttype)
 	defer c.Close()
 
 	// Get the leader
 	leader := c.Leader()
 
 	// Wait until we have 2 followers
-	limit := time.Now().Add(200 * time.Millisecond)
+	limit := time.Now().Add(inmemHeartbeatTimeout * 4)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
 		time.Sleep(10 * time.Millisecond)
@@ -881,13 +954,13 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	leader.RemovePeer(leader.localAddr)
 
 	// Wait a while
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(inmemHeartbeatTimeout)
 
 	// Should have a new leader
 	newLeader := c.Leader()
 
 	// Wait a bit for log application
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(inmemHeartbeatTimeout)
 
 	// Other nodes should have fewer peers
 	if peers, _ := newLeader.peerStore.Peers(); len(peers) != 2 {
@@ -906,10 +979,16 @@ func TestRaft_RemoveLeader(t *testing.T) {
 }
 
 func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_RemoveLeader_NoShutdown(t, ttype)
+	}
+}
+
+func testRaft_RemoveLeader_NoShutdown(t *testing.T, ttype int) {
 	// Make a cluster
 	conf := inmemConfig(t)
 	conf.ShutdownOnRemove = false
-	c := MakeCluster(3, t, conf)
+	c := MakeCluster(3, t, conf, ttype)
 	defer c.Close()
 
 	// Get the leader
@@ -935,13 +1014,13 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	}
 
 	// Wait a while
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(inmemHeartbeatTimeout)
 
 	// Should have a new leader
 	newLeader := c.Leader()
 
 	// Wait a bit for log application
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(inmemHeartbeatTimeout)
 
 	// Other nodes should have fewer peers
 	if peers, _ := newLeader.peerStore.Peers(); len(peers) != 2 {
@@ -963,6 +1042,12 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 }
 
 func TestRaft_RemoveLeader_SplitCluster(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_RemoveLeader_SplitCluster(t, ttype)
+	}
+}
+
+func testRaft_RemoveLeader_SplitCluster(t *testing.T, ttype int) {
 	// Enable operation after a remove
 	conf := inmemConfig(t)
 	conf.EnableSingleNode = true
@@ -970,7 +1055,7 @@ func TestRaft_RemoveLeader_SplitCluster(t *testing.T) {
 	conf.DisableBootstrapAfterElect = false
 
 	// Make a cluster
-	c := MakeCluster(3, t, conf)
+	c := MakeCluster(3, t, conf, ttype)
 	defer c.Close()
 
 	// Get the leader
@@ -981,7 +1066,7 @@ func TestRaft_RemoveLeader_SplitCluster(t *testing.T) {
 	leader.RemovePeer(leader.localAddr)
 
 	// Wait until we have 2 leaders
-	limit := time.Now().Add(300 * time.Millisecond)
+	limit := time.Now().Add(inmemHeartbeatTimeout * 6)
 	var leaders []*Raft
 	for time.Now().Before(limit) && len(leaders) != 2 {
 		time.Sleep(10 * time.Millisecond)
@@ -998,8 +1083,14 @@ func TestRaft_RemoveLeader_SplitCluster(t *testing.T) {
 }
 
 func TestRaft_AddKnownPeer(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_AddKnownPeer(t, ttype)
+	}
+}
+
+func testRaft_AddKnownPeer(t *testing.T, ttype int) {
 	// Make a cluster
-	c := MakeCluster(3, t, nil)
+	c := MakeCluster(3, t, nil, ttype)
 	defer c.Close()
 
 	// Get the leader
@@ -1016,8 +1107,14 @@ func TestRaft_AddKnownPeer(t *testing.T) {
 }
 
 func TestRaft_RemoveUnknownPeer(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_RemoveUnknownPeer(t, ttype)
+	}
+}
+
+func testRaft_RemoveUnknownPeer(t *testing.T, ttype int) {
 	// Make a cluster
-	c := MakeCluster(3, t, nil)
+	c := MakeCluster(3, t, nil, ttype)
 	defer c.Close()
 
 	// Get the leader
@@ -1033,10 +1130,16 @@ func TestRaft_RemoveUnknownPeer(t *testing.T) {
 }
 
 func TestRaft_SnapshotRestore(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_SnapshotRestore(t, ttype)
+	}
+}
+
+func testRaft_SnapshotRestore(t *testing.T, ttype int) {
 	// Make the cluster
 	conf := inmemConfig(t)
 	conf.TrailingLogs = 10
-	c := MakeCluster(1, t, conf)
+	c := MakeCluster(1, t, conf, ttype)
 	defer c.Close()
 
 	// Commit a lot of things
@@ -1076,7 +1179,7 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 	// Restart the Raft
 	r := leader
 	// Can't just reuse the old transport as it will be closed
-	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
+	_, trans2 := NewTestTransport(ttype, r.trans.LocalAddr())
 	r, err := NewRaft(r.conf, r.fsm, r.logs, r.stable,
 		r.snapshots, r.peerStore, trans2)
 	if err != nil {
@@ -1091,10 +1194,16 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 }
 
 func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_SnapshotRestore_PeerChange(t, ttype)
+	}
+}
+
+func testRaft_SnapshotRestore_PeerChange(t *testing.T, ttype int) {
 	// Make the cluster
 	conf := inmemConfig(t)
 	conf.TrailingLogs = 10
-	c := MakeCluster(3, t, conf)
+	c := MakeCluster(3, t, conf, ttype)
 	defer c.Close()
 
 	// Commit a lot of things
@@ -1122,7 +1231,7 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	}
 
 	// Make a separate cluster
-	c2 := MakeClusterNoPeers(2, t, conf)
+	c2 := MakeClusterNoPeers(2, t, conf, ttype)
 	defer c2.Close()
 
 	// Kill the old cluster
@@ -1140,9 +1249,10 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 
 	// Restart the Raft with new peers
 	r := leader
-	peerStore := &StaticPeers{StaticPeers: peers}
 	// Can't just reuse the old transport as it will be closed
-	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
+	peerStore := &StaticPeers{StaticPeers: peers}
+	// Cannot reuse transport that is closed
+	_, trans2 := NewTestTransport(ttype, r.trans.LocalAddr())
 	r, err := NewRaft(r.conf, r.fsm, r.logs, r.stable,
 		r.snapshots, peerStore, trans2)
 	if err != nil {
@@ -1150,12 +1260,12 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	}
 	c.rafts[0] = r
 	c2.rafts = append(c2.rafts, r)
-	c2.trans = append(c2.trans, r.trans.(*InmemTransport))
+	c2.trans = append(c2.trans, r.trans.(LoopbackTransport))
 	c2.fsms = append(c2.fsms, r.fsm.(*MockFSM))
 	c2.FullyConnect()
 
 	// Wait a while
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(inmemHeartbeatTimeout)
 
 	// Ensure we elect a leader, and that we replicate
 	// to our new followers
@@ -1168,12 +1278,18 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 }
 
 func TestRaft_AutoSnapshot(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_AutoSnapshot(t, ttype)
+	}
+}
+
+func testRaft_AutoSnapshot(t *testing.T, ttype int) {
 	// Make the cluster
 	conf := inmemConfig(t)
-	conf.SnapshotInterval = 5 * time.Millisecond
+	conf.SnapshotInterval = inmemHeartbeatTimeout / 10
 	conf.SnapshotThreshold = 50
 	conf.TrailingLogs = 10
-	c := MakeCluster(1, t, conf)
+	c := MakeCluster(1, t, conf, ttype)
 	defer c.Close()
 
 	// Commit a lot of things
@@ -1189,7 +1305,7 @@ func TestRaft_AutoSnapshot(t *testing.T) {
 	}
 
 	// Wait for a snapshot to happen
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(inmemHeartbeatTimeout)
 
 	// Check for snapshot
 	if snaps, _ := leader.snapshots.List(); len(snaps) == 0 {
@@ -1198,11 +1314,17 @@ func TestRaft_AutoSnapshot(t *testing.T) {
 }
 
 func TestRaft_ManualSnapshot(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_ManualSnapshot(t, ttype)
+	}
+}
+
+func testRaft_ManualSnapshot(t *testing.T, ttype int) {
 	// Make the cluster
 	conf := inmemConfig(t)
 	conf.SnapshotThreshold = 50
 	conf.TrailingLogs = 10
-	c := MakeCluster(1, t, conf)
+	c := MakeCluster(1, t, conf, ttype)
 	defer c.Close()
 
 	leader := c.Leader()
@@ -1227,10 +1349,16 @@ func TestRaft_ManualSnapshot(t *testing.T) {
 }
 
 func TestRaft_SendSnapshotFollower(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_SendSnapshotFollower(t, ttype)
+	}
+}
+
+func testRaft_SendSnapshotFollower(t *testing.T, ttype int) {
 	// Make the cluster
 	conf := inmemConfig(t)
 	conf.TrailingLogs = 10
-	c := MakeCluster(3, t, conf)
+	c := MakeCluster(3, t, conf, ttype)
 	defer c.Close()
 
 	// Disconnect one follower
@@ -1269,19 +1397,25 @@ func TestRaft_SendSnapshotFollower(t *testing.T) {
 }
 
 func TestRaft_ReJoinFollower(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_ReJoinFollower(t, ttype)
+	}
+}
+
+func testRaft_ReJoinFollower(t *testing.T, ttype int) {
 	// Enable operation after a remove
 	conf := inmemConfig(t)
 	conf.ShutdownOnRemove = false
 
 	// Make a cluster
-	c := MakeCluster(3, t, conf)
+	c := MakeCluster(3, t, conf, ttype)
 	defer c.Close()
 
 	// Get the leader
 	leader := c.Leader()
 
 	// Wait until we have 2 followers
-	limit := time.Now().Add(200 * time.Millisecond)
+	limit := time.Now().Add(inmemHeartbeatTimeout * 4)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
 		time.Sleep(10 * time.Millisecond)
@@ -1299,7 +1433,7 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	}
 
 	// Wait a while
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(inmemHeartbeatTimeout)
 
 	// Other nodes should have fewer peers
 	if peers, _ := leader.peerStore.Peers(); len(peers) != 2 {
@@ -1310,7 +1444,7 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	}
 
 	// Get the leader
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(inmemHeartbeatTimeout)
 	leader = c.Leader()
 
 	// Rejoin. The follower will have a higher term than the leader,
@@ -1322,7 +1456,7 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	}
 
 	// Wait a while
-	time.Sleep(40 * time.Millisecond)
+	time.Sleep(inmemHeartbeatTimeout)
 
 	// Other nodes should have fewer peers
 	if peers, _ := leader.peerStore.Peers(); len(peers) != 3 {
@@ -1339,16 +1473,22 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 }
 
 func TestRaft_LeaderLeaseExpire(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_LeaderLeaseExpire(t, ttype)
+	}
+}
+
+func testRaft_LeaderLeaseExpire(t *testing.T, ttype int) {
 	// Make a cluster
 	conf := inmemConfig(t)
-	c := MakeCluster(2, t, conf)
+	c := MakeCluster(2, t, conf, ttype)
 	defer c.Close()
 
 	// Get the leader
 	leader := c.Leader()
 
 	// Wait until we have a followers
-	limit := time.Now().Add(200 * time.Millisecond)
+	limit := time.Now().Add(4 * inmemHeartbeatTimeout)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 1 {
 		time.Sleep(10 * time.Millisecond)
@@ -1385,7 +1525,7 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 
 	// Verify no further contact
 	last := follower.LastContact()
-	time.Sleep(110 * time.Millisecond)
+	time.Sleep(inmemHeartbeatTimeout * 3)
 
 	// Check that last contact has not changed
 	if last != follower.LastContact() {
@@ -1402,8 +1542,14 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 }
 
 func TestRaft_Barrier(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_Barrier(t, ttype)
+	}
+}
+
+func testRaft_Barrier(t *testing.T, ttype int) {
 	// Make the cluster
-	c := MakeCluster(3, t, nil)
+	c := MakeCluster(3, t, nil, ttype)
 	defer c.Close()
 
 	// Get the leader
@@ -1430,8 +1576,14 @@ func TestRaft_Barrier(t *testing.T) {
 }
 
 func TestRaft_VerifyLeader(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_VerifyLeader(t, ttype)
+	}
+}
+
+func testRaft_VerifyLeader(t *testing.T, ttype int) {
 	// Make the cluster
-	c := MakeCluster(3, t, nil)
+	c := MakeCluster(3, t, nil, ttype)
 	defer c.Close()
 
 	// Get the leader
@@ -1447,8 +1599,14 @@ func TestRaft_VerifyLeader(t *testing.T) {
 }
 
 func TestRaft_VerifyLeader_Single(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_VerifyLeader_Single(t, ttype)
+	}
+}
+
+func testRaft_VerifyLeader_Single(t *testing.T, ttype int) {
 	// Make the cluster
-	c := MakeCluster(1, t, nil)
+	c := MakeCluster(1, t, nil, ttype)
 	defer c.Close()
 
 	// Get the leader
@@ -1464,9 +1622,15 @@ func TestRaft_VerifyLeader_Single(t *testing.T) {
 }
 
 func TestRaft_VerifyLeader_Fail(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_VerifyLeader_Fail(t, ttype)
+	}
+}
+
+func testRaft_VerifyLeader_Fail(t *testing.T, ttype int) {
 	// Make a cluster
 	conf := inmemConfig(t)
-	c := MakeCluster(2, t, conf)
+	c := MakeCluster(2, t, conf, ttype)
 	defer c.Close()
 
 	// Get the leader
@@ -1493,17 +1657,23 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	}
 }
 
-func TestRaft_VerifyLeader_ParitalConnect(t *testing.T) {
+func TestRaft_VerifyLeader_PartialConnect(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_VerifyLeader_PartialConnect(t, ttype)
+	}
+}
+
+func testRaft_VerifyLeader_PartialConnect(t *testing.T, ttype int) {
 	// Make a cluster
 	conf := inmemConfig(t)
-	c := MakeCluster(3, t, conf)
+	c := MakeCluster(3, t, conf, ttype)
 	defer c.Close()
 
 	// Get the leader
 	leader := c.Leader()
 
 	// Wait until we have a followers
-	limit := time.Now().Add(200 * time.Millisecond)
+	limit := time.Now().Add(inmemHeartbeatTimeout * 4)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
 		time.Sleep(10 * time.Millisecond)
@@ -1528,8 +1698,14 @@ func TestRaft_VerifyLeader_ParitalConnect(t *testing.T) {
 }
 
 func TestRaft_SettingPeers(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_SettingPeers(t, ttype)
+	}
+}
+
+func testRaft_SettingPeers(t *testing.T, ttype int) {
 	// Make the cluster
-	c := MakeClusterNoPeers(3, t, nil)
+	c := MakeClusterNoPeers(3, t, nil, ttype)
 	defer c.Close()
 
 	peers := make([]string, 0)
@@ -1545,7 +1721,7 @@ func TestRaft_SettingPeers(t *testing.T) {
 	}
 
 	// Wait a while
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(inmemHeartbeatTimeout)
 
 	// Should have a new leader
 	if leader := c.Leader(); leader == nil {
@@ -1554,9 +1730,15 @@ func TestRaft_SettingPeers(t *testing.T) {
 }
 
 func TestRaft_StartAsLeader(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_StartAsLeader(t, ttype)
+	}
+}
+
+func testRaft_StartAsLeader(t *testing.T, ttype int) {
 	conf := inmemConfig(t)
 	conf.StartAsLeader = true
-	c := MakeCluster(1, t, conf)
+	c := MakeCluster(1, t, conf, ttype)
 	defer c.Close()
 	raft := c.rafts[0]
 
@@ -1566,7 +1748,7 @@ func TestRaft_StartAsLeader(t *testing.T) {
 		if !v {
 			t.Fatalf("should become leader")
 		}
-	case <-time.After(5 * time.Millisecond):
+	case <-time.After(inmemHeartbeatTimeout / 10):
 		t.Fatalf("timeout becoming leader")
 	}
 
@@ -1598,10 +1780,16 @@ func TestRaft_StartAsLeader(t *testing.T) {
 }
 
 func TestRaft_NotifyCh(t *testing.T) {
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_NotifyCh(t, ttype)
+	}
+}
+
+func testRaft_NotifyCh(t *testing.T, ttype int) {
 	ch := make(chan bool, 1)
 	conf := inmemConfig(t)
 	conf.NotifyCh = ch
-	c := MakeCluster(1, t, conf)
+	c := MakeCluster(1, t, conf, ttype)
 	defer c.Close()
 
 	// Watch leaderCh for change
@@ -1629,7 +1817,13 @@ func TestRaft_NotifyCh(t *testing.T) {
 }
 
 func TestRaft_Voting(t *testing.T) {
-	c := MakeCluster(3, t, nil)
+	for ttype := 0; ttype < TT_MAX; ttype++ {
+		testRaft_Voting(t, ttype)
+	}
+}
+
+func testRaft_Voting(t *testing.T, ttype int) {
+	c := MakeCluster(3, t, nil, ttype)
 	defer c.Close()
 	followers := c.Followers()
 	ldr := c.Leader()
