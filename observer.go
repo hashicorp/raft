@@ -27,15 +27,15 @@ type Observer struct {
 
 // Register a new observer
 func (r *Raft) RegisterObserver(or *Observer) {
-	r.observerLock.Lock()
-	defer r.observerLock.Unlock()
+	r.observersLock.Lock()
+	defer r.observersLock.Unlock()
 	r.observers[or.id] = or
 }
 
 // Deregister an observer
 func (r *Raft) DeregisterObserver(or *Observer) {
-	r.observerLock.Lock()
-	defer r.observerLock.Unlock()
+	r.observersLock.Lock()
+	defer r.observersLock.Unlock()
 	delete(r.observers, or.id)
 }
 
@@ -46,8 +46,8 @@ func (r *Raft) observe(o interface{}) {
 	// disastrous as we only hold a read lock, which merely prevents
 	// registration / deregistration of observers
 	ob := Observation{Raft: r, Data: o}
-	r.observerLock.RLock()
-	defer r.observerLock.RUnlock()
+	r.observersLock.RLock()
+	defer r.observersLock.RUnlock()
 	for _, or := range r.observers {
 		if or.filter != nil {
 			if !or.filter(&ob) {

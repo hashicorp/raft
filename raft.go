@@ -152,7 +152,7 @@ type Raft struct {
 	verifyCh chan *verifyFuture
 
 	// list of observers and the mutex that protects them
-	observerLock sync.RWMutex
+	observersLock sync.RWMutex
 	observers    map[uint64]*Observer
 }
 
