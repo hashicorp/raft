@@ -129,7 +129,7 @@ func TestCommitment_recalculate_startIndex(t *testing.T) {
 }
 
 // With no voting members in the cluster, the most sane behavior is probably
-// to not not mark anything committed.
+// to not mark anything committed.
 func TestCommitment_noVoterSanity(t *testing.T) {
 	commitCh := make(chan struct{}, 1)
 	c := newCommitment(commitCh, []string{}, 4)
