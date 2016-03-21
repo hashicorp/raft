@@ -9,7 +9,7 @@ func voters(n int) []string {
 	if n > 7 {
 		panic("only up to 7 servers implemented")
 	}
-	return []string{"s1", "s2", "s3", "s4", "s5", "s6", "s7"}[:n+1]
+	return []string{"s1", "s2", "s3", "s4", "s5", "s6", "s7"}[:n]
 }
 
 // Tests setVoters() keeps matchIndexes where possible.

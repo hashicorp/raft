@@ -91,7 +91,7 @@ func (c *commitment) recalculate() {
 			matched = append(matched, idx)
 		}
 		sort.Sort(uint64Slice(matched))
-		quorumMatchIndex = matched[len(c.matchIndexes)/2]
+		quorumMatchIndex = matched[(len(matched)-1)/2]
 	}
 	if quorumMatchIndex > c.commitIndex && quorumMatchIndex >= c.startIndex {
 		c.commitIndex = quorumMatchIndex
