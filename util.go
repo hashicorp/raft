@@ -85,6 +85,17 @@ func asyncNotifyCh(ch chan struct{}) {
 	}
 }
 
+// drainNotifyCh empties out a single-item notification channel without
+// blocking, and returns whether it received anything.
+func drainNotifyCh(ch chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
+
 // asyncNotifyBool is used to do an async notification
 // on a bool channel.
 func asyncNotifyBool(ch chan bool, v bool) {

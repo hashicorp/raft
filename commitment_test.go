@@ -20,12 +20,18 @@ func TestCommitment_setVoters(t *testing.T) {
 	c.match("b", 20)
 	c.match("c", 30)
 	// commitIndex: 20
+	if !drainNotifyCh(commitCh) {
+		t.Fatalf("expected commit notify")
+	}
 	c.setVoters([]string{"c", "d", "e"})
 	// c: 30, d: 0, e: 0
 	c.match("e", 40)
 	if c.getCommitIndex() != 30 {
 		t.Fatalf("expected 30 entries committed, found %d",
 			c.getCommitIndex())
+	}
+	if !drainNotifyCh(commitCh) {
+		t.Fatalf("expected commit notify")
 	}
 }
 
@@ -53,12 +59,19 @@ func TestCommitment_match_nonVoting(t *testing.T) {
 	c.match("s2", 8)
 	c.match("s3", 8)
 
+	if !drainNotifyCh(commitCh) {
+		t.Fatalf("expected commit notify")
+	}
+
 	c.match("s90", 10)
 	c.match("s91", 10)
 	c.match("s92", 10)
 
 	if c.getCommitIndex() != 8 {
 		t.Fatalf("non-voting servers shouldn't be able to commit")
+	}
+	if drainNotifyCh(commitCh) {
+		t.Fatalf("unexpected commit notify")
 	}
 }
 
@@ -73,16 +86,25 @@ func TestCommitment_recalculate(t *testing.T) {
 	if c.getCommitIndex() != 0 {
 		t.Fatalf("shouldn't commit after two of five servers")
 	}
+	if drainNotifyCh(commitCh) {
+		t.Fatalf("unexpected commit notify")
+	}
 
 	c.match("s3", 10)
 	if c.getCommitIndex() != 10 {
 		t.Fatalf("expected 10 entries committed, found %d",
 			c.getCommitIndex())
 	}
+	if !drainNotifyCh(commitCh) {
+		t.Fatalf("expected commit notify")
+	}
 	c.match("s4", 15)
 	if c.getCommitIndex() != 15 {
 		t.Fatalf("expected 15 entries committed, found %d",
 			c.getCommitIndex())
+	}
+	if !drainNotifyCh(commitCh) {
+		t.Fatalf("expected commit notify")
 	}
 
 	c.setVoters(voters(3))
@@ -90,6 +112,9 @@ func TestCommitment_recalculate(t *testing.T) {
 	if c.getCommitIndex() != 20 {
 		t.Fatalf("expected 20 entries committed, found %d",
 			c.getCommitIndex())
+	}
+	if !drainNotifyCh(commitCh) {
+		t.Fatalf("expected commit notify")
 	}
 
 	c.setVoters(voters(4))
@@ -99,10 +124,16 @@ func TestCommitment_recalculate(t *testing.T) {
 		t.Fatalf("expected 20 entries committed, found %d",
 			c.getCommitIndex())
 	}
+	if drainNotifyCh(commitCh) {
+		t.Fatalf("unexpected commit notify")
+	}
 	c.match("s4", 23)
 	if c.getCommitIndex() != 23 {
 		t.Fatalf("expected 23 entries committed, found %d",
 			c.getCommitIndex())
+	}
+	if !drainNotifyCh(commitCh) {
+		t.Fatalf("expected commit notify")
 	}
 }
 
@@ -118,6 +149,9 @@ func TestCommitment_recalculate_startIndex(t *testing.T) {
 	if c.getCommitIndex() != 0 {
 		t.Fatalf("can't commit until startIndex is replicated to a quorum")
 	}
+	if drainNotifyCh(commitCh) {
+		t.Fatalf("unexpected commit notify")
+	}
 
 	c.match("s1", 4)
 	c.match("s2", 4)
@@ -125,6 +159,9 @@ func TestCommitment_recalculate_startIndex(t *testing.T) {
 
 	if c.getCommitIndex() != 4 {
 		t.Fatalf("should be able to commit startIndex once replicated to a quorum")
+	}
+	if !drainNotifyCh(commitCh) {
+		t.Fatalf("expected commit notify")
 	}
 }
 
@@ -139,6 +176,9 @@ func TestCommitment_noVoterSanity(t *testing.T) {
 	if c.getCommitIndex() != 0 {
 		t.Fatalf("no voting servers: shouldn't be able to commit")
 	}
+	if drainNotifyCh(commitCh) {
+		t.Fatalf("unexpected commit notify")
+	}
 }
 
 // Single voter commits immediately.
@@ -150,10 +190,19 @@ func TestCommitment_singleVoter(t *testing.T) {
 		t.Fatalf("expected 10 entries committed, found %d",
 			c.getCommitIndex())
 	}
+	if !drainNotifyCh(commitCh) {
+		t.Fatalf("expected commit notify")
+	}
 	c.setVoters(voters(1))
+	if drainNotifyCh(commitCh) {
+		t.Fatalf("unexpected commit notify")
+	}
 	c.match("s1", 12)
 	if c.getCommitIndex() != 12 {
 		t.Fatalf("expected 12 entries committed, found %d",
 			c.getCommitIndex())
+	}
+	if !drainNotifyCh(commitCh) {
+		t.Fatalf("expected commit notify")
 	}
 }
