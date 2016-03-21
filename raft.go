@@ -870,7 +870,6 @@ func (r *Raft) startReplication(peer string) {
 // leaderLoop is the hot loop for a leader. It is invoked
 // after all the various leader setup is done.
 func (r *Raft) leaderLoop() {
-	// TODO: reconsider
 	// stepDown is used to track if there is an inflight log that
 	// would cause us to lose leadership (specifically a RemovePeer of
 	// ourselves). If this is the case, we must not allow any logs to
