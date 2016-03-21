@@ -170,7 +170,8 @@ func (i *InmemTransport) DecodePeer(buf []byte) string {
 
 // Connect is used to connect this transport to another transport for
 // a given peer name. This allows for local routing.
-func (i *InmemTransport) Connect(peer string, trans *InmemTransport) {
+func (i *InmemTransport) Connect(peer string, t Transport) {
+	trans := t.(*InmemTransport)
 	i.Lock()
 	defer i.Unlock()
 	i.peers[peer] = trans
