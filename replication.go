@@ -102,9 +102,11 @@ RPC:
 			}
 			return
 		case <-s.triggerCh:
-			shouldStop = r.replicateTo(s, r.getLastLogIndexOnly())
+			lastLogIdx, _ := r.getLastLog()
+			shouldStop = r.replicateTo(s, lastLogIdx)
 		case <-randomTimeout(r.conf.CommitTimeout):
-			shouldStop = r.replicateTo(s, r.getLastLogIndexOnly())
+			lastLogIdx, _ := r.getLastLog()
+			shouldStop = r.replicateTo(s, lastLogIdx)
 		}
 
 		// If things looks healthy, switch to pipeline mode
@@ -358,9 +360,11 @@ SEND:
 			}
 			break SEND
 		case <-s.triggerCh:
-			shouldStop = r.pipelineSend(s, pipeline, &nextIndex, r.getLastLogIndexOnly())
+			lastLogIdx, _ := r.getLastLog()
+			shouldStop = r.pipelineSend(s, pipeline, &nextIndex, lastLogIdx)
 		case <-randomTimeout(r.conf.CommitTimeout):
-			shouldStop = r.pipelineSend(s, pipeline, &nextIndex, r.getLastLogIndexOnly())
+			lastLogIdx, _ := r.getLastLog()
+			shouldStop = r.pipelineSend(s, pipeline, &nextIndex, lastLogIdx)
 		}
 	}
 

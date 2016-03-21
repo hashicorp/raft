@@ -95,11 +95,6 @@ func (r *raftState) getLastLog() (index, term uint64) {
 	return
 }
 
-func (r *raftState) getLastLogIndexOnly() uint64 {
-	i, _ := r.getLastLog()
-	return i
-}
-
 func (r *raftState) setLastLog(index, term uint64) {
 	r.lastLock.Lock()
 	r.lastLogIndex = index
@@ -136,23 +131,6 @@ func (r *raftState) getLastApplied() uint64 {
 
 func (r *raftState) setLastApplied(index uint64) {
 	atomic.StoreUint64(&r.lastApplied, index)
-}
-
-<<<<<<< 2e665d4be2a5d4698d83f06012524e02bcabd104
-func (r *raftState) getLastSnapshotIndex() uint64 {
-	return atomic.LoadUint64(&r.lastSnapshotIndex)
-}
-
-func (r *raftState) setLastSnapshotIndex(index uint64) {
-	atomic.StoreUint64(&r.lastSnapshotIndex, index)
-}
-
-func (r *raftState) getLastSnapshotTerm() uint64 {
-	return atomic.LoadUint64(&r.lastSnapshotTerm)
-}
-
-func (r *raftState) setLastSnapshotTerm(term uint64) {
-	atomic.StoreUint64(&r.lastSnapshotTerm, term)
 }
 
 func (r *raftState) incrRoutines() {
