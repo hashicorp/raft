@@ -75,6 +75,9 @@ type leaderState struct {
 type Raft struct {
 	raftState
 
+	// the previously observed raft state
+	observedRaftState RaftState
+
 	// applyCh is used to async send logs to the main thread to
 	// be committed and applied to the FSM.
 	applyCh chan *logFuture
@@ -147,6 +150,10 @@ type Raft struct {
 	// verifyCh is used to async send verify futures to the main thread
 	// to verify we are still the leader
 	verifyCh chan *verifyFuture
+
+	// list of observers and the mutex that protects them
+	observerLock sync.RWMutex
+	observers    map[uint64]*Observer
 }
 
 // NewRaft is used to construct a new Raft node. It takes a configuration, as well
@@ -221,6 +228,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		stable:        stable,
 		trans:         trans,
 		verifyCh:      make(chan *verifyFuture, 64),
+		observers:     make(map[uint64]*Observer),
 	}
 
 	// Initialize as a follower
@@ -267,8 +275,12 @@ func (r *Raft) Leader() string {
 // setLeader is used to modify the current leader of the cluster
 func (r *Raft) setLeader(leader string) {
 	r.leaderLock.Lock()
+	oldLeader := r.leader
 	r.leader = leader
 	r.leaderLock.Unlock()
+	if oldLeader != r.leader {
+		r.observe(LeaderObservation{leader: leader})
+	}
 }
 
 // Apply is used to apply a command to the FSM in a highly consistent
@@ -1418,6 +1430,8 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 		rpc.Respond(resp, rpcErr)
 	}()
 
+	r.observe(*req)
+
 	// Check if we have an existing leader [who's not the candidate]
 	candidate := r.trans.DecodePeer(req.Candidate)
 	if leader := r.Leader(); leader != "" && leader != candidate {
@@ -1695,7 +1709,11 @@ func (r *Raft) setCurrentTerm(t uint64) {
 // that leader should be set only after updating the state.
 func (r *Raft) setState(state RaftState) {
 	r.setLeader("")
+	oldState := r.raftState.getState()
 	r.raftState.setState(state)
+	if oldState != state {
+		r.observe(state)
+	}
 }
 
 // runSnapshots is a long running goroutine used to manage taking
