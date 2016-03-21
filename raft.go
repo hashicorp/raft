@@ -237,8 +237,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 
 	// Restore the current term and the last log
 	r.setCurrentTerm(currentTerm)
-	r.setLastLogIndex(lastLog.Index)
-	r.setLastLogTerm(lastLog.Term)
+	r.setLastLog(lastLog.Index, lastLog.Term)
 
 	// Attempt to restore a snapshot if there are any
 	if err := r.restoreSnapshot(); err != nil {
@@ -467,16 +466,18 @@ func (r *Raft) Stats() map[string]string {
 	toString := func(v uint64) string {
 		return strconv.FormatUint(v, 10)
 	}
+	lastLogIndex, lastLogTerm := r.getLastLog()
+	lastSnapIndex, lastSnapTerm := r.getLastSnapshot()
 	s := map[string]string{
 		"state":               r.getState().String(),
 		"term":                toString(r.getCurrentTerm()),
-		"last_log_index":      toString(r.getLastLogIndex()),
-		"last_log_term":       toString(r.getLastLogTerm()),
+		"last_log_index":      toString(lastLogIndex),
+		"last_log_term":       toString(lastLogTerm),
 		"commit_index":        toString(r.getCommitIndex()),
 		"applied_index":       toString(r.getLastApplied()),
 		"fsm_pending":         toString(uint64(len(r.fsmCommitCh))),
-		"last_snapshot_index": toString(r.getLastSnapshotIndex()),
-		"last_snapshot_term":  toString(r.getLastSnapshotTerm()),
+		"last_snapshot_index": toString(lastSnapIndex),
+		"last_snapshot_term":  toString(lastSnapTerm),
 		"num_peers":           toString(uint64(len(r.peers))),
 	}
 	last := r.LastContact()
@@ -1142,8 +1143,7 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 	r.leaderState.commitment.match(r.localAddr, lastIndex)
 
 	// Update the last log since it's on disk now
-	r.setLastLogIndex(lastIndex)
-	r.setLastLogTerm(term)
+	r.setLastLog(lastIndex, term)
 
 	// Notify the replicators of the new log
 	for _, f := range r.leaderState.replState {
@@ -1384,7 +1384,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		last := a.Entries[n-1]
 
 		// Delete any conflicting entries
-		lastLogIdx := r.getLastLogIndex()
+		lastLogIdx, _ := r.getLastLog()
 		if first.Index <= lastLogIdx {
 			r.logger.Printf("[WARN] raft: Clearing log suffix from %d to %d", first.Index, lastLogIdx)
 			if err := r.logs.DeleteRange(first.Index, lastLogIdx); err != nil {
@@ -1400,8 +1400,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		}
 
 		// Update the lastLog
-		r.setLastLogIndex(last.Index)
-		r.setLastLogTerm(last.Term)
+		r.setLastLog(last.Index, last.Term)
 		metrics.MeasureSince([]string{"raft", "rpc", "appendEntries", "storeLogs"}, start)
 	}
 
@@ -1485,7 +1484,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 		return
 	}
 
-	if lastIdx > req.LastLogIndex {
+	if lastTerm == req.LastLogTerm && lastIdx > req.LastLogIndex {
 		r.logger.Printf("[WARN] raft: Rejecting vote request from %v since our last index is greater (%d, %d)",
 			candidate, lastIdx, req.LastLogIndex)
 		return
@@ -1587,8 +1586,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	r.setLastApplied(req.LastLogIndex)
 
 	// Update the last stable snapshot info
-	r.setLastSnapshotIndex(req.LastLogIndex)
-	r.setLastSnapshotTerm(req.LastLogTerm)
+	r.setLastSnapshot(req.LastLogIndex, req.LastLogTerm)
 
 	// Restore the peer set
 	peers := decodePeers(req.Peers, r.trans)
@@ -1750,7 +1748,7 @@ func (r *Raft) runSnapshots() {
 // a new snapshot.
 func (r *Raft) shouldSnapshot() bool {
 	// Check the last snapshot index
-	lastSnap := r.getLastSnapshotIndex()
+	lastSnap, _ := r.getLastSnapshot()
 
 	// Check the last log index
 	lastIdx, err := r.logs.LastIndex()
@@ -1815,8 +1813,7 @@ func (r *Raft) takeSnapshot() error {
 	}
 
 	// Update the last stable snapshot info
-	r.setLastSnapshotIndex(req.index)
-	r.setLastSnapshotTerm(req.term)
+	r.setLastSnapshot(req.index, req.term)
 
 	// Compact the logs
 	if err := r.compactLogs(req.index); err != nil {
@@ -1839,7 +1836,8 @@ func (r *Raft) compactLogs(snapIdx uint64) error {
 	}
 
 	// Check if we have enough logs to truncate
-	if r.getLastLogIndex() <= r.conf.TrailingLogs {
+	lastLogIdx, _ := r.getLastLog()
+	if lastLogIdx <= r.conf.TrailingLogs {
 		return nil
 	}
 
@@ -1847,7 +1845,7 @@ func (r *Raft) compactLogs(snapIdx uint64) error {
 	// back from the head, which ever is further back. This ensures
 	// at least `TrailingLogs` entries, but does not allow logs
 	// after the snapshot to be removed.
-	maxLog := min(snapIdx, r.getLastLogIndex()-r.conf.TrailingLogs)
+	maxLog := min(snapIdx, lastLogIdx-r.conf.TrailingLogs)
 
 	// Log this
 	r.logger.Printf("[INFO] raft: Compacting logs from %d to %d", minLog, maxLog)
@@ -1890,8 +1888,7 @@ func (r *Raft) restoreSnapshot() error {
 		r.setLastApplied(snapshot.Index)
 
 		// Update the last stable snapshot info
-		r.setLastSnapshotIndex(snapshot.Index)
-		r.setLastSnapshotTerm(snapshot.Term)
+		r.setLastSnapshot(snapshot.Index, snapshot.Term)
 
 		// Success!
 		return nil
