@@ -346,7 +346,7 @@ func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 		c.dirs = append(c.dirs, dir2)
 		c.snaps = append(c.snaps, snap)
 
-		addr, trans := NewInmemTransport()
+		addr, trans := NewInmemTransport("")
 		c.trans = append(c.trans, trans)
 		peers = append(peers, addr)
 	}
@@ -397,7 +397,7 @@ func MakeClusterNoPeers(n int, t *testing.T, conf *Config) *cluster {
 		c.dirs = append(c.dirs, dir2)
 		c.snaps = append(c.snaps, snap)
 
-		_, trans := NewInmemTransport()
+		_, trans := NewInmemTransport("")
 		c.trans = append(c.trans, trans)
 	}
 
@@ -1075,8 +1075,10 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 
 	// Restart the Raft
 	r := leader
+	// Can't just reuse the old transport as it will be closed
+	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
 	r, err := NewRaft(r.conf, r.fsm, r.logs, r.stable,
-		r.snapshots, r.peerStore, r.trans)
+		r.snapshots, r.peerStore, trans2)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -1139,8 +1141,10 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	// Restart the Raft with new peers
 	r := leader
 	peerStore := &StaticPeers{StaticPeers: peers}
+	// Can't just reuse the old transport as it will be closed
+	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
 	r, err := NewRaft(r.conf, r.fsm, r.logs, r.stable,
-		r.snapshots, peerStore, r.trans)
+		r.snapshots, peerStore, trans2)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
