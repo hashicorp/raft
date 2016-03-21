@@ -179,6 +179,28 @@ func TestCommitment_noVoterSanity(t *testing.T) {
 	if drainNotifyCh(commitCh) {
 		t.Fatalf("unexpected commit notify")
 	}
+
+	// add a voter so we can commit something and then remove it
+	c.setVoters(voters(1))
+	c.match("s1", 10)
+	if c.getCommitIndex() != 10 {
+		t.Fatalf("expected 10 entries committed, found %d",
+			c.getCommitIndex())
+	}
+	if !drainNotifyCh(commitCh) {
+		t.Fatalf("expected commit notify")
+	}
+
+	c.setVoters([]string{})
+	c.match("s1", 20)
+	if c.getCommitIndex() != 10 {
+		t.Fatalf("expected 10 entries committed, found %d",
+			c.getCommitIndex())
+	}
+	if drainNotifyCh(commitCh) {
+		t.Fatalf("unexpected commit notify")
+	}
+
 }
 
 // Single voter commits immediately.
