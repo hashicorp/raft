@@ -28,13 +28,30 @@ func newSeed() int64 {
 	return r.Int64()
 }
 
+// latest returns the latest of two times
+func latest(t1 time.Time, t2 time.Time) time.Time {
+	if t1.After(t2) {
+		return t1
+	} else {
+		return t2
+	}
+}
+
+// randomDuration returns a randomized duration between the minVal and 2 x minVal
+func randomDuration(minVal time.Duration) time.Duration {
+	if minVal == 0 {
+		return 0
+	}
+	extra := (time.Duration(rand.Int63()) % minVal)
+	return minVal + extra
+}
+
 // randomTimeout returns a value that is between the minVal and 2x minVal.
 func randomTimeout(minVal time.Duration) <-chan time.Time {
 	if minVal == 0 {
 		return nil
 	}
-	extra := (time.Duration(rand.Int63()) % minVal)
-	return time.After(minVal + extra)
+	return time.After(randomDuration(minVal))
 }
 
 // min returns the minimum.

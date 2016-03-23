@@ -612,6 +612,8 @@ func (r *Raft) runFollower() {
 	didWarn := false
 	r.logger.Printf("[INFO] raft: %v entering Follower state", r)
 	metrics.IncrCounter([]string{"raft", "state", "follower"}, 1)
+	// ignore when lastContact is as that may be substantially in the past, which
+	// means new joiners would start elections too early
 	heartbeatTimer := randomTimeout(r.conf.HeartbeatTimeout)
 	for {
 		select {
@@ -633,11 +635,17 @@ func (r *Raft) runFollower() {
 
 		case <-heartbeatTimer:
 			// Restart the heartbeat timer
-			heartbeatTimer = randomTimeout(r.conf.HeartbeatTimeout)
-
-			// Check if we have had a successful contact
+			// According to the raft spec, we should time out between 1 and 2 intervals
+			// (here called r.conf.HeartbeatTimeout) after the last contact. There
+			// is a possibility that this value is before Now(). So what we do is
+			// take a randomized interval from the later of the last interval
+			// and Now() - r.conf.HeartbeatTimeout.
+			now := time.Now()
 			lastContact := r.LastContact()
-			if time.Now().Sub(lastContact) < r.conf.HeartbeatTimeout {
+			startPoint := latest(lastContact, now.Add(-r.conf.HeartbeatTimeout))
+			duration := startPoint.Add(randomDuration(r.conf.HeartbeatTimeout)).Sub(now)
+			heartbeatTimer = time.After(duration)
+			if now.Sub(lastContact) < r.conf.HeartbeatTimeout {
 				continue
 			}
 
