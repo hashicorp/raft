@@ -85,6 +85,17 @@ func asyncNotifyCh(ch chan struct{}) {
 	}
 }
 
+// drainNotifyCh empties out a single-item notification channel without
+// blocking, and returns whether it received anything.
+func drainNotifyCh(ch chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
+
 // asyncNotifyBool is used to do an async notification
 // on a bool channel.
 func asyncNotifyBool(ch chan bool, v bool) {
@@ -198,3 +209,10 @@ func backoff(base time.Duration, round, limit uint64) time.Duration {
 	}
 	return base
 }
+
+// Needed for sorting []uint64, used to determine commitment
+type uint64Slice []uint64
+
+func (p uint64Slice) Len() int           { return len(p) }
+func (p uint64Slice) Less(i, j int) bool { return p[i] < p[j] }
+func (p uint64Slice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }

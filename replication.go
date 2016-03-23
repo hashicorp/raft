@@ -25,14 +25,13 @@ var (
 )
 
 type followerReplication struct {
-	peer     string
-	inflight *inflight
+	peer       string
+	commitment *commitment
 
 	stopCh    chan uint64
 	triggerCh chan struct{}
 
 	currentTerm uint64
-	matchIndex  uint64
 	nextIndex   uint64
 
 	lastContact     time.Time
@@ -182,7 +181,6 @@ START:
 		s.allowPipeline = true
 	} else {
 		s.nextIndex = max(min(s.nextIndex-1, resp.LastLog+1), 1)
-		s.matchIndex = s.nextIndex - 1
 		if resp.NoRetryBackoff {
 			s.failures = 0
 		} else {
@@ -267,12 +265,9 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 
 	// Check for success
 	if resp.Success {
-		// Mark any inflight logs as committed
-		s.inflight.CommitRange(s.matchIndex+1, meta.Index)
-
 		// Update the indexes
-		s.matchIndex = meta.Index
-		s.nextIndex = s.matchIndex + 1
+		s.nextIndex = meta.Index + 1
+		s.commitment.match(s.peer, meta.Index)
 
 		// Clear any failures
 		s.failures = 0
@@ -508,13 +503,9 @@ func (r *Raft) handleStaleTerm(s *followerReplication) {
 func updateLastAppended(s *followerReplication, req *AppendEntriesRequest) {
 	// Mark any inflight logs as committed
 	if logs := req.Entries; len(logs) > 0 {
-		first := logs[0]
 		last := logs[len(logs)-1]
-		s.inflight.CommitRange(first.Index, last.Index)
-
-		// Update the indexes
-		s.matchIndex = last.Index
 		s.nextIndex = last.Index + 1
+		s.commitment.match(s.peer, last.Index)
 	}
 
 	// Notify still leader
