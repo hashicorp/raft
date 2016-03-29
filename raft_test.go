@@ -101,7 +101,7 @@ type cluster struct {
 	stores []*InmemStore
 	fsms   []*MockFSM
 	snaps  []*FileSnapshotStore
-	trans  []*InmemTransport
+	trans  []LoopbackTransport
 	rafts  []*Raft
 	t      *testing.T
 }
@@ -198,7 +198,7 @@ func (c *cluster) FullyConnect() {
 func (c *cluster) Disconnect(a string) {
 	c.t.Logf("[WARN] Disconnecting %v", a)
 	for _, t := range c.trans {
-		if t.localAddr == a {
+		if t.LocalAddr() == a {
 			t.DisconnectAll()
 		} else {
 			t.Disconnect(a)
