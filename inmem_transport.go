@@ -44,9 +44,11 @@ type InmemTransport struct {
 }
 
 // NewInmemTransport is used to initialize a new transport
-// and generates a random local address.
-func NewInmemTransport() (string, *InmemTransport) {
-	addr := NewInmemAddr()
+// and generates a random local address if none is specified
+func NewInmemTransport(addr string) (string, *InmemTransport) {
+	if addr == "" {
+		addr = NewInmemAddr()
+	}
 	trans := &InmemTransport{
 		consumerCh: make(chan RPC, 16),
 		localAddr:  addr,
