@@ -75,9 +75,6 @@ type leaderState struct {
 type Raft struct {
 	raftState
 
-	// the previously observed raft state
-	observedRaftState RaftState
-
 	// applyCh is used to async send logs to the main thread to
 	// be committed and applied to the FSM.
 	applyCh chan *logFuture
