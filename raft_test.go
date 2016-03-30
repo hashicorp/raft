@@ -122,9 +122,9 @@ type cluster struct {
 	logger           *log.Logger
 	startTime        time.Time
 
-	failedMutex sync.Mutex
-	failedCh    chan struct{}
-	failed      bool
+	failedLock sync.Mutex
+	failedCh   chan struct{}
+	failed     bool
 }
 
 func (c *cluster) Merge(other *cluster) {
@@ -137,8 +137,8 @@ func (c *cluster) Merge(other *cluster) {
 }
 
 func (c *cluster) markFailed() {
-	defer c.failedMutex.Unlock()
-	c.failedMutex.Lock()
+	c.failedLock.Lock()
+	defer c.failedLock.Unlock()
 	if !c.failed {
 		c.failed = true
 		close(c.failedCh)
