@@ -136,6 +136,8 @@ func (c *cluster) Merge(other *cluster) {
 	c.rafts = append(c.rafts, other.rafts...)
 }
 
+// markFailed will close the failed channel which will notify waiting goroutines
+// that the test failed and they should bail out.
 func (c *cluster) markFailed() {
 	c.failedLock.Lock()
 	defer c.failedLock.Unlock()
@@ -145,22 +147,26 @@ func (c *cluster) markFailed() {
 	}
 }
 
-// provide a logging function that fails the tests, prints the output
-// with microseconds, and does not mysteriously eat the string
+// Failf provides a logging function that fails the tests, prints the output
+// with microseconds, and does not mysteriously eat the string.
 func (c *cluster) Failf(format string, args ...interface{}) {
 	c.logger.Printf(format, args...)
 	c.t.Fail()
 	c.markFailed()
 }
 
-// provide a logging function that fails the tests, prints the output
-// with microseconds, and does not mysteriously eat the string
+// FailNowf provides a logging function that fails the tests, prints the output
+// with microseconds, and does not mysteriously eat the string. FailNowf must be
+// called from the goroutine running the test or benchmark function, not from
+// other goroutines created during the test. Calling FailNowf does not stop
+// those other goroutines.
 func (c *cluster) FailNowf(format string, args ...interface{}) {
 	c.logger.Printf(format, args...)
 	c.t.FailNow()
 }
 
-// Check whether something has failed (main thread only) and exit if so
+// CheckFailed checks whether something has failed (main thread only) and exits
+// if so.
 func (c *cluster) CheckFailed() {
 	if c.t.Failed() {
 		c.t.FailNow()
@@ -180,7 +186,8 @@ func (c *cluster) Close() {
 
 	// Wait for shutdown
 	timer := time.AfterFunc(c.longstopTimeout, func() {
-		// we can't Failfnow here, and c.Failf won't do anything if we hang, so panic
+		// We can't FailNowf here, and c.Failf won't do anything if we
+		// hang, so panic.
 		c.Failf("[ERROR] timed out waiting for shutdown")
 		panic("timed out waiting for shutdown")
 	})
@@ -196,13 +203,15 @@ func (c *cluster) Close() {
 		os.RemoveAll(d)
 	}
 
-	c.markFailed() // this doesn't fail the test, merely closes the channel
+	// This doesn't fail the test, it merely closes the failed channel.
+	c.markFailed()
 }
 
-// returns a channel which will signal if either something happens or a small amount of time has passed.
-// It is possible to set a filter on the small amount of time. Setting timeout to 0 means that it will wait until
+// WaitEventChan returns a channel which will signal if either something happens
+// or a small amount of time has passed. It is possible to set a filter during
+// the small amount of time. Setting timeout to 0 means that it will wait until
 // something happens.
-func (c *cluster) WaitEventChan(filter func(ob *Observation) bool, timeout time.Duration) <-chan struct{} {
+func (c *cluster) WaitEventChan(filter FilterFn, timeout time.Duration) <-chan struct{} {
 	ch := make(chan struct{})
 	go func() {
 		defer close(ch)
@@ -224,10 +233,10 @@ func (c *cluster) WaitEventChan(filter func(ob *Observation) bool, timeout time.
 	return ch
 }
 
-// Waits until either either something happens or a small amount of time has passed.
-// It is possible to set a filter on the small amount of time. Setting timeout to 0 means that it will wait until
-// something happens.
-func (c *cluster) WaitEvent(filter func(ob *Observation) bool, timeout time.Duration) {
+// Waits until either either something happens or a small amount of time has
+// passed. It is possible to set a filter during the small amount of time.
+// Setting timeout to 0 means that it will wait until something happens.
+func (c *cluster) WaitEvent(filter FilterFn, timeout time.Duration) {
 	select {
 	case <-c.WaitEventChan(filter, timeout):
 	case <-c.failedCh:
@@ -512,8 +521,8 @@ func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 	c := &cluster{
 		observationCh: make(chan Observation, 1024),
 		conf:          conf,
-		// Propagation takes a maximum of 2 heartbeat timeouts (time to get a new heartbeat that would cause a commit)
-		// plus a bit
+		// Propagation takes a maximum of 2 heartbeat timeouts (time to
+		// get a new heartbeat that would cause a commit) plus a bit.
 		propagateTimeout: conf.HeartbeatTimeout*2 + conf.CommitTimeout,
 		longstopTimeout:  5 * time.Second,
 		logger:           newTestLoggerWithPrefix(t, "cluster"),
