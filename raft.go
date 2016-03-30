@@ -151,9 +151,10 @@ type Raft struct {
 	// to verify we are still the leader
 	verifyCh chan *verifyFuture
 
-	// list of observers and the mutex that protects them
+	// List of observers and the mutex that protects them. The observers list
+	// is indexed by an artificial ID which is used for deregistration.
 	observersLock sync.RWMutex
-	observers    map[uint64]*Observer
+	observers     map[uint64]*Observer
 }
 
 // NewRaft is used to construct a new Raft node. It takes a configuration, as well
