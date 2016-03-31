@@ -136,9 +136,10 @@ func (c *cluster) Merge(other *cluster) {
 	c.rafts = append(c.rafts, other.rafts...)
 }
 
-// markFailed will close the failed channel which will notify waiting goroutines
-// that the test failed and they should bail out.
-func (c *cluster) markFailed() {
+// notifyFailed will close the failed channel which can signal the goroutine
+// running the test that another goroutine has detected a failure in order to
+// terminate the test.
+func (c *cluster) notifyFailed() {
 	c.failedLock.Lock()
 	defer c.failedLock.Unlock()
 	if !c.failed {
@@ -148,11 +149,16 @@ func (c *cluster) markFailed() {
 }
 
 // Failf provides a logging function that fails the tests, prints the output
-// with microseconds, and does not mysteriously eat the string.
+// with microseconds, and does not mysteriously eat the string. This can be
+// safely called from goroutines but won't immediately halt the test. The
+// failedCh will be closed to allow blocking functions in the main thread to
+// detect the failure and react. Note that you should arrange for the main
+// thread to block until all goroutines have completed in order to reliably
+// fail tests using this function.
 func (c *cluster) Failf(format string, args ...interface{}) {
 	c.logger.Printf(format, args...)
 	c.t.Fail()
-	c.markFailed()
+	c.notifyFailed()
 }
 
 // FailNowf provides a logging function that fails the tests, prints the output
@@ -165,19 +171,7 @@ func (c *cluster) FailNowf(format string, args ...interface{}) {
 	c.t.FailNow()
 }
 
-// CheckFailed checks whether something has failed (main thread only) and exits
-// if so.
-func (c *cluster) CheckFailed() {
-	if c.t.Failed() {
-		c.t.FailNow()
-	}
-	select {
-	case <-c.failedCh:
-		c.t.FailNow()
-	default:
-	}
-}
-
+// Close shuts down the cluster and cleans up.
 func (c *cluster) Close() {
 	var futures []Future
 	for _, r := range c.rafts {
@@ -201,9 +195,6 @@ func (c *cluster) Close() {
 	for _, d := range c.dirs {
 		os.RemoveAll(d)
 	}
-
-	// This doesn't fail the test, it merely closes the failed channel.
-	c.markFailed()
 }
 
 // WaitEventChan returns a channel which will signal if either something happens
@@ -931,7 +922,13 @@ func TestRaft_ApplyConcurrent(t *testing.T) {
 	case <-time.After(c.longstopTimeout):
 		c.FailNowf("[ERROR] timeout")
 	}
-	c.CheckFailed()
+
+	// If anything failed up to this point then bail now, rather than do a
+	// confusing compare.
+	if t.Failed() {
+		c.FailNowf("[ERROR] One or more of the apply operations failed")
+	}
+
 	// Check the FSMs
 	c.EnsureSame(t)
 }
