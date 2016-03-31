@@ -188,7 +188,6 @@ func (c *cluster) Close() {
 	timer := time.AfterFunc(c.longstopTimeout, func() {
 		// We can't FailNowf here, and c.Failf won't do anything if we
 		// hang, so panic.
-		c.Failf("[ERROR] timed out waiting for shutdown")
 		panic("timed out waiting for shutdown")
 	})
 	defer timer.Stop()
@@ -246,7 +245,9 @@ func (c *cluster) WaitEvent(filter FilterFn, timeout time.Duration) {
 
 // Wait until the entire cluster has fsm length specified
 func (c *cluster) WaitForReplication(fsmLength int) {
-	longstopTimeout := time.AfterFunc(c.longstopTimeout, func() { c.FailNowf("[ERROR] Timeout waiting for replication") })
+	longstopTimeout := time.AfterFunc(c.longstopTimeout, func() {
+		c.Failf("[ERROR] Timeout waiting for replication")
+	})
 	defer longstopTimeout.Stop()
 
 checking:
@@ -962,7 +963,9 @@ func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 		}
 	}
 
-	longstopTimeout := time.AfterFunc(c.longstopTimeout, func() { c.Failf("[ERROR] Timeout waiting to detect apply timeouts") })
+	longstopTimeout := time.AfterFunc(c.longstopTimeout, func() {
+		c.Failf("[ERROR] Timeout waiting to detect apply timeouts")
+	})
 	defer longstopTimeout.Stop()
 
 	for {
