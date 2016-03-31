@@ -929,7 +929,7 @@ func TestRaft_ApplyConcurrent(t *testing.T) {
 	select {
 	case <-doneCh:
 	case <-time.After(c.longstopTimeout):
-		c.Failf("[ERROR] timeout")
+		c.FailNowf("[ERROR] timeout")
 	}
 	c.CheckFailed()
 	// Check the FSMs
