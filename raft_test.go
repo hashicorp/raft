@@ -197,10 +197,10 @@ func (c *cluster) Close() {
 	}
 }
 
-// WaitEventChan returns a channel which will signal if either something happens
-// or a small amount of time has passed. It is possible to set a filter during
-// the small amount of time. Setting timeout to 0 means that it will wait until
-// something happens.
+// WaitEventChan returns a channel which will signal if an observation is made
+// or a timeout occurs. It is possible to set a filter to look for specific
+// observations. Setting timeout to 0 means that it will wait forever until a
+// non-filtered observation is made.
 func (c *cluster) WaitEventChan(filter FilterFn, timeout time.Duration) <-chan struct{} {
 	ch := make(chan struct{})
 	go func() {
@@ -223,9 +223,10 @@ func (c *cluster) WaitEventChan(filter FilterFn, timeout time.Duration) <-chan s
 	return ch
 }
 
-// Waits until either either something happens or a small amount of time has
-// passed. It is possible to set a filter during the small amount of time.
-// Setting timeout to 0 means that it will wait until something happens.
+// WaitEvent waits until an observation is made, a timeout occurs, or a test
+// failure is signaled. It is possible to set a filter to look for specific
+// observations. Setting timeout to 0 means that it will wait forever until a
+// non-filtered observation is made or a test failure is signaled.
 func (c *cluster) WaitEvent(filter FilterFn, timeout time.Duration) {
 	select {
 	case <-c.WaitEventChan(filter, timeout):
