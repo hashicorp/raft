@@ -1417,6 +1417,8 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 // requestVote is invoked when we get an request vote RPC call.
 func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "requestVote"}, time.Now())
+	r.observe(*req)
+
 	// Setup a response
 	resp := &RequestVoteResponse{
 		Term:    r.getCurrentTerm(),
@@ -1427,8 +1429,6 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	defer func() {
 		rpc.Respond(resp, rpcErr)
 	}()
-
-	r.observe(*req)
 
 	// Check if we have an existing leader [who's not the candidate]
 	candidate := r.trans.DecodePeer(req.Candidate)
