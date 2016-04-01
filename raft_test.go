@@ -696,8 +696,8 @@ func TestRaft_TripleNode(t *testing.T) {
 	defer c.Close()
 
 	// Should be one leader
-	leader := c.Leader()
 	c.Followers()
+	leader := c.Leader()
 	c.EnsureLeader(t, leader.localAddr)
 
 	// Should be able to apply
