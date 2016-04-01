@@ -526,10 +526,15 @@ WAIT:
 	goto CHECK
 }
 
-func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
+// makeCluster will return a cluster with the given config and number of peers.
+// If addPeers is true, they will be added into the peer store before starting,
+// otherwise their transports will be wired up but they won't yet have configured
+// each other.
+func makeCluster(n int, addPeers bool, t *testing.T, conf *Config) *cluster {
 	if conf == nil {
 		conf = inmemConfig(t)
 	}
+
 	c := &cluster{
 		observationCh: make(chan Observation, 1024),
 		conf:          conf,
@@ -549,6 +554,7 @@ func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 		if err != nil {
 			c.FailNowf("[ERROR] err: %v ", err)
 		}
+
 		store := NewInmemStore()
 		c.dirs = append(c.dirs, dir)
 		c.stores = append(c.stores, store)
@@ -566,9 +572,8 @@ func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 	// Wire the transports together
 	c.FullyConnect()
 
-	c.startTime = time.Now()
-
 	// Create all the rafts
+	c.startTime = time.Now()
 	for i := 0; i < n; i++ {
 		if n == 1 {
 			conf.EnableSingleNode = true
@@ -578,8 +583,11 @@ func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 		store := c.stores[i]
 		snap := c.snaps[i]
 		trans := c.trans[i]
-		peerStore := &StaticPeers{StaticPeers: peers}
 
+		peerStore := &StaticPeers{}
+		if addPeers {
+			peerStore.StaticPeers = peers
+		}
 		peerConf := conf
 		peerConf.Logger = newTestLoggerWithPrefix(t, peers[i])
 
@@ -587,6 +595,7 @@ func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 		if err != nil {
 			c.FailNowf("[ERROR] NewRaft failed: %v", err)
 		}
+
 		raft.RegisterObserver(NewObserver(c.observationCh, false, nil))
 		if err != nil {
 			c.FailNowf("[ERROR] RegisterObserver failed: %v", err)
@@ -597,68 +606,14 @@ func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 	return c
 }
 
+// See makeCluster. This adds the peers initially to the peer store.
+func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
+	return makeCluster(n, true, t, conf)
+}
+
+// See makeCluster. This doesn't add the peers initially to the peer store.
 func MakeClusterNoPeers(n int, t *testing.T, conf *Config) *cluster {
-	if conf == nil {
-		conf = inmemConfig(t)
-	}
-	c := &cluster{
-		observationCh:    make(chan Observation, 1024),
-		conf:             conf,
-		propagateTimeout: conf.CommitTimeout * 4,
-		longstopTimeout:  5 * time.Second,
-		logger:           newTestLoggerWithPrefix(t, "cluster"),
-		failedCh:         make(chan struct{}),
-	}
-	c.t = t
-	peers := make([]string, 0, n)
-	// Setup the stores and transports
-	for i := 0; i < n; i++ {
-		dir, err := ioutil.TempDir("", "raft")
-		if err != nil {
-			c.FailNowf("[ERROR] err: %v ", err)
-		}
-		store := NewInmemStore()
-		c.dirs = append(c.dirs, dir)
-		c.stores = append(c.stores, store)
-		c.fsms = append(c.fsms, &MockFSM{})
-
-		dir2, snap := FileSnapTest(t)
-		c.dirs = append(c.dirs, dir2)
-		c.snaps = append(c.snaps, snap)
-
-		addr, trans := NewInmemTransport("")
-		c.trans = append(c.trans, trans)
-		peers = append(peers, addr)
-	}
-
-	// Wire the transports together
-	c.FullyConnect()
-
-	c.startTime = time.Now()
-
-	// Create all the rafts
-	for i := 0; i < n; i++ {
-		logs := c.stores[i]
-		store := c.stores[i]
-		snap := c.snaps[i]
-		trans := c.trans[i]
-		peerStore := &StaticPeers{}
-
-		peerConf := conf
-		peerConf.Logger = newTestLoggerWithPrefix(t, peers[i])
-
-		raft, err := NewRaft(peerConf, c.fsms[i], logs, store, snap, peerStore, trans)
-		if err != nil {
-			c.FailNowf("[ERROR] NewRaft failed: %v", err)
-		}
-		raft.RegisterObserver(NewObserver(c.observationCh, false, nil))
-		if err != nil {
-			c.FailNowf("[ERROR] RegisterObserver failed: %v", err)
-		}
-		c.rafts = append(c.rafts, raft)
-	}
-
-	return c
+	return makeCluster(n, false, t, conf)
 }
 
 func TestRaft_StartStop(t *testing.T) {
