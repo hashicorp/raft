@@ -179,12 +179,12 @@ func (c *cluster) Close() {
 	}
 
 	// Wait for shutdown
-	timer := time.AfterFunc(c.longstopTimeout, func() {
+	limit := time.AfterFunc(c.longstopTimeout, func() {
 		// We can't FailNowf here, and c.Failf won't do anything if we
 		// hang, so panic.
 		panic("timed out waiting for shutdown")
 	})
-	defer timer.Stop()
+	defer limit.Stop()
 
 	for _, f := range futures {
 		if err := f.Error(); err != nil {
@@ -240,16 +240,16 @@ func (c *cluster) WaitEvent(filter FilterFn, timeout time.Duration) {
 // WaitForReplication blocks until every FSM in the cluster has the given
 // length, or the long sanity check timeout expires.
 func (c *cluster) WaitForReplication(fsmLength int) {
-	timeoutCh := time.After(c.longstopTimeout)
+	limitCh := time.After(c.longstopTimeout)
 
-CHECKING:
+CHECK:
 	for {
 		ch := c.WaitEventChan(nil, c.conf.CommitTimeout)
 		select {
 		case <-c.failedCh:
 			c.t.FailNow()
 
-		case <-timeoutCh:
+		case <-limitCh:
 			c.FailNowf("[ERROR] Timeout waiting for replication")
 
 		case <-ch:
@@ -258,7 +258,7 @@ CHECKING:
 				num := len(fsm.logs)
 				fsm.Unlock()
 				if num != fsmLength {
-					continue CHECKING
+					continue CHECK
 				}
 			}
 			return
@@ -266,8 +266,10 @@ CHECKING:
 	}
 }
 
-// internal routine to get a snapshot of state - may not be stable
-func (c *cluster) GetInStateInternal(s RaftState) ([]*Raft, uint64) {
+// pollState takes a snapshot of the state of the cluster. This might not be
+// stable, so use GetInState() to apply some additional checks when waiting
+// for the cluster to achieve a particular state.
+func (c *cluster) pollState(s RaftState) ([]*Raft, uint64) {
 	var highestTerm uint64
 	in := make([]*Raft, 0, 1)
 	for _, r := range c.rafts {
@@ -282,55 +284,51 @@ func (c *cluster) GetInStateInternal(s RaftState) ([]*Raft, uint64) {
 	return in, highestTerm
 }
 
-// get the a stable version of the which rafts are in what state
+// GetInState polls the state of the cluster and attempts to identify when it has
+// settled into the given state.
 func (c *cluster) GetInState(s RaftState) []*Raft {
-	// this is the longstop timeout
-	longstopTimeout := time.AfterFunc(c.longstopTimeout, func() {
-		c.Failf("[ERROR] longstop timeout waiting for stable state %s", s)
-	})
-	defer longstopTimeout.Stop()
-
 	c.logger.Printf("[INFO] Starting stability test for raft state: %+v", s)
-	var pollStartTime = time.Now()
+	limitCh := time.After(c.longstopTimeout)
 
-	inState, highestTerm := c.GetInStateInternal(s)
-
-	inStateTime := pollStartTime
-
-	// an election should complete after 2 * max(HeartbeatTimeout, ElectionTimeout)
+	// An election should complete after 2 * max(HeartbeatTimeout, ElectionTimeout)
 	// because of the randomised timer expiring in 1 x interval ... 2 x interval.
-	// we add a bit for propagation delay. If the election fails (e.g. because
+	// We add a bit for propagation delay. If the election fails (e.g. because
 	// two elections start at once), we will have got something through our
-	// Observer channel indicating a different state (i.e. one of the nodes
+	// observer channel indicating a different state (i.e. one of the nodes
 	// will have moved to candidate state) which will reset the timer.
 	//
-	// because of an implementation peculiarity, it can actually be 3 x timeout
-	//
-	electionTimeout := c.conf.HeartbeatTimeout
-	if electionTimeout < c.conf.ElectionTimeout {
-		electionTimeout = c.conf.ElectionTimeout
+	// Because of an implementation peculiarity, it can actually be 3 x timeout.
+	timeout := c.conf.HeartbeatTimeout
+	if timeout < c.conf.ElectionTimeout {
+		timeout = c.conf.ElectionTimeout
 	}
-	timeout := electionTimeout*2 + c.conf.CommitTimeout
+	timeout = 2*timeout + c.conf.CommitTimeout
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
-	// wait until we have a stable instate slice. Each time we see
-	// an observation a state has changed, recheck it and if it
-	// as changed, restart the timer.
+
+	// Wait until we have a stable instate slice. Each time we see an
+	// observation a state has changed, recheck it and if it has changed,
+	// restart the timer.
+	var pollStartTime = time.Now()
 	for {
-		inState, highestTerm = c.GetInStateInternal(s)
-		inStateTime = time.Now()
-		// sometimes this routine is called very early on before the rafts have started
-		// up. We then timeout even though no one has even started an election. So if the
-		// highest term in use is zero, we know there are no raft processes that have yet
-		// issued a RequestVote, and we set a long time out. This is fixed when we hear
-		// the first RequestVote, at which point we reset the timer
+		inState, highestTerm := c.pollState(s)
+		inStateTime := time.Now()
+
+		// Sometimes this routine is called very early on before the
+		// rafts have started up. We then timeout even though no one has
+		// even started an election. So if the highest term in use is
+		// zero, we know there are no raft processes that have yet issued
+		// a RequestVote, and we set a long time out. This is fixed when
+		// we hear the first RequestVote, at which point we reset the
+		// timer.
 		if highestTerm == 0 {
 			timer.Reset(c.longstopTimeout)
 		} else {
 			timer.Reset(timeout)
 		}
-		select {
-		case <-c.WaitEventChan(func(ob *Observation) bool {
+
+		// Filter will wake up whenever we observe a RequestVote.
+		filter := func(ob *Observation) bool {
 			switch ob.Data.(type) {
 			case RaftState:
 				return true
@@ -339,27 +337,33 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 			default:
 				return false
 			}
-		}, time.Duration(0)):
+		}
+
+		select {
+		case <-c.failedCh:
+			c.t.FailNow()
+
+		case <-limitCh:
+			c.FailNowf("[ERROR] Timeout waiting for stable %s state", s)
+
+		case <-c.WaitEventChan(filter, 0):
 			c.logger.Printf("[DEBUG] Resetting stability timeout")
+
 		case t, ok := <-timer.C:
 			if !ok {
 				c.FailNowf("[ERROR] Timer channel errored")
 			}
-			c.logger.Printf("[INFO] Stable state for %s reached at %s (%d nodes), %s from start of poll, %s from cluster start. Timeout at %s, %s after stability", s, inStateTime, len(inState), inStateTime.Sub(pollStartTime), inStateTime.Sub(c.startTime), t, t.Sub(inStateTime))
+			c.logger.Printf("[INFO] Stable state for %s reached at %s (%d nodes), %s from start of poll, %s from cluster start. Timeout at %s, %s after stability",
+				s, inStateTime, len(inState), inStateTime.Sub(pollStartTime), inStateTime.Sub(c.startTime), t, t.Sub(inStateTime))
 			return inState
-		case <-c.failedCh:
-			c.t.FailNow()
 		}
 	}
+
+	return nil
 }
 
+// Leader waits for the cluster to elect a leader and stay in a stable state.
 func (c *cluster) Leader() *Raft {
-	// this is the longstop timeout
-	longstopTimeout := time.AfterFunc(c.longstopTimeout, func() {
-		c.Failf("[ERROR] longstop timeout waiting for leader")
-	})
-	defer longstopTimeout.Stop()
-
 	leaders := c.GetInState(Leader)
 	if len(leaders) != 1 {
 		c.FailNowf("[ERROR] expected one leader: %v", leaders)
@@ -367,7 +371,8 @@ func (c *cluster) Leader() *Raft {
 	return leaders[0]
 }
 
-// Waits for there to be cluster size -1 followers, and then returns them
+// Followers waits for the cluster to have N-1 followers and stay in a stable
+// state.
 func (c *cluster) Followers() []*Raft {
 	expFollowers := len(c.rafts) - 1
 	followers := c.GetInState(Follower)
@@ -377,8 +382,9 @@ func (c *cluster) Followers() []*Raft {
 	return followers
 }
 
+// FullyConnect connects all the transports together.
 func (c *cluster) FullyConnect() {
-	c.logger.Printf("[WARN] Fully Connecting")
+	c.logger.Printf("[DEBUG] Fully Connecting")
 	for i, t1 := range c.trans {
 		for j, t2 := range c.trans {
 			if i != j {
@@ -389,8 +395,9 @@ func (c *cluster) FullyConnect() {
 	}
 }
 
+// Disconnect disconnects all transports from the given address.
 func (c *cluster) Disconnect(a string) {
-	c.logger.Printf("[WARN] Disconnecting %v", a)
+	c.logger.Printf("[DEBUG] Disconnecting %v", a)
 	for _, t := range c.trans {
 		if t.LocalAddr() == a {
 			t.DisconnectAll()
@@ -400,6 +407,7 @@ func (c *cluster) Disconnect(a string) {
 	}
 }
 
+// IndexOf returns the index of the given raft instance.
 func (c *cluster) IndexOf(r *Raft) int {
 	for i, n := range c.rafts {
 		if n == r {
@@ -409,10 +417,11 @@ func (c *cluster) IndexOf(r *Raft) int {
 	return -1
 }
 
-// This checks that ALL the nodes think the leader is 'expect'
+// EnsureLeader checks that ALL the nodes think the leader is the given expected
+// leader.
 func (c *cluster) EnsureLeader(t *testing.T, expect string) {
-	// We assume c.Leader() has been called already
-	// Now check all the rafts think the leader is correct
+	// We assume c.Leader() has been called already; now check all the rafts
+	// think the leader is correct
 	fail := false
 	for _, r := range c.rafts {
 		leader := r.Leader()
@@ -431,9 +440,9 @@ func (c *cluster) EnsureLeader(t *testing.T, expect string) {
 	if fail {
 		c.FailNowf("[ERROR] At least one peer has the wrong notion of leader")
 	}
-	return
 }
 
+// EnsureSame makes sure all the FSMs have the same contents.
 func (c *cluster) EnsureSame(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
 	first := c.fsms[0]
@@ -460,7 +469,7 @@ CHECK:
 			if bytes.Compare(first.logs[idx], fsm.logs[idx]) != 0 {
 				fsm.Unlock()
 				if time.Now().After(limit) {
-					c.FailNowf("[ERROR] log mismatch at index %d", idx)
+					c.FailNowf("[ERROR] FSM log mismatch at index %d", idx)
 				} else {
 					goto WAIT
 				}
@@ -478,6 +487,7 @@ WAIT:
 	goto CHECK
 }
 
+// raftToPeerSet returns the set of peers as a map.
 func raftToPeerSet(r *Raft) map[string]struct{} {
 	peers := make(map[string]struct{})
 	peers[r.localAddr] = struct{}{}
@@ -489,6 +499,7 @@ func raftToPeerSet(r *Raft) map[string]struct{} {
 	return peers
 }
 
+// EnsureSamePeers makes sure all the rafts have the same set of peers.
 func (c *cluster) EnsureSamePeers(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
 	peerSet := raftToPeerSet(c.rafts[0])
