@@ -207,12 +207,13 @@ func (c *cluster) WaitEventChan(filter FilterFn, timeout time.Duration) <-chan s
 		defer close(ch)
 		var timeoutCh <-chan time.Time
 		if timeout > 0 {
-			timeoutCh = time.After(c.conf.CommitTimeout)
+			timeoutCh = time.After(timeout)
 		}
 		for {
 			select {
 			case <-timeoutCh:
 				return
+
 			case o, ok := <-c.observationCh:
 				if !ok || filter == nil || filter(&o) {
 					return
@@ -229,29 +230,36 @@ func (c *cluster) WaitEventChan(filter FilterFn, timeout time.Duration) <-chan s
 // non-filtered observation is made or a test failure is signaled.
 func (c *cluster) WaitEvent(filter FilterFn, timeout time.Duration) {
 	select {
-	case <-c.WaitEventChan(filter, timeout):
 	case <-c.failedCh:
 		c.t.FailNow()
+
+	case <-c.WaitEventChan(filter, timeout):
 	}
 }
 
-// Wait until the entire cluster has fsm length specified
+// WaitForReplication blocks until every FSM in the cluster has the given
+// length, or the long sanity check timeout expires.
 func (c *cluster) WaitForReplication(fsmLength int) {
-	longstopTimeout := time.AfterFunc(c.longstopTimeout, func() {
-		c.Failf("[ERROR] Timeout waiting for replication")
-	})
-	defer longstopTimeout.Stop()
+	timeoutCh := time.After(c.longstopTimeout)
 
-checking:
+CHECKING:
 	for {
-		// Check that it is applied to the FSM
-		c.WaitEvent(nil, c.conf.CommitTimeout)
-		for _, fsm := range c.fsms {
-			fsm.Lock()
-			num := len(fsm.logs)
-			fsm.Unlock()
-			if num != 1 {
-				continue checking
+		ch := c.WaitEventChan(nil, c.conf.CommitTimeout)
+		select {
+		case <-c.failedCh:
+			c.t.FailNow()
+
+		case <-timeoutCh:
+			c.FailNowf("[ERROR] Timeout waiting for replication")
+
+		case <-ch:
+			for _, fsm := range c.fsms {
+				fsm.Lock()
+				num := len(fsm.logs)
+				fsm.Unlock()
+				if num != fsmLength {
+					continue CHECKING
+				}
 			}
 			return
 		}
@@ -731,7 +739,6 @@ func TestRaft_TripleNode(t *testing.T) {
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERROR] err: %v", err)
 	}
-
 	c.WaitForReplication(1)
 }
 
@@ -749,8 +756,6 @@ func TestRaft_LeaderFail(t *testing.T) {
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERROR] err: %v", err)
 	}
-
-	// Wait for replication
 	c.WaitForReplication(1)
 
 	// Disconnect the leader now
