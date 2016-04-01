@@ -188,7 +188,7 @@ func (c *cluster) Close() {
 
 	for _, f := range futures {
 		if err := f.Error(); err != nil {
-			c.FailNowf("[ERROR] shutdown future err: %v", err)
+			c.FailNowf("[ERR] shutdown future err: %v", err)
 		}
 	}
 
@@ -250,7 +250,7 @@ CHECK:
 			c.t.FailNow()
 
 		case <-limitCh:
-			c.FailNowf("[ERROR] Timeout waiting for replication")
+			c.FailNowf("[ERR] Timeout waiting for replication")
 
 		case <-ch:
 			for _, fsm := range c.fsms {
@@ -344,14 +344,14 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 			c.t.FailNow()
 
 		case <-limitCh:
-			c.FailNowf("[ERROR] Timeout waiting for stable %s state", s)
+			c.FailNowf("[ERR] Timeout waiting for stable %s state", s)
 
 		case <-c.WaitEventChan(filter, 0):
 			c.logger.Printf("[DEBUG] Resetting stability timeout")
 
 		case t, ok := <-timer.C:
 			if !ok {
-				c.FailNowf("[ERROR] Timer channel errored")
+				c.FailNowf("[ERR] Timer channel errored")
 			}
 			c.logger.Printf("[INFO] Stable state for %s reached at %s (%d nodes), %s from start of poll, %s from cluster start. Timeout at %s, %s after stability",
 				s, inStateTime, len(inState), inStateTime.Sub(pollStartTime), inStateTime.Sub(c.startTime), t, t.Sub(inStateTime))
@@ -366,7 +366,7 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 func (c *cluster) Leader() *Raft {
 	leaders := c.GetInState(Leader)
 	if len(leaders) != 1 {
-		c.FailNowf("[ERROR] expected one leader: %v", leaders)
+		c.FailNowf("[ERR] expected one leader: %v", leaders)
 	}
 	return leaders[0]
 }
@@ -377,7 +377,7 @@ func (c *cluster) Followers() []*Raft {
 	expFollowers := len(c.rafts) - 1
 	followers := c.GetInState(Follower)
 	if len(followers) != expFollowers {
-		c.FailNowf("[ERROR] timeout waiting for %d followers (followers are %v)", expFollowers, followers)
+		c.FailNowf("[ERR] timeout waiting for %d followers (followers are %v)", expFollowers, followers)
 	}
 	return followers
 }
@@ -430,15 +430,15 @@ func (c *cluster) EnsureLeader(t *testing.T, expect string) {
 				leader = "[none]"
 			}
 			if expect == "" {
-				c.logger.Printf("[ERROR] Peer %s sees leader %v expected [none]", r, leader)
+				c.logger.Printf("[ERR] Peer %s sees leader %v expected [none]", r, leader)
 			} else {
-				c.logger.Printf("[ERROR] Peer %s sees leader %v expected %v", r, leader, expect)
+				c.logger.Printf("[ERR] Peer %s sees leader %v expected %v", r, leader, expect)
 			}
 			fail = true
 		}
 	}
 	if fail {
-		c.FailNowf("[ERROR] At least one peer has the wrong notion of leader")
+		c.FailNowf("[ERR] At least one peer has the wrong notion of leader")
 	}
 }
 
@@ -458,7 +458,7 @@ CHECK:
 		if len(first.logs) != len(fsm.logs) {
 			fsm.Unlock()
 			if time.Now().After(limit) {
-				c.FailNowf("[ERROR] FSM log length mismatch: %d %d",
+				c.FailNowf("[ERR] FSM log length mismatch: %d %d",
 					len(first.logs), len(fsm.logs))
 			} else {
 				goto WAIT
@@ -469,7 +469,7 @@ CHECK:
 			if bytes.Compare(first.logs[idx], fsm.logs[idx]) != 0 {
 				fsm.Unlock()
 				if time.Now().After(limit) {
-					c.FailNowf("[ERROR] FSM log mismatch at index %d", idx)
+					c.FailNowf("[ERR] FSM log mismatch at index %d", idx)
 				} else {
 					goto WAIT
 				}
@@ -513,7 +513,7 @@ CHECK:
 		otherSet := raftToPeerSet(raft)
 		if !reflect.DeepEqual(peerSet, otherSet) {
 			if time.Now().After(limit) {
-				c.FailNowf("[ERROR] peer mismatch: %v %v", peerSet, otherSet)
+				c.FailNowf("[ERR] peer mismatch: %v %v", peerSet, otherSet)
 			} else {
 				goto WAIT
 			}
@@ -552,7 +552,7 @@ func makeCluster(n int, addPeers bool, t *testing.T, conf *Config) *cluster {
 	for i := 0; i < n; i++ {
 		dir, err := ioutil.TempDir("", "raft")
 		if err != nil {
-			c.FailNowf("[ERROR] err: %v ", err)
+			c.FailNowf("[ERR] err: %v ", err)
 		}
 
 		store := NewInmemStore()
@@ -593,12 +593,12 @@ func makeCluster(n int, addPeers bool, t *testing.T, conf *Config) *cluster {
 
 		raft, err := NewRaft(peerConf, c.fsms[i], logs, store, snap, peerStore, trans)
 		if err != nil {
-			c.FailNowf("[ERROR] NewRaft failed: %v", err)
+			c.FailNowf("[ERR] NewRaft failed: %v", err)
 		}
 
 		raft.RegisterObserver(NewObserver(c.observationCh, false, nil))
 		if err != nil {
-			c.FailNowf("[ERROR] RegisterObserver failed: %v", err)
+			c.FailNowf("[ERR] RegisterObserver failed: %v", err)
 		}
 		c.rafts = append(c.rafts, raft)
 	}
@@ -628,21 +628,21 @@ func TestRaft_AfterShutdown(t *testing.T) {
 
 	// Everything should fail now
 	if f := raft.Apply(nil, 0); f.Error() != ErrRaftShutdown {
-		c.FailNowf("[ERROR] should be shutdown: %v", f.Error())
+		c.FailNowf("[ERR] should be shutdown: %v", f.Error())
 	}
 	if f := raft.AddPeer(NewInmemAddr()); f.Error() != ErrRaftShutdown {
-		c.FailNowf("[ERROR] should be shutdown: %v", f.Error())
+		c.FailNowf("[ERR] should be shutdown: %v", f.Error())
 	}
 	if f := raft.RemovePeer(NewInmemAddr()); f.Error() != ErrRaftShutdown {
-		c.FailNowf("[ERROR] should be shutdown: %v", f.Error())
+		c.FailNowf("[ERR] should be shutdown: %v", f.Error())
 	}
 	if f := raft.Snapshot(); f.Error() != ErrRaftShutdown {
-		c.FailNowf("[ERROR] should be shutdown: %v", f.Error())
+		c.FailNowf("[ERR] should be shutdown: %v", f.Error())
 	}
 
 	// Should be idempotent
 	if f := raft.Shutdown(); f.Error() != nil {
-		c.FailNowf("[ERROR] shutdown should be idempotent")
+		c.FailNowf("[ERR] shutdown should be idempotent")
 	}
 
 }
@@ -657,36 +657,36 @@ func TestRaft_SingleNode(t *testing.T) {
 	select {
 	case v := <-raft.LeaderCh():
 		if !v {
-			c.FailNowf("[ERROR] should become leader")
+			c.FailNowf("[ERR] should become leader")
 		}
 	case <-time.After(conf.HeartbeatTimeout * 3):
-		c.FailNowf("[ERROR] timeout becoming leader")
+		c.FailNowf("[ERR] timeout becoming leader")
 	}
 
 	// Should be leader
 	if s := raft.State(); s != Leader {
-		c.FailNowf("[ERROR] expected leader: %v", s)
+		c.FailNowf("[ERR] expected leader: %v", s)
 	}
 
 	// Should be able to apply
 	future := raft.Apply([]byte("test"), c.conf.HeartbeatTimeout)
 	if err := future.Error(); err != nil {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 
 	// Check the response
 	if future.Response().(int) != 1 {
-		c.FailNowf("[ERROR] bad response: %v", future.Response())
+		c.FailNowf("[ERR] bad response: %v", future.Response())
 	}
 
 	// Check the index
 	if idx := future.Index(); idx == 0 {
-		c.FailNowf("[ERROR] bad index: %d", idx)
+		c.FailNowf("[ERR] bad index: %d", idx)
 	}
 
 	// Check that it is applied to the FSM
 	if len(c.fsms[0].logs) != 1 {
-		c.FailNowf("[ERROR] did not apply to FSM!")
+		c.FailNowf("[ERR] did not apply to FSM!")
 	}
 }
 
@@ -703,7 +703,7 @@ func TestRaft_TripleNode(t *testing.T) {
 	// Should be able to apply
 	future := leader.Apply([]byte("test"), c.conf.CommitTimeout)
 	if err := future.Error(); err != nil {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 	c.WaitForReplication(1)
 }
@@ -720,7 +720,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 	// Should be able to apply
 	future := leader.Apply([]byte("test"), c.conf.CommitTimeout)
 	if err := future.Error(); err != nil {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 	c.WaitForReplication(1)
 
@@ -740,12 +740,12 @@ func TestRaft_LeaderFail(t *testing.T) {
 		}
 	}
 	if newLead == nil {
-		c.FailNowf("[ERROR] expected new leader")
+		c.FailNowf("[ERR] expected new leader")
 	}
 
 	// Ensure the term is greater
 	if newLead.getCurrentTerm() <= leaderTerm {
-		c.FailNowf("[ERROR] expected newer term! %d %d (%v, %v)", newLead.getCurrentTerm(), leaderTerm, newLead, leader)
+		c.FailNowf("[ERR] expected newer term! %d %d (%v, %v)", newLead.getCurrentTerm(), leaderTerm, newLead, leader)
 	}
 
 	// Apply should work not work on old leader
@@ -756,7 +756,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 
 	// Future2 should work
 	if err := future2.Error(); err != nil {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 
 	// Reconnect the networks
@@ -765,7 +765,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 
 	// Future1 should fail
 	if err := future1.Error(); err != ErrLeadershipLost && err != ErrNotLeader {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 
 	// Wait for log replication
@@ -775,13 +775,13 @@ func TestRaft_LeaderFail(t *testing.T) {
 	for _, fsm := range c.fsms {
 		fsm.Lock()
 		if len(fsm.logs) != 2 {
-			c.FailNowf("[ERROR] did not apply both to FSM! %v", fsm.logs)
+			c.FailNowf("[ERR] did not apply both to FSM! %v", fsm.logs)
 		}
 		if bytes.Compare(fsm.logs[0], []byte("test")) != 0 {
-			c.FailNowf("[ERROR] first entry should be 'test'")
+			c.FailNowf("[ERR] first entry should be 'test'")
 		}
 		if bytes.Compare(fsm.logs[1], []byte("apply")) != 0 {
-			c.FailNowf("[ERROR] second entry should be 'apply'")
+			c.FailNowf("[ERR] second entry should be 'apply'")
 		}
 		fsm.Unlock()
 	}
@@ -806,14 +806,14 @@ func TestRaft_BehindFollower(t *testing.T) {
 
 	// Wait for the last future to apply
 	if err := future.Error(); err != nil {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	} else {
 		t.Logf("[INFO] Finished apply without behind follower")
 	}
 
 	// Check that we have a non zero last contact
 	if behind.LastContact().IsZero() {
-		c.FailNowf("[ERROR] expected previous contact")
+		c.FailNowf("[ERR] expected previous contact")
 	}
 
 	// Reconnect the behind node
@@ -838,19 +838,19 @@ func TestRaft_ApplyNonLeader(t *testing.T) {
 	// Try to apply to them
 	followers := c.GetInState(Follower)
 	if len(followers) != 2 {
-		c.FailNowf("[ERROR] Expected 2 followers")
+		c.FailNowf("[ERR] Expected 2 followers")
 	}
 	follower := followers[0]
 
 	// Try to apply
 	future := follower.Apply([]byte("test"), c.conf.CommitTimeout)
 	if future.Error() != ErrNotLeader {
-		c.FailNowf("[ERROR] should not apply on follower")
+		c.FailNowf("[ERR] should not apply on follower")
 	}
 
 	// Should be cached
 	if future.Error() != ErrNotLeader {
-		c.FailNowf("[ERROR] should not apply on follower")
+		c.FailNowf("[ERR] should not apply on follower")
 	}
 }
 
@@ -874,7 +874,7 @@ func TestRaft_ApplyConcurrent(t *testing.T) {
 		defer group.Done()
 		future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
 		if err := future.Error(); err != nil {
-			c.Failf("[ERROR] err: %v", err)
+			c.Failf("[ERR] err: %v", err)
 		}
 	}
 
@@ -892,13 +892,13 @@ func TestRaft_ApplyConcurrent(t *testing.T) {
 	select {
 	case <-doneCh:
 	case <-time.After(c.longstopTimeout):
-		c.FailNowf("[ERROR] timeout")
+		c.FailNowf("[ERR] timeout")
 	}
 
 	// If anything failed up to this point then bail now, rather than do a
 	// confusing compare.
 	if t.Failed() {
-		c.FailNowf("[ERROR] One or more of the apply operations failed")
+		c.FailNowf("[ERR] One or more of the apply operations failed")
 	}
 
 	// Check the FSMs
@@ -942,7 +942,7 @@ func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 		}
 		c.WaitEvent(nil, c.propagateTimeout)
 	}
-	c.FailNowf("[ERROR] Timeout waiting to detect apply timeouts")
+	c.FailNowf("[ERR] Timeout waiting to detect apply timeouts")
 }
 
 func TestRaft_JoinNode(t *testing.T) {
@@ -955,7 +955,7 @@ func TestRaft_JoinNode(t *testing.T) {
 	leader := c.Leader()
 	future = leader.Apply([]byte("first"), 0)
 	if err := future.Error(); err != nil {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	} else {
 		t.Logf("[INFO] Applied log")
 	}
@@ -975,13 +975,13 @@ func TestRaft_JoinNode(t *testing.T) {
 		leaders = c.GetInState(Leader)
 	}
 	if len(leaders) != 2 {
-		c.FailNowf("[ERROR] expected two leader: %v", leaders)
+		c.FailNowf("[ERR] expected two leader: %v", leaders)
 	}
 
 	// Join the new node in
 	future = leader.AddPeer(c1.rafts[0].localAddr)
 	if err := future.Error(); err != nil {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 
 	// Wait until we have 2 followers
@@ -992,7 +992,7 @@ func TestRaft_JoinNode(t *testing.T) {
 		followers = c.GetInState(Follower)
 	}
 	if len(followers) != 2 {
-		c.FailNowf("[ERROR] expected two followers: %v", followers)
+		c.FailNowf("[ERR] expected two followers: %v", followers)
 	}
 
 	// Check the FSMs
@@ -1022,14 +1022,14 @@ func TestRaft_RemoveFollower(t *testing.T) {
 		followers = c.GetInState(Follower)
 	}
 	if len(followers) != 2 {
-		c.FailNowf("[ERROR] expected two followers: %v", followers)
+		c.FailNowf("[ERR] expected two followers: %v", followers)
 	}
 
 	// Remove a follower
 	follower := followers[0]
 	future := leader.RemovePeer(follower.localAddr)
 	if err := future.Error(); err != nil {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 
 	// Wait a while
@@ -1037,10 +1037,10 @@ func TestRaft_RemoveFollower(t *testing.T) {
 
 	// Other nodes should have fewer peers
 	if peers, _ := leader.peerStore.Peers(); len(peers) != 2 {
-		c.FailNowf("[ERROR] too many peers")
+		c.FailNowf("[ERR] too many peers")
 	}
 	if peers, _ := followers[1].peerStore.Peers(); len(peers) != 2 {
-		c.FailNowf("[ERROR] too many peers")
+		c.FailNowf("[ERR] too many peers")
 	}
 }
 
@@ -1060,7 +1060,7 @@ func TestRaft_RemoveLeader(t *testing.T) {
 		followers = c.GetInState(Follower)
 	}
 	if len(followers) != 2 {
-		c.FailNowf("[ERROR] expected two followers: %v", followers)
+		c.FailNowf("[ERR] expected two followers: %v", followers)
 	}
 
 	// Remove the leader
@@ -1077,17 +1077,17 @@ func TestRaft_RemoveLeader(t *testing.T) {
 
 	// Other nodes should have fewer peers
 	if peers, _ := newLeader.peerStore.Peers(); len(peers) != 2 {
-		c.FailNowf("[ERROR] too many peers")
+		c.FailNowf("[ERR] too many peers")
 	}
 
 	// Old leader should be shutdown
 	if leader.State() != Shutdown {
-		c.FailNowf("[ERROR] leader should be shutdown")
+		c.FailNowf("[ERR] leader should be shutdown")
 	}
 
 	// Old leader should have no peers
 	if peers, _ := leader.peerStore.Peers(); len(peers) != 1 {
-		c.FailNowf("[ERROR] leader should have no peers")
+		c.FailNowf("[ERR] leader should have no peers")
 	}
 }
 
@@ -1111,13 +1111,13 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 		}
 		if i > 80 {
 			if err := future.Error(); err == nil || err != ErrNotLeader {
-				c.FailNowf("[ERROR] err: %v, future entries should fail", err)
+				c.FailNowf("[ERR] err: %v, future entries should fail", err)
 			}
 		}
 	}
 
 	if err := removeFuture.Error(); err != nil {
-		c.FailNowf("[ERROR] RemovePeer failed with error %v", err)
+		c.FailNowf("[ERR] RemovePeer failed with error %v", err)
 	}
 
 	// Wait a while
@@ -1131,17 +1131,17 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 
 	// Other nodes should have fewer peers
 	if peers, _ := newLeader.peerStore.Peers(); len(peers) != 2 {
-		c.FailNowf("[ERROR] too many peers")
+		c.FailNowf("[ERR] too many peers")
 	}
 
 	// Old leader should be a follower
 	if leader.State() != Follower {
-		c.FailNowf("[ERROR] leader should be shutdown")
+		c.FailNowf("[ERR] leader should be shutdown")
 	}
 
 	// Old leader should have no peers
 	if peers, _ := leader.peerStore.Peers(); len(peers) != 1 {
-		c.FailNowf("[ERROR] leader should have no peers")
+		c.FailNowf("[ERR] leader should have no peers")
 	}
 
 	// Other nodes should have the same state
@@ -1174,12 +1174,12 @@ func TestRaft_RemoveLeader_SplitCluster(t *testing.T) {
 		leaders = c.GetInState(Leader)
 	}
 	if len(leaders) != 2 {
-		c.FailNowf("[ERROR] expected two leader: %v", leaders)
+		c.FailNowf("[ERR] expected two leader: %v", leaders)
 	}
 
 	// Old leader should have no peers
 	if len(leader.peers) != 0 {
-		c.FailNowf("[ERROR] leader should have no peers")
+		c.FailNowf("[ERR] leader should have no peers")
 	}
 }
 
@@ -1197,7 +1197,7 @@ func TestRaft_AddKnownPeer(t *testing.T) {
 
 	// Should be already added
 	if err := future.Error(); err != ErrKnownPeer {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 }
 
@@ -1214,7 +1214,7 @@ func TestRaft_RemoveUnknownPeer(t *testing.T) {
 
 	// Should be already added
 	if err := future.Error(); err != ErrUnknownPeer {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 }
 
@@ -1234,29 +1234,29 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 
 	// Wait for the last future to apply
 	if err := future.Error(); err != nil {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 
 	// Take a snapshot
 	snapFuture := leader.Snapshot()
 	if err := snapFuture.Error(); err != nil {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 
 	// Check for snapshot
 	if snaps, _ := leader.snapshots.List(); len(snaps) != 1 {
-		c.FailNowf("[ERROR] should have a snapshot")
+		c.FailNowf("[ERR] should have a snapshot")
 	}
 
 	// Logs should be trimmed
 	if idx, _ := leader.logs.FirstIndex(); idx != 92 {
-		c.FailNowf("[ERROR] should trim logs to 92: %d", idx)
+		c.FailNowf("[ERR] should trim logs to 92: %d", idx)
 	}
 
 	// Shutdown
 	shutdown := leader.Shutdown()
 	if err := shutdown.Error(); err != nil {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 
 	// Restart the Raft
@@ -1266,13 +1266,13 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 	r, err := NewRaft(r.conf, r.fsm, r.logs, r.stable,
 		r.snapshots, r.peerStore, trans2)
 	if err != nil {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 	c.rafts[0] = r
 
 	// We should have restored from the snapshot!
 	if last := r.getLastApplied(); last != 101 {
-		c.FailNowf("[ERROR] bad last: %v", last)
+		c.FailNowf("[ERR] bad last: %v", last)
 	}
 }
 
@@ -1292,19 +1292,19 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 
 	// Wait for the last future to apply
 	if err := future.Error(); err != nil {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 
 	// Take a snapshot
 	snapFuture := leader.Snapshot()
 	if err := snapFuture.Error(); err != nil {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 
 	// Shutdown
 	shutdown := leader.Shutdown()
 	if err := shutdown.Error(); err != nil {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 
 	// Make a separate cluster
@@ -1332,7 +1332,7 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	r, err := NewRaft(r.conf, r.fsm, r.logs, r.stable,
 		r.snapshots, peerStore, trans2)
 	if err != nil {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 	c.rafts[0] = r
 	c2.rafts = append(c2.rafts, r)
@@ -1349,7 +1349,7 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 
 	// We should have restored from the snapshot!
 	if last := r.getLastApplied(); last != 102 {
-		c.FailNowf("[ERROR] bad last: %v", last)
+		c.FailNowf("[ERR] bad last: %v", last)
 	}
 }
 
@@ -1371,7 +1371,7 @@ func TestRaft_AutoSnapshot(t *testing.T) {
 
 	// Wait for the last future to apply
 	if err := future.Error(); err != nil {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 
 	// Wait for a snapshot to happen
@@ -1379,7 +1379,7 @@ func TestRaft_AutoSnapshot(t *testing.T) {
 
 	// Check for snapshot
 	if snaps, _ := leader.snapshots.List(); len(snaps) == 0 {
-		c.FailNowf("[ERROR] should have a snapshot")
+		c.FailNowf("[ERR] should have a snapshot")
 	}
 }
 
@@ -1403,7 +1403,7 @@ func TestRaft_ManualSnapshot(t *testing.T) {
 		future = leader.Apply([]byte(fmt.Sprintf("test %d", i)), 0)
 	}
 	if err := future.Error(); err != nil {
-		c.FailNowf("[ERROR] Error Apply new log entries: %v", err)
+		c.FailNowf("[ERR] Error Apply new log entries: %v", err)
 	}
 	// now we should be able to ask for a snapshot without getting an error
 	ssErr = leader.Snapshot().Error()
@@ -1433,7 +1433,7 @@ func TestRaft_SendSnapshotFollower(t *testing.T) {
 
 	// Wait for the last future to apply
 	if err := future.Error(); err != nil {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	} else {
 		t.Logf("[INFO] Finished apply without behind follower")
 	}
@@ -1443,7 +1443,7 @@ func TestRaft_SendSnapshotFollower(t *testing.T) {
 		future = r.Snapshot()
 		// the disconnected node will have nothing to snapshot, so that's expected
 		if err := future.Error(); err != nil && err != ErrNothingNewToSnapshot {
-			c.FailNowf("[ERROR] err: %v", err)
+			c.FailNowf("[ERR] err: %v", err)
 		}
 	}
 
@@ -1474,14 +1474,14 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 		followers = c.GetInState(Follower)
 	}
 	if len(followers) != 2 {
-		c.FailNowf("[ERROR] expected two followers: %v", followers)
+		c.FailNowf("[ERR] expected two followers: %v", followers)
 	}
 
 	// Remove a follower
 	follower := followers[0]
 	future := leader.RemovePeer(follower.localAddr)
 	if err := future.Error(); err != nil {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 
 	// Wait a while
@@ -1489,10 +1489,10 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 
 	// Other nodes should have fewer peers
 	if peers, _ := leader.peerStore.Peers(); len(peers) != 2 {
-		c.FailNowf("[ERROR] too many peers: %v", peers)
+		c.FailNowf("[ERR] too many peers: %v", peers)
 	}
 	if peers, _ := followers[1].peerStore.Peers(); len(peers) != 2 {
-		c.FailNowf("[ERROR] too many peers: %v", peers)
+		c.FailNowf("[ERR] too many peers: %v", peers)
 	}
 
 	// Get the leader
@@ -1504,7 +1504,7 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	// to take place. We should eventually re-stabilize.
 	future = leader.AddPeer(follower.localAddr)
 	if err := future.Error(); err != nil && err != ErrLeadershipLost {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 
 	// Wait a while
@@ -1512,15 +1512,15 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 
 	// Other nodes should have fewer peers
 	if peers, _ := leader.peerStore.Peers(); len(peers) != 3 {
-		c.FailNowf("[ERROR] missing peers: %v", peers)
+		c.FailNowf("[ERR] missing peers: %v", peers)
 	}
 	if peers, _ := followers[1].peerStore.Peers(); len(peers) != 3 {
-		c.FailNowf("[ERROR] missing peers: %v", peers)
+		c.FailNowf("[ERR] missing peers: %v", peers)
 	}
 
 	// Should be a follower now
 	if follower.State() != Follower {
-		c.FailNowf("[ERROR] bad state: %v", follower.State())
+		c.FailNowf("[ERR] bad state: %v", follower.State())
 	}
 }
 
@@ -1541,7 +1541,7 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 		followers = c.GetInState(Follower)
 	}
 	if len(followers) != 1 {
-		c.FailNowf("[ERROR] expected a followers: %v", followers)
+		c.FailNowf("[ERR] expected a followers: %v", followers)
 	}
 
 	// Disconnect the follower now
@@ -1553,20 +1553,20 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	select {
 	case v := <-leader.LeaderCh():
 		if v {
-			c.FailNowf("[ERROR] should step down as leader")
+			c.FailNowf("[ERR] should step down as leader")
 		}
 	case <-time.After(conf.LeaderLeaseTimeout * 2):
-		c.FailNowf("[ERROR] timeout stepping down as leader")
+		c.FailNowf("[ERR] timeout stepping down as leader")
 	}
 
 	// Ensure the last contact of the leader is non-zero
 	if leader.LastContact().IsZero() {
-		c.FailNowf("[ERROR] expected non-zero contact time")
+		c.FailNowf("[ERR] expected non-zero contact time")
 	}
 
 	// Should be no leaders
 	if len(c.GetInState(Leader)) != 0 {
-		c.FailNowf("[ERROR] expected step down")
+		c.FailNowf("[ERR] expected step down")
 	}
 
 	// Verify no further contact
@@ -1575,15 +1575,15 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 
 	// Check that last contact has not changed
 	if last != follower.LastContact() {
-		c.FailNowf("[ERROR] unexpected further contact")
+		c.FailNowf("[ERR] unexpected further contact")
 	}
 
 	// Ensure both have cleared their leader
 	if l := leader.Leader(); l != "" {
-		c.FailNowf("[ERROR] bad: %v", l)
+		c.FailNowf("[ERR] bad: %v", l)
 	}
 	if l := follower.Leader(); l != "" {
-		c.FailNowf("[ERROR] bad: %v", l)
+		c.FailNowf("[ERR] bad: %v", l)
 	}
 }
 
@@ -1605,13 +1605,13 @@ func TestRaft_Barrier(t *testing.T) {
 
 	// Wait for the barrier future to apply
 	if err := barrier.Error(); err != nil {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 
 	// Ensure all the logs are the same
 	c.EnsureSame(t)
 	if len(c.fsms[0].logs) != 100 {
-		c.FailNowf("[ERROR] Bad log length")
+		c.FailNowf("[ERR] Bad log length")
 	}
 }
 
@@ -1628,7 +1628,7 @@ func TestRaft_VerifyLeader(t *testing.T) {
 
 	// Wait for the verify to apply
 	if err := verify.Error(); err != nil {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 }
 
@@ -1645,7 +1645,7 @@ func TestRaft_VerifyLeader_Single(t *testing.T) {
 
 	// Wait for the verify to apply
 	if err := verify.Error(); err != nil {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 }
 
@@ -1670,12 +1670,12 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 
 	// Wait for the leader to step down
 	if err := verify.Error(); err != ErrNotLeader && err != ErrLeadershipLost {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 
 	// Ensure the known leader is cleared
 	if l := leader.Leader(); l != "" {
-		c.FailNowf("[ERROR] bad: %v", l)
+		c.FailNowf("[ERR] bad: %v", l)
 	}
 }
 
@@ -1696,7 +1696,7 @@ func TestRaft_VerifyLeader_ParitalConnect(t *testing.T) {
 		followers = c.GetInState(Follower)
 	}
 	if len(followers) != 2 {
-		c.FailNowf("[ERROR] expected two followers but got: %v", followers)
+		c.FailNowf("[ERR] expected two followers but got: %v", followers)
 	}
 
 	// Force partial disconnect
@@ -1709,7 +1709,7 @@ func TestRaft_VerifyLeader_ParitalConnect(t *testing.T) {
 
 	// Wait for the leader to step down
 	if err := verify.Error(); err != nil {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 }
 
@@ -1726,7 +1726,7 @@ func TestRaft_SettingPeers(t *testing.T) {
 	for _, v := range c.rafts {
 		future := v.SetPeers(peers)
 		if err := future.Error(); err != nil {
-			c.FailNowf("[ERROR] error setting peers: %v", err)
+			c.FailNowf("[ERR] error setting peers: %v", err)
 		}
 	}
 
@@ -1735,7 +1735,7 @@ func TestRaft_SettingPeers(t *testing.T) {
 
 	// Should have a new leader
 	if leader := c.Leader(); leader == nil {
-		c.FailNowf("[ERROR] no leader?")
+		c.FailNowf("[ERR] no leader?")
 	}
 }
 
@@ -1750,36 +1750,37 @@ func TestRaft_StartAsLeader(t *testing.T) {
 	select {
 	case v := <-raft.LeaderCh():
 		if !v {
-			c.FailNowf("[ERROR] should become leader")
+			c.FailNowf("[ERR] should become leader")
 		}
-	case <-time.After(c.conf.HeartbeatTimeout * 4): // Longer than you think as possibility of multiple elections
-		c.FailNowf("[ERROR] timeout becoming leader")
+	case <-time.After(c.conf.HeartbeatTimeout * 4):
+		// Longer than you think as possibility of multiple elections
+		c.FailNowf("[ERR] timeout becoming leader")
 	}
 
 	// Should be leader
 	if s := raft.State(); s != Leader {
-		c.FailNowf("[ERROR] expected leader: %v", s)
+		c.FailNowf("[ERR] expected leader: %v", s)
 	}
 
 	// Should be able to apply
 	future := raft.Apply([]byte("test"), c.conf.CommitTimeout)
 	if err := future.Error(); err != nil {
-		c.FailNowf("[ERROR] err: %v", err)
+		c.FailNowf("[ERR] err: %v", err)
 	}
 
 	// Check the response
 	if future.Response().(int) != 1 {
-		c.FailNowf("[ERROR] bad response: %v", future.Response())
+		c.FailNowf("[ERR] bad response: %v", future.Response())
 	}
 
 	// Check the index
 	if idx := future.Index(); idx == 0 {
-		c.FailNowf("[ERROR] bad index: %d", idx)
+		c.FailNowf("[ERR] bad index: %d", idx)
 	}
 
 	// Check that it is applied to the FSM
 	if len(c.fsms[0].logs) != 1 {
-		c.FailNowf("[ERROR] did not apply to FSM!")
+		c.FailNowf("[ERR] did not apply to FSM!")
 	}
 }
 
@@ -1794,10 +1795,10 @@ func TestRaft_NotifyCh(t *testing.T) {
 	select {
 	case v := <-ch:
 		if !v {
-			c.FailNowf("[ERROR] should become leader")
+			c.FailNowf("[ERR] should become leader")
 		}
 	case <-time.After(conf.HeartbeatTimeout * 8):
-		c.FailNowf("[ERROR] timeout becoming leader")
+		c.FailNowf("[ERR] timeout becoming leader")
 	}
 
 	// Close the cluster
@@ -1807,10 +1808,10 @@ func TestRaft_NotifyCh(t *testing.T) {
 	select {
 	case v := <-ch:
 		if v {
-			c.FailNowf("[ERROR] should step down as leader")
+			c.FailNowf("[ERR] should step down as leader")
 		}
 	case <-time.After(conf.HeartbeatTimeout * 6):
-		c.FailNowf("[ERROR] timeout on step down as leader")
+		c.FailNowf("[ERR] timeout on step down as leader")
 	}
 }
 
@@ -1830,17 +1831,17 @@ func TestRaft_Voting(t *testing.T) {
 	// a follower that thinks there's a leader should vote for that leader.
 	var resp RequestVoteResponse
 	if err := ldrT.RequestVote(followers[0].localAddr, &reqVote, &resp); err != nil {
-		c.FailNowf("[ERROR] RequestVote RPC failed %v", err)
+		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
 	}
 	if !resp.Granted {
-		c.FailNowf("[ERROR] expected vote to be granted, but wasn't %+v", resp)
+		c.FailNowf("[ERR] expected vote to be granted, but wasn't %+v", resp)
 	}
 	// a follow that thinks there's a leader shouldn't vote for a different candidate
 	reqVote.Candidate = ldrT.EncodePeer(followers[0].localAddr)
 	if err := ldrT.RequestVote(followers[1].localAddr, &reqVote, &resp); err != nil {
-		c.FailNowf("[ERROR] RequestVote RPC failed %v", err)
+		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
 	}
 	if resp.Granted {
-		c.FailNowf("[ERROR] expected vote not to be granted, but was %+v", resp)
+		c.FailNowf("[ERR] expected vote not to be granted, but was %+v", resp)
 	}
 }
