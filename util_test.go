@@ -153,7 +153,7 @@ func TestAddUniquePeer(t *testing.T) {
 
 func TestEncodeDecodePeers(t *testing.T) {
 	peers := []string{NewInmemAddr(), NewInmemAddr(), NewInmemAddr()}
-	_, trans := NewInmemTransport()
+	_, trans := NewInmemTransport("")
 
 	// Try to encode/decode
 	buf := encodePeers(peers, trans)

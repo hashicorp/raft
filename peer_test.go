@@ -15,7 +15,7 @@ func TestJSONPeers(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	// Create the store
-	_, trans := NewInmemTransport()
+	_, trans := NewInmemTransport("")
 	store := NewJSONPeers(dir, trans)
 
 	// Try a read, should get nothing
