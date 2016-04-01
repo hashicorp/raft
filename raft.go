@@ -147,6 +147,11 @@ type Raft struct {
 	// verifyCh is used to async send verify futures to the main thread
 	// to verify we are still the leader
 	verifyCh chan *verifyFuture
+
+	// List of observers and the mutex that protects them. The observers list
+	// is indexed by an artificial ID which is used for deregistration.
+	observersLock sync.RWMutex
+	observers     map[uint64]*Observer
 }
 
 // NewRaft is used to construct a new Raft node. It takes a configuration, as well
@@ -221,6 +226,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		stable:        stable,
 		trans:         trans,
 		verifyCh:      make(chan *verifyFuture, 64),
+		observers:     make(map[uint64]*Observer),
 	}
 
 	// Initialize as a follower
@@ -267,8 +273,12 @@ func (r *Raft) Leader() string {
 // setLeader is used to modify the current leader of the cluster
 func (r *Raft) setLeader(leader string) {
 	r.leaderLock.Lock()
+	oldLeader := r.leader
 	r.leader = leader
 	r.leaderLock.Unlock()
+	if oldLeader != leader {
+		r.observe(LeaderObservation{leader: leader})
+	}
 }
 
 // Apply is used to apply a command to the FSM in a highly consistent
@@ -1407,6 +1417,8 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 // requestVote is invoked when we get an request vote RPC call.
 func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "requestVote"}, time.Now())
+	r.observe(*req)
+
 	// Setup a response
 	resp := &RequestVoteResponse{
 		Term:    r.getCurrentTerm(),
@@ -1695,7 +1707,11 @@ func (r *Raft) setCurrentTerm(t uint64) {
 // that leader should be set only after updating the state.
 func (r *Raft) setState(state RaftState) {
 	r.setLeader("")
+	oldState := r.raftState.getState()
 	r.raftState.setState(state)
+	if oldState != state {
+		r.observe(state)
+	}
 }
 
 // runSnapshots is a long running goroutine used to manage taking
