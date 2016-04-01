@@ -739,7 +739,6 @@ func TestRaft_LeaderFail(t *testing.T) {
 			newLead = leaders[0]
 		}
 	}
-
 	if newLead == nil {
 		c.FailNowf("[ERROR] expected new leader")
 	}
@@ -835,6 +834,7 @@ func TestRaft_ApplyNonLeader(t *testing.T) {
 
 	// Wait for a leader
 	c.Leader()
+
 	// Try to apply to them
 	followers := c.GetInState(Follower)
 	if len(followers) != 2 {
@@ -844,7 +844,6 @@ func TestRaft_ApplyNonLeader(t *testing.T) {
 
 	// Try to apply
 	future := follower.Apply([]byte("test"), c.conf.CommitTimeout)
-
 	if future.Error() != ErrNotLeader {
 		c.FailNowf("[ERROR] should not apply on follower")
 	}
@@ -867,8 +866,9 @@ func TestRaft_ApplyConcurrent(t *testing.T) {
 	leader := c.Leader()
 
 	// Create a wait group
+	const sz = 100
 	var group sync.WaitGroup
-	group.Add(100)
+	group.Add(sz)
 
 	applyF := func(i int) {
 		defer group.Done()
@@ -879,7 +879,7 @@ func TestRaft_ApplyConcurrent(t *testing.T) {
 	}
 
 	// Concurrently apply
-	for i := 0; i < 100; i++ {
+	for i := 0; i < sz; i++ {
 		go applyF(i)
 	}
 
@@ -926,23 +926,23 @@ func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 				atomic.StoreInt32(&didTimeout, 1)
 			}
 		}(i)
-		// give the leaderloop some otherthings to do in order to increase the odds of a timeout
+
+		// Give the leader loop some other things to do in order to
+		// increase the odds of a timeout.
 		if i%5 == 0 {
 			leader.VerifyLeader()
 		}
 	}
 
-	longstopTimeout := time.AfterFunc(c.longstopTimeout, func() {
-		c.Failf("[ERROR] Timeout waiting to detect apply timeouts")
-	})
-	defer longstopTimeout.Stop()
-
-	for {
+	// Loop until we see a timeout, or give up.
+	limit := time.Now().Add(c.longstopTimeout)
+	for time.Now().Before(limit) {
 		if atomic.LoadInt32(&didTimeout) != 0 {
 			return
 		}
 		c.WaitEvent(nil, c.propagateTimeout)
 	}
+	c.FailNowf("[ERROR] Timeout waiting to detect apply timeouts")
 }
 
 func TestRaft_JoinNode(t *testing.T) {
