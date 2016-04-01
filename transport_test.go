@@ -2,7 +2,6 @@ package raft
 
 import (
 	"bytes"
-	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -14,27 +13,21 @@ const (
 )
 
 func NewTestTransport(ttype int, addr string) (string, LoopbackTransport) {
-	var lt LoopbackTransport
-	var err error
 	switch ttype {
 	case TT_INMEM:
-		addr, lt = NewInmemTransport(addr)
-		if err != nil {
-			panic(fmt.Sprintf("Cannot create NewInmemUnixgramTransport: %v", err))
-		}
+		addr, lt := NewInmemTransport(addr)
+		return addr, lt
 	default:
 		panic("Unknown transport type")
 	}
-	return addr, lt
 }
 
 func TestTransport_StartStop(t *testing.T) {
 	for ttype := 0; ttype < TT_MAX; ttype++ {
-		addr, trans := NewTestTransport(ttype, "")
-		if addr == "" || trans == nil {
-			t.Fatalf("No address / transport returned")
+		_, trans := NewTestTransport(ttype, "")
+		if err := trans.Close(); err != nil {
+			t.Fatalf("err: %v", err)
 		}
-		trans.Close()
 	}
 }
 
