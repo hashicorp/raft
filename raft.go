@@ -1388,29 +1388,48 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	}
 
 	// Process any new entries
-	if n := len(a.Entries); n > 0 {
+	if len(a.Entries) > 0 {
 		start := time.Now()
-		first := a.Entries[0]
-		last := a.Entries[n-1]
 
-		// Delete any conflicting entries
+		// Delete any conflicting entries, skip any duplicates
 		lastLogIdx, _ := r.getLastLog()
-		if first.Index <= lastLogIdx {
-			r.logger.Printf("[WARN] raft: Clearing log suffix from %d to %d", first.Index, lastLogIdx)
-			if err := r.logs.DeleteRange(first.Index, lastLogIdx); err != nil {
-				r.logger.Printf("[ERR] raft: Failed to clear log suffix: %v", err)
+		var newEntries []*Log
+		for i, entry := range a.Entries {
+			if entry.Index > lastLogIdx {
+				newEntries = a.Entries[i:]
+				break
+			}
+			var storeEntry Log
+			if err := r.logs.GetLog(entry.Index, &storeEntry); err != nil {
+				r.logger.Printf("[WARN] raft: Failed to get log entry %d: %v",
+					entry.Index, err)
 				return
+			}
+			if entry.Term != storeEntry.Term {
+				r.logger.Printf("[WARN] raft: Clearing log suffix from %d to %d", entry.Index, lastLogIdx)
+				if err := r.logs.DeleteRange(entry.Index, lastLogIdx); err != nil {
+					r.logger.Printf("[ERR] raft: Failed to clear log suffix: %v", err)
+					return
+				}
+				newEntries = a.Entries[i:]
+				break
 			}
 		}
 
-		// Append the entry
-		if err := r.logs.StoreLogs(a.Entries); err != nil {
-			r.logger.Printf("[ERR] raft: Failed to append to logs: %v", err)
-			return
+		if n := len(newEntries); n > 0 {
+			// Append the new entries
+			if err := r.logs.StoreLogs(newEntries); err != nil {
+				r.logger.Printf("[ERR] raft: Failed to append to logs: %v", err)
+				return
+			}
+
+			// Update the lastLog
+			last := newEntries[n-1]
+			if last.Index > lastLogIdx {
+				r.setLastLog(last.Index, last.Term)
+			}
 		}
 
-		// Update the lastLog
-		r.setLastLog(last.Index, last.Term)
 		metrics.MeasureSince([]string{"raft", "rpc", "appendEntries", "storeLogs"}, start)
 	}
 
