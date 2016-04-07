@@ -121,9 +121,10 @@ type Raft struct {
 	logs LogStore
 
 	// Track our known peers
-	peerCh    chan *peerFuture
-	peers     []string
-	peerStore PeerStore
+	peerChangeCh chan *logFuture
+	peerCh       chan *peerFuture
+	peers        []string
+	peerStore    PeerStore
 
 	// RPC chan comes from the transport layer
 	rpcCh <-chan RPC
@@ -218,6 +219,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		localAddr:     localAddr,
 		logger:        logger,
 		logs:          logs,
+		peerChangeCh:  make(chan *logFuture),
 		peerCh:        make(chan *peerFuture),
 		peers:         peers,
 		peerStore:     peerStore,
@@ -370,7 +372,7 @@ func (r *Raft) AddPeer(peer string) Future {
 	}
 	logFuture.init()
 	select {
-	case r.applyCh <- logFuture:
+	case r.peerChangeCh <- logFuture:
 		return logFuture
 	case <-r.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
@@ -389,7 +391,7 @@ func (r *Raft) RemovePeer(peer string) Future {
 	}
 	logFuture.init()
 	select {
-	case r.applyCh <- logFuture:
+	case r.peerChangeCh <- logFuture:
 		return logFuture
 	case <-r.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
@@ -630,6 +632,10 @@ func (r *Raft) runFollower() {
 		case rpc := <-r.rpcCh:
 			r.processRPC(rpc)
 
+		case c := <-r.peerChangeCh:
+			// Reject any operations since we are not the leader
+			c.respond(ErrNotLeader)
+
 		case a := <-r.applyCh:
 			// Reject any operations since we are not the leader
 			a.respond(ErrNotLeader)
@@ -715,6 +721,10 @@ func (r *Raft) runCandidate() {
 				r.setLeader(r.localAddr)
 				return
 			}
+
+		case c := <-r.peerChangeCh:
+			// Reject any operations since we are not the leader
+			c.respond(ErrNotLeader)
 
 		case a := <-r.applyCh:
 			// Reject any operations since we are not the leader
@@ -939,6 +949,21 @@ func (r *Raft) leaderLoop() {
 		case p := <-r.peerCh:
 			p.respond(ErrLeader)
 
+		case log := <-r.peerChangeCh:
+			if r.preparePeerChange(log) {
+				// Apply peer set changes early and check if we will step
+				// down after the commit of this log. If so, we must not
+				// allow any future entries to make progress to avoid undefined
+				// behavior.
+				if ok := r.processLog(&log.log, nil, true); ok {
+					stepDown = true
+					r.leaderState.commitment.setVoters(r.peers)
+				} else {
+					r.leaderState.commitment.setVoters(append([]string{r.localAddr}, r.peers...))
+				}
+				r.dispatchLogs([]*logFuture{log})
+			}
+
 		case newLog := <-r.applyCh:
 			// Group commit, gather all the ready commits
 			ready := []*logFuture{newLog}
@@ -951,54 +976,15 @@ func (r *Raft) leaderLoop() {
 				}
 			}
 
-			// Handle any peer set changes
-			n := len(ready)
-			for i := 0; i < n; i++ {
-				// Fail all future transactions once stepDown is on
-				if stepDown {
-					ready[i].respond(ErrNotLeader)
-					ready[i], ready[n-1] = ready[n-1], nil
-					n--
-					i--
-					continue
-				}
-
-				// Special case AddPeer and RemovePeer
-				log := ready[i]
-				if log.log.Type != LogAddPeer && log.log.Type != LogRemovePeer {
-					continue
-				}
-
-				// Check if this log should be ignored. The logs can be
-				// reordered here since we have not yet assigned an index
-				// and are not violating any promises.
-				if !r.preparePeerChange(log) {
-					ready[i], ready[n-1] = ready[n-1], nil
-					n--
-					i--
-					continue
-				}
-
-				// Apply peer set changes early and check if we will step
-				// down after the commit of this log. If so, we must not
-				// allow any future entries to make progress to avoid undefined
-				// behavior.
-				if ok := r.processLog(&log.log, nil, true); ok {
-					stepDown = true
-					r.leaderState.commitment.setVoters(r.peers)
-				} else {
-					r.leaderState.commitment.setVoters(append([]string{r.localAddr}, r.peers...))
-				}
-			}
-
-			// Nothing to do if all logs are invalid
-			if n == 0 {
-				continue
-			}
-
 			// Dispatch the logs
-			ready = ready[:n]
-			r.dispatchLogs(ready)
+			if stepDown {
+				// we're in the process of stepping down as leader, don't process anything new
+				for i := range ready {
+					ready[i].respond(ErrNotLeader)
+				}
+			} else {
+				r.dispatchLogs(ready)
+			}
 
 		case <-lease:
 			// Check if we've exceeded the lease, potentially stepping down
