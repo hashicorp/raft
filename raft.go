@@ -1425,9 +1425,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 
 			// Update the lastLog
 			last := newEntries[n-1]
-			if last.Index > lastLogIdx {
-				r.setLastLog(last.Index, last.Term)
-			}
+			r.setLastLog(last.Index, last.Term)
 		}
 
 		metrics.MeasureSince([]string{"raft", "rpc", "appendEntries", "storeLogs"}, start)
