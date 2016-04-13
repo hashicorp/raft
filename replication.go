@@ -190,6 +190,17 @@ START:
 	}
 
 CHECK_MORE:
+	// Poll the stop channel here in case we are looping and have been asked
+	// to stop, or have stepped down as leader. Even for the best effort case
+	// where we are asked to replicate to a given index and then shutdown,
+	// it's better to not loop in here to send lots of entries to a straggler
+	// that's leaving the cluster anyways.
+	select {
+	case <-s.stopCh:
+		return true
+	default:
+	}
+
 	// Check if there are more logs to replicate
 	if s.nextIndex <= lastIndex {
 		goto START
@@ -350,6 +361,7 @@ SEND:
 		case <-finishCh:
 			break SEND
 		case maxIndex := <-s.stopCh:
+			// Make a best effort to replicate up to this index
 			if maxIndex > 0 {
 				r.pipelineSend(s, pipeline, &nextIndex, maxIndex)
 			}
