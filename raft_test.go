@@ -1454,6 +1454,60 @@ func TestRaft_SendSnapshotFollower(t *testing.T) {
 	c.EnsureSame(t)
 }
 
+func TestRaft_SendSnapshotAndLogsFollower(t *testing.T) {
+	// Make the cluster
+	conf := inmemConfig(t)
+	conf.TrailingLogs = 10
+	c := MakeCluster(3, t, conf)
+	defer c.Close()
+
+	// Disconnect one follower
+	followers := c.Followers()
+	leader := c.Leader()
+	behind := followers[0]
+	c.Disconnect(behind.localAddr)
+
+	// Commit a lot of things
+	var future Future
+	for i := 0; i < 100; i++ {
+		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	// Wait for the last future to apply
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	} else {
+		t.Logf("[INFO] Finished apply without behind follower")
+	}
+
+	// Snapshot, this will truncate logs!
+	for _, r := range c.rafts {
+		future = r.Snapshot()
+		// the disconnected node will have nothing to snapshot, so that's expected
+		if err := future.Error(); err != nil && err != ErrNothingNewToSnapshot {
+			c.FailNowf("[ERR] err: %v", err)
+		}
+	}
+
+	// Commit more logs past the snapshot.
+	for i := 100; i < 200; i++ {
+		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	// Wait for the last future to apply
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	} else {
+		t.Logf("[INFO] Finished apply without behind follower")
+	}
+
+	// Reconnect the behind node
+	c.FullyConnect()
+
+	// Ensure all the logs are the same
+	c.EnsureSame(t)
+}
+
 func TestRaft_ReJoinFollower(t *testing.T) {
 	// Enable operation after a remove
 	conf := inmemConfig(t)
