@@ -117,8 +117,14 @@ type Raft struct {
 	// Used for our logging
 	logger *log.Logger
 
-	// LogStore provides durable storage for logs
-	logs LogStore
+	// logs provides durable storage for logs. logsLock is used to synchronize
+	// replication tasks with log truncation. This lets us take advantage of
+	// the simpler LogStore interface with per-entry consistency for most
+	// operations but still operate safely during the relatively rare times
+	// that truncation takes place, without adding more sophisticated MVCC
+	// requirements on the LogStore.
+	logs     LogStore
+	logsLock sync.RWMutex
 
 	// Track our known peers
 	peerCh    chan *peerFuture
@@ -1866,7 +1872,11 @@ func (r *Raft) compactLogs(snapIdx uint64) error {
 	// Log this
 	r.logger.Printf("[INFO] raft: Compacting logs from %d to %d", minLog, maxLog)
 
-	// Compact the logs
+	// Compact the logs. We take the full write lock here so that we don't
+	// interfere with any replication task that's reading the logs as we
+	// truncate.
+	r.logsLock.Lock()
+	defer r.logsLock.Unlock()
 	if err := r.logs.DeleteRange(minLog, maxLog); err != nil {
 		return fmt.Errorf("log compaction failed: %v", err)
 	}

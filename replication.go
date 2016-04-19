@@ -150,6 +150,7 @@ START:
 	if err := r.setupAppendEntries(s, &req, s.nextIndex, lastIndex); err == ErrLogNotFound {
 		goto SEND_SNAP
 	} else if err != nil {
+		r.logger.Printf("[ERR] raft: Failed to setup AppendEntries to %v: %v", s.peer, err)
 		return
 	}
 
@@ -389,6 +390,7 @@ func (r *Raft) pipelineSend(s *followerReplication, p AppendPipeline, nextIdx *u
 	// Create a new append request
 	req := new(AppendEntriesRequest)
 	if err := r.setupAppendEntries(s, req, *nextIdx, lastIndex); err != nil {
+		r.logger.Printf("[ERR] raft: Failed setup AppendEntries to %v: %v", s.peer, err)
 		return true
 	}
 
@@ -440,6 +442,11 @@ func (r *Raft) pipelineDecode(s *followerReplication, p AppendPipeline, stopCh, 
 
 // setupAppendEntries is used to setup an append entries request.
 func (r *Raft) setupAppendEntries(s *followerReplication, req *AppendEntriesRequest, nextIndex, lastIndex uint64) error {
+	// Take a read lock here so that we can get a consistent pull from the
+	// logs without worrying about truncation.
+	r.logsLock.RLock()
+	defer r.logsLock.RUnlock()
+
 	req.Term = s.currentTerm
 	req.Leader = r.trans.EncodePeer(r.localAddr)
 	req.LeaderCommitIndex = r.getCommitIndex()
@@ -453,7 +460,8 @@ func (r *Raft) setupAppendEntries(s *followerReplication, req *AppendEntriesRequ
 }
 
 // setPreviousLog is used to setup the PrevLogEntry and PrevLogTerm for an
-// AppendEntriesRequest given the next index to replicate.
+// AppendEntriesRequest given the next index to replicate. It is assumed that
+// the logsLock is held when calling this.
 func (r *Raft) setPreviousLog(req *AppendEntriesRequest, nextIndex uint64) error {
 	// Guard for the first index, since there is no 0 log entry
 	// Guard against the previous index being a snapshot as well
@@ -482,6 +490,7 @@ func (r *Raft) setPreviousLog(req *AppendEntriesRequest, nextIndex uint64) error
 }
 
 // setNewLogs is used to setup the logs which should be appended for a request.
+// It is assumed that the logsLock is held when calling this.
 func (r *Raft) setNewLogs(req *AppendEntriesRequest, nextIndex, lastIndex uint64) error {
 	// Append up to MaxAppendEntries or up to the lastIndex
 	req.Entries = make([]*Log, 0, r.conf.MaxAppendEntries)
