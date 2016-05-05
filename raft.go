@@ -620,7 +620,7 @@ func (r *Raft) run() {
 // runFollower runs the FSM for a follower.
 func (r *Raft) runFollower() {
 	didWarn := false
-	r.logger.Printf("[INFO] raft: %v entering Follower state", r)
+	r.logger.Printf("[INFO] raft: %v entering Follower state (Leader: %q)", r, r.Leader())
 	metrics.IncrCounter([]string{"raft", "state", "follower"}, 1)
 	heartbeatTimer := randomTimeout(r.conf.HeartbeatTimeout)
 	for {
@@ -652,6 +652,7 @@ func (r *Raft) runFollower() {
 			}
 
 			// Heartbeat failed! Transition to the candidate state
+			lastLeader := r.Leader()
 			r.setLeader("")
 			if len(r.peers) == 0 && !r.conf.EnableSingleNode {
 				if !didWarn {
@@ -659,7 +660,7 @@ func (r *Raft) runFollower() {
 					didWarn = true
 				}
 			} else {
-				r.logger.Printf("[WARN] raft: Heartbeat timeout reached, starting election")
+				r.logger.Printf(`[WARN] raft: Heartbeat timeout from %q reached, starting election`, lastLeader)
 
 				metrics.IncrCounter([]string{"raft", "transition", "heartbeat_timeout"}, 1)
 				r.setState(Candidate)
