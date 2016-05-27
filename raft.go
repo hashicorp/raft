@@ -1420,6 +1420,8 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 			// Append the new entries
 			if err := r.logs.StoreLogs(newEntries); err != nil {
 				r.logger.Printf("[ERR] raft: Failed to append to logs: %v", err)
+				// TODO: leaving r.getLastLog() in the wrong
+				// state if there was a truncation above
 				return
 			}
 
