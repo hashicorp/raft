@@ -1845,3 +1845,32 @@ func TestRaft_Voting(t *testing.T) {
 		c.FailNowf("[ERR] expected vote not to be granted, but was %+v", resp)
 	}
 }
+
+// TODO: These are test cases we'd like to write for appendEntries().
+// Unfortunately, it's difficult to do so with the current way this file is
+// tested.
+//
+// Term check:
+// - m.term is too small: no-op.
+// - m.term is too large: update term, become follower, process request.
+// - m.term is right but we're candidate: become follower, process request.
+//
+// Previous entry check:
+// - prev is within the snapshot, before the snapshot's index: assume match.
+// - prev is within the snapshot, exactly the snapshot's index: check
+//   snapshot's term.
+// - prev is a log entry: check entry's term.
+// - prev is past the end of the log: return fail.
+//
+// New entries:
+// - new entries are all new: add them all.
+// - new entries are all duplicate: ignore them all without ever removing dups.
+// - new entries some duplicate, some new: add the new ones without ever
+//   removing dups.
+// - new entries all conflict: remove the conflicting ones, add their
+//   replacements.
+// - new entries some duplicate, some conflict: remove the conflicting ones,
+//   add their replacement, without ever removing dups.
+//
+// Storage errors handled properly.
+// Commit index updated properly.
