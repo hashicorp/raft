@@ -1454,6 +1454,60 @@ func TestRaft_SendSnapshotFollower(t *testing.T) {
 	c.EnsureSame(t)
 }
 
+func TestRaft_SendSnapshotAndLogsFollower(t *testing.T) {
+	// Make the cluster
+	conf := inmemConfig(t)
+	conf.TrailingLogs = 10
+	c := MakeCluster(3, t, conf)
+	defer c.Close()
+
+	// Disconnect one follower
+	followers := c.Followers()
+	leader := c.Leader()
+	behind := followers[0]
+	c.Disconnect(behind.localAddr)
+
+	// Commit a lot of things
+	var future Future
+	for i := 0; i < 100; i++ {
+		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	// Wait for the last future to apply
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	} else {
+		t.Logf("[INFO] Finished apply without behind follower")
+	}
+
+	// Snapshot, this will truncate logs!
+	for _, r := range c.rafts {
+		future = r.Snapshot()
+		// the disconnected node will have nothing to snapshot, so that's expected
+		if err := future.Error(); err != nil && err != ErrNothingNewToSnapshot {
+			c.FailNowf("[ERR] err: %v", err)
+		}
+	}
+
+	// Commit more logs past the snapshot.
+	for i := 100; i < 200; i++ {
+		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	// Wait for the last future to apply
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	} else {
+		t.Logf("[INFO] Finished apply without behind follower")
+	}
+
+	// Reconnect the behind node
+	c.FullyConnect()
+
+	// Ensure all the logs are the same
+	c.EnsureSame(t)
+}
+
 func TestRaft_ReJoinFollower(t *testing.T) {
 	// Enable operation after a remove
 	conf := inmemConfig(t)
@@ -1845,3 +1899,32 @@ func TestRaft_Voting(t *testing.T) {
 		c.FailNowf("[ERR] expected vote not to be granted, but was %+v", resp)
 	}
 }
+
+// TODO: These are test cases we'd like to write for appendEntries().
+// Unfortunately, it's difficult to do so with the current way this file is
+// tested.
+//
+// Term check:
+// - m.term is too small: no-op.
+// - m.term is too large: update term, become follower, process request.
+// - m.term is right but we're candidate: become follower, process request.
+//
+// Previous entry check:
+// - prev is within the snapshot, before the snapshot's index: assume match.
+// - prev is within the snapshot, exactly the snapshot's index: check
+//   snapshot's term.
+// - prev is a log entry: check entry's term.
+// - prev is past the end of the log: return fail.
+//
+// New entries:
+// - new entries are all new: add them all.
+// - new entries are all duplicate: ignore them all without ever removing dups.
+// - new entries some duplicate, some new: add the new ones without ever
+//   removing dups.
+// - new entries all conflict: remove the conflicting ones, add their
+//   replacements.
+// - new entries some duplicate, some conflict: remove the conflicting ones,
+//   add their replacement, without ever removing dups.
+//
+// Storage errors handled properly.
+// Commit index updated properly.

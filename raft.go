@@ -121,9 +121,10 @@ type Raft struct {
 	logs LogStore
 
 	// Track our known peers
-	peerCh    chan *peerFuture
-	peers     []string
-	peerStore PeerStore
+	peerChangeCh chan *logFuture
+	peerCh       chan *peerFuture
+	peers        []string
+	peerStore    PeerStore
 
 	// RPC chan comes from the transport layer
 	rpcCh <-chan RPC
@@ -218,6 +219,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		localAddr:     localAddr,
 		logger:        logger,
 		logs:          logs,
+		peerChangeCh:  make(chan *logFuture),
 		peerCh:        make(chan *peerFuture),
 		peers:         peers,
 		peerStore:     peerStore,
@@ -370,7 +372,7 @@ func (r *Raft) AddPeer(peer string) Future {
 	}
 	logFuture.init()
 	select {
-	case r.applyCh <- logFuture:
+	case r.peerChangeCh <- logFuture:
 		return logFuture
 	case <-r.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
@@ -389,7 +391,7 @@ func (r *Raft) RemovePeer(peer string) Future {
 	}
 	logFuture.init()
 	select {
-	case r.applyCh <- logFuture:
+	case r.peerChangeCh <- logFuture:
 		return logFuture
 	case <-r.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
@@ -622,13 +624,17 @@ func (r *Raft) run() {
 // runFollower runs the FSM for a follower.
 func (r *Raft) runFollower() {
 	didWarn := false
-	r.logger.Printf("[INFO] raft: %v entering Follower state", r)
+	r.logger.Printf("[INFO] raft: %v entering Follower state (Leader: %q)", r, r.Leader())
 	metrics.IncrCounter([]string{"raft", "state", "follower"}, 1)
 	heartbeatTimer := randomTimeout(r.conf.HeartbeatTimeout)
 	for {
 		select {
 		case rpc := <-r.rpcCh:
 			r.processRPC(rpc)
+
+		case c := <-r.peerChangeCh:
+			// Reject any operations since we are not the leader
+			c.respond(ErrNotLeader)
 
 		case a := <-r.applyCh:
 			// Reject any operations since we are not the leader
@@ -654,6 +660,7 @@ func (r *Raft) runFollower() {
 			}
 
 			// Heartbeat failed! Transition to the candidate state
+			lastLeader := r.Leader()
 			r.setLeader("")
 			if len(r.peers) == 0 && !r.conf.EnableSingleNode {
 				if !didWarn {
@@ -661,9 +668,9 @@ func (r *Raft) runFollower() {
 					didWarn = true
 				}
 			} else {
-				r.logger.Printf("[WARN] raft: Heartbeat timeout reached, starting election")
+				r.logger.Printf(`[WARN] raft: Heartbeat timeout from %q reached, starting election`, lastLeader)
 
-				metrics.IncrCounter([]string{"raft", "transition", "heartbeat_timout"}, 1)
+				metrics.IncrCounter([]string{"raft", "transition", "heartbeat_timeout"}, 1)
 				r.setState(Candidate)
 				return
 			}
@@ -715,6 +722,10 @@ func (r *Raft) runCandidate() {
 				r.setLeader(r.localAddr)
 				return
 			}
+
+		case c := <-r.peerChangeCh:
+			// Reject any operations since we are not the leader
+			c.respond(ErrNotLeader)
 
 		case a := <-r.applyCh:
 			// Reject any operations since we are not the leader
@@ -939,6 +950,21 @@ func (r *Raft) leaderLoop() {
 		case p := <-r.peerCh:
 			p.respond(ErrLeader)
 
+		case log := <-r.peerChangeCh:
+			if r.preparePeerChange(log) {
+				// Apply peer set changes early and check if we will step
+				// down after the commit of this log. If so, we must not
+				// allow any future entries to make progress to avoid undefined
+				// behavior.
+				if ok := r.processLog(&log.log, nil, true); ok {
+					stepDown = true
+					r.leaderState.commitment.setVoters(r.peers)
+				} else {
+					r.leaderState.commitment.setVoters(append([]string{r.localAddr}, r.peers...))
+				}
+				r.dispatchLogs([]*logFuture{log})
+			}
+
 		case newLog := <-r.applyCh:
 			// Group commit, gather all the ready commits
 			ready := []*logFuture{newLog}
@@ -951,54 +977,15 @@ func (r *Raft) leaderLoop() {
 				}
 			}
 
-			// Handle any peer set changes
-			n := len(ready)
-			for i := 0; i < n; i++ {
-				// Fail all future transactions once stepDown is on
-				if stepDown {
-					ready[i].respond(ErrNotLeader)
-					ready[i], ready[n-1] = ready[n-1], nil
-					n--
-					i--
-					continue
-				}
-
-				// Special case AddPeer and RemovePeer
-				log := ready[i]
-				if log.log.Type != LogAddPeer && log.log.Type != LogRemovePeer {
-					continue
-				}
-
-				// Check if this log should be ignored. The logs can be
-				// reordered here since we have not yet assigned an index
-				// and are not violating any promises.
-				if !r.preparePeerChange(log) {
-					ready[i], ready[n-1] = ready[n-1], nil
-					n--
-					i--
-					continue
-				}
-
-				// Apply peer set changes early and check if we will step
-				// down after the commit of this log. If so, we must not
-				// allow any future entries to make progress to avoid undefined
-				// behavior.
-				if ok := r.processLog(&log.log, nil, true); ok {
-					stepDown = true
-					r.leaderState.commitment.setVoters(r.peers)
-				} else {
-					r.leaderState.commitment.setVoters(append([]string{r.localAddr}, r.peers...))
-				}
-			}
-
-			// Nothing to do if all logs are invalid
-			if n == 0 {
-				continue
-			}
-
 			// Dispatch the logs
-			ready = ready[:n]
-			r.dispatchLogs(ready)
+			if stepDown {
+				// we're in the process of stepping down as leader, don't process anything new
+				for i := range ready {
+					ready[i].respond(ErrNotLeader)
+				}
+			} else {
+				r.dispatchLogs(ready)
+			}
 
 		case <-lease:
 			// Check if we've exceeded the lease, potentially stepping down
@@ -1388,29 +1375,48 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	}
 
 	// Process any new entries
-	if n := len(a.Entries); n > 0 {
+	if len(a.Entries) > 0 {
 		start := time.Now()
-		first := a.Entries[0]
-		last := a.Entries[n-1]
 
-		// Delete any conflicting entries
+		// Delete any conflicting entries, skip any duplicates
 		lastLogIdx, _ := r.getLastLog()
-		if first.Index <= lastLogIdx {
-			r.logger.Printf("[WARN] raft: Clearing log suffix from %d to %d", first.Index, lastLogIdx)
-			if err := r.logs.DeleteRange(first.Index, lastLogIdx); err != nil {
-				r.logger.Printf("[ERR] raft: Failed to clear log suffix: %v", err)
+		var newEntries []*Log
+		for i, entry := range a.Entries {
+			if entry.Index > lastLogIdx {
+				newEntries = a.Entries[i:]
+				break
+			}
+			var storeEntry Log
+			if err := r.logs.GetLog(entry.Index, &storeEntry); err != nil {
+				r.logger.Printf("[WARN] raft: Failed to get log entry %d: %v",
+					entry.Index, err)
 				return
+			}
+			if entry.Term != storeEntry.Term {
+				r.logger.Printf("[WARN] raft: Clearing log suffix from %d to %d", entry.Index, lastLogIdx)
+				if err := r.logs.DeleteRange(entry.Index, lastLogIdx); err != nil {
+					r.logger.Printf("[ERR] raft: Failed to clear log suffix: %v", err)
+					return
+				}
+				newEntries = a.Entries[i:]
+				break
 			}
 		}
 
-		// Append the entry
-		if err := r.logs.StoreLogs(a.Entries); err != nil {
-			r.logger.Printf("[ERR] raft: Failed to append to logs: %v", err)
-			return
+		if n := len(newEntries); n > 0 {
+			// Append the new entries
+			if err := r.logs.StoreLogs(newEntries); err != nil {
+				r.logger.Printf("[ERR] raft: Failed to append to logs: %v", err)
+				// TODO: leaving r.getLastLog() in the wrong
+				// state if there was a truncation above
+				return
+			}
+
+			// Update the lastLog
+			last := newEntries[n-1]
+			r.setLastLog(last.Index, last.Term)
 		}
 
-		// Update the lastLog
-		r.setLastLog(last.Index, last.Term)
 		metrics.MeasureSince([]string{"raft", "rpc", "appendEntries", "storeLogs"}, start)
 	}
 
