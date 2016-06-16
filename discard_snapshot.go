@@ -19,7 +19,7 @@ func NewDiscardSnapshotStore() *DiscardSnapshotStore {
 	return &DiscardSnapshotStore{}
 }
 
-func (d *DiscardSnapshotStore) Create(index, term uint64, peers []byte) (SnapshotSink, error) {
+func (d *DiscardSnapshotStore) Create(index, term uint64, configuration Configuration, configurationIndex uint64) (SnapshotSink, error) {
 	return &DiscardSnapshotSink{}, nil
 }
 

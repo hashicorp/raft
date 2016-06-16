@@ -13,7 +13,7 @@ type commitment struct {
 	sync.Mutex
 	// notified when commitIndex increases
 	commitCh chan struct{}
-	// voter to log index: the server stores up through this log entry
+	// voter GUID to log index: the server stores up through this log entry
 	matchIndexes map[string]uint64
 	// a quorum stores up through this log entry. monotonically increases.
 	commitIndex uint64
@@ -26,14 +26,15 @@ type commitment struct {
 // newCommitment returns an commitment struct that notifies the provided
 // channel when log entries have been committed. A new commitment struct is
 // created each time this server becomes leader for a particular term.
-// 'voters' are the voting members of the cluster, including the
-// local server except when it's removed itself from the cluster.
+// 'configuration' is the servers in the cluster.
 // 'startIndex' is the first index created in this term (see
 // its description above).
-func newCommitment(commitCh chan struct{}, voters []string, startIndex uint64) *commitment {
-	matchIndexes := make(map[string]uint64, len(voters))
-	for _, voter := range voters {
-		matchIndexes[voter] = 0
+func newCommitment(commitCh chan struct{}, configuration Configuration, startIndex uint64) *commitment {
+	matchIndexes := make(map[string]uint64)
+	for _, server := range configuration.Servers {
+		if server.Suffrage == Voter {
+			matchIndexes[server.GUID] = 0
+		}
 	}
 	return &commitment{
 		commitCh:     commitCh,
@@ -44,16 +45,17 @@ func newCommitment(commitCh chan struct{}, voters []string, startIndex uint64) *
 }
 
 // Called when a new cluster membership configuration is created: it will be
-// used to determine commitment from now on. 'voters' are the voting members of
-// the cluster, including the local server except when it's removed itself from
+// used to determine commitment from now on. 'configuration' is the servers in
 // the cluster.
-func (c *commitment) setVoters(voters []string) {
+func (c *commitment) setConfiguration(configuration Configuration) {
 	c.Lock()
 	defer c.Unlock()
 	oldMatchIndexes := c.matchIndexes
-	c.matchIndexes = make(map[string]uint64, len(voters))
-	for _, voter := range voters {
-		c.matchIndexes[voter] = oldMatchIndexes[voter] // defaults to 0
+	c.matchIndexes = make(map[string]uint64)
+	for _, server := range configuration.Servers {
+		if server.Suffrage == Voter {
+			c.matchIndexes[server.GUID] = oldMatchIndexes[server.GUID] // defaults to 0
+		}
 	}
 	c.recalculate()
 }

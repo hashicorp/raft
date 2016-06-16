@@ -52,9 +52,6 @@ type RequestVoteResponse struct {
 	// Newer term if leader is out of date
 	Term uint64
 
-	// Return the peers, so that a node can shutdown on removal
-	Peers []byte
-
 	// Is the vote granted
 	Granted bool
 }
@@ -69,8 +66,15 @@ type InstallSnapshotRequest struct {
 	LastLogIndex uint64
 	LastLogTerm  uint64
 
-	// Peer Set in the snapshot
+	// Peer Set in the snapshot. This is deprecated in favor of Configuration
+	// but remains here in case we receive an InstallSnapshot from a leader
+	// that's running old code.
 	Peers []byte
+
+	// Cluster membership.
+	Configuration []byte
+	// Log index where 'Configuration' entry was originally written.
+	ConfigurationIndex uint64
 
 	// Size of the snapshot
 	Size int64

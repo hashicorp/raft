@@ -4,18 +4,30 @@ import (
 	"testing"
 )
 
+func makeConfiguration(voters []string) Configuration {
+	var configuration Configuration
+	for _, voter := range voters {
+		configuration.Servers = append(configuration.Servers, Server{
+			Suffrage: Voter,
+			Address:  voter,
+			GUID:     voter,
+		})
+	}
+	return configuration
+}
+
 // Returns a slice of server names of size n.
-func voters(n int) []string {
+func voters(n int) Configuration {
 	if n > 7 {
 		panic("only up to 7 servers implemented")
 	}
-	return []string{"s1", "s2", "s3", "s4", "s5", "s6", "s7"}[:n]
+	return makeConfiguration([]string{"s1", "s2", "s3", "s4", "s5", "s6", "s7"}[:n])
 }
 
 // Tests setVoters() keeps matchIndexes where possible.
 func TestCommitment_setVoters(t *testing.T) {
 	commitCh := make(chan struct{}, 1)
-	c := newCommitment(commitCh, []string{"a", "b", "c"}, 0)
+	c := newCommitment(commitCh, makeConfiguration([]string{"a", "b", "c"}), 0)
 	c.match("a", 10)
 	c.match("b", 20)
 	c.match("c", 30)
@@ -23,7 +35,7 @@ func TestCommitment_setVoters(t *testing.T) {
 	if !drainNotifyCh(commitCh) {
 		t.Fatalf("expected commit notify")
 	}
-	c.setVoters([]string{"c", "d", "e"})
+	c.setConfiguration(makeConfiguration([]string{"c", "d", "e"}))
 	// c: 30, d: 0, e: 0
 	c.match("e", 40)
 	if c.getCommitIndex() != 30 {
@@ -107,7 +119,7 @@ func TestCommitment_recalculate(t *testing.T) {
 		t.Fatalf("expected commit notify")
 	}
 
-	c.setVoters(voters(3))
+	c.setConfiguration(voters(3))
 	// s1: 30, s2: 20, s3: 10
 	if c.getCommitIndex() != 20 {
 		t.Fatalf("expected 20 entries committed, found %d",
@@ -117,7 +129,7 @@ func TestCommitment_recalculate(t *testing.T) {
 		t.Fatalf("expected commit notify")
 	}
 
-	c.setVoters(voters(4))
+	c.setConfiguration(voters(4))
 	// s1: 30, s2: 20, s3: 10, s4: 0
 	c.match("s2", 25)
 	if c.getCommitIndex() != 20 {
@@ -169,9 +181,9 @@ func TestCommitment_recalculate_startIndex(t *testing.T) {
 // to not mark anything committed.
 func TestCommitment_noVoterSanity(t *testing.T) {
 	commitCh := make(chan struct{}, 1)
-	c := newCommitment(commitCh, []string{}, 4)
+	c := newCommitment(commitCh, makeConfiguration([]string{}), 4)
 	c.match("s1", 10)
-	c.setVoters([]string{})
+	c.setConfiguration(makeConfiguration([]string{}))
 	c.match("s1", 10)
 	if c.getCommitIndex() != 0 {
 		t.Fatalf("no voting servers: shouldn't be able to commit")
@@ -181,7 +193,7 @@ func TestCommitment_noVoterSanity(t *testing.T) {
 	}
 
 	// add a voter so we can commit something and then remove it
-	c.setVoters(voters(1))
+	c.setConfiguration(voters(1))
 	c.match("s1", 10)
 	if c.getCommitIndex() != 10 {
 		t.Fatalf("expected 10 entries committed, found %d",
@@ -191,7 +203,7 @@ func TestCommitment_noVoterSanity(t *testing.T) {
 		t.Fatalf("expected commit notify")
 	}
 
-	c.setVoters([]string{})
+	c.setConfiguration(makeConfiguration([]string{}))
 	c.match("s1", 20)
 	if c.getCommitIndex() != 10 {
 		t.Fatalf("expected 10 entries committed, found %d",
@@ -215,7 +227,7 @@ func TestCommitment_singleVoter(t *testing.T) {
 	if !drainNotifyCh(commitCh) {
 		t.Fatalf("expected commit notify")
 	}
-	c.setVoters(voters(1))
+	c.setConfiguration(voters(1))
 	if drainNotifyCh(commitCh) {
 		t.Fatalf("unexpected commit notify")
 	}

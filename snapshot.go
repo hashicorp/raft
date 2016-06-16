@@ -6,11 +6,13 @@ import (
 
 // SnapshotMeta is for metadata of a snapshot.
 type SnapshotMeta struct {
-	ID    string // ID is opaque to the store, and is used for opening
-	Index uint64
-	Term  uint64
-	Peers []byte
-	Size  int64
+	ID                 string // ID is opaque to the store, and is used for opening
+	Index              uint64
+	Term               uint64
+	Peers              []byte // deprecated, use Configuration and ConfigurationIndex now
+	Configuration      Configuration
+	ConfigurationIndex uint64
+	Size               int64
 }
 
 // SnapshotStore interface is used to allow for flexible implementations
@@ -19,8 +21,8 @@ type SnapshotMeta struct {
 // without steaming from the leader.
 type SnapshotStore interface {
 	// Create is used to begin a snapshot at a given index and term,
-	// with the current peer set already encoded.
-	Create(index, term uint64, peers []byte) (SnapshotSink, error)
+	// with the current configuration already encoded.
+	Create(index, term uint64, configuration Configuration, configurationIndex uint64) (SnapshotSink, error)
 
 	// List is used to list the available snapshots in the store.
 	// It should return then in descending order, with the highest index first.

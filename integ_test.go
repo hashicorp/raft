@@ -28,7 +28,6 @@ type RaftEnv struct {
 	fsm      *MockFSM
 	store    *InmemStore
 	snapshot *FileSnapshotStore
-	peers    *JSONPeers
 	trans    *NetworkTransport
 	raft     *Raft
 }
@@ -75,10 +74,8 @@ func MakeRaft(t *testing.T, conf *Config) *RaftEnv {
 	}
 	env.trans = trans
 
-	env.peers = NewJSONPeers(dir, trans)
-
 	log.Printf("[INFO] Starting node at %v", trans.LocalAddr())
-	raft, err := NewRaft(conf, env.fsm, stable, stable, snap, env.peers, trans)
+	raft, err := NewRaft(conf, env.fsm, stable, stable, snap, trans)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -170,7 +167,6 @@ func TestRaft_Integ(t *testing.T) {
 	conf.CommitTimeout = 5 * time.Millisecond
 	conf.SnapshotThreshold = 100
 	conf.TrailingLogs = 10
-	conf.EnableSingleNode = true
 
 	// Create a single node
 	env1 := MakeRaft(t, conf)
