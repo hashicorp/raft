@@ -505,10 +505,13 @@ func (r *Raft) LastIndex() uint64 {
 	return r.getLastIndex()
 }
 
-// AppliedIndex returns the last index applied to the FSM.
-// This is generally lagging behind the last index, especially
-// for indexes that are persisted but have not yet been considered
-// committed by the leader.
+// AppliedIndex returns the last index applied to the FSM. This is generally
+// lagging behind the last index, especially for indexes that are persisted but
+// have not yet been considered committed by the leader. NOTE - this reflects
+// the last index that was sent to the application's FSM over the apply channel
+// but DOES NOT mean that the application's FSM has yet consumed it and applied
+// it to its internal state. Thus, the application's state may lag behind this
+// index.
 func (r *Raft) AppliedIndex() uint64 {
 	return r.getLastApplied()
 }
