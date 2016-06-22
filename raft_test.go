@@ -358,8 +358,6 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 			return inState
 		}
 	}
-
-	return nil
 }
 
 // Leader waits for the cluster to elect a leader and stay in a stable state.
