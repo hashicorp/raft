@@ -31,10 +31,11 @@ type RaftEnv struct {
 	peers    *JSONPeers
 	trans    *NetworkTransport
 	raft     *Raft
+	logger   *log.Logger
 }
 
 func (r *RaftEnv) Release() {
-	log.Printf("[WARN] Release node at %v", r.raft.localAddr)
+	r.logger.Printf("[WARN] Release node at %v", r.raft.localAddr)
 	f := r.raft.Shutdown()
 	if err := f.Error(); err != nil {
 		panic(err)
@@ -67,6 +68,7 @@ func MakeRaft(t *testing.T, conf *Config) *RaftEnv {
 		store:    stable,
 		snapshot: snap,
 		fsm:      &MockFSM{},
+		logger:   log.New(&testLoggerAdapter{t: t}, "", log.Lmicroseconds),
 	}
 
 	trans, err := NewTCPTransport("127.0.0.1:0", nil, 2, time.Second, nil)
@@ -77,7 +79,7 @@ func MakeRaft(t *testing.T, conf *Config) *RaftEnv {
 
 	env.peers = NewJSONPeers(dir, trans)
 
-	log.Printf("[INFO] Starting node at %v", trans.LocalAddr())
+	env.logger.Printf("[INFO] Starting node at %v", trans.LocalAddr())
 	raft, err := NewRaft(conf, env.fsm, stable, stable, snap, env.peers, trans)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -183,7 +185,7 @@ func TestRaft_Integ(t *testing.T) {
 	}
 	for _, f := range futures {
 		NoErr(WaitFuture(f, t), t)
-		log.Printf("[DEBUG] Applied %v", f)
+		env1.logger.Printf("[DEBUG] Applied %v", f)
 	}
 
 	// Do a snapshot
@@ -209,7 +211,7 @@ func TestRaft_Integ(t *testing.T) {
 	}
 	for _, f := range futures {
 		NoErr(WaitFuture(f, t), t)
-		log.Printf("[DEBUG] Applied %v", f)
+		leader.logger.Printf("[DEBUG] Applied %v", f)
 	}
 
 	// Shoot two nodes in the head!
@@ -230,7 +232,7 @@ func TestRaft_Integ(t *testing.T) {
 	}
 	for _, f := range futures {
 		NoErr(WaitFuture(f, t), t)
-		log.Printf("[DEBUG] Applied %v", f)
+		leader.logger.Printf("[DEBUG] Applied %v", f)
 	}
 
 	// Join a few new nodes!
