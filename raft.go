@@ -191,7 +191,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	// Get the log
 	var lastLog Log
 	if lastIdx > 0 {
-		if err := logs.GetLog(lastIdx, &lastLog); err != nil {
+		if err = logs.GetLog(lastIdx, &lastLog); err != nil {
 			return nil, fmt.Errorf("failed to get last log: %v", err)
 		}
 	}

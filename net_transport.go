@@ -295,7 +295,7 @@ func (n *NetworkTransport) genericRPC(target string, rpcType uint8, args interfa
 	}
 
 	// Send the RPC
-	if err := sendRPC(conn, rpcType, args); err != nil {
+	if err = sendRPC(conn, rpcType, args); err != nil {
 		return err
 	}
 
@@ -326,17 +326,17 @@ func (n *NetworkTransport) InstallSnapshot(target string, args *InstallSnapshotR
 	}
 
 	// Send the RPC
-	if err := sendRPC(conn, rpcInstallSnapshot, args); err != nil {
+	if err = sendRPC(conn, rpcInstallSnapshot, args); err != nil {
 		return err
 	}
 
 	// Stream the state
-	if _, err := io.Copy(conn.w, data); err != nil {
+	if _, err = io.Copy(conn.w, data); err != nil {
 		return err
 	}
 
 	// Flush
-	if err := conn.w.Flush(); err != nil {
+	if err = conn.w.Flush(); err != nil {
 		return err
 	}
 
