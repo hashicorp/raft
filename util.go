@@ -3,7 +3,6 @@ package raft
 import (
 	"bytes"
 	crand "crypto/rand"
-	"encoding/binary"
 	"fmt"
 	"math"
 	"math/big"
@@ -165,13 +164,6 @@ func encodeMsgPack(in interface{}) (*bytes.Buffer, error) {
 	enc := codec.NewEncoder(buf, &hd)
 	err := enc.Encode(in)
 	return buf, err
-}
-
-// Converts a uint64 to a byte slice.
-func uint64ToBytes(u uint64) []byte {
-	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, u)
-	return buf
 }
 
 // backoff is used to compute an exponential backoff
