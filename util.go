@@ -68,14 +68,6 @@ func generateUUID() string {
 		buf[10:16])
 }
 
-// asyncNotify is used to do an async channel send to
-// a list of channels. This will not block.
-func asyncNotify(chans []chan struct{}) {
-	for _, ch := range chans {
-		asyncNotifyCh(ch)
-	}
-}
-
 // asyncNotifyCh is used to do an async channel send
 // to a single channel without blocking.
 func asyncNotifyCh(ch chan struct{}) {
