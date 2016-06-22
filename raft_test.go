@@ -1716,7 +1716,7 @@ func TestRaft_SettingPeers(t *testing.T) {
 	c := MakeClusterNoPeers(3, t, nil)
 	defer c.Close()
 
-	peers := make([]string, 0)
+	peers := make([]string, 0, len(c.rafts))
 	for _, v := range c.rafts {
 		peers = append(peers, v.localAddr)
 	}
