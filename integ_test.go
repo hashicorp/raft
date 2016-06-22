@@ -44,30 +44,30 @@ func (r *RaftEnv) Release() {
 }
 
 func MakeRaft(t *testing.T, conf *Config) *RaftEnv {
-	env := &RaftEnv{}
-
 	// Set the config
 	if conf == nil {
 		conf = inmemConfig(t)
 	}
-	env.conf = conf
 
 	dir, err := ioutil.TempDir("", "raft")
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
-	env.dir = dir
 
 	stable := NewInmemStore()
-	env.store = stable
 
 	snap, err := NewFileSnapshotStore(dir, 3, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	env.snapshot = snap
 
-	env.fsm = &MockFSM{}
+	env := &RaftEnv{
+		conf:     conf,
+		dir:      dir,
+		store:    stable,
+		snapshot: snap,
+		fsm:      &MockFSM{},
+	}
 
 	trans, err := NewTCPTransport("127.0.0.1:0", nil, 2, time.Second, nil)
 	if err != nil {
