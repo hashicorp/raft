@@ -93,10 +93,10 @@ func (a *testLoggerAdapter) Write(d []byte) (int, error) {
 		l := a.prefix + ": " + string(d)
 		a.t.Log(l)
 		return len(l), nil
-	} else {
-		a.t.Log(string(d))
-		return len(d), nil
 	}
+
+	a.t.Log(string(d))
+	return len(d), nil
 }
 
 func newTestLogger(t *testing.T) *log.Logger {
