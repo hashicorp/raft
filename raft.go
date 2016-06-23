@@ -1060,7 +1060,7 @@ func (r *Raft) checkLeaderLease() time.Duration {
 				r.logger.Printf("[DEBUG] raft: Failed to contact %v in %v", peer, diff)
 			}
 		}
-		metrics.AddSample([]string{"raft", "leader", "lastContact"}, float32(diff/time.Millisecond))
+		metrics.AddSample([]string{"raft", "leader", "lastContact", peer}, float32(diff/time.Millisecond))
 	}
 
 	// Verify we can contact a quorum
