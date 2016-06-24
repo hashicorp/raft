@@ -5,18 +5,19 @@ import "fmt"
 // ServerSuffrage determines whether a Server in a Configuration gets a vote.
 type ServerSuffrage int
 
+// Note: Don't renumber these, since the numbers are written into the log.
 const (
 	// Voter is a server whose vote is counted in elections and whose match index
 	// is used in advancing the leader's commit index.
-	Voter ServerSuffrage = 1
+	Voter ServerSuffrage = iota
 	// Nonvoter is a server that receives log entries but is not considered for
 	// elections or commitment purposes.
-	Nonvoter ServerSuffrage = 2
+	Nonvoter
 	// Staging is a server that acts like a nonvoter with one exception: once a
 	// staging server receives enough log entries to be sufficiently caught up to
 	// the leader's log, the leader will invoke a  membership change to change
 	// the Staging server to a Voter.
-	Staging ServerSuffrage = 3
+	Staging
 )
 
 // ServerID is a unique string identifying a server for all time.
