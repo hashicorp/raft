@@ -605,16 +605,16 @@ func (r *Raft) Stats() map[string]string {
 	lastLogIndex, lastLogTerm := r.getLastLog()
 	lastSnapIndex, lastSnapTerm := r.getLastSnapshot()
 	s := map[string]string{
-		"state":               r.getState().String(),
-		"term":                toString(r.getCurrentTerm()),
-		"last_log_index":      toString(lastLogIndex),
-		"last_log_term":       toString(lastLogTerm),
-		"commit_index":        toString(r.getCommitIndex()),
-		"applied_index":       toString(r.getLastApplied()),
-		"fsm_pending":         toString(uint64(len(r.fsmCommitCh))),
-		"last_snapshot_index": toString(lastSnapIndex),
-		"last_snapshot_term":  toString(lastSnapTerm),
-		"num_servers":         toString(uint64(len(r.configurations.latest.Servers))),
+		"state":                r.getState().String(),
+		"term":                 toString(r.getCurrentTerm()),
+		"last_log_index":       toString(lastLogIndex),
+		"last_log_term":        toString(lastLogTerm),
+		"commit_index":         toString(r.getCommitIndex()),
+		"applied_index":        toString(r.getLastApplied()),
+		"fsm_pending":          toString(uint64(len(r.fsmCommitCh))),
+		"last_snapshot_index":  toString(lastSnapIndex),
+		"last_snapshot_term":   toString(lastSnapTerm),
+		"latest_configuration": fmt.Sprintf("%+v", r.configurations.latest),
 	}
 	last := r.LastContact()
 	if last.IsZero() {
