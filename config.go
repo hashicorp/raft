@@ -58,6 +58,11 @@ type Config struct {
 	// never be used except for testing purposes, as it can cause a split-brain.
 	StartAsLeader bool
 
+	// The unique ID for this server across all time. For now, this defaults to
+	// an empty string, indicating the server's network address should be used
+	// here. That default will be removed in the future.
+	LocalID ServerID
+
 	// NotifyCh is used to provide a channel that will be notified of leadership
 	// changes. Raft will block writing to this channel, so it should either be
 	// buffered or aggressively consumed.
