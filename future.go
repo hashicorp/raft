@@ -98,8 +98,8 @@ const (
 type configurationChangeFuture struct {
 	logFuture
 	command       ConfigurationChangeCommand
-	serverGUID    string
-	serverAddress string // only present for AddStaging, AddNonvoter
+	serverID      ServerID
+	serverAddress ServerAddress // only present for AddStaging, AddNonvoter
 	// prevIndex, if nonzero, is the index of the only configuration upon which
 	// this change may be applied; if another configuration entry has been
 	// added in the meantime, this request will fail.

@@ -9,8 +9,8 @@ func makeConfiguration(voters []string) Configuration {
 	for _, voter := range voters {
 		configuration.Servers = append(configuration.Servers, Server{
 			Suffrage: Voter,
-			Address:  voter,
-			GUID:     voter,
+			Address:  ServerAddress(voter + "addr"),
+			ID:       ServerID(voter),
 		})
 	}
 	return configuration

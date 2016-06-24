@@ -27,7 +27,7 @@ var (
 // followerReplication is in charge of sending snapshots and log entries from
 // this leader during this particular term to a remote follower.
 type followerReplication struct {
-	// peer contains the network address and GUID of the remote follower.
+	// peer contains the network address and ID of the remote follower.
 	peer Server
 
 	// commitment tracks the entries acknowledged by followers so that the
@@ -183,12 +183,12 @@ START:
 
 	// Make the RPC call
 	start = time.Now()
-	if err := r.trans.AppendEntries(s.peer.Address, &req, &resp); err != nil {
+	if err := r.trans.AppendEntries(string(s.peer.Address), &req, &resp); err != nil {
 		r.logger.Printf("[ERR] raft: Failed to AppendEntries to %v: %v", s.peer, err)
 		s.failures++
 		return
 	}
-	appendStats(s.peer.GUID, start, float32(len(req.Entries)))
+	appendStats(string(s.peer.ID), start, float32(len(req.Entries)))
 
 	// Check for a newer term, stop running
 	if resp.Term > req.Term {
@@ -276,7 +276,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	// Setup the request
 	req := InstallSnapshotRequest{
 		Term:               s.currentTerm,
-		Leader:             r.trans.EncodePeer(r.localAddr),
+		Leader:             r.trans.EncodePeer(string(r.localAddr)),
 		LastLogIndex:       meta.Index,
 		LastLogTerm:        meta.Term,
 		Peers:              meta.Peers,
@@ -288,12 +288,12 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	// Make the call
 	start := time.Now()
 	var resp InstallSnapshotResponse
-	if err := r.trans.InstallSnapshot(s.peer.Address, &req, &resp, snapshot); err != nil {
+	if err := r.trans.InstallSnapshot(string(s.peer.Address), &req, &resp, snapshot); err != nil {
 		r.logger.Printf("[ERR] raft: Failed to install snapshot %v: %v", snapID, err)
 		s.failures++
 		return false, err
 	}
-	metrics.MeasureSince([]string{"raft", "replication", "installSnapshot", s.peer.GUID}, start)
+	metrics.MeasureSince([]string{"raft", "replication", "installSnapshot", string(s.peer.ID)}, start)
 
 	// Check for a newer term, stop running
 	if resp.Term > req.Term {
@@ -308,7 +308,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	if resp.Success {
 		// Update the indexes
 		s.nextIndex = meta.Index + 1
-		s.commitment.match(s.peer.GUID, meta.Index)
+		s.commitment.match(s.peer.ID, meta.Index)
 
 		// Clear any failures
 		s.failures = 0
@@ -329,7 +329,7 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 	var failures uint64
 	req := AppendEntriesRequest{
 		Term:   s.currentTerm,
-		Leader: r.trans.EncodePeer(r.localAddr),
+		Leader: r.trans.EncodePeer(string(r.localAddr)),
 	}
 	var resp AppendEntriesResponse
 	for {
@@ -342,7 +342,7 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 		}
 
 		start := time.Now()
-		if err := r.trans.AppendEntries(s.peer.Address, &req, &resp); err != nil {
+		if err := r.trans.AppendEntries(string(s.peer.Address), &req, &resp); err != nil {
 			r.logger.Printf("[ERR] raft: Failed to heartbeat to %v: %v", s.peer.Address, err)
 			failures++
 			select {
@@ -352,7 +352,7 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 		} else {
 			s.setLastContact()
 			failures = 0
-			metrics.MeasureSince([]string{"raft", "replication", "heartbeat", s.peer.GUID}, start)
+			metrics.MeasureSince([]string{"raft", "replication", "heartbeat", string(s.peer.ID)}, start)
 			s.notifyAll(resp.Success)
 		}
 	}
@@ -364,7 +364,7 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 // back to the standard replication which can handle more complex situations.
 func (r *Raft) pipelineReplicate(s *followerReplication) error {
 	// Create a new pipeline
-	pipeline, err := r.trans.AppendEntriesPipeline(s.peer.Address)
+	pipeline, err := r.trans.AppendEntriesPipeline(string(s.peer.Address))
 	if err != nil {
 		return err
 	}
@@ -445,7 +445,7 @@ func (r *Raft) pipelineDecode(s *followerReplication, p AppendPipeline, stopCh, 
 		select {
 		case ready := <-respCh:
 			req, resp := ready.Request(), ready.Response()
-			appendStats(s.peer.GUID, ready.Start(), float32(len(req.Entries)))
+			appendStats(string(s.peer.ID), ready.Start(), float32(len(req.Entries)))
 
 			// Check for a newer term, stop running
 			if resp.Term > req.Term {
@@ -472,7 +472,7 @@ func (r *Raft) pipelineDecode(s *followerReplication, p AppendPipeline, stopCh, 
 // setupAppendEntries is used to setup an append entries request.
 func (r *Raft) setupAppendEntries(s *followerReplication, req *AppendEntriesRequest, nextIndex, lastIndex uint64) error {
 	req.Term = s.currentTerm
-	req.Leader = r.trans.EncodePeer(r.localAddr)
+	req.Leader = r.trans.EncodePeer(string(r.localAddr))
 	req.LeaderCommitIndex = r.getCommitIndex()
 	if err := r.setPreviousLog(req, nextIndex); err != nil {
 		return err
@@ -549,7 +549,7 @@ func updateLastAppended(s *followerReplication, req *AppendEntriesRequest) {
 	if logs := req.Entries; len(logs) > 0 {
 		last := logs[len(logs)-1]
 		s.nextIndex = last.Index + 1
-		s.commitment.match(s.peer.GUID, last.Index)
+		s.commitment.match(s.peer.ID, last.Index)
 	}
 
 	// Notify still leader

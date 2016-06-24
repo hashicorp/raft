@@ -68,7 +68,7 @@ type leaderState struct {
 	commitCh   chan struct{}
 	commitment *commitment
 	inflight   *list.List // list of logFuture in log index order
-	replState  map[string]*followerReplication
+	replState  map[ServerID]*followerReplication
 	notify     map[*verifyFuture]struct{}
 	stepDown   chan struct{}
 }
@@ -102,7 +102,7 @@ type Raft struct {
 	lastContactLock sync.RWMutex
 
 	// Leader is the current cluster leader
-	leader     string
+	leader     ServerAddress
 	leaderLock sync.RWMutex
 
 	// leaderCh is used to notify of leadership changes
@@ -111,11 +111,11 @@ type Raft struct {
 	// leaderState used only while state is leader
 	leaderState leaderState
 
-	// Stores our local GUID, used to avoid sending RPCs to ourself
-	localGUID string
+	// Stores our local server ID, used to avoid sending RPCs to ourself
+	localID ServerID
 
 	// Stores our local addr
-	localAddr string
+	localAddr ServerAddress
 
 	// Used for our logging
 	logger *log.Logger
@@ -267,8 +267,8 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		}
 	}
 
-	localAddr := trans.LocalAddr()
-	localGUID := localAddr // TODO: where should we get this from?
+	localAddr := ServerAddress(trans.LocalAddr())
+	localID := ServerID(localAddr) // TODO: where should we get this from?
 
 	// Create Raft struct
 	r := &Raft{
@@ -279,7 +279,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		fsmRestoreCh:  make(chan *restoreFuture),
 		fsmSnapshotCh: make(chan *reqSnapshotFuture),
 		leaderCh:      make(chan bool),
-		localGUID:     localGUID,
+		localID:       localID,
 		localAddr:     localAddr,
 		logger:        logger,
 		logs:          logs,
@@ -348,20 +348,21 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 // It may return empty string if there is no current leader
 // or the leader is unknown.
 func (r *Raft) Leader() string {
+	// TODO: change return type to ServerAddress?
 	r.leaderLock.RLock()
-	leader := r.leader
+	leader := string(r.leader)
 	r.leaderLock.RUnlock()
 	return leader
 }
 
 // setLeader is used to modify the current leader of the cluster
-func (r *Raft) setLeader(leader string) {
+func (r *Raft) setLeader(leader ServerAddress) {
 	r.leaderLock.Lock()
 	oldLeader := r.leader
 	r.leader = leader
 	r.leaderLock.Unlock()
 	if oldLeader != leader {
-		r.observe(LeaderObservation{leader: leader})
+		r.observe(LeaderObservation{leader: string(leader)})
 	}
 }
 
@@ -446,7 +447,7 @@ func (r *Raft) VerifyLeader() Future {
 // AddPeer (deprecated) is used to add a new peer into the cluster. This must be
 // run on the leader or it will fail. Use AddVoter/AddNonvoter instead.
 func (r *Raft) AddPeer(peer string) Future {
-	return r.AddVoter(peer, peer, 0, 0)
+	return r.AddVoter(ServerID(peer), ServerAddress(peer), 0, 0)
 }
 
 // RemovePeer (deprecated) is used to remove a peer from the cluster. If the
@@ -454,7 +455,7 @@ func (r *Raft) AddPeer(peer string) Future {
 // to occur. This must be run on the leader or it will fail.
 // Use RemoveServer instead.
 func (r *Raft) RemovePeer(peer string) Future {
-	return r.RemoveServer(peer, 0, 0)
+	return r.RemoveServer(ServerID(peer), 0, 0)
 }
 
 // AddVoter will add the given server to the cluster as a staging server. If the
@@ -465,10 +466,10 @@ func (r *Raft) RemovePeer(peer string) Future {
 // configuration entry has been added in the meantime, this request will fail.
 // If nonzero, timeout is how long this server should wait before the
 // configuration change log entry is appended.
-func (r *Raft) AddVoter(guid string, address string, prevIndex uint64, timeout time.Duration) IndexFuture {
+func (r *Raft) AddVoter(id ServerID, address ServerAddress, prevIndex uint64, timeout time.Duration) IndexFuture {
 	return r.requestConfigChange(&configurationChangeFuture{
 		command:       AddStaging,
-		serverGUID:    guid,
+		serverID:      id,
 		serverAddress: address,
 		prevIndex:     prevIndex,
 	}, timeout)
@@ -479,10 +480,10 @@ func (r *Raft) AddVoter(guid string, address string, prevIndex uint64, timeout t
 // elections or log entry commitment. If the server is already in the cluster as
 // a staging server or voter, this does nothing. This must be run on the leader
 // or it will fail. For prevIndex and timeout, see AddVoter.
-func (r *Raft) AddNonvoter(guid string, address string, prevIndex uint64, timeout time.Duration) IndexFuture {
+func (r *Raft) AddNonvoter(id ServerID, address ServerAddress, prevIndex uint64, timeout time.Duration) IndexFuture {
 	return r.requestConfigChange(&configurationChangeFuture{
 		command:       AddNonvoter,
-		serverGUID:    guid,
+		serverID:      id,
 		serverAddress: address,
 		prevIndex:     prevIndex,
 	}, timeout)
@@ -491,11 +492,11 @@ func (r *Raft) AddNonvoter(guid string, address string, prevIndex uint64, timeou
 // RemoveServer will remove the given server from the cluster. If the current
 // leader is being removed, it will cause a new election to occur. This must be
 // run on the leader or it will fail. For prevIndex and timeout, see AddVoter.
-func (r *Raft) RemoveServer(guid string, prevIndex uint64, timeout time.Duration) IndexFuture {
+func (r *Raft) RemoveServer(id ServerID, prevIndex uint64, timeout time.Duration) IndexFuture {
 	return r.requestConfigChange(&configurationChangeFuture{
-		command:    RemoveServer,
-		serverGUID: guid,
-		prevIndex:  prevIndex,
+		command:   RemoveServer,
+		serverID:  id,
+		prevIndex: prevIndex,
 	}, timeout)
 }
 
@@ -504,11 +505,11 @@ func (r *Raft) RemoveServer(guid string, prevIndex uint64, timeout time.Duration
 // elections or log entry commitment. If the server is not in the cluster, this
 // does nothing. This must be run on the leader or it will fail. For prevIndex
 // and timeout, see AddVoter.
-func (r *Raft) DemoteVoter(guid string, prevIndex uint64, timeout time.Duration) IndexFuture {
+func (r *Raft) DemoteVoter(id ServerID, prevIndex uint64, timeout time.Duration) IndexFuture {
 	return r.requestConfigChange(&configurationChangeFuture{
-		command:    DemoteVoter,
-		serverGUID: guid,
-		prevIndex:  prevIndex,
+		command:   DemoteVoter,
+		serverID:  id,
+		prevIndex: prevIndex,
 	}, timeout)
 }
 
@@ -780,7 +781,7 @@ func (r *Raft) runFollower() {
 					didWarn = true
 				}
 			} else if r.configurations.latestIndex == r.configurations.committedIndex &&
-				!hasVote(r.configurations.latest, r.localGUID) {
+				!hasVote(r.configurations.latest, r.localID) {
 				if !didWarn {
 					r.logger.Printf("[WARN] raft: not part of stable configuration, aborting election")
 					didWarn = true
@@ -831,7 +832,7 @@ func (r *Raft) runCandidate() {
 			if vote.Granted {
 				grantedVotes++
 				r.logger.Printf("[DEBUG] raft: Vote granted from %s in term %v. Tally: %d",
-					vote.voterGUID, vote.Term, grantedVotes)
+					vote.voterID, vote.Term, grantedVotes)
 			}
 
 			// Check if we've become the leader
@@ -889,7 +890,7 @@ func (r *Raft) runLeader() {
 		r.configurations.latest,
 		r.getLastIndex()+1 /* first index that may be committed in this term */)
 	r.leaderState.inflight = list.New()
-	r.leaderState.replState = make(map[string]*followerReplication)
+	r.leaderState.replState = make(map[ServerID]*followerReplication)
 	r.leaderState.notify = make(map[*verifyFuture]struct{})
 	r.leaderState.stepDown = make(chan struct{}, 1)
 
@@ -976,7 +977,7 @@ func (r *Raft) runLeader() {
 // startReplication is a helper to setup state and start async replication to a peer.
 // It's safe to call this with the local server (in that case, it does nothing.)
 func (r *Raft) startReplication(server Server) {
-	if server.GUID == r.localGUID {
+	if server.ID == r.localID {
 		return
 	}
 	lastIdx := r.getLastIndex()
@@ -991,7 +992,7 @@ func (r *Raft) startReplication(server Server) {
 		notifyCh:    make(chan struct{}, 1),
 		stepDown:    r.leaderState.stepDown,
 	}
-	r.leaderState.replState[server.GUID] = s
+	r.leaderState.replState[server.ID] = s
 	r.goFunc(func() { r.replicate(s) })
 	asyncNotifyCh(s.triggerCh)
 }
@@ -1000,14 +1001,14 @@ func (r *Raft) startReplication(server Server) {
 // peer, after it's tried to replicate up through the given index.
 // It's safe to call this with the local server (in that case, it does nothing.)
 func (r *Raft) stopReplication(server Server, index uint64) {
-	if server.GUID == r.localGUID {
+	if server.ID == r.localID {
 		return
 	}
-	if repl, ok := r.leaderState.replState[server.GUID]; ok {
+	if repl, ok := r.leaderState.replState[server.ID]; ok {
 		// Replicate up to this index and stop
 		repl.stopCh <- index
 		close(repl.stopCh)
-		delete(r.leaderState.replState, server.GUID)
+		delete(r.leaderState.replState, server.ID)
 	}
 }
 
@@ -1056,7 +1057,7 @@ func (r *Raft) leaderLoop() {
 				r.configurations.committedIndex = r.configurations.latestIndex
 				haveVote := false
 				for _, server := range r.configurations.committed.Servers {
-					if server.GUID == r.localGUID {
+					if server.ID == r.localID {
 						haveVote = (server.Suffrage == Voter)
 						break
 					}
@@ -1257,12 +1258,12 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 			// server will have a vote right away, and the Promote case below is
 			// unused.
 			Suffrage: Voter,
-			GUID:     future.serverGUID,
+			ID:       future.serverID,
 			Address:  future.serverAddress,
 		}
 		found := false
 		for i, server := range configuration.Servers {
-			if server.GUID == future.serverGUID {
+			if server.ID == future.serverID {
 				if server.Suffrage == Voter {
 					configuration.Servers[i].Address = future.serverAddress
 				} else {
@@ -1280,12 +1281,12 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 		commandStr = "AddNonvoter"
 		newServer := Server{
 			Suffrage: Nonvoter,
-			GUID:     future.serverGUID,
+			ID:       future.serverID,
 			Address:  future.serverAddress,
 		}
 		found := false
 		for i, server := range configuration.Servers {
-			if server.GUID == future.serverGUID {
+			if server.ID == future.serverID {
 				if server.Suffrage == Voter {
 					configuration.Servers[i].Address = future.serverAddress
 				} else {
@@ -1302,7 +1303,7 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 	case DemoteVoter:
 		commandStr = "DemoteVoter"
 		for i, server := range configuration.Servers {
-			if server.GUID == future.serverGUID {
+			if server.ID == future.serverID {
 				configuration.Servers[i].Suffrage = Nonvoter
 				break
 			}
@@ -1310,7 +1311,7 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 	case RemoveServer:
 		commandStr = "RemoveServer"
 		for i, server := range configuration.Servers {
-			if server.GUID == future.serverGUID {
+			if server.ID == future.serverID {
 				configuration.Servers = append(configuration.Servers[:i], configuration.Servers[i+1:]...)
 				stop = append(stop, server)
 				break
@@ -1319,7 +1320,7 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 	case Promote:
 		commandStr = "Promote"
 		for i, server := range configuration.Servers {
-			if server.GUID == future.serverGUID && server.Suffrage == Staging {
+			if server.ID == future.serverID && server.Suffrage == Staging {
 				configuration.Servers[i].Suffrage = Voter
 				break
 			}
@@ -1333,7 +1334,7 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 	}
 
 	r.logger.Printf("[INFO] raft: Updating configuration with %v (%v, %v) to %v",
-		commandStr, future.serverAddress, future.serverGUID, configuration)
+		commandStr, future.serverAddress, future.serverID, configuration)
 
 	future.log = Log{
 		Type: LogConfiguration,
@@ -1383,7 +1384,7 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 		r.setState(Follower)
 		return
 	}
-	r.leaderState.commitment.match(r.localAddr, lastIndex)
+	r.leaderState.commitment.match(r.localID, lastIndex)
 
 	// Update the last log since it's on disk now
 	r.setLastLog(lastIndex, term)
@@ -1532,7 +1533,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	}
 
 	// Save the current leader
-	r.setLeader(r.trans.DecodePeer(a.Leader))
+	r.setLeader(ServerAddress(r.trans.DecodePeer(a.Leader)))
 
 	// Verify the last log entry
 	if a.PrevLogEntry > 0 {
@@ -1751,7 +1752,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	}
 
 	// Save the current leader
-	r.setLeader(r.trans.DecodePeer(req.Leader))
+	r.setLeader(ServerAddress(r.trans.DecodePeer(req.Leader)))
 
 	// Create a new snapshot
 	var reqConfiguration Configuration
@@ -1845,7 +1846,7 @@ func (r *Raft) setLastContact() {
 
 type voteResult struct {
 	RequestVoteResponse
-	voterGUID string
+	voterID ServerID
 }
 
 // electSelf is used to send a RequestVote RPC to all peers,
@@ -1863,7 +1864,7 @@ func (r *Raft) electSelf() <-chan *voteResult {
 	lastIdx, lastTerm := r.getLastEntry()
 	req := &RequestVoteRequest{
 		Term:         r.getCurrentTerm(),
-		Candidate:    r.trans.EncodePeer(r.localAddr),
+		Candidate:    r.trans.EncodePeer(string(r.localAddr)),
 		LastLogIndex: lastIdx,
 		LastLogTerm:  lastTerm,
 	}
@@ -1872,8 +1873,8 @@ func (r *Raft) electSelf() <-chan *voteResult {
 	askPeer := func(peer Server) {
 		r.goFunc(func() {
 			defer metrics.MeasureSince([]string{"raft", "candidate", "electSelf"}, time.Now())
-			resp := &voteResult{voterGUID: peer.GUID}
-			err := r.trans.RequestVote(peer.Address, req, &resp.RequestVoteResponse)
+			resp := &voteResult{voterID: peer.ID}
+			err := r.trans.RequestVote(string(peer.Address), req, &resp.RequestVoteResponse)
 			if err != nil {
 				r.logger.Printf("[ERR] raft: Failed to make RequestVote RPC to %v: %v", peer, err)
 				resp.Term = req.Term
@@ -1886,7 +1887,7 @@ func (r *Raft) electSelf() <-chan *voteResult {
 	// For each peer, request a vote
 	for _, server := range r.configurations.latest.Servers {
 		if server.Suffrage == Voter {
-			if server.GUID == r.localGUID {
+			if server.ID == r.localID {
 				// Persist a vote for ourselves
 				if err := r.persistVote(req.Term, req.Candidate); err != nil {
 					r.logger.Printf("[ERR] raft: Failed to persist vote : %v", err)
@@ -1898,7 +1899,7 @@ func (r *Raft) electSelf() <-chan *voteResult {
 						Term:    req.Term,
 						Granted: true,
 					},
-					voterGUID: r.localGUID,
+					voterID: r.localID,
 				}
 			} else {
 				askPeer(server)

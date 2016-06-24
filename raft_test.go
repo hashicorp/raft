@@ -402,13 +402,13 @@ func (c *cluster) FullyConnect() {
 }
 
 // Disconnect disconnects all transports from the given address.
-func (c *cluster) Disconnect(a string) {
+func (c *cluster) Disconnect(a ServerAddress) {
 	c.logger.Printf("[DEBUG] Disconnecting %v", a)
 	for _, t := range c.trans {
-		if t.LocalAddr() == a {
+		if t.LocalAddr() == string(a) {
 			t.DisconnectAll()
 		} else {
-			t.Disconnect(a)
+			t.Disconnect(string(a))
 		}
 	}
 }
@@ -425,12 +425,12 @@ func (c *cluster) IndexOf(r *Raft) int {
 
 // EnsureLeader checks that ALL the nodes think the leader is the given expected
 // leader.
-func (c *cluster) EnsureLeader(t *testing.T, expect string) {
+func (c *cluster) EnsureLeader(t *testing.T, expect ServerAddress) {
 	// We assume c.Leader() has been called already; now check all the rafts
 	// think the leader is correct
 	fail := false
 	for _, r := range c.rafts {
-		leader := r.Leader()
+		leader := ServerAddress(r.Leader())
 		if leader != expect {
 			if leader == "" {
 				leader = "[none]"
@@ -494,11 +494,11 @@ WAIT:
 }
 
 // raftToPeerSet returns the set of peers as a map.
-func raftToPeerSet(r *Raft) map[string]struct{} {
-	peers := make(map[string]struct{})
+func raftToPeerSet(r *Raft) map[ServerID]struct{} {
+	peers := make(map[ServerID]struct{})
 	for _, p := range r.configurations.latest.Servers {
 		if p.Suffrage == Voter {
-			peers[p.Address] = struct{}{}
+			peers[p.ID] = struct{}{}
 		}
 	}
 	return peers
@@ -573,8 +573,8 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
 		c.trans = append(c.trans, trans)
 		configuration.Servers = append(configuration.Servers, Server{
 			Suffrage: Voter,
-			GUID:     addr,
-			Address:  addr,
+			ID:       ServerID(addr),
+			Address:  ServerAddress(addr),
 		})
 	}
 
@@ -590,7 +590,7 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
 		trans := c.trans[i]
 
 		peerConf := conf
-		peerConf.Logger = newTestLoggerWithPrefix(t, configuration.Servers[i].GUID)
+		peerConf.Logger = newTestLoggerWithPrefix(t, string(configuration.Servers[i].ID))
 
 		if bootstrap {
 			err := BootstrapCluster(peerConf, logs, store, snap, configuration)
@@ -966,7 +966,7 @@ func TestRaft_JoinNode(t *testing.T) {
 	c.FullyConnect()
 
 	// Join the new node in
-	future := c.Leader().AddPeer(c1.rafts[0].localAddr)
+	future := c.Leader().AddPeer(string(c1.rafts[0].localAddr))
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -1002,7 +1002,7 @@ func TestRaft_RemoveFollower(t *testing.T) {
 
 	// Remove a follower
 	follower := followers[0]
-	future := leader.RemovePeer(follower.localAddr)
+	future := leader.RemovePeer(string(follower.localAddr))
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -1039,7 +1039,7 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	}
 
 	// Remove the leader
-	f := leader.RemovePeer(leader.localAddr)
+	f := leader.RemovePeer(string(leader.localAddr))
 
 	// Wait for the future to complete
 	if f.Error() != nil {
@@ -1088,7 +1088,7 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	for i := byte(0); i < 100; i++ {
 		future := leader.Apply([]byte{i}, 0)
 		if i == 80 {
-			removeFuture = leader.RemovePeer(leader.localAddr)
+			removeFuture = leader.RemovePeer(string(leader.localAddr))
 		}
 		if i > 80 {
 			if err := future.Error(); err == nil || err != ErrNotLeader {
@@ -1144,7 +1144,7 @@ func TestRaft_RemoveLeader_SplitCluster(t *testing.T) {
 	leader := c.Leader()
 
 	// Remove the leader
-	leader.RemovePeer(leader.localAddr)
+	leader.RemovePeer(string(leader.localAddr))
 
 	// Wait until we have 2 leaders
 	limit := time.Now().Add(c.longstopTimeout)
@@ -1175,7 +1175,7 @@ func TestRaft_AddKnownPeer(t *testing.T) {
 	startingConfigIdx := leader.configurations.committedIndex
 
 	// Add a follower
-	future := leader.AddPeer(followers[0].localAddr)
+	future := leader.AddPeer(string(followers[0].localAddr))
 
 	// shouldn't error, configuration should end up the same as it was.
 	// Should be already added
@@ -1537,7 +1537,7 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 
 	// Remove a follower
 	follower := followers[0]
-	future := leader.RemovePeer(follower.localAddr)
+	future := leader.RemovePeer(string(follower.localAddr))
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -1560,7 +1560,7 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	// Rejoin. The follower will have a higher term than the leader,
 	// this will cause the leader to step down, and a new round of elections
 	// to take place. We should eventually re-stabilize.
-	future = leader.AddPeer(follower.localAddr)
+	future = leader.AddPeer(string(follower.localAddr))
 	if err := future.Error(); err != nil && err != ErrLeadershipLost {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -1856,21 +1856,21 @@ func TestRaft_Voting(t *testing.T) {
 
 	reqVote := RequestVoteRequest{
 		Term:         ldr.getCurrentTerm() + 10,
-		Candidate:    ldrT.EncodePeer(ldr.localAddr),
+		Candidate:    ldrT.EncodePeer(string(ldr.localAddr)),
 		LastLogIndex: ldr.LastIndex(),
 		LastLogTerm:  ldr.getCurrentTerm(),
 	}
 	// a follower that thinks there's a leader should vote for that leader.
 	var resp RequestVoteResponse
-	if err := ldrT.RequestVote(followers[0].localAddr, &reqVote, &resp); err != nil {
+	if err := ldrT.RequestVote(string(followers[0].localAddr), &reqVote, &resp); err != nil {
 		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
 	}
 	if !resp.Granted {
 		c.FailNowf("[ERR] expected vote to be granted, but wasn't %+v", resp)
 	}
 	// a follow that thinks there's a leader shouldn't vote for a different candidate
-	reqVote.Candidate = ldrT.EncodePeer(followers[0].localAddr)
-	if err := ldrT.RequestVote(followers[1].localAddr, &reqVote, &resp); err != nil {
+	reqVote.Candidate = ldrT.EncodePeer(string(followers[0].localAddr))
+	if err := ldrT.RequestVote(string(followers[1].localAddr), &reqVote, &resp); err != nil {
 		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
 	}
 	if resp.Granted {

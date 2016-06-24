@@ -88,8 +88,8 @@ func TestFileSS_CreateSnapshot(t *testing.T) {
 	var configuration Configuration
 	configuration.Servers = append(configuration.Servers, Server{
 		Suffrage: Voter,
-		GUID:     "my guid",
-		Address:  "over here",
+		ID:       ServerID("my id"),
+		Address:  ServerAddress("over here"),
 	})
 	sink, err := snap.Create(10, 3, configuration, 2)
 	if err != nil {

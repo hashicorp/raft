@@ -19,14 +19,20 @@ const (
 	Staging ServerSuffrage = 3
 )
 
+// ServerID is a unique string identifying a server for all time.
+type ServerID string
+
+// ServerAddress is a network address for a server that a transport can contact.
+type ServerAddress string
+
 // Server tracks the information about a single server in a configuration.
 type Server struct {
 	// Suffrage determines whether the server gets a vote.
 	Suffrage ServerSuffrage
-	// GUID is a unique string identifying this server for all time.
-	GUID string
+	// ID is a unique string identifying this server for all time.
+	ID ServerID
 	// Address is its network address that a transport can contact.
-	Address string
+	Address ServerAddress
 }
 
 // Configuration tracks which servers are in the cluster, and whether they have
@@ -67,11 +73,11 @@ func cloneConfiguration(old Configuration) (copy Configuration) {
 	return
 }
 
-// hasVote returns true if the server identified by 'guid' is a Voter in the
+// hasVote returns true if the server identified by 'id' is a Voter in the
 // provided Configuration.
-func hasVote(configuration Configuration, guid string) bool {
+func hasVote(configuration Configuration, id ServerID) bool {
 	for _, server := range configuration.Servers {
-		if server.GUID == guid {
+		if server.ID == id {
 			return server.Suffrage == Voter
 		}
 	}
@@ -81,20 +87,20 @@ func hasVote(configuration Configuration, guid string) bool {
 // checkConfiguration tests a cluster membership configuration for common
 // errors.
 func checkConfiguration(configuration Configuration) error {
-	guidSet := make(map[string]bool)
-	addressSet := make(map[string]bool)
+	idSet := make(map[ServerID]bool)
+	addressSet := make(map[ServerAddress]bool)
 	var voters int
 	for _, server := range configuration.Servers {
-		if server.GUID == "" {
-			return fmt.Errorf("Empty GUID in configuration: %v", configuration)
+		if server.ID == "" {
+			return fmt.Errorf("Empty ID in configuration: %v", configuration)
 		}
 		if server.Address == "" {
 			return fmt.Errorf("Empty address in configuration: %v", server)
 		}
-		if guidSet[server.GUID] {
-			return fmt.Errorf("Found duplicate GUID in configuration: %v", server.GUID)
+		if idSet[server.ID] {
+			return fmt.Errorf("Found duplicate ID in configuration: %v", server.ID)
 		}
-		guidSet[server.GUID] = true
+		idSet[server.ID] = true
 		if addressSet[server.Address] {
 			return fmt.Errorf("Found duplicate Address in configuration: %v", server.Address)
 		}
@@ -125,8 +131,8 @@ func decodePeers(buf []byte, trans Transport) Configuration {
 		p := trans.DecodePeer(enc)
 		servers = append(servers, Server{
 			Suffrage: Voter,
-			GUID:     p,
-			Address:  p,
+			ID:       ServerID(p),
+			Address:  ServerAddress(p),
 		})
 	}
 

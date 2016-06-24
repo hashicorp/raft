@@ -13,8 +13,8 @@ type commitment struct {
 	sync.Mutex
 	// notified when commitIndex increases
 	commitCh chan struct{}
-	// voter GUID to log index: the server stores up through this log entry
-	matchIndexes map[string]uint64
+	// voter ID to log index: the server stores up through this log entry
+	matchIndexes map[ServerID]uint64
 	// a quorum stores up through this log entry. monotonically increases.
 	commitIndex uint64
 	// the first index of this leader's term: this needs to be replicated to a
@@ -30,10 +30,10 @@ type commitment struct {
 // 'startIndex' is the first index created in this term (see
 // its description above).
 func newCommitment(commitCh chan struct{}, configuration Configuration, startIndex uint64) *commitment {
-	matchIndexes := make(map[string]uint64)
+	matchIndexes := make(map[ServerID]uint64)
 	for _, server := range configuration.Servers {
 		if server.Suffrage == Voter {
-			matchIndexes[server.GUID] = 0
+			matchIndexes[server.ID] = 0
 		}
 	}
 	return &commitment{
@@ -51,10 +51,10 @@ func (c *commitment) setConfiguration(configuration Configuration) {
 	c.Lock()
 	defer c.Unlock()
 	oldMatchIndexes := c.matchIndexes
-	c.matchIndexes = make(map[string]uint64)
+	c.matchIndexes = make(map[ServerID]uint64)
 	for _, server := range configuration.Servers {
 		if server.Suffrage == Voter {
-			c.matchIndexes[server.GUID] = oldMatchIndexes[server.GUID] // defaults to 0
+			c.matchIndexes[server.ID] = oldMatchIndexes[server.ID] // defaults to 0
 		}
 	}
 	c.recalculate()
@@ -71,7 +71,7 @@ func (c *commitment) getCommitIndex() uint64 {
 // leader has written the new entry or a follower has replied to an
 // AppendEntries RPC. The given server's disk agrees with this server's log up
 // through the given index.
-func (c *commitment) match(server string, matchIndex uint64) {
+func (c *commitment) match(server ServerID, matchIndex uint64) {
 	c.Lock()
 	defer c.Unlock()
 	if prev, hasVote := c.matchIndexes[server]; hasVote && matchIndex > prev {

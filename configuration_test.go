@@ -14,8 +14,8 @@ func TestCheckConfiguration(t *testing.T) {
 
 	configuration.Servers = append(configuration.Servers, Server{
 		Suffrage: Nonvoter,
-		GUID:     "guid0",
-		Address:  "addr0",
+		ID:       ServerID("id0"),
+		Address:  ServerAddress("addr0"),
 	})
 	if checkConfiguration(configuration) == nil {
 		t.Fatalf("lack of voter should be error")
@@ -23,18 +23,18 @@ func TestCheckConfiguration(t *testing.T) {
 
 	configuration.Servers = append(configuration.Servers, Server{
 		Suffrage: Voter,
-		GUID:     "guid1",
-		Address:  "addr1",
+		ID:       ServerID("id1"),
+		Address:  ServerAddress("addr1"),
 	})
 	if err := checkConfiguration(configuration); err != nil {
 		t.Fatalf("should be OK: %v", err)
 	}
 
-	configuration.Servers[1].GUID = "guid0"
+	configuration.Servers[1].ID = "id0"
 	if checkConfiguration(configuration) == nil {
-		t.Fatalf("duplicate GUID should be error")
+		t.Fatalf("duplicate ID should be error")
 	}
-	configuration.Servers[1].GUID = "guid1"
+	configuration.Servers[1].ID = "id1"
 
 	configuration.Servers[1].Address = "addr0"
 	if checkConfiguration(configuration) == nil {
@@ -52,8 +52,8 @@ func TestDecodePeers(t *testing.T) {
 		address := NewInmemAddr()
 		configuration.Servers = append(configuration.Servers, Server{
 			Suffrage: Voter,
-			GUID:     address,
-			Address:  address,
+			ID:       ServerID(address),
+			Address:  ServerAddress(address),
 		})
 		encPeers = append(encPeers, trans.EncodePeer(address))
 	}
