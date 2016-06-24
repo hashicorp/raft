@@ -1020,6 +1020,9 @@ func (r *Raft) stopReplication(server Server, index uint64) {
 
 // configurationChangeChIfStable returns r.configurationChangeCh if it's safe
 // to process requests from it, or nil otherwise.
+//
+// Note that if the conditions here were to change outside of leaderLoop to take
+// this from nil to non-nil, we would need leaderLoop to be kicked.
 func (r *Raft) configurationChangeChIfStable() chan *configurationChangeFuture {
 	// Have to wait until:
 	// 1. The latest configuration is committed, and
