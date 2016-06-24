@@ -103,7 +103,7 @@ func checkConfiguration(configuration Configuration) error {
 		}
 		idSet[server.ID] = true
 		if addressSet[server.Address] {
-			return fmt.Errorf("Found duplicate Address in configuration: %v", server.Address)
+			return fmt.Errorf("Found duplicate address in configuration: %v", server.Address)
 		}
 		addressSet[server.Address] = true
 		if server.Suffrage == Voter {

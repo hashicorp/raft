@@ -3,6 +3,7 @@ package raft
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -77,14 +78,22 @@ func TestConfiguration_checkConfiguration(t *testing.T) {
 	}
 
 	configuration.Servers[1].ID = "id0"
-	if checkConfiguration(configuration) == nil {
+	err := checkConfiguration(configuration)
+	if err == nil {
 		t.Fatalf("duplicate ID should be error")
+	}
+	if !strings.Contains(err.Error(), "duplicate ID") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 	configuration.Servers[1].ID = "id1"
 
 	configuration.Servers[1].Address = "addr0"
-	if checkConfiguration(configuration) == nil {
+	err = checkConfiguration(configuration)
+	if err == nil {
 		t.Fatalf("duplicate address should be error")
+	}
+	if !strings.Contains(err.Error(), "duplicate address") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
