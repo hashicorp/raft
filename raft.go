@@ -1061,14 +1061,7 @@ func (r *Raft) leaderLoop() {
 				r.configurations.latestIndex <= commitIndex {
 				r.configurations.committed = r.configurations.latest
 				r.configurations.committedIndex = r.configurations.latestIndex
-				haveVote := false
-				for _, server := range r.configurations.committed.Servers {
-					if server.ID == r.localID {
-						haveVote = (server.Suffrage == Voter)
-						break
-					}
-				}
-				if !haveVote {
+				if !hasVote(r.configurations.committed, r.localID) {
 					stepDown = true
 				}
 			}
