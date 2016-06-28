@@ -363,12 +363,8 @@ func (r *Raft) Leader() ServerAddress {
 // setLeader is used to modify the current leader of the cluster
 func (r *Raft) setLeader(leader ServerAddress) {
 	r.leaderLock.Lock()
-	oldLeader := r.leader
 	r.leader = leader
 	r.leaderLock.Unlock()
-	if oldLeader != leader {
-		r.observe(LeaderObservation{leader: string(leader)})
-	}
 }
 
 // Apply is used to apply a command to the FSM in a highly consistent
