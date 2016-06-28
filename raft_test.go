@@ -1072,7 +1072,6 @@ func TestRaft_RemoveLeader(t *testing.T) {
 }
 
 func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
-	return // TODO: fix broken test
 	// Make a cluster
 	conf := inmemConfig(t)
 	conf.ShutdownOnRemove = false
@@ -1084,21 +1083,19 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	leader := c.Leader()
 
 	// Remove the leader
-	var removeFuture Future
 	for i := byte(0); i < 100; i++ {
-		future := leader.Apply([]byte{i}, 0)
 		if i == 80 {
-			removeFuture = leader.RemovePeer(leader.localAddr)
+			removeFuture := leader.RemoveServer(leader.localID, 0, 0)
+			if err := removeFuture.Error(); err != nil {
+				c.FailNowf("[ERR] err: %v, remove leader failed", err)
+			}
 		}
+		future := leader.Apply([]byte{i}, 0)
 		if i > 80 {
 			if err := future.Error(); err == nil || err != ErrNotLeader {
 				c.FailNowf("[ERR] err: %v, future entries should fail", err)
 			}
 		}
-	}
-
-	if err := removeFuture.Error(); err != nil {
-		c.FailNowf("[ERR] RemovePeer failed with error %v", err)
 	}
 
 	// Wait a while
@@ -1110,19 +1107,25 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	// Wait a bit for log application
 	time.Sleep(c.propagateTimeout)
 
-	// Other nodes should have fewer peers
-	if len(newLeader.configurations.latest.Servers) != 3 {
+	// Other nodes should have pulled the leader.
+	if len(newLeader.configurations.latest.Servers) != 2 {
 		c.FailNowf("[ERR] too many peers")
 	}
+	if hasVote(newLeader.configurations.latest, leader.localID) {
+		c.FailNowf("[ERR] old leader should no longer have a vote")
+	}
 
-	// Old leader should be a follower
+	// Old leader should be a follower.
 	if leader.State() != Follower {
 		c.FailNowf("[ERR] leader should be shutdown")
 	}
 
-	// Old leader should have no peers
+	// Old leader should not include itself in its peers.
 	if len(leader.configurations.latest.Servers) != 2 {
-		c.FailNowf("[ERR] leader should have no peers")
+		c.FailNowf("[ERR] too many peers")
+	}
+	if hasVote(leader.configurations.latest, leader.localID) {
+		c.FailNowf("[ERR] old leader should no longer have a vote")
 	}
 
 	// Other nodes should have the same state
