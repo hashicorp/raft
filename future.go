@@ -10,11 +10,16 @@ type Future interface {
 	Error() error
 }
 
+// IndexFuture is used for future actions that can result in a raft log entry being created.
+type IndexFuture interface {
+	Future
+	Index() uint64
+}
+
 // ApplyFuture is used for Apply() and can returns the FSM response.
 type ApplyFuture interface {
-	Future
+	IndexFuture
 	Response() interface{}
-	Index() uint64
 }
 
 // errorFuture is used to return a static error.
@@ -69,6 +74,38 @@ func (d *deferError) respond(err error) {
 	d.responded = true
 }
 
+// ConfigurationChangeCommand is the different ways to change the cluster
+// configuration.
+type ConfigurationChangeCommand uint8
+
+const (
+	// AddStaging makes a server Staging unless its Voter.
+	AddStaging ConfigurationChangeCommand = iota
+	// AddNonvoter makes a server Nonvoter unless its Staging or Voter.
+	AddNonvoter
+	// DemoteVoter makes a server Nonvoter unless its absent.
+	DemoteVoter
+	// RemoveServer removes a server entirely from the cluster membership.
+	RemoveServer
+	// Promote is created automatically by a leader; it turns a Staging server
+	// into a Voter.
+	Promote
+)
+
+// There are several types of requests that cause a configuration entry to
+// be appended to the log. These are encoded here for leaderLoop() to process.
+// This is internal to a single server.
+type configurationChangeFuture struct {
+	logFuture
+	command       ConfigurationChangeCommand
+	serverID      ServerID
+	serverAddress ServerAddress // only present for AddStaging, AddNonvoter
+	// prevIndex, if nonzero, is the index of the only configuration upon which
+	// this change may be applied; if another configuration entry has been
+	// added in the meantime, this request will fail.
+	prevIndex uint64
+}
+
 // logFuture is used to apply a log entry and waits until
 // the log is considered committed.
 type logFuture struct {
@@ -84,11 +121,6 @@ func (l *logFuture) Response() interface{} {
 
 func (l *logFuture) Index() uint64 {
 	return l.log.Index
-}
-
-type peerFuture struct {
-	deferError
-	peers []string
 }
 
 type shutdownFuture struct {
@@ -119,10 +151,11 @@ type reqSnapshotFuture struct {
 	deferError
 
 	// snapshot details provided by the FSM runner before responding
-	index    uint64
-	term     uint64
-	peers    []string
-	snapshot FSMSnapshot
+	index              uint64
+	term               uint64
+	configuration      Configuration
+	configurationIndex uint64
+	snapshot           FSMSnapshot
 }
 
 // restoreFuture is used for requesting an FSM to perform a

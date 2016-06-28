@@ -235,7 +235,6 @@ func TestNetworkTransport_RequestVote(t *testing.T) {
 	}
 	resp := RequestVoteResponse{
 		Term:    100,
-		Peers:   []byte("blah"),
 		Granted: false,
 	}
 

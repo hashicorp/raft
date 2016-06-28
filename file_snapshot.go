@@ -132,7 +132,7 @@ func snapshotName(term, index uint64) string {
 }
 
 // Create is used to start a new snapshot
-func (f *FileSnapshotStore) Create(index, term uint64, peers []byte) (SnapshotSink, error) {
+func (f *FileSnapshotStore) Create(index, term uint64, configuration Configuration, configurationIndex uint64) (SnapshotSink, error) {
 	// Create a new path
 	name := snapshotName(term, index)
 	path := filepath.Join(f.path, name+tmpSuffix)
@@ -151,10 +151,11 @@ func (f *FileSnapshotStore) Create(index, term uint64, peers []byte) (SnapshotSi
 		dir:    path,
 		meta: fileSnapshotMeta{
 			SnapshotMeta: SnapshotMeta{
-				ID:    name,
-				Index: index,
-				Term:  term,
-				Peers: peers,
+				ID:                 name,
+				Index:              index,
+				Term:               term,
+				Configuration:      configuration,
+				ConfigurationIndex: configurationIndex,
 			},
 			CRC: nil,
 		},

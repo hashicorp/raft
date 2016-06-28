@@ -33,13 +33,6 @@ type Config struct {
 	// we can become a leader of a cluster containing only this node.
 	ShutdownOnRemove bool
 
-	// DisableBootstrapAfterElect is used to turn off EnableSingleNode
-	// after the node is elected. This is used to prevent self-election
-	// if the node is removed from the Raft cluster via RemovePeer. Setting
-	// it to false will keep the bootstrap mode, allowing the node to self-elect
-	// and potentially bootstrap a separate cluster.
-	DisableBootstrapAfterElect bool
-
 	// TrailingLogs controls how many logs we leave after a snapshot. This is
 	// used so that we can quickly replay logs on a follower instead of being
 	// forced to send an entire snapshot.
@@ -55,11 +48,6 @@ type Config struct {
 	// just replay a small set of logs.
 	SnapshotThreshold uint64
 
-	// EnableSingleNode allows for a single node mode of operation. This
-	// is false by default, which prevents a lone node from electing itself.
-	// leader.
-	EnableSingleNode bool
-
 	// LeaderLeaseTimeout is used to control how long the "lease" lasts
 	// for being the leader without being able to contact a quorum
 	// of nodes. If we reach this interval without contact, we will
@@ -69,6 +57,11 @@ type Config struct {
 	// StartAsLeader forces Raft to start in the leader state. This should
 	// never be used except for testing purposes, as it can cause a split-brain.
 	StartAsLeader bool
+
+	// The unique ID for this server across all time. For now, this defaults to
+	// an empty string, indicating the server's network address should be used
+	// here. That default will be removed in the future.
+	LocalID ServerID
 
 	// NotifyCh is used to provide a channel that will be notified of leadership
 	// changes. Raft will block writing to this channel, so it should either be
@@ -87,17 +80,15 @@ type Config struct {
 // DefaultConfig returns a Config with usable defaults.
 func DefaultConfig() *Config {
 	return &Config{
-		HeartbeatTimeout:           1000 * time.Millisecond,
-		ElectionTimeout:            1000 * time.Millisecond,
-		CommitTimeout:              50 * time.Millisecond,
-		MaxAppendEntries:           64,
-		ShutdownOnRemove:           true,
-		DisableBootstrapAfterElect: true,
-		TrailingLogs:               10240,
-		SnapshotInterval:           120 * time.Second,
-		SnapshotThreshold:          8192,
-		EnableSingleNode:           false,
-		LeaderLeaseTimeout:         500 * time.Millisecond,
+		HeartbeatTimeout:   1000 * time.Millisecond,
+		ElectionTimeout:    1000 * time.Millisecond,
+		CommitTimeout:      50 * time.Millisecond,
+		MaxAppendEntries:   64,
+		ShutdownOnRemove:   true,
+		TrailingLogs:       10240,
+		SnapshotInterval:   120 * time.Second,
+		SnapshotThreshold:  8192,
+		LeaderLeaseTimeout: 500 * time.Millisecond,
 	}
 }
 
