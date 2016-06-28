@@ -31,27 +31,27 @@ type Transport interface {
 	Consumer() <-chan RPC
 
 	// LocalAddr is used to return our local address to distinguish from our peers.
-	LocalAddr() string
+	LocalAddr() ServerAddress
 
 	// AppendEntriesPipeline returns an interface that can be used to pipeline
 	// AppendEntries requests.
-	AppendEntriesPipeline(target string) (AppendPipeline, error)
+	AppendEntriesPipeline(target ServerAddress) (AppendPipeline, error)
 
 	// AppendEntries sends the appropriate RPC to the target node.
-	AppendEntries(target string, args *AppendEntriesRequest, resp *AppendEntriesResponse) error
+	AppendEntries(target ServerAddress, args *AppendEntriesRequest, resp *AppendEntriesResponse) error
 
 	// RequestVote sends the appropriate RPC to the target node.
-	RequestVote(target string, args *RequestVoteRequest, resp *RequestVoteResponse) error
+	RequestVote(target ServerAddress, args *RequestVoteRequest, resp *RequestVoteResponse) error
 
 	// InstallSnapshot is used to push a snapshot down to a follower. The data is read from
 	// the ReadCloser and streamed to the client.
-	InstallSnapshot(target string, args *InstallSnapshotRequest, resp *InstallSnapshotResponse, data io.Reader) error
+	InstallSnapshot(target ServerAddress, args *InstallSnapshotRequest, resp *InstallSnapshotResponse, data io.Reader) error
 
-	// EncodePeer is used to serialize a peer name.
-	EncodePeer(string) []byte
+	// EncodePeer is used to serialize a peer's address.
+	EncodePeer(ServerAddress) []byte
 
-	// DecodePeer is used to deserialize a peer name.
-	DecodePeer([]byte) string
+	// DecodePeer is used to deserialize a peer's address.
+	DecodePeer([]byte) ServerAddress
 
 	// SetHeartbeatHandler is used to setup a heartbeat handler
 	// as a fast-pass. This is to avoid head-of-line blocking from
@@ -79,9 +79,9 @@ type LoopbackTransport interface {
 // disconnection. Unless the transport is a loopback transport, the transport specified to
 // "Connect" is likely to be nil.
 type WithPeers interface {
-	Connect(peer string, t Transport) // Connect a peer
-	Disconnect(peer string)           // Disconnect a given peer
-	DisconnectAll()                   // Disconnect all peers, possibly to reconnect them later
+	Connect(peer ServerAddress, t Transport) // Connect a peer
+	Disconnect(peer ServerAddress)           // Disconnect a given peer
+	DisconnectAll()                          // Disconnect all peers, possibly to reconnect them later
 }
 
 // AppendPipeline is used for pipelining AppendEntries requests. It is used

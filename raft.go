@@ -353,10 +353,9 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 // Leader is used to return the current leader of the cluster.
 // It may return empty string if there is no current leader
 // or the leader is unknown.
-func (r *Raft) Leader() string {
-	// TODO: change return type to ServerAddress?
+func (r *Raft) Leader() ServerAddress {
 	r.leaderLock.RLock()
-	leader := string(r.leader)
+	leader := r.leader
 	r.leaderLock.RUnlock()
 	return leader
 }
@@ -452,15 +451,15 @@ func (r *Raft) VerifyLeader() Future {
 
 // AddPeer (deprecated) is used to add a new peer into the cluster. This must be
 // run on the leader or it will fail. Use AddVoter/AddNonvoter instead.
-func (r *Raft) AddPeer(peer string) Future {
-	return r.AddVoter(ServerID(peer), ServerAddress(peer), 0, 0)
+func (r *Raft) AddPeer(peer ServerAddress) Future {
+	return r.AddVoter(ServerID(peer), peer, 0, 0)
 }
 
 // RemovePeer (deprecated) is used to remove a peer from the cluster. If the
 // current leader is being removed, it will cause a new election
 // to occur. This must be run on the leader or it will fail.
 // Use RemoveServer instead.
-func (r *Raft) RemovePeer(peer string) Future {
+func (r *Raft) RemovePeer(peer ServerAddress) Future {
 	return r.RemoveServer(ServerID(peer), 0, 0)
 }
 
@@ -1866,7 +1865,7 @@ func (r *Raft) electSelf() <-chan *voteResult {
 	lastIdx, lastTerm := r.getLastEntry()
 	req := &RequestVoteRequest{
 		Term:         r.getCurrentTerm(),
-		Candidate:    r.trans.EncodePeer(string(r.localAddr)),
+		Candidate:    r.trans.EncodePeer(r.localAddr),
 		LastLogIndex: lastIdx,
 		LastLogTerm:  lastTerm,
 	}
@@ -1876,7 +1875,7 @@ func (r *Raft) electSelf() <-chan *voteResult {
 		r.goFunc(func() {
 			defer metrics.MeasureSince([]string{"raft", "candidate", "electSelf"}, time.Now())
 			resp := &voteResult{voterID: peer.ID}
-			err := r.trans.RequestVote(string(peer.Address), req, &resp.RequestVoteResponse)
+			err := r.trans.RequestVote(peer.Address, req, &resp.RequestVoteResponse)
 			if err != nil {
 				r.logger.Printf("[ERR] raft: Failed to make RequestVote RPC to %v: %v", peer, err)
 				resp.Term = req.Term

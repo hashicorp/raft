@@ -238,8 +238,8 @@ func TestRaft_Integ(t *testing.T) {
 	}
 
 	// Remove the old nodes
-	NoErr(WaitFuture(leader.raft.RemovePeer(string(rm1.raft.localAddr)), t), t)
-	NoErr(WaitFuture(leader.raft.RemovePeer(string(rm2.raft.localAddr)), t), t)
+	NoErr(WaitFuture(leader.raft.RemovePeer(rm1.raft.localAddr), t), t)
+	NoErr(WaitFuture(leader.raft.RemovePeer(rm2.raft.localAddr), t), t)
 
 	// Shoot the leader
 	env1.Release()
