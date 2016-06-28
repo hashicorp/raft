@@ -413,6 +413,41 @@ func (c *cluster) Disconnect(a ServerAddress) {
 	}
 }
 
+// Partition keeps the given list of addresses connected but isolates them
+// from the other members of the cluster.
+func (c *cluster) Partition(far []string) {
+	c.logger.Printf("[DEBUG] Partitioning %v", far)
+
+	// Gather the set of nodes on the "near" side of the partition (we
+	// will call the supplied list of nodes the "far" side).
+	near := make(map[string]struct{})
+OUTER:
+	for _, t := range c.trans {
+		l := t.LocalAddr()
+		for _, a := range far {
+			if l == a {
+				continue OUTER
+			}
+		}
+		near[l] = struct{}{}
+	}
+
+	// Now fixup all the connections. The near side will be separated from
+	// the far side, and vice-versa.
+	for _, t := range c.trans {
+		l := t.LocalAddr()
+		if _, ok := near[l]; ok {
+			for _, a := range far {
+				t.Disconnect(a)
+			}
+		} else {
+			for a, _ := range near {
+				t.Disconnect(a)
+			}
+		}
+	}
+}
+
 // IndexOf returns the index of the given raft instance.
 func (c *cluster) IndexOf(r *Raft) int {
 	for i, n := range c.rafts {
@@ -1160,6 +1195,42 @@ func TestRaft_RemoveLeader_SplitCluster(t *testing.T) {
 	// Old leader should have no peers
 	if len(leader.configurations.latest.Servers) != 1 {
 		c.FailNowf("[ERR] leader should have no peers")
+	}
+}
+
+func TestRaft_RemoveFollower_SplitCluster(t *testing.T) {
+	// Make a cluster.
+	conf := inmemConfig(t)
+	c := MakeCluster(4, t, conf)
+	defer c.Close()
+
+	// Wait for a leader to get elected.
+	leader := c.Leader()
+
+	// Wait to make sure knowledge of the 4th server is known to all the
+	// peers.
+	limit := time.Now().Add(c.longstopTimeout)
+	numPeers := 0
+	for time.Now().Before(limit) && numPeers != 4 {
+		peers, err := leader.peerStore.Peers()
+		if err != nil {
+			c.FailNowf("[ERR] Failed to get peers: %v", err)
+		}
+		numPeers = len(peers)
+	}
+	if numPeers != 4 {
+		c.FailNowf("[ERR] Leader should have 4 peers, got %d", numPeers)
+	}
+	c.EnsureSamePeers(t)
+
+	// Isolate two of the followers.
+	followers := c.Followers()
+	c.Partition([]string{followers[0].localAddr, followers[1].localAddr})
+
+	// Try to remove the remaining follower that was left with the leader.
+	future := leader.RemovePeer(followers[2].localAddr)
+	if err := future.Error(); err == nil {
+		c.FailNowf("[ERR] Should not have been able to make peer change")
 	}
 }
 
