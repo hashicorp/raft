@@ -270,9 +270,8 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	localAddr := ServerAddress(trans.LocalAddr())
 	localID := conf.LocalID
 	if localID == "" {
-		logger.Printf("[WARN] raft: No server ID given, using network address: %v",
+		logger.Printf("[WARN] raft: No server ID given, using network address: %v. This default will be removed in the future. Set server ID explicitly in config.",
 			localAddr)
-		logger.Printf("[WARN] raft: This default will be removed in the future. Set server ID explicitly in Config")
 		localID = ServerID(localAddr)
 	}
 
