@@ -1132,40 +1132,6 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	c.EnsureSame(t)
 }
 
-func TestRaft_RemoveLeader_SplitCluster(t *testing.T) {
-	return // TODO: fix broken test
-	// Enable operation after a remove
-	conf := inmemConfig(t)
-	conf.ShutdownOnRemove = false
-
-	// Make a cluster
-	c := MakeCluster(3, t, conf)
-	defer c.Close()
-
-	// Get the leader
-	c.Followers()
-	leader := c.Leader()
-
-	// Remove the leader
-	leader.RemovePeer(leader.localAddr)
-
-	// Wait until we have 2 leaders
-	limit := time.Now().Add(c.longstopTimeout)
-	var leaders []*Raft
-	for time.Now().Before(limit) && len(leaders) != 2 {
-		c.WaitEvent(nil, c.conf.CommitTimeout)
-		leaders = c.GetInState(Leader)
-	}
-	if len(leaders) != 2 {
-		c.FailNowf("[ERR] expected two leader: %v", leaders)
-	}
-
-	// Old leader should have no peers
-	if len(leader.configurations.latest.Servers) != 1 {
-		c.FailNowf("[ERR] leader should have no peers")
-	}
-}
-
 func TestRaft_AddKnownPeer(t *testing.T) {
 	// Make a cluster
 	c := MakeCluster(3, t, nil)
