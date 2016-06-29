@@ -1250,7 +1250,10 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 // TODO: Need a test that has a previous format Snapshot and check that it can be read/installed on the new code.
 
 func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
-	return // TODO: fix broken test
+	// TODO - Fix broken test. This needs a story about how we recover and
+	// manually let the operator adjust the quorum before we can proceed.
+	return
+
 	// Make the cluster
 	conf := inmemConfig(t)
 	conf.TrailingLogs = 10
