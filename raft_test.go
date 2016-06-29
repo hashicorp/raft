@@ -1481,8 +1481,7 @@ func TestRaft_SendSnapshotAndLogsFollower(t *testing.T) {
 }
 
 func TestRaft_ReJoinFollower(t *testing.T) {
-	return // TODO: fix broken test
-	// Enable operation after a remove
+	// Enable operation after a remove.
 	conf := inmemConfig(t)
 	conf.ShutdownOnRemove = false
 
@@ -1490,10 +1489,10 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	c := MakeCluster(3, t, conf)
 	defer c.Close()
 
-	// Get the leader
+	// Get the leader.
 	leader := c.Leader()
 
-	// Wait until we have 2 followers
+	// Wait until we have 2 followers.
 	limit := time.Now().Add(c.longstopTimeout)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
@@ -1504,27 +1503,36 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 		c.FailNowf("[ERR] expected two followers: %v", followers)
 	}
 
-	// Remove a follower
+	// Remove a follower.
 	follower := followers[0]
 	future := leader.RemovePeer(follower.localAddr)
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 
-	// Wait a while
+	// Other nodes should have fewer peers.
 	time.Sleep(c.propagateTimeout)
-
-	// Other nodes should have fewer peers
-	if len(leader.configurations.latest.Servers) != 3 {
+	if len(leader.configurations.latest.Servers) != 2 {
 		c.FailNowf("[ERR] too many peers: %v", leader.configurations)
 	}
-	if len(followers[1].configurations.latest.Servers) != 3 {
+	if len(followers[1].configurations.latest.Servers) != 2 {
 		c.FailNowf("[ERR] too many peers: %v", followers[1].configurations)
 	}
 
-	// Get the leader
-	time.Sleep(c.propagateTimeout)
-	leader = c.Leader()
+	// Get the leader. We can't use the normal stability checker here because
+	// the removed server will be trying to run an election but will be
+	// ignored. The stability check will think this is off nominal because
+	// the RequestVote RPCs won't stop firing.
+	limit = time.Now().Add(c.longstopTimeout)
+	var leaders []*Raft
+	for time.Now().Before(limit) && len(leaders) != 1 {
+		c.WaitEvent(nil, c.conf.CommitTimeout)
+		leaders, _ = c.pollState(Leader)
+	}
+	if len(leaders) != 1 {
+		c.FailNowf("[ERR] expected a leader")
+	}
+	leader = leaders[0]
 
 	// Rejoin. The follower will have a higher term than the leader,
 	// this will cause the leader to step down, and a new round of elections
@@ -1534,18 +1542,18 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 
-	// Wait a while
-	time.Sleep(c.propagateTimeout)
-
-	// Other nodes should have fewer peers
-	if len(leader.configurations.latest.Servers) != 4 {
+	// We should level back up to the proper number of peers. We add a
+	// stability check here to make sure the cluster gets to a state where
+	// there's a solid leader.
+	leader = c.Leader()
+	if len(leader.configurations.latest.Servers) != 3 {
 		c.FailNowf("[ERR] missing peers: %v", leader.configurations)
 	}
-	if len(followers[1].configurations.latest.Servers) != 4 {
+	if len(followers[1].configurations.latest.Servers) != 3 {
 		c.FailNowf("[ERR] missing peers: %v", followers[1].configurations)
 	}
 
-	// Should be a follower now
+	// Should be a follower now.
 	if follower.State() != Follower {
 		c.FailNowf("[ERR] bad state: %v", follower.State())
 	}
