@@ -74,6 +74,17 @@ func MakeRaft(t *testing.T, conf *Config) *RaftEnv {
 	}
 	env.trans = trans
 
+	var configuration Configuration
+	configuration.Servers = append(configuration.Servers, Server{
+		Suffrage: Voter,
+		ID:       ServerID(trans.LocalAddr()),
+		Address:  trans.LocalAddr(),
+	})
+	err = BootstrapCluster(conf, stable, stable, snap, configuration)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
 	log.Printf("[INFO] Starting node at %v", trans.LocalAddr())
 	raft, err := NewRaft(conf, env.fsm, stable, stable, snap, trans)
 	if err != nil {
