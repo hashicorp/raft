@@ -413,6 +413,41 @@ func (c *cluster) Disconnect(a ServerAddress) {
 	}
 }
 
+// Partition keeps the given list of addresses connected but isolates them
+// from the other members of the cluster.
+func (c *cluster) Partition(far []ServerAddress) {
+	c.logger.Printf("[DEBUG] Partitioning %v", far)
+
+	// Gather the set of nodes on the "near" side of the partition (we
+	// will call the supplied list of nodes the "far" side).
+	near := make(map[ServerAddress]struct{})
+OUTER:
+	for _, t := range c.trans {
+		l := t.LocalAddr()
+		for _, a := range far {
+			if l == a {
+				continue OUTER
+			}
+		}
+		near[l] = struct{}{}
+	}
+
+	// Now fixup all the connections. The near side will be separated from
+	// the far side, and vice-versa.
+	for _, t := range c.trans {
+		l := t.LocalAddr()
+		if _, ok := near[l]; ok {
+			for _, a := range far {
+				t.Disconnect(a)
+			}
+		} else {
+			for a, _ := range near {
+				t.Disconnect(a)
+			}
+		}
+	}
+}
+
 // IndexOf returns the index of the given raft instance.
 func (c *cluster) IndexOf(r *Raft) int {
 	for i, n := range c.rafts {
@@ -1130,6 +1165,42 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 
 	// Other nodes should have the same state
 	c.EnsureSame(t)
+}
+
+func TestRaft_RemoveFollower_SplitCluster(t *testing.T) {
+	// Make a cluster.
+	conf := inmemConfig(t)
+	c := MakeCluster(4, t, conf)
+	defer c.Close()
+
+	// Wait for a leader to get elected.
+	leader := c.Leader()
+
+	// Wait to make sure knowledge of the 4th server is known to all the
+	// peers.
+	numServers := 0
+	limit := time.Now().Add(c.longstopTimeout)
+	for time.Now().Before(limit) && numServers != 4 {
+		time.Sleep(c.propagateTimeout)
+		numServers = len(leader.configurations.latest.Servers)
+	}
+	if numServers != 4 {
+		c.FailNowf("[ERR] Leader should have 4 servers, got %d", numServers)
+	}
+	c.EnsureSamePeers(t)
+
+	// Isolate two of the followers.
+	followers := c.Followers()
+	if len(followers) != 3 {
+		c.FailNowf("[ERR] Expected 3 followers, got %d", len(followers))
+	}
+	c.Partition([]ServerAddress{followers[0].localAddr, followers[1].localAddr})
+
+	// Try to remove the remaining follower that was left with the leader.
+	future := leader.RemovePeer(followers[2].localAddr)
+	if err := future.Error(); err == nil {
+		c.FailNowf("[ERR] Should not have been able to make peer change")
+	}
 }
 
 func TestRaft_AddKnownPeer(t *testing.T) {
