@@ -27,10 +27,17 @@ const (
 // Log entries are replicated to all members of the Raft cluster
 // and form the heart of the replicated state machine.
 type Log struct {
+	// Index holds the index of the log entry.
 	Index uint64
-	Term  uint64
-	Type  LogType
-	Data  []byte
+
+	// Term holds the election term of the log entry.
+	Term uint64
+
+	// Type holds the type of the log entry.
+	Type LogType
+
+	// Data holds the log entry's type-specific data.
+	Data []byte
 
 	// peer is not exported since it is not transmitted, only used
 	// internally to construct the Data field.
@@ -40,21 +47,21 @@ type Log struct {
 // LogStore is used to provide an interface for storing
 // and retrieving logs in a durable fashion.
 type LogStore interface {
-	// Returns the first index written. 0 for no entries.
+	// FirstIndex returns the first index written. 0 for no entries.
 	FirstIndex() (uint64, error)
 
-	// Returns the last index written. 0 for no entries.
+	// LastIndex returns the last index written. 0 for no entries.
 	LastIndex() (uint64, error)
 
-	// Gets a log entry at a given index.
+	// GetLog gets a log entry at a given index.
 	GetLog(index uint64, log *Log) error
 
-	// Stores a log entry.
+	// StoreLog stores a log entry.
 	StoreLog(log *Log) error
 
-	// Stores multiple log entries.
+	// StoreLogs stores multiple log entries.
 	StoreLogs(logs []*Log) error
 
-	// Deletes a range of log entries. The range is inclusive.
+	// DeleteRange deletes a range of log entries. The range is inclusive.
 	DeleteRange(min, max uint64) error
 }

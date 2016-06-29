@@ -7,13 +7,27 @@ import (
 
 // Future is used to represent an action that may occur in the future.
 type Future interface {
+	// Error blocks until the future arrives and then
+	// returns the error status of the future.
+	// This may be called any number of times - all
+	// calls will return the same value.
+	// Note that it is not OK to call this method
+	// twice concurrently on the same Future instance.
 	Error() error
 }
 
 // ApplyFuture is used for Apply() and can returns the FSM response.
 type ApplyFuture interface {
 	Future
+
+	// Response returns the FSM response as returned
+	// by the FSM.Apply method. This must not be called
+	// until after the Error method has returned.
 	Response() interface{}
+
+	// Index holds the index of the newly applied log entry.
+	// This must not be called
+	// until after the Error method has returned.
 	Index() uint64
 }
 
@@ -48,6 +62,9 @@ func (d *deferError) init() {
 
 func (d *deferError) Error() error {
 	if d.err != nil {
+		// Note that when we've received a nil error, this
+		// won't trigger, but the channel is closed after
+		// send so we'll still return nil below.
 		return d.err
 	}
 	if d.errCh == nil {
@@ -100,9 +117,7 @@ func (s *shutdownFuture) Error() error {
 	if s.raft == nil {
 		return nil
 	}
-	for s.raft.getRoutines() > 0 {
-		time.Sleep(5 * time.Millisecond)
-	}
+	s.raft.waitShutdown()
 	if closeable, ok := s.raft.trans.(WithClose); ok {
 		closeable.Close()
 	}
