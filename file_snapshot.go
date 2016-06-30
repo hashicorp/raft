@@ -386,7 +386,10 @@ func (s *FileSnapshotSink) Close() error {
 	}
 
 	// Reap any old snapshots
-	s.store.ReapSnapshots()
+	if err := s.store.ReapSnapshots(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
