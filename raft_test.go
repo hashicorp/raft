@@ -405,10 +405,45 @@ func (c *cluster) FullyConnect() {
 func (c *cluster) Disconnect(a ServerAddress) {
 	c.logger.Printf("[DEBUG] Disconnecting %v", a)
 	for _, t := range c.trans {
-		if t.LocalAddr() == string(a) {
+		if t.LocalAddr() == a {
 			t.DisconnectAll()
 		} else {
-			t.Disconnect(string(a))
+			t.Disconnect(a)
+		}
+	}
+}
+
+// Partition keeps the given list of addresses connected but isolates them
+// from the other members of the cluster.
+func (c *cluster) Partition(far []ServerAddress) {
+	c.logger.Printf("[DEBUG] Partitioning %v", far)
+
+	// Gather the set of nodes on the "near" side of the partition (we
+	// will call the supplied list of nodes the "far" side).
+	near := make(map[ServerAddress]struct{})
+OUTER:
+	for _, t := range c.trans {
+		l := t.LocalAddr()
+		for _, a := range far {
+			if l == a {
+				continue OUTER
+			}
+		}
+		near[l] = struct{}{}
+	}
+
+	// Now fixup all the connections. The near side will be separated from
+	// the far side, and vice-versa.
+	for _, t := range c.trans {
+		l := t.LocalAddr()
+		if _, ok := near[l]; ok {
+			for _, a := range far {
+				t.Disconnect(a)
+			}
+		} else {
+			for a, _ := range near {
+				t.Disconnect(a)
+			}
 		}
 	}
 }
@@ -966,7 +1001,7 @@ func TestRaft_JoinNode(t *testing.T) {
 	c.FullyConnect()
 
 	// Join the new node in
-	future := c.Leader().AddPeer(string(c1.rafts[0].localAddr))
+	future := c.Leader().AddPeer(c1.rafts[0].localAddr)
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -1002,7 +1037,7 @@ func TestRaft_RemoveFollower(t *testing.T) {
 
 	// Remove a follower
 	follower := followers[0]
-	future := leader.RemovePeer(string(follower.localAddr))
+	future := leader.RemovePeer(follower.localAddr)
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -1039,7 +1074,7 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	}
 
 	// Remove the leader
-	f := leader.RemovePeer(string(leader.localAddr))
+	f := leader.RemovePeer(leader.localAddr)
 
 	// Wait for the future to complete
 	if f.Error() != nil {
@@ -1072,7 +1107,6 @@ func TestRaft_RemoveLeader(t *testing.T) {
 }
 
 func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
-	return // TODO: fix broken test
 	// Make a cluster
 	conf := inmemConfig(t)
 	conf.ShutdownOnRemove = false
@@ -1084,21 +1118,19 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	leader := c.Leader()
 
 	// Remove the leader
-	var removeFuture Future
 	for i := byte(0); i < 100; i++ {
-		future := leader.Apply([]byte{i}, 0)
 		if i == 80 {
-			removeFuture = leader.RemovePeer(string(leader.localAddr))
+			removeFuture := leader.RemoveServer(leader.localID, 0, 0)
+			if err := removeFuture.Error(); err != nil {
+				c.FailNowf("[ERR] err: %v, remove leader failed", err)
+			}
 		}
+		future := leader.Apply([]byte{i}, 0)
 		if i > 80 {
 			if err := future.Error(); err == nil || err != ErrNotLeader {
 				c.FailNowf("[ERR] err: %v, future entries should fail", err)
 			}
 		}
-	}
-
-	if err := removeFuture.Error(); err != nil {
-		c.FailNowf("[ERR] RemovePeer failed with error %v", err)
 	}
 
 	// Wait a while
@@ -1110,56 +1142,64 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	// Wait a bit for log application
 	time.Sleep(c.propagateTimeout)
 
-	// Other nodes should have fewer peers
-	if len(newLeader.configurations.latest.Servers) != 3 {
+	// Other nodes should have pulled the leader.
+	if len(newLeader.configurations.latest.Servers) != 2 {
 		c.FailNowf("[ERR] too many peers")
 	}
+	if hasVote(newLeader.configurations.latest, leader.localID) {
+		c.FailNowf("[ERR] old leader should no longer have a vote")
+	}
 
-	// Old leader should be a follower
+	// Old leader should be a follower.
 	if leader.State() != Follower {
 		c.FailNowf("[ERR] leader should be shutdown")
 	}
 
-	// Old leader should have no peers
+	// Old leader should not include itself in its peers.
 	if len(leader.configurations.latest.Servers) != 2 {
-		c.FailNowf("[ERR] leader should have no peers")
+		c.FailNowf("[ERR] too many peers")
+	}
+	if hasVote(leader.configurations.latest, leader.localID) {
+		c.FailNowf("[ERR] old leader should no longer have a vote")
 	}
 
 	// Other nodes should have the same state
 	c.EnsureSame(t)
 }
 
-func TestRaft_RemoveLeader_SplitCluster(t *testing.T) {
-	return // TODO: fix broken test
-	// Enable operation after a remove
+func TestRaft_RemoveFollower_SplitCluster(t *testing.T) {
+	// Make a cluster.
 	conf := inmemConfig(t)
-	conf.ShutdownOnRemove = false
-
-	// Make a cluster
-	c := MakeCluster(3, t, conf)
+	c := MakeCluster(4, t, conf)
 	defer c.Close()
 
-	// Get the leader
-	c.Followers()
+	// Wait for a leader to get elected.
 	leader := c.Leader()
 
-	// Remove the leader
-	leader.RemovePeer(string(leader.localAddr))
-
-	// Wait until we have 2 leaders
+	// Wait to make sure knowledge of the 4th server is known to all the
+	// peers.
+	numServers := 0
 	limit := time.Now().Add(c.longstopTimeout)
-	var leaders []*Raft
-	for time.Now().Before(limit) && len(leaders) != 2 {
-		c.WaitEvent(nil, c.conf.CommitTimeout)
-		leaders = c.GetInState(Leader)
+	for time.Now().Before(limit) && numServers != 4 {
+		time.Sleep(c.propagateTimeout)
+		numServers = len(leader.configurations.latest.Servers)
 	}
-	if len(leaders) != 2 {
-		c.FailNowf("[ERR] expected two leader: %v", leaders)
+	if numServers != 4 {
+		c.FailNowf("[ERR] Leader should have 4 servers, got %d", numServers)
 	}
+	c.EnsureSamePeers(t)
 
-	// Old leader should have no peers
-	if len(leader.configurations.latest.Servers) != 1 {
-		c.FailNowf("[ERR] leader should have no peers")
+	// Isolate two of the followers.
+	followers := c.Followers()
+	if len(followers) != 3 {
+		c.FailNowf("[ERR] Expected 3 followers, got %d", len(followers))
+	}
+	c.Partition([]ServerAddress{followers[0].localAddr, followers[1].localAddr})
+
+	// Try to remove the remaining follower that was left with the leader.
+	future := leader.RemovePeer(followers[2].localAddr)
+	if err := future.Error(); err == nil {
+		c.FailNowf("[ERR] Should not have been able to make peer change")
 	}
 }
 
@@ -1175,7 +1215,7 @@ func TestRaft_AddKnownPeer(t *testing.T) {
 	startingConfigIdx := leader.configurations.committedIndex
 
 	// Add a follower
-	future := leader.AddPeer(string(followers[0].localAddr))
+	future := leader.AddPeer(followers[0].localAddr)
 
 	// shouldn't error, configuration should end up the same as it was.
 	// Should be already added
@@ -1281,7 +1321,10 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 // TODO: Need a test that has a previous format Snapshot and check that it can be read/installed on the new code.
 
 func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
-	return // TODO: fix broken test
+	// TODO - Fix broken test. This needs a story about how we recover and
+	// manually let the operator adjust the quorum before we can proceed.
+	return
+
 	// Make the cluster
 	conf := inmemConfig(t)
 	conf.TrailingLogs = 10
@@ -1324,7 +1367,7 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	}
 
 	// Change the peer addresses
-	peers := []string{leader.trans.LocalAddr()}
+	peers := []ServerAddress{leader.trans.LocalAddr()}
 	for _, sec := range c2.rafts {
 		peers = append(peers, sec.trans.LocalAddr())
 	}
@@ -1512,8 +1555,7 @@ func TestRaft_SendSnapshotAndLogsFollower(t *testing.T) {
 }
 
 func TestRaft_ReJoinFollower(t *testing.T) {
-	return // TODO: fix broken test
-	// Enable operation after a remove
+	// Enable operation after a remove.
 	conf := inmemConfig(t)
 	conf.ShutdownOnRemove = false
 
@@ -1521,10 +1563,10 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	c := MakeCluster(3, t, conf)
 	defer c.Close()
 
-	// Get the leader
+	// Get the leader.
 	leader := c.Leader()
 
-	// Wait until we have 2 followers
+	// Wait until we have 2 followers.
 	limit := time.Now().Add(c.longstopTimeout)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
@@ -1535,48 +1577,57 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 		c.FailNowf("[ERR] expected two followers: %v", followers)
 	}
 
-	// Remove a follower
+	// Remove a follower.
 	follower := followers[0]
-	future := leader.RemovePeer(string(follower.localAddr))
+	future := leader.RemovePeer(follower.localAddr)
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 
-	// Wait a while
+	// Other nodes should have fewer peers.
 	time.Sleep(c.propagateTimeout)
-
-	// Other nodes should have fewer peers
-	if len(leader.configurations.latest.Servers) != 3 {
+	if len(leader.configurations.latest.Servers) != 2 {
 		c.FailNowf("[ERR] too many peers: %v", leader.configurations)
 	}
-	if len(followers[1].configurations.latest.Servers) != 3 {
+	if len(followers[1].configurations.latest.Servers) != 2 {
 		c.FailNowf("[ERR] too many peers: %v", followers[1].configurations)
 	}
 
-	// Get the leader
-	time.Sleep(c.propagateTimeout)
-	leader = c.Leader()
+	// Get the leader. We can't use the normal stability checker here because
+	// the removed server will be trying to run an election but will be
+	// ignored. The stability check will think this is off nominal because
+	// the RequestVote RPCs won't stop firing.
+	limit = time.Now().Add(c.longstopTimeout)
+	var leaders []*Raft
+	for time.Now().Before(limit) && len(leaders) != 1 {
+		c.WaitEvent(nil, c.conf.CommitTimeout)
+		leaders, _ = c.pollState(Leader)
+	}
+	if len(leaders) != 1 {
+		c.FailNowf("[ERR] expected a leader")
+	}
+	leader = leaders[0]
 
 	// Rejoin. The follower will have a higher term than the leader,
 	// this will cause the leader to step down, and a new round of elections
 	// to take place. We should eventually re-stabilize.
-	future = leader.AddPeer(string(follower.localAddr))
+	future = leader.AddPeer(follower.localAddr)
 	if err := future.Error(); err != nil && err != ErrLeadershipLost {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 
-	// Wait a while
-	time.Sleep(c.propagateTimeout)
-
-	// Other nodes should have fewer peers
-	if len(leader.configurations.latest.Servers) != 4 {
+	// We should level back up to the proper number of peers. We add a
+	// stability check here to make sure the cluster gets to a state where
+	// there's a solid leader.
+	leader = c.Leader()
+	if len(leader.configurations.latest.Servers) != 3 {
 		c.FailNowf("[ERR] missing peers: %v", leader.configurations)
 	}
-	if len(followers[1].configurations.latest.Servers) != 4 {
+	if len(followers[1].configurations.latest.Servers) != 3 {
 		c.FailNowf("[ERR] missing peers: %v", followers[1].configurations)
 	}
 
-	// Should be a follower now
+	// Should be a follower now.
 	if follower.State() != Follower {
 		c.FailNowf("[ERR] bad state: %v", follower.State())
 	}
@@ -1856,21 +1907,21 @@ func TestRaft_Voting(t *testing.T) {
 
 	reqVote := RequestVoteRequest{
 		Term:         ldr.getCurrentTerm() + 10,
-		Candidate:    ldrT.EncodePeer(string(ldr.localAddr)),
+		Candidate:    ldrT.EncodePeer(ldr.localAddr),
 		LastLogIndex: ldr.LastIndex(),
 		LastLogTerm:  ldr.getCurrentTerm(),
 	}
 	// a follower that thinks there's a leader should vote for that leader.
 	var resp RequestVoteResponse
-	if err := ldrT.RequestVote(string(followers[0].localAddr), &reqVote, &resp); err != nil {
+	if err := ldrT.RequestVote(followers[0].localAddr, &reqVote, &resp); err != nil {
 		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
 	}
 	if !resp.Granted {
 		c.FailNowf("[ERR] expected vote to be granted, but wasn't %+v", resp)
 	}
 	// a follow that thinks there's a leader shouldn't vote for a different candidate
-	reqVote.Candidate = ldrT.EncodePeer(string(followers[0].localAddr))
-	if err := ldrT.RequestVote(string(followers[1].localAddr), &reqVote, &resp); err != nil {
+	reqVote.Candidate = ldrT.EncodePeer(followers[0].localAddr)
+	if err := ldrT.RequestVote(followers[1].localAddr, &reqVote, &resp); err != nil {
 		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
 	}
 	if resp.Granted {

@@ -12,7 +12,7 @@ const (
 	TT_MAX
 )
 
-func NewTestTransport(ttype int, addr string) (string, LoopbackTransport) {
+func NewTestTransport(ttype int, addr ServerAddress) (ServerAddress, LoopbackTransport) {
 	switch ttype {
 	case TT_INMEM:
 		addr, lt := NewInmemTransport(addr)

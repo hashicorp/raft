@@ -183,7 +183,7 @@ START:
 
 	// Make the RPC call
 	start = time.Now()
-	if err := r.trans.AppendEntries(string(s.peer.Address), &req, &resp); err != nil {
+	if err := r.trans.AppendEntries(s.peer.Address, &req, &resp); err != nil {
 		r.logger.Printf("[ERR] raft: Failed to AppendEntries to %v: %v", s.peer, err)
 		s.failures++
 		return
@@ -276,7 +276,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	// Setup the request
 	req := InstallSnapshotRequest{
 		Term:               s.currentTerm,
-		Leader:             r.trans.EncodePeer(string(r.localAddr)),
+		Leader:             r.trans.EncodePeer(r.localAddr),
 		LastLogIndex:       meta.Index,
 		LastLogTerm:        meta.Term,
 		Peers:              meta.Peers,
@@ -288,7 +288,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	// Make the call
 	start := time.Now()
 	var resp InstallSnapshotResponse
-	if err := r.trans.InstallSnapshot(string(s.peer.Address), &req, &resp, snapshot); err != nil {
+	if err := r.trans.InstallSnapshot(s.peer.Address, &req, &resp, snapshot); err != nil {
 		r.logger.Printf("[ERR] raft: Failed to install snapshot %v: %v", snapID, err)
 		s.failures++
 		return false, err
@@ -329,7 +329,7 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 	var failures uint64
 	req := AppendEntriesRequest{
 		Term:   s.currentTerm,
-		Leader: r.trans.EncodePeer(string(r.localAddr)),
+		Leader: r.trans.EncodePeer(r.localAddr),
 	}
 	var resp AppendEntriesResponse
 	for {
@@ -342,7 +342,7 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 		}
 
 		start := time.Now()
-		if err := r.trans.AppendEntries(string(s.peer.Address), &req, &resp); err != nil {
+		if err := r.trans.AppendEntries(s.peer.Address, &req, &resp); err != nil {
 			r.logger.Printf("[ERR] raft: Failed to heartbeat to %v: %v", s.peer.Address, err)
 			failures++
 			select {
@@ -364,7 +364,7 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 // back to the standard replication which can handle more complex situations.
 func (r *Raft) pipelineReplicate(s *followerReplication) error {
 	// Create a new pipeline
-	pipeline, err := r.trans.AppendEntriesPipeline(string(s.peer.Address))
+	pipeline, err := r.trans.AppendEntriesPipeline(s.peer.Address)
 	if err != nil {
 		return err
 	}
@@ -472,7 +472,7 @@ func (r *Raft) pipelineDecode(s *followerReplication, p AppendPipeline, stopCh, 
 // setupAppendEntries is used to setup an append entries request.
 func (r *Raft) setupAppendEntries(s *followerReplication, req *AppendEntriesRequest, nextIndex, lastIndex uint64) error {
 	req.Term = s.currentTerm
-	req.Leader = r.trans.EncodePeer(string(r.localAddr))
+	req.Leader = r.trans.EncodePeer(r.localAddr)
 	req.LeaderCommitIndex = r.getCommitIndex()
 	if err := r.setPreviousLog(req, nextIndex); err != nil {
 		return err
