@@ -8,13 +8,15 @@ import (
 )
 
 const (
-	TT_INMEM = iota
-	TT_MAX
+	TT_Inmem = iota
+
+	// NOTE: must be last
+	numTestTransports
 )
 
 func NewTestTransport(ttype int, addr string) (string, LoopbackTransport) {
 	switch ttype {
-	case TT_INMEM:
+	case TT_Inmem:
 		addr, lt := NewInmemTransport(addr)
 		return addr, lt
 	default:
@@ -23,7 +25,7 @@ func NewTestTransport(ttype int, addr string) (string, LoopbackTransport) {
 }
 
 func TestTransport_StartStop(t *testing.T) {
-	for ttype := 0; ttype < TT_MAX; ttype++ {
+	for ttype := 0; ttype < numTestTransports; ttype++ {
 		_, trans := NewTestTransport(ttype, "")
 		if err := trans.Close(); err != nil {
 			t.Fatalf("err: %v", err)
@@ -32,7 +34,7 @@ func TestTransport_StartStop(t *testing.T) {
 }
 
 func TestTransport_AppendEntries(t *testing.T) {
-	for ttype := 0; ttype < TT_MAX; ttype++ {
+	for ttype := 0; ttype < numTestTransports; ttype++ {
 		addr1, trans1 := NewTestTransport(ttype, "")
 		defer trans1.Close()
 		rpcCh := trans1.Consumer()
@@ -94,7 +96,7 @@ func TestTransport_AppendEntries(t *testing.T) {
 }
 
 func TestTransport_AppendEntriesPipeline(t *testing.T) {
-	for ttype := 0; ttype < TT_MAX; ttype++ {
+	for ttype := 0; ttype < numTestTransports; ttype++ {
 		addr1, trans1 := NewTestTransport(ttype, "")
 		defer trans1.Close()
 		rpcCh := trans1.Consumer()
@@ -173,7 +175,7 @@ func TestTransport_AppendEntriesPipeline(t *testing.T) {
 }
 
 func TestTransport_RequestVote(t *testing.T) {
-	for ttype := 0; ttype < TT_MAX; ttype++ {
+	for ttype := 0; ttype < numTestTransports; ttype++ {
 		addr1, trans1 := NewTestTransport(ttype, "")
 		defer trans1.Close()
 		rpcCh := trans1.Consumer()
@@ -228,7 +230,7 @@ func TestTransport_RequestVote(t *testing.T) {
 }
 
 func TestTransport_InstallSnapshot(t *testing.T) {
-	for ttype := 0; ttype < TT_MAX; ttype++ {
+	for ttype := 0; ttype < numTestTransports; ttype++ {
 		addr1, trans1 := NewTestTransport(ttype, "")
 		defer trans1.Close()
 		rpcCh := trans1.Consumer()
@@ -296,7 +298,7 @@ func TestTransport_InstallSnapshot(t *testing.T) {
 }
 
 func TestTransport_EncodeDecode(t *testing.T) {
-	for ttype := 0; ttype < TT_MAX; ttype++ {
+	for ttype := 0; ttype < numTestTransports; ttype++ {
 		_, trans1 := NewTestTransport(ttype, "")
 		defer trans1.Close()
 

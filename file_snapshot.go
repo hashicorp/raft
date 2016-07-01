@@ -119,8 +119,14 @@ func (f *FileSnapshotStore) testPermissions() error {
 	if err != nil {
 		return err
 	}
-	fh.Close()
-	os.Remove(path)
+
+	if err = fh.Close(); err != nil {
+		return err
+	}
+
+	if err = os.Remove(path); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -380,7 +386,10 @@ func (s *FileSnapshotSink) Close() error {
 	}
 
 	// Reap any old snapshots
-	s.store.ReapSnapshots()
+	if err := s.store.ReapSnapshots(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
