@@ -79,41 +79,6 @@ func TestGenerateUUID(t *testing.T) {
 	}
 }
 
-func TestAsyncNotify(t *testing.T) {
-	chs := []chan struct{}{
-		make(chan struct{}),
-		make(chan struct{}, 1),
-		make(chan struct{}, 2),
-	}
-
-	// Should not block!
-	asyncNotify(chs)
-	asyncNotify(chs)
-	asyncNotify(chs)
-
-	// Try to read
-	select {
-	case <-chs[0]:
-		t.Fatalf("should not have message!")
-	default:
-	}
-	select {
-	case <-chs[1]:
-	default:
-		t.Fatalf("should have message!")
-	}
-	select {
-	case <-chs[2]:
-	default:
-		t.Fatalf("should have message!")
-	}
-	select {
-	case <-chs[2]:
-	default:
-		t.Fatalf("should have message!")
-	}
-}
-
 func TestBackoff(t *testing.T) {
 	b := backoff(10*time.Millisecond, 1, 8)
 	if b != 10*time.Millisecond {

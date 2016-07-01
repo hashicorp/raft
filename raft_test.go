@@ -96,13 +96,10 @@ func (a *testLoggerAdapter) Write(d []byte) (int, error) {
 		}
 		a.t.Log(l)
 		return len(l), nil
-	} else {
-		if testing.Verbose() {
-			fmt.Printf("testLoggerAdapter verbose: %s\n", string(d))
-		}
-		a.t.Log(string(d))
-		return len(d), nil
 	}
+
+	a.t.Log(string(d))
+	return len(d), nil
 }
 
 func newTestLogger(t *testing.T) *log.Logger {
@@ -364,8 +361,6 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 			return inState
 		}
 	}
-
-	return nil
 }
 
 // Leader waits for the cluster to elect a leader and stay in a stable state.
@@ -961,7 +956,7 @@ func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 	leader := c.Leader()
 
 	// Enough enqueues should cause at least one timeout...
-	var didTimeout int32 = 0
+	var didTimeout int32
 	for i := 0; (i < 5000) && (atomic.LoadInt32(&didTimeout) == 0); i++ {
 		go func(i int) {
 			future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), time.Microsecond)

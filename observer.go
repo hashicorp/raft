@@ -12,7 +12,7 @@ type Observation struct {
 
 // nextObserverId is used to provide a unique ID for each observer to aid in
 // deregistration.
-var nextObserverId uint64
+var nextObserverID uint64
 
 // FilterFn is a function that can be registered in order to filter observations
 // by returning false.
@@ -46,7 +46,7 @@ func NewObserver(channel chan Observation, blocking bool, filter FilterFn) *Obse
 		channel:  channel,
 		blocking: blocking,
 		filter:   filter,
-		id:       atomic.AddUint64(&nextObserverId, 1),
+		id:       atomic.AddUint64(&nextObserverID, 1),
 	}
 }
 

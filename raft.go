@@ -262,7 +262,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	// Get the log
 	var lastLog Log
 	if lastIdx > 0 {
-		if err := logs.GetLog(lastIdx, &lastLog); err != nil {
+		if err = logs.GetLog(lastIdx, &lastLog); err != nil {
 			return nil, fmt.Errorf("failed to get last log: %v", err)
 		}
 	}
@@ -627,10 +627,13 @@ func (r *Raft) LastIndex() uint64 {
 	return r.getLastIndex()
 }
 
-// AppliedIndex returns the last index applied to the FSM.
-// This is generally lagging behind the last index, especially
-// for indexes that are persisted but have not yet been considered
-// committed by the leader.
+// AppliedIndex returns the last index applied to the FSM. This is generally
+// lagging behind the last index, especially for indexes that are persisted but
+// have not yet been considered committed by the leader. NOTE - this reflects
+// the last index that was sent to the application's FSM over the apply channel
+// but DOES NOT mean that the application's FSM has yet consumed it and applied
+// it to its internal state. Thus, the application's state may lag behind this
+// index.
 func (r *Raft) AppliedIndex() uint64 {
 	return r.getLastApplied()
 }
@@ -691,23 +694,23 @@ func (r *Raft) runFSM() {
 			req.snapshot = snap
 			req.respond(err)
 
-		case commitTuple := <-r.fsmCommitCh:
+		case commitEntry := <-r.fsmCommitCh:
 			// Apply the log if a command
 			var resp interface{}
-			if commitTuple.log.Type == LogCommand {
+			if commitEntry.log.Type == LogCommand {
 				start := time.Now()
-				resp = r.fsm.Apply(commitTuple.log)
+				resp = r.fsm.Apply(commitEntry.log)
 				metrics.MeasureSince([]string{"raft", "fsm", "apply"}, start)
 			}
 
 			// Update the indexes
-			lastIndex = commitTuple.log.Index
-			lastTerm = commitTuple.log.Term
+			lastIndex = commitEntry.log.Index
+			lastTerm = commitEntry.log.Term
 
 			// Invoke the future if given
-			if commitTuple.future != nil {
-				commitTuple.future.response = resp
-				commitTuple.future.respond(nil)
+			if commitEntry.future != nil {
+				commitEntry.future.response = resp
+				commitEntry.future.respond(nil)
 			}
 		case <-r.shutdownCh:
 			return
