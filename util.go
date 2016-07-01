@@ -3,7 +3,6 @@ package raft
 import (
 	"bytes"
 	crand "crypto/rand"
-	"encoding/binary"
 	"fmt"
 	"math"
 	"math/big"
@@ -68,14 +67,6 @@ func generateUUID() string {
 		buf[10:16])
 }
 
-// asyncNotify is used to do an async channel send to
-// a list of channels. This will not block.
-func asyncNotify(chans []chan struct{}) {
-	for _, ch := range chans {
-		asyncNotifyCh(ch)
-	}
-}
-
 // asyncNotifyCh is used to do an async channel send
 // to a single channel without blocking.
 func asyncNotifyCh(ch chan struct{}) {
@@ -120,18 +111,6 @@ func encodeMsgPack(in interface{}) (*bytes.Buffer, error) {
 	enc := codec.NewEncoder(buf, &hd)
 	err := enc.Encode(in)
 	return buf, err
-}
-
-// Converts bytes to an integer.
-func bytesToUint64(b []byte) uint64 {
-	return binary.BigEndian.Uint64(b)
-}
-
-// Converts a uint64 to a byte slice.
-func uint64ToBytes(u uint64) []byte {
-	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, u)
-	return buf
 }
 
 // backoff is used to compute an exponential backoff
