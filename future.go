@@ -92,6 +92,22 @@ const (
 	Promote
 )
 
+func (c ConfigurationChangeCommand) String() string {
+	switch c {
+	case AddStaging:
+		return "AddStaging"
+	case AddNonvoter:
+		return "AddNonvoter"
+	case DemoteVoter:
+		return "DemoteVoter"
+	case RemoveServer:
+		return "RemoveServer"
+	case Promote:
+		return "Promote"
+	}
+	return "ConfigurationChangeCommand"
+}
+
 // There are several types of requests that cause a configuration entry to
 // be appended to the log. These are encoded here for leaderLoop() to process.
 // This is internal to a single server.

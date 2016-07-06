@@ -20,6 +20,18 @@ const (
 	Staging
 )
 
+func (s ServerSuffrage) String() string {
+	switch s {
+	case Voter:
+		return "Voter"
+	case Nonvoter:
+		return "Nonvoter"
+	case Staging:
+		return "Staging"
+	}
+	return "ServerSuffrage"
+}
+
 // ServerID is a unique string identifying a server for all time.
 type ServerID string
 
