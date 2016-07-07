@@ -10,15 +10,17 @@ import (
 // Config provides any necessary configuration to
 // the Raft server
 type Config struct {
-	// Time in follower state without a leader before we attempt an election.
+	// HeartbeatTimeout specifies the time in follower state without
+	// a leader before we attempt an election.
 	HeartbeatTimeout time.Duration
 
-	// Time in candidate state without a leader before we attempt an election.
+	// ElectionTimeout specifies the time in candidate state without
+	// a leader before we attempt an election.
 	ElectionTimeout time.Duration
 
-	// Time without an Apply() operation before we heartbeat to ensure
-	// a timely commit. Due to random staggering, may be delayed as much as
-	// 2x this value.
+	// CommitTimeout controls the time without an Apply() operation
+	// before we heartbeat to ensure a timely commit. Due to random
+	// staggering, may be delayed as much as 2x this value.
 	CommitTimeout time.Duration
 
 	// MaxAppendEntries controls the maximum number of append entries

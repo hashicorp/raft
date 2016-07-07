@@ -277,7 +277,7 @@ func (r *Raft) setLeader(leader string) {
 	r.leader = leader
 	r.leaderLock.Unlock()
 	if oldLeader != leader {
-		r.observe(LeaderObservation{leader: leader})
+		r.observe(LeaderObservation{Leader: leader})
 	}
 }
 

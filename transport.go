@@ -60,14 +60,19 @@ type Transport interface {
 	SetHeartbeatHandler(cb func(rpc RPC))
 }
 
-// Close() lives in a separate interface as unfortunately it wasn't in the
+// WithClose is an interface that a transport may provide which
+// allows a transport to be shut down cleanly when a Raft instance
+// shuts down.
+//
+// It is defined separately from Transport as unfortunately it wasn't in the
 // original interface specification.
 type WithClose interface {
-	// Permanently close a transport, stop all go-routines etc
+	// Close permanently closes a transport, stopping
+	// any associated goroutines and freeing other resources.
 	Close() error
 }
 
-// Loopback transport is an interface that provides a loopback transport suitable for testing
+// LoopbackTransport is an interface that provides a loopback transport suitable for testing
 // e.g. InmemTransport. It's there so we don't have to rewrite tests.
 type LoopbackTransport interface {
 	Transport // Embedded transport reference
@@ -96,14 +101,24 @@ type AppendPipeline interface {
 	// response futures when they are ready.
 	Consumer() <-chan AppendFuture
 
-	// Closes pipeline and cancels all inflight RPCs
+	// Close closes the pipeline and cancels all inflight RPCs
 	Close() error
 }
 
 // AppendFuture is used to return information about a pipelined AppendEntries request.
 type AppendFuture interface {
 	Future
+
+	// Start returns the time that the append request was started.
+	// It is always OK to call this method.
 	Start() time.Time
+
+	// Request holds the parameters of the AppendEntries call.
+	// It is always OK to call this method.
 	Request() *AppendEntriesRequest
+
+	// Response holds the results of the AppendEntries call.
+	// This method must only be called after the Error
+	// method returns, and will only be valid on success.
 	Response() *AppendEntriesResponse
 }
