@@ -984,62 +984,6 @@ func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 	c.FailNowf("[ERR] Timeout waiting to detect apply timeouts")
 }
 
-func TestRaft_nextConfiguration_prevIndex(t *testing.T) {
-	// Stale prevIndex.
-	future := &configurationChangeFuture{
-		command:       AddStaging,
-		serverID:      ServerID("id1"),
-		serverAddress: ServerAddress("addr1"),
-		prevIndex:     1,
-	}
-	future.init()
-	next := nextConfiguration(Configuration{}, 2, future)
-	if len(next.Servers) > 0 || !future.responded ||
-		!strings.Contains(future.Error().Error(), "changed") {
-		t.Fatalf("nextConfiguration should have failed due to intervening configuration change")
-	}
-
-	// Current prevIndex.
-	future = &configurationChangeFuture{
-		command:       AddStaging,
-		serverID:      ServerID("id2"),
-		serverAddress: ServerAddress("addr2"),
-		prevIndex:     2,
-	}
-	future.init()
-	next = nextConfiguration(Configuration{}, 2, future)
-	if len(next.Servers) == 0 || future.responded {
-		t.Fatalf("nextConfiguration should have succeeded, got %v", future.Error())
-	}
-
-	// Zero prevIndex.
-	future = &configurationChangeFuture{
-		command:       AddStaging,
-		serverID:      ServerID("id3"),
-		serverAddress: ServerAddress("addr3"),
-		prevIndex:     0,
-	}
-	future.init()
-	next = nextConfiguration(Configuration{}, 2, future)
-	if len(next.Servers) == 0 || future.responded {
-		t.Fatalf("nextConfiguration should have succeeded, got %v", future.Error())
-	}
-}
-
-func TestRaft_nextConfiguration_checkConfiguration(t *testing.T) {
-	future := &configurationChangeFuture{
-		command:       AddNonvoter,
-		serverID:      ServerID("id1"),
-		serverAddress: ServerAddress("addr1"),
-	}
-	future.init()
-	next := nextConfiguration(Configuration{}, 1, future)
-	if len(next.Servers) > 0 || !future.responded ||
-		!strings.Contains(future.Error().Error(), "at least one voter") {
-		t.Fatalf("nextConfiguration should have failed for not having a voter")
-	}
-}
-
 var singleServer = Configuration{
 	Servers: []Server{
 		Server{
@@ -1155,6 +1099,62 @@ func TestRaft_nextConfiguration_table(t *testing.T) {
 			t.Errorf("nextConfiguration %d returned %v, expected %s", i, next, tt.next)
 			continue
 		}
+	}
+}
+
+func TestRaft_nextConfiguration_prevIndex(t *testing.T) {
+	// Stale prevIndex.
+	future := &configurationChangeFuture{
+		command:       AddStaging,
+		serverID:      ServerID("id1"),
+		serverAddress: ServerAddress("addr1"),
+		prevIndex:     1,
+	}
+	future.init()
+	next := nextConfiguration(singleServer, 2, future)
+	if len(next.Servers) > 0 || !future.responded ||
+		!strings.Contains(future.Error().Error(), "changed") {
+		t.Fatalf("nextConfiguration should have failed due to intervening configuration change")
+	}
+
+	// Current prevIndex.
+	future = &configurationChangeFuture{
+		command:       AddStaging,
+		serverID:      ServerID("id2"),
+		serverAddress: ServerAddress("addr2"),
+		prevIndex:     2,
+	}
+	future.init()
+	next = nextConfiguration(singleServer, 2, future)
+	if len(next.Servers) == 0 || future.responded {
+		t.Fatalf("nextConfiguration should have succeeded, got %v", future.Error())
+	}
+
+	// Zero prevIndex.
+	future = &configurationChangeFuture{
+		command:       AddStaging,
+		serverID:      ServerID("id3"),
+		serverAddress: ServerAddress("addr3"),
+		prevIndex:     0,
+	}
+	future.init()
+	next = nextConfiguration(singleServer, 2, future)
+	if len(next.Servers) == 0 || future.responded {
+		t.Fatalf("nextConfiguration should have succeeded, got %v", future.Error())
+	}
+}
+
+func TestRaft_nextConfiguration_checkConfiguration(t *testing.T) {
+	future := &configurationChangeFuture{
+		command:       AddNonvoter,
+		serverID:      ServerID("id1"),
+		serverAddress: ServerAddress("addr1"),
+	}
+	future.init()
+	next := nextConfiguration(Configuration{}, 1, future)
+	if len(next.Servers) > 0 || !future.responded ||
+		!strings.Contains(future.Error().Error(), "at least one voter") {
+		t.Fatalf("nextConfiguration should have failed for not having a voter")
 	}
 }
 

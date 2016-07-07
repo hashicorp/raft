@@ -980,7 +980,7 @@ func (r *Raft) runLeader() {
 // it'll instruct the replication routines to try to replicate to the current
 // index.
 func (r *Raft) startStopReplication() {
-	inConfig := make(map[ServerID]bool, len(r.leaderState.replState))
+	inConfig := make(map[ServerID]bool, len(r.configurations.latest.Servers))
 	lastIdx := r.getLastIndex()
 
 	// Start replication goroutines that need starting
@@ -989,8 +989,8 @@ func (r *Raft) startStopReplication() {
 			continue
 		}
 		inConfig[server.ID] = true
-		r.logger.Printf("[INFO] raft: Added peer %v, starting replication", server)
-		if _, present := r.leaderState.replState[server.ID]; !present {
+		if _, ok := r.leaderState.replState[server.ID]; !ok {
+			r.logger.Printf("[INFO] raft: Added peer %v, starting replication", server.ID)
 			s := &followerReplication{
 				peer:        server,
 				commitment:  r.leaderState.commitment,
