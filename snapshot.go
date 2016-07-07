@@ -18,7 +18,7 @@ type SnapshotMeta struct {
 // SnapshotStore interface is used to allow for flexible implementations
 // of snapshot storage and retrieval. For example, a client could implement
 // a shared state store such as S3, allowing new nodes to restore snapshots
-// without steaming from the leader.
+// without streaming from the leader.
 type SnapshotStore interface {
 	// Create is used to begin a snapshot at a given index and term,
 	// with the current configuration already encoded.
