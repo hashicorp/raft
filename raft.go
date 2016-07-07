@@ -467,7 +467,7 @@ func (r *Raft) RemovePeer(peer ServerAddress) Future {
 // If nonzero, timeout is how long this server should wait before the
 // configuration change log entry is appended.
 func (r *Raft) AddVoter(id ServerID, address ServerAddress, prevIndex uint64, timeout time.Duration) IndexFuture {
-	return r.requestConfigChange(&configurationChangeFuture{
+	return r.requestConfigChange(configurationChangeRequest{
 		command:       AddStaging,
 		serverID:      id,
 		serverAddress: address,
@@ -481,7 +481,7 @@ func (r *Raft) AddVoter(id ServerID, address ServerAddress, prevIndex uint64, ti
 // a staging server or voter, this does nothing. This must be run on the leader
 // or it will fail. For prevIndex and timeout, see AddVoter.
 func (r *Raft) AddNonvoter(id ServerID, address ServerAddress, prevIndex uint64, timeout time.Duration) IndexFuture {
-	return r.requestConfigChange(&configurationChangeFuture{
+	return r.requestConfigChange(configurationChangeRequest{
 		command:       AddNonvoter,
 		serverID:      id,
 		serverAddress: address,
@@ -493,7 +493,7 @@ func (r *Raft) AddNonvoter(id ServerID, address ServerAddress, prevIndex uint64,
 // leader is being removed, it will cause a new election to occur. This must be
 // run on the leader or it will fail. For prevIndex and timeout, see AddVoter.
 func (r *Raft) RemoveServer(id ServerID, prevIndex uint64, timeout time.Duration) IndexFuture {
-	return r.requestConfigChange(&configurationChangeFuture{
+	return r.requestConfigChange(configurationChangeRequest{
 		command:   RemoveServer,
 		serverID:  id,
 		prevIndex: prevIndex,
@@ -506,7 +506,7 @@ func (r *Raft) RemoveServer(id ServerID, prevIndex uint64, timeout time.Duration
 // does nothing. This must be run on the leader or it will fail. For prevIndex
 // and timeout, see AddVoter.
 func (r *Raft) DemoteVoter(id ServerID, prevIndex uint64, timeout time.Duration) IndexFuture {
-	return r.requestConfigChange(&configurationChangeFuture{
+	return r.requestConfigChange(configurationChangeRequest{
 		command:   DemoteVoter,
 		serverID:  id,
 		prevIndex: prevIndex,
@@ -514,12 +514,15 @@ func (r *Raft) DemoteVoter(id ServerID, prevIndex uint64, timeout time.Duration)
 }
 
 // requestConfigChange is a helper for the above functions that make
-// configuration change requests. 'future' describes the change. For timeout,
+// configuration change requests. 'req' describes the change. For timeout,
 // see AddVoter.
-func (r *Raft) requestConfigChange(future *configurationChangeFuture, timeout time.Duration) IndexFuture {
+func (r *Raft) requestConfigChange(req configurationChangeRequest, timeout time.Duration) IndexFuture {
 	var timer <-chan time.Time
 	if timeout > 0 {
 		timer = time.After(timeout)
+	}
+	future := &configurationChangeFuture{
+		req: req,
 	}
 	future.init()
 	select {
@@ -956,9 +959,7 @@ func (r *Raft) runLeader() {
 	}()
 
 	// Start a replication routine for each peer
-	for _, server := range r.configurations.latest.Servers {
-		r.startReplication(server)
-	}
+	r.startStopReplication()
 
 	// Dispatch a no-op log entry first. This gets this leader up to the latest
 	// possible commit index, even in the absence of client commands. This used
@@ -977,41 +978,49 @@ func (r *Raft) runLeader() {
 	r.leaderLoop()
 }
 
-// startReplication is a helper to setup state and start async replication to a peer.
-// It's safe to call this with the local server (in that case, it does nothing.)
-func (r *Raft) startReplication(server Server) {
-	if server.ID == r.localID {
-		return
-	}
+// startStopReplication will set up state and start asynchronous replication to
+// new peers, and stop replication to removed peers. Before removing a peer,
+// it'll instruct the replication routines to try to replicate to the current
+// index.
+func (r *Raft) startStopReplication() {
+	inConfig := make(map[ServerID]bool, len(r.configurations.latest.Servers))
 	lastIdx := r.getLastIndex()
-	s := &followerReplication{
-		peer:        server,
-		commitment:  r.leaderState.commitment,
-		stopCh:      make(chan uint64, 1),
-		triggerCh:   make(chan struct{}, 1),
-		currentTerm: r.getCurrentTerm(),
-		nextIndex:   lastIdx + 1,
-		lastContact: time.Now(),
-		notifyCh:    make(chan struct{}, 1),
-		stepDown:    r.leaderState.stepDown,
-	}
-	r.leaderState.replState[server.ID] = s
-	r.goFunc(func() { r.replicate(s) })
-	asyncNotifyCh(s.triggerCh)
-}
 
-// stopReplication is a helper to stop the replication goroutine for the given
-// peer, after it's tried to replicate up through the given index.
-// It's safe to call this with the local server (in that case, it does nothing.)
-func (r *Raft) stopReplication(server Server, index uint64) {
-	if server.ID == r.localID {
-		return
+	// Start replication goroutines that need starting
+	for _, server := range r.configurations.latest.Servers {
+		if server.ID == r.localID {
+			continue
+		}
+		inConfig[server.ID] = true
+		if _, ok := r.leaderState.replState[server.ID]; !ok {
+			r.logger.Printf("[INFO] raft: Added peer %v, starting replication", server.ID)
+			s := &followerReplication{
+				peer:        server,
+				commitment:  r.leaderState.commitment,
+				stopCh:      make(chan uint64, 1),
+				triggerCh:   make(chan struct{}, 1),
+				currentTerm: r.getCurrentTerm(),
+				nextIndex:   lastIdx + 1,
+				lastContact: time.Now(),
+				notifyCh:    make(chan struct{}, 1),
+				stepDown:    r.leaderState.stepDown,
+			}
+			r.leaderState.replState[server.ID] = s
+			r.goFunc(func() { r.replicate(s) })
+			asyncNotifyCh(s.triggerCh)
+		}
 	}
-	if repl, ok := r.leaderState.replState[server.ID]; ok {
-		// Replicate up to this index and stop
-		repl.stopCh <- index
+
+	// Stop replication goroutines that need stopping
+	for serverID, repl := range r.leaderState.replState {
+		if inConfig[serverID] {
+			continue
+		}
+		// Replicate up to lastIdx and stop
+		r.logger.Printf("[INFO] raft: Removed peer %v, stopping replication after %v", serverID, lastIdx)
+		repl.stopCh <- lastIdx
 		close(repl.stopCh)
-		delete(r.leaderState.replState, server.ID)
+		delete(r.leaderState.replState, serverID)
 	}
 }
 
@@ -1232,23 +1241,18 @@ func (r *Raft) quorumSize() int {
 	return voters/2 + 1
 }
 
-// appendConfigurationEntry changes the configuration and adds a new
-// configuration entry to the log
-func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
-	configuration := cloneConfiguration(r.configurations.latest) // same as committed
-
-	if future.prevIndex > 0 && future.prevIndex != r.configurations.latestIndex {
-		future.respond(fmt.Errorf("Configuration changed since %v (latest is %v)",
-			future.prevIndex, r.configurations.latestIndex))
+// nextConfiguration generates a new Configuration from the current one and a
+// configuration change request. It's split from appendConfigurationEntry so
+// that it can be unit tested easily.
+func nextConfiguration(current Configuration, currentIndex uint64, change configurationChangeRequest) (Configuration, error) {
+	if change.prevIndex > 0 && change.prevIndex != currentIndex {
+		return Configuration{}, fmt.Errorf("Configuration changed since %v (latest is %v)", change.prevIndex, currentIndex)
 	}
 
-	var start []Server
-	var stop []Server
-	var commandStr string
-	switch future.command {
+	configuration := cloneConfiguration(current)
+	switch change.command {
 	case AddStaging:
 		// TODO: barf on new address?
-		commandStr = "AddStaging"
 		newServer := Server{
 			// TODO: This should add the server as Staging, to be automatically
 			// promoted to Voter later. However, the promoton to Voter is not yet
@@ -1257,14 +1261,14 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 			// server will have a vote right away, and the Promote case below is
 			// unused.
 			Suffrage: Voter,
-			ID:       future.serverID,
-			Address:  future.serverAddress,
+			ID:       change.serverID,
+			Address:  change.serverAddress,
 		}
 		found := false
 		for i, server := range configuration.Servers {
-			if server.ID == future.serverID {
+			if server.ID == change.serverID {
 				if server.Suffrage == Voter {
-					configuration.Servers[i].Address = future.serverAddress
+					configuration.Servers[i].Address = change.serverAddress
 				} else {
 					configuration.Servers[i] = newServer
 				}
@@ -1274,20 +1278,18 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 		}
 		if !found {
 			configuration.Servers = append(configuration.Servers, newServer)
-			start = append(start, newServer)
 		}
 	case AddNonvoter:
-		commandStr = "AddNonvoter"
 		newServer := Server{
 			Suffrage: Nonvoter,
-			ID:       future.serverID,
-			Address:  future.serverAddress,
+			ID:       change.serverID,
+			Address:  change.serverAddress,
 		}
 		found := false
 		for i, server := range configuration.Servers {
-			if server.ID == future.serverID {
-				if server.Suffrage == Voter {
-					configuration.Servers[i].Address = future.serverAddress
+			if server.ID == change.serverID {
+				if server.Suffrage != Nonvoter {
+					configuration.Servers[i].Address = change.serverAddress
 				} else {
 					configuration.Servers[i] = newServer
 				}
@@ -1297,29 +1299,24 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 		}
 		if !found {
 			configuration.Servers = append(configuration.Servers, newServer)
-			start = append(start, newServer)
 		}
 	case DemoteVoter:
-		commandStr = "DemoteVoter"
 		for i, server := range configuration.Servers {
-			if server.ID == future.serverID {
+			if server.ID == change.serverID {
 				configuration.Servers[i].Suffrage = Nonvoter
 				break
 			}
 		}
 	case RemoveServer:
-		commandStr = "RemoveServer"
 		for i, server := range configuration.Servers {
-			if server.ID == future.serverID {
+			if server.ID == change.serverID {
 				configuration.Servers = append(configuration.Servers[:i], configuration.Servers[i+1:]...)
-				stop = append(stop, server)
 				break
 			}
 		}
 	case Promote:
-		commandStr = "Promote"
 		for i, server := range configuration.Servers {
-			if server.ID == future.serverID && server.Suffrage == Staging {
+			if server.ID == change.serverID && server.Suffrage == Staging {
 				configuration.Servers[i].Suffrage = Voter
 				break
 			}
@@ -1328,13 +1325,22 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 
 	// Make sure we didn't do something bad like remove the last voter
 	if err := checkConfiguration(configuration); err != nil {
+		return Configuration{}, err
+	}
+
+	return configuration, nil
+}
+
+// appendConfigurationEntry changes the configuration and adds a new
+// configuration entry to the log
+func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
+	configuration, err := nextConfiguration(r.configurations.latest, r.configurations.latestIndex, future.req)
+	if err != nil {
 		future.respond(err)
 		return
 	}
-
-	r.logger.Printf("[INFO] raft: Updating configuration with %v (%v, %v) to %v",
-		commandStr, future.serverAddress, future.serverID, configuration)
-
+	r.logger.Printf("[INFO] raft: Updating configuration with %s (%v, %v) to %v",
+		future.req.command, future.req.serverAddress, future.req.serverID, configuration)
 	future.log = Log{
 		Type: LogConfiguration,
 		Data: encodeConfiguration(configuration),
@@ -1344,15 +1350,7 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 	r.configurations.latest = configuration
 	r.configurations.latestIndex = index
 	r.leaderState.commitment.setConfiguration(configuration)
-
-	for _, server := range start {
-		r.logger.Printf("[INFO] raft: Added peer %v, starting replication", server)
-		r.startReplication(server)
-	}
-	for _, server := range stop {
-		r.logger.Printf("[INFO] raft: Removed peer %v, stopping replication after %v", server, index)
-		r.stopReplication(server, index)
-	}
+	r.startStopReplication()
 }
 
 // dispatchLog is called on the leader to push a log to disk, mark it

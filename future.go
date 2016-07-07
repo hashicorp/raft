@@ -74,36 +74,12 @@ func (d *deferError) respond(err error) {
 	d.responded = true
 }
 
-// ConfigurationChangeCommand is the different ways to change the cluster
-// configuration.
-type ConfigurationChangeCommand uint8
-
-const (
-	// AddStaging makes a server Staging unless its Voter.
-	AddStaging ConfigurationChangeCommand = iota
-	// AddNonvoter makes a server Nonvoter unless its Staging or Voter.
-	AddNonvoter
-	// DemoteVoter makes a server Nonvoter unless its absent.
-	DemoteVoter
-	// RemoveServer removes a server entirely from the cluster membership.
-	RemoveServer
-	// Promote is created automatically by a leader; it turns a Staging server
-	// into a Voter.
-	Promote
-)
-
 // There are several types of requests that cause a configuration entry to
 // be appended to the log. These are encoded here for leaderLoop() to process.
 // This is internal to a single server.
 type configurationChangeFuture struct {
 	logFuture
-	command       ConfigurationChangeCommand
-	serverID      ServerID
-	serverAddress ServerAddress // only present for AddStaging, AddNonvoter
-	// prevIndex, if nonzero, is the index of the only configuration upon which
-	// this change may be applied; if another configuration entry has been
-	// added in the meantime, this request will fail.
-	prevIndex uint64
+	req configurationChangeRequest
 }
 
 // logFuture is used to apply a log entry and waits until
