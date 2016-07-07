@@ -56,6 +56,53 @@ type Configuration struct {
 	Servers []Server
 }
 
+// ConfigurationChangeCommand is the different ways to change the cluster
+// configuration.
+type ConfigurationChangeCommand uint8
+
+const (
+	// AddStaging makes a server Staging unless its Voter.
+	AddStaging ConfigurationChangeCommand = iota
+	// AddNonvoter makes a server Nonvoter unless its Staging or Voter.
+	AddNonvoter
+	// DemoteVoter makes a server Nonvoter unless its absent.
+	DemoteVoter
+	// RemoveServer removes a server entirely from the cluster membership.
+	RemoveServer
+	// Promote is created automatically by a leader; it turns a Staging server
+	// into a Voter.
+	Promote
+)
+
+func (c ConfigurationChangeCommand) String() string {
+	switch c {
+	case AddStaging:
+		return "AddStaging"
+	case AddNonvoter:
+		return "AddNonvoter"
+	case DemoteVoter:
+		return "DemoteVoter"
+	case RemoveServer:
+		return "RemoveServer"
+	case Promote:
+		return "Promote"
+	}
+	return "ConfigurationChangeCommand"
+}
+
+// configurationChangeRequest describes a change that a leader would like to
+// make to its current configuration. It's used only within a single server
+// (never serialized into the log), as part of `configurationChangeFuture`.
+type configurationChangeRequest struct {
+	command       ConfigurationChangeCommand
+	serverID      ServerID
+	serverAddress ServerAddress // only present for AddStaging, AddNonvoter
+	// prevIndex, if nonzero, is the index of the only configuration upon which
+	// this change may be applied; if another configuration entry has been
+	// added in the meantime, this request will fail.
+	prevIndex uint64
+}
+
 // configurations is state tracked on every server about its Configurations.
 // Note that, per Diego's dissertation, there can be at most one uncommitted
 // configuration at a time (the next configuration may not be created until the

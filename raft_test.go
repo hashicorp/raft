@@ -1084,15 +1084,14 @@ var nextConfigurationTests = []struct {
 
 func TestRaft_nextConfiguration_table(t *testing.T) {
 	for i, tt := range nextConfigurationTests {
-		future := &configurationChangeFuture{
+		req := configurationChangeRequest{
 			command:       tt.command,
 			serverID:      ServerID(fmt.Sprintf("id%d", tt.serverID)),
 			serverAddress: ServerAddress(fmt.Sprintf("addr%d", tt.serverID)),
 		}
-		future.init()
-		next := nextConfiguration(tt.current, 1, future)
-		if len(next.Servers) == 0 || future.responded {
-			t.Errorf("nextConfiguration %d should have succeeded, got %v", i, future.Error())
+		next, err := nextConfiguration(tt.current, 1, req)
+		if err != nil {
+			t.Errorf("nextConfiguration %d should have succeeded, got %v", i, err)
 			continue
 		}
 		if fmt.Sprintf("%v", next) != tt.next {
@@ -1104,56 +1103,50 @@ func TestRaft_nextConfiguration_table(t *testing.T) {
 
 func TestRaft_nextConfiguration_prevIndex(t *testing.T) {
 	// Stale prevIndex.
-	future := &configurationChangeFuture{
+	req := configurationChangeRequest{
 		command:       AddStaging,
 		serverID:      ServerID("id1"),
 		serverAddress: ServerAddress("addr1"),
 		prevIndex:     1,
 	}
-	future.init()
-	next := nextConfiguration(singleServer, 2, future)
-	if len(next.Servers) > 0 || !future.responded ||
-		!strings.Contains(future.Error().Error(), "changed") {
+	_, err := nextConfiguration(singleServer, 2, req)
+	if err == nil || !strings.Contains(err.Error(), "changed") {
 		t.Fatalf("nextConfiguration should have failed due to intervening configuration change")
 	}
 
 	// Current prevIndex.
-	future = &configurationChangeFuture{
+	req = configurationChangeRequest{
 		command:       AddStaging,
 		serverID:      ServerID("id2"),
 		serverAddress: ServerAddress("addr2"),
 		prevIndex:     2,
 	}
-	future.init()
-	next = nextConfiguration(singleServer, 2, future)
-	if len(next.Servers) == 0 || future.responded {
-		t.Fatalf("nextConfiguration should have succeeded, got %v", future.Error())
+	_, err = nextConfiguration(singleServer, 2, req)
+	if err != nil {
+		t.Fatalf("nextConfiguration should have succeeded, got %v", err)
 	}
 
 	// Zero prevIndex.
-	future = &configurationChangeFuture{
+	req = configurationChangeRequest{
 		command:       AddStaging,
 		serverID:      ServerID("id3"),
 		serverAddress: ServerAddress("addr3"),
 		prevIndex:     0,
 	}
-	future.init()
-	next = nextConfiguration(singleServer, 2, future)
-	if len(next.Servers) == 0 || future.responded {
-		t.Fatalf("nextConfiguration should have succeeded, got %v", future.Error())
+	_, err = nextConfiguration(singleServer, 2, req)
+	if err != nil {
+		t.Fatalf("nextConfiguration should have succeeded, got %v", err)
 	}
 }
 
 func TestRaft_nextConfiguration_checkConfiguration(t *testing.T) {
-	future := &configurationChangeFuture{
+	req := configurationChangeRequest{
 		command:       AddNonvoter,
 		serverID:      ServerID("id1"),
 		serverAddress: ServerAddress("addr1"),
 	}
-	future.init()
-	next := nextConfiguration(Configuration{}, 1, future)
-	if len(next.Servers) > 0 || !future.responded ||
-		!strings.Contains(future.Error().Error(), "at least one voter") {
+	_, err := nextConfiguration(Configuration{}, 1, req)
+	if err == nil || !strings.Contains(err.Error(), "at least one voter") {
 		t.Fatalf("nextConfiguration should have failed for not having a voter")
 	}
 }
