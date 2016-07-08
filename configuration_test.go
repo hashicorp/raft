@@ -27,14 +27,35 @@ var sampleConfiguration Configuration = Configuration{
 	},
 }
 
-func TestConfiguration_cloneConfiguration(t *testing.T) {
-	cloned := cloneConfiguration(sampleConfiguration)
-	if !reflect.DeepEqual(sampleConfiguration, cloned) {
-		t.Fatalf("mismatch %v %v", sampleConfiguration, cloned)
+func TestConfiguration_Clone(t *testing.T) {
+	{
+		cloned := sampleConfiguration.Clone()
+		if !reflect.DeepEqual(sampleConfiguration, cloned) {
+			t.Fatalf("mismatch %v %v", sampleConfiguration, cloned)
+		}
+		cloned.Servers[1].ID = "scribble"
+		if sampleConfiguration.Servers[1].ID == "scribble" {
+			t.Fatalf("cloned configuration shouldn't alias Servers")
+		}
 	}
-	cloned.Servers[1].ID = "scribble"
-	if sampleConfiguration.Servers[1].ID == "scribble" {
-		t.Fatalf("cloned configuration shouldn't alias Servers")
+
+	{
+		configurations := configurations{
+			committed:      sampleConfiguration,
+			committedIndex: 1,
+			latest:         sampleConfiguration,
+			latestIndex:    2,
+		}
+		cloned := configurations.Clone()
+		if !reflect.DeepEqual(configurations, cloned) {
+			t.Fatalf("mismatch %v %v", configurations, cloned)
+		}
+		cloned.committed.Servers[1].ID = "scribble"
+		cloned.latest.Servers[1].ID = "scribble"
+		if configurations.committed.Servers[1].ID == "scribble" ||
+			configurations.latest.Servers[1].ID == "scribble" {
+			t.Fatalf("cloned configuration shouldn't alias Servers")
+		}
 	}
 }
 

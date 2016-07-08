@@ -128,8 +128,7 @@ type Raft struct {
 
 	// Tracks the latest configuration and latest committed configuration from
 	// the log/snapshot.
-	configurations     configurations
-	configurationsLock sync.RWMutex
+	configurations configurations
 
 	// RPC chan comes from the transport layer
 	rpcCh <-chan RPC
@@ -155,6 +154,10 @@ type Raft struct {
 	// verifyCh is used to async send verify futures to the main thread
 	// to verify we are still the leader
 	verifyCh chan *verifyFuture
+
+	// configurationsCh is used to get the configuration data safely from
+	// outside of the main thread.
+	configurationsCh chan *configurationsFuture
 
 	// List of observers and the mutex that protects them. The observers list
 	// is indexed by an artificial ID which is used for deregistration.
@@ -298,6 +301,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		stable:                stable,
 		trans:                 trans,
 		verifyCh:              make(chan *verifyFuture, 64),
+		configurationsCh:      make(chan *configurationsFuture, 64),
 		observers:             make(map[uint64]*Observer),
 	}
 
@@ -444,15 +448,30 @@ func (r *Raft) VerifyLeader() Future {
 }
 
 // GetConfiguration returns the latest configuration and its associated index
-// currently in use. This may not yet be committed.
-func (r *Raft) GetConfiguration() (Configuration, uint64) {
-	r.configurationsLock.RLock()
-	defer r.configurationsLock.RUnlock()
+// currently in use. This may not yet be committed. This must not be called on
+// the main thread (which can access the information directly).
+func (r *Raft) GetConfiguration() (Configuration, uint64, error) {
+	configurationsFuture := r.getConfigurations()
+	if err := configurationsFuture.Error(); err != nil {
+		return Configuration{}, 0, err
+	}
 
-	// Since we always update a clone of the configuration, there's no need
-	// to return a copy here, though we do need the read lock to ensure that
-	// we get a safe read and a consistent index.
-	return r.configurations.latest, r.configurations.latestIndex
+	configurations := &configurationsFuture.configurations
+	return configurations.latest, configurations.latestIndex, nil
+}
+
+// getConfigurations returns the full configuration information. This must not
+// be called on the main thread (which can access the information directly).
+func (r *Raft) getConfigurations() *configurationsFuture {
+	configurationsFuture := &configurationsFuture{}
+	configurationsFuture.init()
+	select {
+	case <-r.shutdownCh:
+		configurationsFuture.respond(ErrRaftShutdown)
+		return configurationsFuture
+	case r.configurationsCh <- configurationsFuture:
+		return configurationsFuture
+	}
 }
 
 // AddPeer (deprecated) is used to add a new peer into the cluster. This must be
@@ -624,8 +643,12 @@ func (r *Raft) Stats() map[string]string {
 		"last_snapshot_term":  toString(lastSnapTerm),
 	}
 
-	configuration, _ := r.GetConfiguration()
-	s["latest_configuration"] = fmt.Sprintf("%+v", configuration)
+	configuration, _, err := r.GetConfiguration()
+	if err != nil {
+		s["latest_configuration"] = fmt.Sprintf("%+v", configuration)
+	} else {
+		r.logger.Printf("[WARN] raft: could not get configuration for Stats: %v", err)
+	}
 
 	last := r.LastContact()
 	if last.IsZero() {
@@ -774,6 +797,10 @@ func (r *Raft) runFollower() {
 			// Reject any operations since we are not the leader
 			v.respond(ErrNotLeader)
 
+		case c := <-r.configurationsCh:
+			c.configurations = r.configurations.Clone()
+			c.respond(nil)
+
 		case <-heartbeatTimer:
 			// Restart the heartbeat timer
 			heartbeatTimer = randomTimeout(r.conf.HeartbeatTimeout)
@@ -788,7 +815,6 @@ func (r *Raft) runFollower() {
 			lastLeader := r.Leader()
 			r.setLeader("")
 
-			r.configurationsLock.RLock()
 			if r.configurations.latestIndex == 0 {
 				if !didWarn {
 					r.logger.Printf("[WARN] raft: no known peers, aborting election")
@@ -804,10 +830,8 @@ func (r *Raft) runFollower() {
 				r.logger.Printf(`[WARN] raft: Heartbeat timeout from %q reached, starting election`, lastLeader)
 				metrics.IncrCounter([]string{"raft", "transition", "heartbeat_timeout"}, 1)
 				r.setState(Candidate)
-				r.configurationsLock.RUnlock()
 				return
 			}
-			r.configurationsLock.RUnlock()
 
 		case <-r.shutdownCh:
 			return
@@ -871,6 +895,10 @@ func (r *Raft) runCandidate() {
 			// Reject any operations since we are not the leader
 			v.respond(ErrNotLeader)
 
+		case c := <-r.configurationsCh:
+			c.configurations = r.configurations.Clone()
+			c.respond(nil)
+
 		case <-electionTimer:
 			// Election failed! Restart the election. We simply return,
 			// which will kick us back into runCandidate
@@ -902,9 +930,8 @@ func (r *Raft) runLeader() {
 
 	// Setup leader state
 	r.leaderState.commitCh = make(chan struct{}, 1)
-	configuration, _ := r.GetConfiguration()
 	r.leaderState.commitment = newCommitment(r.leaderState.commitCh,
-		configuration, r.getLastIndex()+1 /* first index that may be committed in this term */)
+		r.configurations.latest, r.getLastIndex()+1 /* first index that may be committed in this term */)
 	r.leaderState.inflight = list.New()
 	r.leaderState.replState = make(map[ServerID]*followerReplication)
 	r.leaderState.notify = make(map[*verifyFuture]struct{})
@@ -991,14 +1018,13 @@ func (r *Raft) runLeader() {
 // startStopReplication will set up state and start asynchronous replication to
 // new peers, and stop replication to removed peers. Before removing a peer,
 // it'll instruct the replication routines to try to replicate to the current
-// index.
+// index. This should only be called from the main thread.
 func (r *Raft) startStopReplication() {
-	configuration, _ := r.GetConfiguration()
-	inConfig := make(map[ServerID]bool, len(configuration.Servers))
+	inConfig := make(map[ServerID]bool, len(r.configurations.latest.Servers))
 	lastIdx := r.getLastIndex()
 
 	// Start replication goroutines that need starting
-	for _, server := range configuration.Servers {
+	for _, server := range r.configurations.latest.Servers {
 		if server.ID == r.localID {
 			continue
 		}
@@ -1036,14 +1062,12 @@ func (r *Raft) startStopReplication() {
 }
 
 // configurationChangeChIfStable returns r.configurationChangeCh if it's safe
-// to process requests from it, or nil otherwise.
+// to process requests from it, or nil otherwise. This should only be called
+// from the main thread.
 //
 // Note that if the conditions here were to change outside of leaderLoop to take
 // this from nil to non-nil, we would need leaderLoop to be kicked.
 func (r *Raft) configurationChangeChIfStable() chan *configurationChangeFuture {
-	r.configurationsLock.RLock()
-	defer r.configurationsLock.RUnlock()
-
 	// Have to wait until:
 	// 1. The latest configuration is committed, and
 	// 2. This leader has committed some entry (the noop) in this term
@@ -1081,7 +1105,6 @@ func (r *Raft) leaderLoop() {
 			commitIndex := r.leaderState.commitment.getCommitIndex()
 			r.setCommitIndex(commitIndex)
 
-			r.configurationsLock.RLock()
 			if r.configurations.latestIndex > oldCommitIndex &&
 				r.configurations.latestIndex <= commitIndex {
 				r.configurations.committed = r.configurations.latest
@@ -1090,7 +1113,6 @@ func (r *Raft) leaderLoop() {
 					stepDown = true
 				}
 			}
-			r.configurationsLock.RUnlock()
 
 			for {
 				e := r.leaderState.inflight.Front()
@@ -1135,6 +1157,10 @@ func (r *Raft) leaderLoop() {
 				delete(r.leaderState.notify, v)
 				v.respond(nil)
 			}
+
+		case c := <-r.configurationsCh:
+			c.configurations = r.configurations.Clone()
+			c.respond(nil)
 
 		case future := <-r.configurationChangeChIfStable():
 			r.appendConfigurationEntry(future)
@@ -1210,7 +1236,7 @@ func (r *Raft) verifyLeader(v *verifyFuture) {
 // checkLeaderLease is used to check if we can contact a quorum of nodes
 // within the last leader lease interval. If not, we need to step down,
 // as we may have lost connectivity. Returns the maximum duration without
-// contact.
+// contact. This must only be called from the main thread.
 func (r *Raft) checkLeaderLease() time.Duration {
 	// Track contacted nodes, we can always contact ourself
 	contacted := 1
@@ -1246,12 +1272,12 @@ func (r *Raft) checkLeaderLease() time.Duration {
 	return maxDiff
 }
 
-// quorumSize is used to return the quorum size
+// quorumSize is used to return the quorum size. This should only be run on
+// the main thread.
 // TODO: revisit usage
 func (r *Raft) quorumSize() int {
-	configuration, _ := r.GetConfiguration()
 	voters := 0
-	for _, server := range configuration.Servers {
+	for _, server := range r.configurations.latest.Servers {
 		if server.Suffrage == Voter {
 			voters++
 		}
@@ -1267,7 +1293,7 @@ func nextConfiguration(current Configuration, currentIndex uint64, change config
 		return Configuration{}, fmt.Errorf("Configuration changed since %v (latest is %v)", change.prevIndex, currentIndex)
 	}
 
-	configuration := cloneConfiguration(current)
+	configuration := current.Clone()
 	switch change.command {
 	case AddStaging:
 		// TODO: barf on new address?
@@ -1350,10 +1376,10 @@ func nextConfiguration(current Configuration, currentIndex uint64, change config
 }
 
 // appendConfigurationEntry changes the configuration and adds a new
-// configuration entry to the log
+// configuration entry to the log. This should only be called from the
+// main thread.
 func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
-	latest, latestIndex := r.GetConfiguration()
-	configuration, err := nextConfiguration(latest, latestIndex, future.req)
+	configuration, err := nextConfiguration(r.configurations.latest, r.configurations.latestIndex, future.req)
 	if err != nil {
 		future.respond(err)
 		return
@@ -1367,10 +1393,8 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 	}
 	r.dispatchLogs([]*logFuture{&future.logFuture})
 	index := future.Index()
-	r.configurationsLock.Lock()
 	r.configurations.latest = configuration
 	r.configurations.latestIndex = index
-	r.configurationsLock.Unlock()
 	r.leaderState.commitment.setConfiguration(configuration)
 	r.startStopReplication()
 }
@@ -1485,7 +1509,8 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 	}
 }
 
-// processRPC is called to handle an incoming RPC request.
+// processRPC is called to handle an incoming RPC request. This should only be
+// called from the main thread.
 func (r *Raft) processRPC(rpc RPC) {
 	switch cmd := rpc.Command.(type) {
 	case *AppendEntriesRequest:
@@ -1501,7 +1526,8 @@ func (r *Raft) processRPC(rpc RPC) {
 }
 
 // processHeartbeat is a special handler used just for heartbeat requests
-// so that they can be fast-pathed if a transport supports it.
+// so that they can be fast-pathed if a transport supports it. This should only
+// be called from the main thread.
 func (r *Raft) processHeartbeat(rpc RPC) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "processHeartbeat"}, time.Now())
 
@@ -1522,7 +1548,8 @@ func (r *Raft) processHeartbeat(rpc RPC) {
 	}
 }
 
-// appendEntries is invoked when we get an append entries RPC call.
+// appendEntries is invoked when we get an append entries RPC call. This should
+// only be called from the main thread.
 func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "appendEntries"}, time.Now())
 	// Setup a response
@@ -1605,12 +1632,10 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 					r.logger.Printf("[ERR] raft: Failed to clear log suffix: %v", err)
 					return
 				}
-				r.configurationsLock.Lock()
 				if entry.Index <= r.configurations.latestIndex {
 					r.configurations.latest = r.configurations.committed
 					r.configurations.latestIndex = r.configurations.committedIndex
 				}
-				r.configurationsLock.Unlock()
 				newEntries = a.Entries[i:]
 				break
 			}
@@ -1627,12 +1652,10 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 
 			for _, newEntry := range newEntries {
 				if newEntry.Type == LogConfiguration {
-					r.configurationsLock.Lock()
 					r.configurations.committed = r.configurations.latest
 					r.configurations.committedIndex = r.configurations.latestIndex
 					r.configurations.latest = decodeConfiguration(newEntry.Data)
 					r.configurations.latestIndex = newEntry.Index
-					r.configurationsLock.Unlock()
 				}
 			}
 
@@ -1649,12 +1672,10 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		start := time.Now()
 		idx := min(a.LeaderCommitIndex, r.getLastIndex())
 		r.setCommitIndex(idx)
-		r.configurationsLock.Lock()
 		if r.configurations.latestIndex <= idx {
 			r.configurations.committed = r.configurations.latest
 			r.configurations.committedIndex = r.configurations.latestIndex
 		}
-		r.configurationsLock.Unlock()
 		r.processLogs(idx, nil)
 		metrics.MeasureSince([]string{"raft", "rpc", "appendEntries", "processLogs"}, start)
 	}
@@ -1750,7 +1771,8 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 
 // installSnapshot is invoked when we get a InstallSnapshot RPC call.
 // We must be in the follower state for this, since it means we are
-// too far behind a leader for log replay.
+// too far behind a leader for log replay. This should only be called
+// from the main thread.
 func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "installSnapshot"}, time.Now())
 	// Setup a response
@@ -1846,12 +1868,10 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	r.setLastSnapshot(req.LastLogIndex, req.LastLogTerm)
 
 	// Restore the peer set
-	r.configurationsLock.Lock()
 	r.configurations.latest = reqConfiguration
 	r.configurations.latestIndex = reqConfigurationIndex
 	r.configurations.committed = reqConfiguration
 	r.configurations.committedIndex = reqConfigurationIndex
-	r.configurationsLock.Unlock()
 
 	// Compact logs, continue even if this fails
 	if err := r.compactLogs(req.LastLogIndex); err != nil {
@@ -1879,11 +1899,10 @@ type voteResult struct {
 // electSelf is used to send a RequestVote RPC to all peers, and vote for
 // ourself. This has the side affecting of incrementing the current term. The
 // response channel returned is used to wait for all the responses (including a
-// vote for ourself).
+// vote for ourself). This should only be called from the main thread.
 func (r *Raft) electSelf() <-chan *voteResult {
 	// Create a response channel
-	configuration, _ := r.GetConfiguration()
-	respCh := make(chan *voteResult, len(configuration.Servers))
+	respCh := make(chan *voteResult, len(r.configurations.latest.Servers))
 
 	// Increment the term
 	r.setCurrentTerm(r.getCurrentTerm() + 1)
@@ -1913,7 +1932,7 @@ func (r *Raft) electSelf() <-chan *voteResult {
 	}
 
 	// For each peer, request a vote
-	for _, server := range configuration.Servers {
+	for _, server := range r.configurations.latest.Servers {
 		if server.Suffrage == Voter {
 			if server.ID == r.localID {
 				// Persist a vote for ourselves
@@ -2019,36 +2038,40 @@ func (r *Raft) shouldSnapshot() bool {
 	return delta >= r.conf.SnapshotThreshold
 }
 
-// takeSnapshot is used to take a new snapshot.
+// takeSnapshot is used to take a new snapshot. This should only be called from
+// the snapshot thread, never the main thread.
 func (r *Raft) takeSnapshot() error {
 	defer metrics.MeasureSince([]string{"raft", "snapshot", "takeSnapshot"}, time.Now())
-	// Create a snapshot request
-	req := &reqSnapshotFuture{}
-	req.init()
 
-	// Wait for dispatch or shutdown
+	// Create a request for the FSM to perform a snapshot.
+	snapReq := &reqSnapshotFuture{}
+	snapReq.init()
+
+	// Wait for dispatch or shutdown.
 	select {
-	case r.fsmSnapshotCh <- req:
+	case r.fsmSnapshotCh <- snapReq:
 	case <-r.shutdownCh:
 		return ErrRaftShutdown
 	}
 
 	// Wait until we get a response
-	if err := req.Error(); err != nil {
+	if err := snapReq.Error(); err != nil {
 		if err != ErrNothingNewToSnapshot {
 			err = fmt.Errorf("failed to start snapshot: %v", err)
 		}
 		return err
 	}
-	defer req.snapshot.Release()
+	defer snapReq.snapshot.Release()
 
-	// Pull the committed configuration. Since we always update a clone of the
-	// configuration, there's no need to copy here, though we do need the
-	// read lock to ensure that we get a safe read and a consistent index.
-	r.configurationsLock.RLock()
-	committed := r.configurations.committed
-	committedIndex := r.configurations.committedIndex
-	r.configurationsLock.RUnlock()
+	// Make a request for the configurations and extract the committed info.
+	// We have to use the future here to safely get this information since
+	// it is owned by the main thread.
+	configReq := r.getConfigurations()
+	if err := configReq.Error(); err != nil {
+		return err
+	}
+	committed := configReq.configurations.committed
+	committedIndex := configReq.configurations.committedIndex
 
 	// We don't support snapshots while there's a config change outstanding
 	// since the snapshot doesn't have a means to represent this state. This
@@ -2058,46 +2081,42 @@ func (r *Raft) takeSnapshot() error {
 	// application traffic flowing through the FSM. If there's none of that
 	// then it's not crucial that we snapshot, since there's not much going
 	// on Raft-wise.
-	if req.index < committedIndex {
+	if snapReq.index < committedIndex {
 		return fmt.Errorf("cannot take snapshot now, wait until the configuration entry at %v has been applied (have applied %v)",
-			committedIndex, req.index)
+			committedIndex, snapReq.index)
 	}
 
-	// Log that we are starting the snapshot
-	r.logger.Printf("[INFO] raft: Starting snapshot up to %d", req.index)
-
-	// Create a new snapshot
+	// Create a new snapshot.
+	r.logger.Printf("[INFO] raft: Starting snapshot up to %d", snapReq.index)
 	start := time.Now()
-	// TODO: take the req in as a single argument
-	sink, err := r.snapshots.Create(req.index, req.term, committed, committedIndex)
+	sink, err := r.snapshots.Create(snapReq.index, snapReq.term, committed, committedIndex)
 	if err != nil {
 		return fmt.Errorf("failed to create snapshot: %v", err)
 	}
 	metrics.MeasureSince([]string{"raft", "snapshot", "create"}, start)
 
-	// Try to persist the snapshot
+	// Try to persist the snapshot.
 	start = time.Now()
-	if err := req.snapshot.Persist(sink); err != nil {
+	if err := snapReq.snapshot.Persist(sink); err != nil {
 		sink.Cancel()
 		return fmt.Errorf("failed to persist snapshot: %v", err)
 	}
 	metrics.MeasureSince([]string{"raft", "snapshot", "persist"}, start)
 
-	// Close and check for error
+	// Close and check for error.
 	if err := sink.Close(); err != nil {
 		return fmt.Errorf("failed to close snapshot: %v", err)
 	}
 
-	// Update the last stable snapshot info
-	r.setLastSnapshot(req.index, req.term)
+	// Update the last stable snapshot info.
+	r.setLastSnapshot(snapReq.index, snapReq.term)
 
-	// Compact the logs
-	if err := r.compactLogs(req.index); err != nil {
+	// Compact the logs.
+	if err := r.compactLogs(snapReq.index); err != nil {
 		return err
 	}
 
-	// Log completion
-	r.logger.Printf("[INFO] raft: Snapshot to %d complete", req.index)
+	r.logger.Printf("[INFO] raft: Snapshot to %d complete", snapReq.index)
 	return nil
 }
 
@@ -2133,9 +2152,9 @@ func (r *Raft) compactLogs(snapIdx uint64) error {
 	return nil
 }
 
-// restoreSnapshot attempts to restore the latest snapshots, and fails
-// if none of them can be restored. This is called at initialization time,
-// and is completely unsafe to call at any other time.
+// restoreSnapshot attempts to restore the latest snapshots, and fails if none
+// of them can be restored. This is called at initialization time, and is
+// completely unsafe to call at any other time.
 func (r *Raft) restoreSnapshot() error {
 	snapshots, err := r.snapshots.List()
 	if err != nil {
@@ -2167,7 +2186,6 @@ func (r *Raft) restoreSnapshot() error {
 		r.setLastSnapshot(snapshot.Index, snapshot.Term)
 
 		// Update the configuration
-		r.configurationsLock.Lock()
 		if snapshot.ConfigurationIndex > 0 {
 			r.configurations.committed = snapshot.Configuration
 			r.configurations.committedIndex = snapshot.ConfigurationIndex
@@ -2180,7 +2198,6 @@ func (r *Raft) restoreSnapshot() error {
 			r.configurations.latest = configuration
 			r.configurations.latestIndex = snapshot.Index
 		}
-		r.configurationsLock.Unlock()
 
 		// Success!
 		return nil

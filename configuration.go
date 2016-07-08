@@ -56,6 +56,12 @@ type Configuration struct {
 	Servers []Server
 }
 
+// Clone makes a deep copy of a Configuration.
+func (c *Configuration) Clone() (copy Configuration) {
+	copy.Servers = append(copy.Servers, c.Servers...)
+	return
+}
+
 // ConfigurationChangeCommand is the different ways to change the cluster
 // configuration.
 type ConfigurationChangeCommand uint8
@@ -127,9 +133,12 @@ type configurations struct {
 	latestIndex uint64
 }
 
-// cloneConfiguration makes a deep copy of a Configuration.
-func cloneConfiguration(old Configuration) (copy Configuration) {
-	copy.Servers = append(copy.Servers, old.Servers...)
+// Clone makes a deep copy of a configurations object.
+func (c *configurations) Clone() (copy configurations) {
+	copy.committed = c.committed.Clone()
+	copy.committedIndex = c.committedIndex
+	copy.latest = c.latest.Clone()
+	copy.latestIndex = c.latestIndex
 	return
 }
 

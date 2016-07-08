@@ -163,6 +163,13 @@ type verifyFuture struct {
 	voteLock   sync.Mutex
 }
 
+// configurationsFuture is used to retrieve the current configurations. This is
+// used to allow safe access to this information outside of the main thread.
+type configurationsFuture struct {
+	deferError
+	configurations configurations
+}
+
 // vote is used to respond to a verifyFuture.
 // This may block when responding on the notifyCh.
 func (v *verifyFuture) vote(leader bool) {
