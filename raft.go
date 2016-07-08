@@ -624,9 +624,8 @@ func (r *Raft) Stats() map[string]string {
 		"last_snapshot_term":  toString(lastSnapTerm),
 	}
 
-	r.configurationsLock.RLock()
-	s["latest_configuration"] = fmt.Sprintf("%+v", r.configurations.latest)
-	r.configurationsLock.RUnlock()
+	configuration, _ := r.GetConfiguration()
+	s["latest_configuration"] = fmt.Sprintf("%+v", configuration)
 
 	last := r.LastContact()
 	if last.IsZero() {
@@ -903,11 +902,9 @@ func (r *Raft) runLeader() {
 
 	// Setup leader state
 	r.leaderState.commitCh = make(chan struct{}, 1)
-	r.configurationsLock.RLock()
+	configuration, _ := r.GetConfiguration()
 	r.leaderState.commitment = newCommitment(r.leaderState.commitCh,
-		r.configurations.latest,
-		r.getLastIndex()+1 /* first index that may be committed in this term */)
-	r.configurationsLock.RUnlock()
+		configuration, r.getLastIndex()+1 /* first index that may be committed in this term */)
 	r.leaderState.inflight = list.New()
 	r.leaderState.replState = make(map[ServerID]*followerReplication)
 	r.leaderState.notify = make(map[*verifyFuture]struct{})
@@ -996,14 +993,12 @@ func (r *Raft) runLeader() {
 // it'll instruct the replication routines to try to replicate to the current
 // index.
 func (r *Raft) startStopReplication() {
-	r.configurationsLock.RLock()
-	defer r.configurationsLock.RUnlock()
-
-	inConfig := make(map[ServerID]bool, len(r.configurations.latest.Servers))
+	configuration, _ := r.GetConfiguration()
+	inConfig := make(map[ServerID]bool, len(configuration.Servers))
 	lastIdx := r.getLastIndex()
 
 	// Start replication goroutines that need starting
-	for _, server := range r.configurations.latest.Servers {
+	for _, server := range configuration.Servers {
 		if server.ID == r.localID {
 			continue
 		}
@@ -1254,11 +1249,9 @@ func (r *Raft) checkLeaderLease() time.Duration {
 // quorumSize is used to return the quorum size
 // TODO: revisit usage
 func (r *Raft) quorumSize() int {
-	r.configurationsLock.RLock()
-	defer r.configurationsLock.RUnlock()
-
+	configuration, _ := r.GetConfiguration()
 	voters := 0
-	for _, server := range r.configurations.latest.Servers {
+	for _, server := range configuration.Servers {
 		if server.Suffrage == Voter {
 			voters++
 		}
@@ -1359,9 +1352,8 @@ func nextConfiguration(current Configuration, currentIndex uint64, change config
 // appendConfigurationEntry changes the configuration and adds a new
 // configuration entry to the log
 func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
-	r.configurationsLock.RLock()
-	configuration, err := nextConfiguration(r.configurations.latest, r.configurations.latestIndex, future.req)
-	r.configurationsLock.RUnlock()
+	latest, latestIndex := r.GetConfiguration()
+	configuration, err := nextConfiguration(latest, latestIndex, future.req)
 	if err != nil {
 		future.respond(err)
 		return
@@ -1889,11 +1881,9 @@ type voteResult struct {
 // response channel returned is used to wait for all the responses (including a
 // vote for ourself).
 func (r *Raft) electSelf() <-chan *voteResult {
-	r.configurationsLock.RLock()
-	defer r.configurationsLock.RUnlock()
-
 	// Create a response channel
-	respCh := make(chan *voteResult, len(r.configurations.latest.Servers))
+	configuration, _ := r.GetConfiguration()
+	respCh := make(chan *voteResult, len(configuration.Servers))
 
 	// Increment the term
 	r.setCurrentTerm(r.getCurrentTerm() + 1)
@@ -1923,7 +1913,7 @@ func (r *Raft) electSelf() <-chan *voteResult {
 	}
 
 	// For each peer, request a vote
-	for _, server := range r.configurations.latest.Servers {
+	for _, server := range configuration.Servers {
 		if server.Suffrage == Voter {
 			if server.ID == r.localID {
 				// Persist a vote for ourselves
