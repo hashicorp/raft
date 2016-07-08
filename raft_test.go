@@ -1270,10 +1270,6 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	if leader.State() != Shutdown {
 		c.FailNowf("[ERR] old leader should be shutdown")
 	}
-
-	if configuration, _, err := leader.GetConfiguration(); err != nil || len(configuration.Servers) != 2 {
-		c.FailNowf("[ERR] old leader should have less peers (err: %v)", err)
-	}
 }
 
 func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
@@ -1323,7 +1319,7 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 
 	// Old leader should be a follower.
 	if leader.State() != Follower {
-		c.FailNowf("[ERR] leader should be shutdown")
+		c.FailNowf("[ERR] leader should be follower")
 	}
 
 	// Old leader should not include itself in its peers.
