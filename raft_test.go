@@ -526,8 +526,9 @@ WAIT:
 
 // raftToPeerSet returns the set of peers as a map.
 func raftToPeerSet(r *Raft) map[ServerID]struct{} {
+	configuration, _ := r.GetConfiguration()
 	peers := make(map[ServerID]struct{})
-	for _, p := range r.configurations.latest.Servers {
+	for _, p := range configuration.Servers {
 		if p.Suffrage == Voter {
 			peers[p.ID] = struct{}{}
 		}
@@ -1209,10 +1210,10 @@ func TestRaft_RemoveFollower(t *testing.T) {
 	time.Sleep(c.propagateTimeout)
 
 	// Other nodes should have fewer peers
-	if len(leader.configurations.latest.Servers) != 2 {
+	if configuration, _ := leader.GetConfiguration(); len(configuration.Servers) != 2 {
 		c.FailNowf("[ERR] too many peers")
 	}
-	if len(followers[1].configurations.latest.Servers) != 2 {
+	if configuration, _ := followers[1].GetConfiguration(); len(configuration.Servers) != 2 {
 		c.FailNowf("[ERR] too many peers")
 	}
 }
@@ -1255,8 +1256,8 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	}
 
 	// Other nodes should have fewer peers
-	if len(newLeader.configurations.latest.Servers) != 2 {
-		c.FailNowf("[ERR] wrong number of peers %d", len(newLeader.configurations.latest.Servers))
+	if configuration, _ := newLeader.GetConfiguration(); len(configuration.Servers) != 2 {
+		c.FailNowf("[ERR] wrong number of peers %d", len(configuration.Servers))
 	}
 
 	// Old leader should be shutdown
@@ -1264,7 +1265,7 @@ func TestRaft_RemoveLeader(t *testing.T) {
 		c.FailNowf("[ERR] old leader should be shutdown")
 	}
 
-	if len(leader.configurations.latest.Servers) != 2 {
+	if configuration, _ := leader.GetConfiguration(); len(configuration.Servers) != 2 {
 		c.FailNowf("[ERR] old leader should have less peers")
 	}
 }
@@ -1306,10 +1307,11 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	time.Sleep(c.propagateTimeout)
 
 	// Other nodes should have pulled the leader.
-	if len(newLeader.configurations.latest.Servers) != 2 {
+	configuration, _ := newLeader.GetConfiguration()
+	if len(configuration.Servers) != 2 {
 		c.FailNowf("[ERR] too many peers")
 	}
-	if hasVote(newLeader.configurations.latest, leader.localID) {
+	if hasVote(configuration, leader.localID) {
 		c.FailNowf("[ERR] old leader should no longer have a vote")
 	}
 
@@ -1319,10 +1321,11 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	}
 
 	// Old leader should not include itself in its peers.
-	if len(leader.configurations.latest.Servers) != 2 {
+	configuration, _ = leader.GetConfiguration()
+	if len(configuration.Servers) != 2 {
 		c.FailNowf("[ERR] too many peers")
 	}
-	if hasVote(leader.configurations.latest, leader.localID) {
+	if hasVote(configuration, leader.localID) {
 		c.FailNowf("[ERR] old leader should no longer have a vote")
 	}
 
@@ -1345,7 +1348,8 @@ func TestRaft_RemoveFollower_SplitCluster(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
 	for time.Now().Before(limit) && numServers != 4 {
 		time.Sleep(c.propagateTimeout)
-		numServers = len(leader.configurations.latest.Servers)
+		configuration, _ := leader.GetConfiguration()
+		numServers = len(configuration.Servers)
 	}
 	if numServers != 4 {
 		c.FailNowf("[ERR] Leader should have 4 servers, got %d", numServers)
@@ -1374,8 +1378,10 @@ func TestRaft_AddKnownPeer(t *testing.T) {
 	// Get the leader
 	leader := c.Leader()
 	followers := c.GetInState(Follower)
+	leader.configurationsLock.RLock()
 	startingConfig := leader.configurations.committed
 	startingConfigIdx := leader.configurations.committedIndex
+	leader.configurationsLock.RUnlock()
 
 	// Add a follower
 	future := leader.AddPeer(followers[0].localAddr)
@@ -1385,8 +1391,10 @@ func TestRaft_AddKnownPeer(t *testing.T) {
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] AddPeer() err: %v", err)
 	}
+	leader.configurationsLock.RLock()
 	newConfig := leader.configurations.committed
 	newConfigIdx := leader.configurations.committedIndex
+	leader.configurationsLock.RUnlock()
 	if newConfigIdx <= startingConfigIdx {
 		c.FailNowf("[ERR] AddPeer should of written a new config entry, but configurations.commitedIndex still %d", newConfigIdx)
 	}
@@ -1402,8 +1410,10 @@ func TestRaft_RemoveUnknownPeer(t *testing.T) {
 
 	// Get the leader
 	leader := c.Leader()
+	leader.configurationsLock.RLock()
 	startingConfig := leader.configurations.committed
 	startingConfigIdx := leader.configurations.committedIndex
+	leader.configurationsLock.RUnlock()
 
 	// Remove unknown
 	future := leader.RemovePeer(NewInmemAddr())
@@ -1412,8 +1422,10 @@ func TestRaft_RemoveUnknownPeer(t *testing.T) {
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] RemovePeer() err: %v", err)
 	}
+	leader.configurationsLock.RLock()
 	newConfig := leader.configurations.committed
 	newConfigIdx := leader.configurations.committedIndex
+	leader.configurationsLock.RUnlock()
 	if newConfigIdx <= startingConfigIdx {
 		c.FailNowf("[ERR] RemovePeer should of written a new config entry, but configurations.commitedIndex still %d", newConfigIdx)
 	}
@@ -1749,11 +1761,11 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 
 	// Other nodes should have fewer peers.
 	time.Sleep(c.propagateTimeout)
-	if len(leader.configurations.latest.Servers) != 2 {
-		c.FailNowf("[ERR] too many peers: %v", leader.configurations)
+	if configuration, _ := leader.GetConfiguration(); len(configuration.Servers) != 2 {
+		c.FailNowf("[ERR] too many peers: %v", configuration)
 	}
-	if len(followers[1].configurations.latest.Servers) != 2 {
-		c.FailNowf("[ERR] too many peers: %v", followers[1].configurations)
+	if configuration, _ := followers[1].GetConfiguration(); len(configuration.Servers) != 2 {
+		c.FailNowf("[ERR] too many peers: %v", configuration)
 	}
 
 	// Get the leader. We can't use the normal stability checker here because
@@ -1783,11 +1795,11 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	// stability check here to make sure the cluster gets to a state where
 	// there's a solid leader.
 	leader = c.Leader()
-	if len(leader.configurations.latest.Servers) != 3 {
-		c.FailNowf("[ERR] missing peers: %v", leader.configurations)
+	if configuration, _ := leader.GetConfiguration(); len(configuration.Servers) != 3 {
+		c.FailNowf("[ERR] missing peers: %v", configuration)
 	}
-	if len(followers[1].configurations.latest.Servers) != 3 {
-		c.FailNowf("[ERR] missing peers: %v", followers[1].configurations)
+	if configuration, _ := followers[1].GetConfiguration(); len(configuration.Servers) != 3 {
+		c.FailNowf("[ERR] missing peers: %v", configuration)
 	}
 
 	// Should be a follower now.
