@@ -931,7 +931,8 @@ func (r *Raft) runLeader() {
 	// Setup leader state
 	r.leaderState.commitCh = make(chan struct{}, 1)
 	r.leaderState.commitment = newCommitment(r.leaderState.commitCh,
-		r.configurations.latest, r.getLastIndex()+1 /* first index that may be committed in this term */)
+		r.configurations.latest,
+		r.getLastIndex()+1 /* first index that may be committed in this term */)
 	r.leaderState.inflight = list.New()
 	r.leaderState.replState = make(map[ServerID]*followerReplication)
 	r.leaderState.notify = make(map[*verifyFuture]struct{})
@@ -1018,7 +1019,7 @@ func (r *Raft) runLeader() {
 // startStopReplication will set up state and start asynchronous replication to
 // new peers, and stop replication to removed peers. Before removing a peer,
 // it'll instruct the replication routines to try to replicate to the current
-// index. This should only be called from the main thread.
+// index. This must only be called from the main thread.
 func (r *Raft) startStopReplication() {
 	inConfig := make(map[ServerID]bool, len(r.configurations.latest.Servers))
 	lastIdx := r.getLastIndex()
@@ -1062,7 +1063,7 @@ func (r *Raft) startStopReplication() {
 }
 
 // configurationChangeChIfStable returns r.configurationChangeCh if it's safe
-// to process requests from it, or nil otherwise. This should only be called
+// to process requests from it, or nil otherwise. This must only be called
 // from the main thread.
 //
 // Note that if the conditions here were to change outside of leaderLoop to take
@@ -1272,7 +1273,7 @@ func (r *Raft) checkLeaderLease() time.Duration {
 	return maxDiff
 }
 
-// quorumSize is used to return the quorum size. This should only be run on
+// quorumSize is used to return the quorum size. This must only be called on
 // the main thread.
 // TODO: revisit usage
 func (r *Raft) quorumSize() int {
@@ -1376,7 +1377,7 @@ func nextConfiguration(current Configuration, currentIndex uint64, change config
 }
 
 // appendConfigurationEntry changes the configuration and adds a new
-// configuration entry to the log. This should only be called from the
+// configuration entry to the log. This must only be called from the
 // main thread.
 func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 	configuration, err := nextConfiguration(r.configurations.latest, r.configurations.latestIndex, future.req)
@@ -1509,7 +1510,7 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 	}
 }
 
-// processRPC is called to handle an incoming RPC request. This should only be
+// processRPC is called to handle an incoming RPC request. This must only be
 // called from the main thread.
 func (r *Raft) processRPC(rpc RPC) {
 	switch cmd := rpc.Command.(type) {
@@ -1526,7 +1527,7 @@ func (r *Raft) processRPC(rpc RPC) {
 }
 
 // processHeartbeat is a special handler used just for heartbeat requests
-// so that they can be fast-pathed if a transport supports it. This should only
+// so that they can be fast-pathed if a transport supports it. This must only
 // be called from the main thread.
 func (r *Raft) processHeartbeat(rpc RPC) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "processHeartbeat"}, time.Now())
@@ -1548,7 +1549,7 @@ func (r *Raft) processHeartbeat(rpc RPC) {
 	}
 }
 
-// appendEntries is invoked when we get an append entries RPC call. This should
+// appendEntries is invoked when we get an append entries RPC call. This must
 // only be called from the main thread.
 func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "appendEntries"}, time.Now())
@@ -1771,7 +1772,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 
 // installSnapshot is invoked when we get a InstallSnapshot RPC call.
 // We must be in the follower state for this, since it means we are
-// too far behind a leader for log replay. This should only be called
+// too far behind a leader for log replay. This must only be called
 // from the main thread.
 func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "installSnapshot"}, time.Now())
@@ -1899,7 +1900,7 @@ type voteResult struct {
 // electSelf is used to send a RequestVote RPC to all peers, and vote for
 // ourself. This has the side affecting of incrementing the current term. The
 // response channel returned is used to wait for all the responses (including a
-// vote for ourself). This should only be called from the main thread.
+// vote for ourself). This must only be called from the main thread.
 func (r *Raft) electSelf() <-chan *voteResult {
 	// Create a response channel
 	respCh := make(chan *voteResult, len(r.configurations.latest.Servers))
@@ -2038,7 +2039,7 @@ func (r *Raft) shouldSnapshot() bool {
 	return delta >= r.conf.SnapshotThreshold
 }
 
-// takeSnapshot is used to take a new snapshot. This should only be called from
+// takeSnapshot is used to take a new snapshot. This must only be called from
 // the snapshot thread, never the main thread.
 func (r *Raft) takeSnapshot() error {
 	defer metrics.MeasureSince([]string{"raft", "snapshot", "takeSnapshot"}, time.Now())
