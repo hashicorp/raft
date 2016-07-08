@@ -128,7 +128,8 @@ type Raft struct {
 
 	// Tracks the latest configuration and latest committed configuration from
 	// the log/snapshot.
-	configurations configurations
+	configurations     configurations
+	configurationsLock sync.RWMutex
 
 	// RPC chan comes from the transport layer
 	rpcCh <-chan RPC
@@ -442,7 +443,17 @@ func (r *Raft) VerifyLeader() Future {
 	}
 }
 
-// TODO: implement GetConfiguration()
+// GetConfiguration returns the latest configuration and its associated index
+// currently in use. This may not yet be committed.
+func (r *Raft) GetConfiguration() (Configuration, uint64) {
+	r.configurationsLock.RLock()
+	defer r.configurationsLock.RUnlock()
+
+	// Since we always update a clone of the configuration, there's no need
+	// to return a copy here, though we do need the read lock to ensure that
+	// we get a safe read and a consistent index.
+	return r.configurations.latest, r.configurations.latestIndex
+}
 
 // AddPeer (deprecated) is used to add a new peer into the cluster. This must be
 // run on the leader or it will fail. Use AddVoter/AddNonvoter instead.
@@ -602,17 +613,21 @@ func (r *Raft) Stats() map[string]string {
 	lastLogIndex, lastLogTerm := r.getLastLog()
 	lastSnapIndex, lastSnapTerm := r.getLastSnapshot()
 	s := map[string]string{
-		"state":                r.getState().String(),
-		"term":                 toString(r.getCurrentTerm()),
-		"last_log_index":       toString(lastLogIndex),
-		"last_log_term":        toString(lastLogTerm),
-		"commit_index":         toString(r.getCommitIndex()),
-		"applied_index":        toString(r.getLastApplied()),
-		"fsm_pending":          toString(uint64(len(r.fsmCommitCh))),
-		"last_snapshot_index":  toString(lastSnapIndex),
-		"last_snapshot_term":   toString(lastSnapTerm),
-		"latest_configuration": fmt.Sprintf("%+v", r.configurations.latest),
+		"state":               r.getState().String(),
+		"term":                toString(r.getCurrentTerm()),
+		"last_log_index":      toString(lastLogIndex),
+		"last_log_term":       toString(lastLogTerm),
+		"commit_index":        toString(r.getCommitIndex()),
+		"applied_index":       toString(r.getLastApplied()),
+		"fsm_pending":         toString(uint64(len(r.fsmCommitCh))),
+		"last_snapshot_index": toString(lastSnapIndex),
+		"last_snapshot_term":  toString(lastSnapTerm),
 	}
+
+	r.configurationsLock.RLock()
+	s["latest_configuration"] = fmt.Sprintf("%+v", r.configurations.latest)
+	r.configurationsLock.RUnlock()
+
 	last := r.LastContact()
 	if last.IsZero() {
 		s["last_contact"] = "never"
@@ -678,6 +693,8 @@ func (r *Raft) runFSM() {
 				continue
 			}
 
+			// TODO - this logic should be in the snapshot thread,
+			// not here in the FSM.
 			if lastIndex < r.configurations.committedIndex {
 				req.respond(fmt.Errorf("cannot take snapshot now, wait until the configuration entry at %v has been applied (have applied %v)",
 					r.configurations.committedIndex, lastIndex))
@@ -781,6 +798,8 @@ func (r *Raft) runFollower() {
 			// Heartbeat failed! Transition to the candidate state
 			lastLeader := r.Leader()
 			r.setLeader("")
+
+			r.configurationsLock.RLock()
 			if r.configurations.latestIndex == 0 {
 				if !didWarn {
 					r.logger.Printf("[WARN] raft: no known peers, aborting election")
@@ -796,8 +815,10 @@ func (r *Raft) runFollower() {
 				r.logger.Printf(`[WARN] raft: Heartbeat timeout from %q reached, starting election`, lastLeader)
 				metrics.IncrCounter([]string{"raft", "transition", "heartbeat_timeout"}, 1)
 				r.setState(Candidate)
+				r.configurationsLock.RUnlock()
 				return
 			}
+			r.configurationsLock.RUnlock()
 
 		case <-r.shutdownCh:
 			return
@@ -892,9 +913,11 @@ func (r *Raft) runLeader() {
 
 	// Setup leader state
 	r.leaderState.commitCh = make(chan struct{}, 1)
+	r.configurationsLock.RLock()
 	r.leaderState.commitment = newCommitment(r.leaderState.commitCh,
 		r.configurations.latest,
 		r.getLastIndex()+1 /* first index that may be committed in this term */)
+	r.configurationsLock.RUnlock()
 	r.leaderState.inflight = list.New()
 	r.leaderState.replState = make(map[ServerID]*followerReplication)
 	r.leaderState.notify = make(map[*verifyFuture]struct{})
@@ -983,6 +1006,9 @@ func (r *Raft) runLeader() {
 // it'll instruct the replication routines to try to replicate to the current
 // index.
 func (r *Raft) startStopReplication() {
+	r.configurationsLock.RLock()
+	defer r.configurationsLock.RUnlock()
+
 	inConfig := make(map[ServerID]bool, len(r.configurations.latest.Servers))
 	lastIdx := r.getLastIndex()
 
@@ -1030,6 +1056,9 @@ func (r *Raft) startStopReplication() {
 // Note that if the conditions here were to change outside of leaderLoop to take
 // this from nil to non-nil, we would need leaderLoop to be kicked.
 func (r *Raft) configurationChangeChIfStable() chan *configurationChangeFuture {
+	r.configurationsLock.RLock()
+	defer r.configurationsLock.RUnlock()
+
 	// Have to wait until:
 	// 1. The latest configuration is committed, and
 	// 2. This leader has committed some entry (the noop) in this term
@@ -1066,6 +1095,8 @@ func (r *Raft) leaderLoop() {
 			oldCommitIndex := r.getCommitIndex()
 			commitIndex := r.leaderState.commitment.getCommitIndex()
 			r.setCommitIndex(commitIndex)
+
+			r.configurationsLock.RLock()
 			if r.configurations.latestIndex > oldCommitIndex &&
 				r.configurations.latestIndex <= commitIndex {
 				r.configurations.committed = r.configurations.latest
@@ -1074,6 +1105,7 @@ func (r *Raft) leaderLoop() {
 					stepDown = true
 				}
 			}
+			r.configurationsLock.RUnlock()
 
 			for {
 				e := r.leaderState.inflight.Front()
@@ -1232,6 +1264,9 @@ func (r *Raft) checkLeaderLease() time.Duration {
 // quorumSize is used to return the quorum size
 // TODO: revisit usage
 func (r *Raft) quorumSize() int {
+	r.configurationsLock.RLock()
+	defer r.configurationsLock.RUnlock()
+
 	voters := 0
 	for _, server := range r.configurations.latest.Servers {
 		if server.Suffrage == Voter {
@@ -1334,11 +1369,14 @@ func nextConfiguration(current Configuration, currentIndex uint64, change config
 // appendConfigurationEntry changes the configuration and adds a new
 // configuration entry to the log
 func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
+	r.configurationsLock.RLock()
 	configuration, err := nextConfiguration(r.configurations.latest, r.configurations.latestIndex, future.req)
+	r.configurationsLock.RUnlock()
 	if err != nil {
 		future.respond(err)
 		return
 	}
+
 	r.logger.Printf("[INFO] raft: Updating configuration with %s (%v, %v) to %v",
 		future.req.command, future.req.serverAddress, future.req.serverID, configuration)
 	future.log = Log{
@@ -1347,8 +1385,10 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 	}
 	r.dispatchLogs([]*logFuture{&future.logFuture})
 	index := future.Index()
+	r.configurationsLock.Lock()
 	r.configurations.latest = configuration
 	r.configurations.latestIndex = index
+	r.configurationsLock.Unlock()
 	r.leaderState.commitment.setConfiguration(configuration)
 	r.startStopReplication()
 }
@@ -1583,10 +1623,12 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 					r.logger.Printf("[ERR] raft: Failed to clear log suffix: %v", err)
 					return
 				}
+				r.configurationsLock.Lock()
 				if entry.Index <= r.configurations.latestIndex {
 					r.configurations.latest = r.configurations.committed
 					r.configurations.latestIndex = r.configurations.committedIndex
 				}
+				r.configurationsLock.Unlock()
 				newEntries = a.Entries[i:]
 				break
 			}
@@ -1603,10 +1645,12 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 
 			for _, newEntry := range newEntries {
 				if newEntry.Type == LogConfiguration {
+					r.configurationsLock.Lock()
 					r.configurations.committed = r.configurations.latest
 					r.configurations.committedIndex = r.configurations.latestIndex
 					r.configurations.latest = decodeConfiguration(newEntry.Data)
 					r.configurations.latestIndex = newEntry.Index
+					r.configurationsLock.Unlock()
 				}
 			}
 
@@ -1623,10 +1667,12 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		start := time.Now()
 		idx := min(a.LeaderCommitIndex, r.getLastIndex())
 		r.setCommitIndex(idx)
+		r.configurationsLock.Lock()
 		if r.configurations.latestIndex <= idx {
 			r.configurations.committed = r.configurations.latest
 			r.configurations.committedIndex = r.configurations.latestIndex
 		}
+		r.configurationsLock.Unlock()
 		r.processLogs(idx, nil)
 		metrics.MeasureSince([]string{"raft", "rpc", "appendEntries", "processLogs"}, start)
 	}
@@ -1818,10 +1864,12 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	r.setLastSnapshot(req.LastLogIndex, req.LastLogTerm)
 
 	// Restore the peer set
+	r.configurationsLock.Lock()
 	r.configurations.latest = reqConfiguration
 	r.configurations.latestIndex = reqConfigurationIndex
 	r.configurations.committed = reqConfiguration
 	r.configurations.committedIndex = reqConfigurationIndex
+	r.configurationsLock.Unlock()
 
 	// Compact logs, continue even if this fails
 	if err := r.compactLogs(req.LastLogIndex); err != nil {
@@ -1846,11 +1894,14 @@ type voteResult struct {
 	voterID ServerID
 }
 
-// electSelf is used to send a RequestVote RPC to all peers,
-// and vote for ourself. This has the side affecting of incrementing
-// the current term. The response channel returned is used to wait
-// for all the responses (including a vote for ourself).
+// electSelf is used to send a RequestVote RPC to all peers, and vote for
+// ourself. This has the side affecting of incrementing the current term. The
+// response channel returned is used to wait for all the responses (including a
+// vote for ourself).
 func (r *Raft) electSelf() <-chan *voteResult {
+	r.configurationsLock.RLock()
+	defer r.configurationsLock.RUnlock()
+
 	// Create a response channel
 	respCh := make(chan *voteResult, len(r.configurations.latest.Servers))
 
@@ -2114,6 +2165,8 @@ func (r *Raft) restoreSnapshot() error {
 		// Update the last stable snapshot info
 		r.setLastSnapshot(snapshot.Index, snapshot.Term)
 
+		// Update the configuration
+		r.configurationsLock.Lock()
 		if snapshot.ConfigurationIndex > 0 {
 			r.configurations.committed = snapshot.Configuration
 			r.configurations.committedIndex = snapshot.ConfigurationIndex
@@ -2126,6 +2179,7 @@ func (r *Raft) restoreSnapshot() error {
 			r.configurations.latest = configuration
 			r.configurations.latestIndex = snapshot.Index
 		}
+		r.configurationsLock.Unlock()
 
 		// Success!
 		return nil
