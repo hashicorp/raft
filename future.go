@@ -141,11 +141,9 @@ type reqSnapshotFuture struct {
 	deferError
 
 	// snapshot details provided by the FSM runner before responding
-	index              uint64
-	term               uint64
-	configuration      Configuration
-	configurationIndex uint64
-	snapshot           FSMSnapshot
+	index    uint64
+	term     uint64
+	snapshot FSMSnapshot
 }
 
 // restoreFuture is used for requesting an FSM to perform a

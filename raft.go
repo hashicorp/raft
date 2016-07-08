@@ -693,14 +693,6 @@ func (r *Raft) runFSM() {
 				continue
 			}
 
-			// TODO - this logic should be in the snapshot thread,
-			// not here in the FSM.
-			if lastIndex < r.configurations.committedIndex {
-				req.respond(fmt.Errorf("cannot take snapshot now, wait until the configuration entry at %v has been applied (have applied %v)",
-					r.configurations.committedIndex, lastIndex))
-				continue
-			}
-
 			// Start a snapshot
 			start := time.Now()
 			snap, err := r.fsm.Snapshot()
@@ -709,8 +701,6 @@ func (r *Raft) runFSM() {
 			// Respond to the request
 			req.index = lastIndex
 			req.term = lastTerm
-			req.configuration = r.configurations.committed
-			req.configurationIndex = r.configurations.committedIndex
 			req.snapshot = snap
 			req.respond(err)
 
@@ -2062,13 +2052,34 @@ func (r *Raft) takeSnapshot() error {
 	}
 	defer req.snapshot.Release()
 
+	// Pull the committed configuration. Since we always update a clone of the
+	// configuration, there's no need to copy here, though we do need the
+	// read lock to ensure that we get a safe read and a consistent index.
+	r.configurationsLock.RLock()
+	committed := r.configurations.committed
+	committedIndex := r.configurations.committedIndex
+	r.configurationsLock.RUnlock()
+
+	// We don't support snapshots while there's a config change outstanding
+	// since the snapshot doesn't have a means to represent this state. This
+	// is a little weird because we need the FSM to apply an index that's
+	// past the configuration change, even though the FSM itself doesn't see
+	// the configuration changes. It should be ok in practice with normal
+	// application traffic flowing through the FSM. If there's none of that
+	// then it's not crucial that we snapshot, since there's not much going
+	// on Raft-wise.
+	if req.index < committedIndex {
+		return fmt.Errorf("cannot take snapshot now, wait until the configuration entry at %v has been applied (have applied %v)",
+			committedIndex, req.index)
+	}
+
 	// Log that we are starting the snapshot
 	r.logger.Printf("[INFO] raft: Starting snapshot up to %d", req.index)
 
 	// Create a new snapshot
 	start := time.Now()
 	// TODO: take the req in as a single argument
-	sink, err := r.snapshots.Create(req.index, req.term, req.configuration, req.configurationIndex)
+	sink, err := r.snapshots.Create(req.index, req.term, committed, committedIndex)
 	if err != nil {
 		return fmt.Errorf("failed to create snapshot: %v", err)
 	}
