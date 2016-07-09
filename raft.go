@@ -301,7 +301,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		stable:                stable,
 		trans:                 trans,
 		verifyCh:              make(chan *verifyFuture, 64),
-		configurationsCh:      make(chan *configurationsFuture, 64),
+		configurationsCh:      make(chan *configurationsFuture, 8),
 		observers:             make(map[uint64]*Observer),
 	}
 
