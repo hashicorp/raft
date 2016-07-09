@@ -141,11 +141,9 @@ type reqSnapshotFuture struct {
 	deferError
 
 	// snapshot details provided by the FSM runner before responding
-	index              uint64
-	term               uint64
-	configuration      Configuration
-	configurationIndex uint64
-	snapshot           FSMSnapshot
+	index    uint64
+	term     uint64
+	snapshot FSMSnapshot
 }
 
 // restoreFuture is used for requesting an FSM to perform a
@@ -163,6 +161,13 @@ type verifyFuture struct {
 	quorumSize int
 	votes      int
 	voteLock   sync.Mutex
+}
+
+// configurationsFuture is used to retrieve the current configurations. This is
+// used to allow safe access to this information outside of the main thread.
+type configurationsFuture struct {
+	deferError
+	configurations configurations
 }
 
 // vote is used to respond to a verifyFuture.

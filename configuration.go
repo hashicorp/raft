@@ -56,6 +56,12 @@ type Configuration struct {
 	Servers []Server
 }
 
+// Clone makes a deep copy of a Configuration.
+func (c *Configuration) Clone() (copy Configuration) {
+	copy.Servers = append(copy.Servers, c.Servers...)
+	return
+}
+
 // ConfigurationChangeCommand is the different ways to change the cluster
 // configuration.
 type ConfigurationChangeCommand uint8
@@ -127,9 +133,12 @@ type configurations struct {
 	latestIndex uint64
 }
 
-// cloneConfiguration makes a deep copy of a Configuration.
-func cloneConfiguration(old Configuration) (copy Configuration) {
-	copy.Servers = append(copy.Servers, old.Servers...)
+// Clone makes a deep copy of a configurations object.
+func (c *configurations) Clone() (copy configurations) {
+	copy.committed = c.committed.Clone()
+	copy.committedIndex = c.committedIndex
+	copy.latest = c.latest.Clone()
+	copy.latestIndex = c.latestIndex
 	return
 }
 
@@ -173,6 +182,96 @@ func checkConfiguration(configuration Configuration) error {
 		return fmt.Errorf("Need at least one voter in configuration: %v", configuration)
 	}
 	return nil
+}
+
+// nextConfiguration generates a new Configuration from the current one and a
+// configuration change request. It's split from appendConfigurationEntry so
+// that it can be unit tested easily.
+func nextConfiguration(current Configuration, currentIndex uint64, change configurationChangeRequest) (Configuration, error) {
+	if change.prevIndex > 0 && change.prevIndex != currentIndex {
+		return Configuration{}, fmt.Errorf("Configuration changed since %v (latest is %v)", change.prevIndex, currentIndex)
+	}
+
+	configuration := current.Clone()
+	switch change.command {
+	case AddStaging:
+		// TODO: barf on new address?
+		newServer := Server{
+			// TODO: This should add the server as Staging, to be automatically
+			// promoted to Voter later. However, the promoton to Voter is not yet
+			// implemented, and doing so is not trivial with the way the leader loop
+			// coordinates with the replication goroutines today. So, for now, the
+			// server will have a vote right away, and the Promote case below is
+			// unused.
+			Suffrage: Voter,
+			ID:       change.serverID,
+			Address:  change.serverAddress,
+		}
+		found := false
+		for i, server := range configuration.Servers {
+			if server.ID == change.serverID {
+				if server.Suffrage == Voter {
+					configuration.Servers[i].Address = change.serverAddress
+				} else {
+					configuration.Servers[i] = newServer
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			configuration.Servers = append(configuration.Servers, newServer)
+		}
+	case AddNonvoter:
+		newServer := Server{
+			Suffrage: Nonvoter,
+			ID:       change.serverID,
+			Address:  change.serverAddress,
+		}
+		found := false
+		for i, server := range configuration.Servers {
+			if server.ID == change.serverID {
+				if server.Suffrage != Nonvoter {
+					configuration.Servers[i].Address = change.serverAddress
+				} else {
+					configuration.Servers[i] = newServer
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			configuration.Servers = append(configuration.Servers, newServer)
+		}
+	case DemoteVoter:
+		for i, server := range configuration.Servers {
+			if server.ID == change.serverID {
+				configuration.Servers[i].Suffrage = Nonvoter
+				break
+			}
+		}
+	case RemoveServer:
+		for i, server := range configuration.Servers {
+			if server.ID == change.serverID {
+				configuration.Servers = append(configuration.Servers[:i], configuration.Servers[i+1:]...)
+				break
+			}
+		}
+	case Promote:
+		for i, server := range configuration.Servers {
+			if server.ID == change.serverID && server.Suffrage == Staging {
+				configuration.Servers[i].Suffrage = Voter
+				break
+			}
+		}
+	}
+
+	// Make sure we didn't do something bad like remove the last voter
+	if err := checkConfiguration(configuration); err != nil {
+		return Configuration{}, err
+	}
+
+	return configuration, nil
 }
 
 // decodePeers is used to deserialize an old list of peers into a Configuration.

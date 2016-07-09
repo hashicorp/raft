@@ -8,7 +8,6 @@ import (
 	"log"
 	"os"
 	"reflect"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -525,9 +524,16 @@ WAIT:
 }
 
 // raftToPeerSet returns the set of peers as a map.
-func raftToPeerSet(r *Raft) map[ServerID]struct{} {
+func (c *cluster) raftToPeerSet(r *Raft) map[ServerID]struct{} {
 	peers := make(map[ServerID]struct{})
-	for _, p := range r.configurations.latest.Servers {
+
+	configuration, _, err := r.GetConfiguration()
+	if err != nil {
+		c.FailNowf("[ERR] failed to get configuration: %v", err)
+		return peers
+	}
+
+	for _, p := range configuration.Servers {
 		if p.Suffrage == Voter {
 			peers[p.ID] = struct{}{}
 		}
@@ -538,7 +544,7 @@ func raftToPeerSet(r *Raft) map[ServerID]struct{} {
 // EnsureSamePeers makes sure all the rafts have the same set of peers.
 func (c *cluster) EnsureSamePeers(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
-	peerSet := raftToPeerSet(c.rafts[0])
+	peerSet := c.raftToPeerSet(c.rafts[0])
 
 CHECK:
 	for i, raft := range c.rafts {
@@ -546,7 +552,7 @@ CHECK:
 			continue
 		}
 
-		otherSet := raftToPeerSet(raft)
+		otherSet := c.raftToPeerSet(raft)
 		if !reflect.DeepEqual(peerSet, otherSet) {
 			if time.Now().After(limit) {
 				c.FailNowf("[ERR] peer mismatch: %v %v", peerSet, otherSet)
@@ -984,173 +990,6 @@ func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 	c.FailNowf("[ERR] Timeout waiting to detect apply timeouts")
 }
 
-var singleServer = Configuration{
-	Servers: []Server{
-		Server{
-			Suffrage: Voter,
-			ID:       ServerID("id1"),
-			Address:  ServerAddress("addr1x"),
-		},
-	},
-}
-
-var oneOfEach = Configuration{
-	Servers: []Server{
-		Server{
-			Suffrage: Voter,
-			ID:       ServerID("id1"),
-			Address:  ServerAddress("addr1x"),
-		},
-		Server{
-			Suffrage: Staging,
-			ID:       ServerID("id2"),
-			Address:  ServerAddress("addr2x"),
-		},
-		Server{
-			Suffrage: Nonvoter,
-			ID:       ServerID("id3"),
-			Address:  ServerAddress("addr3x"),
-		},
-	},
-}
-
-var voterPair = Configuration{
-	Servers: []Server{
-		Server{
-			Suffrage: Voter,
-			ID:       ServerID("id1"),
-			Address:  ServerAddress("addr1x"),
-		},
-		Server{
-			Suffrage: Voter,
-			ID:       ServerID("id2"),
-			Address:  ServerAddress("addr2x"),
-		},
-	},
-}
-
-var nextConfigurationTests = []struct {
-	current  Configuration
-	command  ConfigurationChangeCommand
-	serverID int
-	next     string
-}{
-	// AddStaging: was missing.
-	{Configuration{}, AddStaging, 1, "{[{Voter id1 addr1}]}"},
-	{singleServer, AddStaging, 2, "{[{Voter id1 addr1x} {Voter id2 addr2}]}"},
-	// AddStaging: was Voter.
-	{singleServer, AddStaging, 1, "{[{Voter id1 addr1}]}"},
-	// AddStaging: was Staging.
-	{oneOfEach, AddStaging, 2, "{[{Voter id1 addr1x} {Voter id2 addr2} {Nonvoter id3 addr3x}]}"},
-	// AddStaging: was Nonvoter.
-	{oneOfEach, AddStaging, 3, "{[{Voter id1 addr1x} {Staging id2 addr2x} {Voter id3 addr3}]}"},
-
-	// AddNonvoter: was missing.
-	{singleServer, AddNonvoter, 2, "{[{Voter id1 addr1x} {Nonvoter id2 addr2}]}"},
-	// AddNonvoter: was Voter.
-	{singleServer, AddNonvoter, 1, "{[{Voter id1 addr1}]}"},
-	// AddNonvoter: was Staging.
-	{oneOfEach, AddNonvoter, 2, "{[{Voter id1 addr1x} {Staging id2 addr2} {Nonvoter id3 addr3x}]}"},
-	// AddNonvoter: was Nonvoter.
-	{oneOfEach, AddNonvoter, 3, "{[{Voter id1 addr1x} {Staging id2 addr2x} {Nonvoter id3 addr3}]}"},
-
-	// DemoteVoter: was missing.
-	{singleServer, DemoteVoter, 2, "{[{Voter id1 addr1x}]}"},
-	// DemoteVoter: was Voter.
-	{voterPair, DemoteVoter, 2, "{[{Voter id1 addr1x} {Nonvoter id2 addr2x}]}"},
-	// DemoteVoter: was Staging.
-	{oneOfEach, DemoteVoter, 2, "{[{Voter id1 addr1x} {Nonvoter id2 addr2x} {Nonvoter id3 addr3x}]}"},
-	// DemoteVoter: was Nonvoter.
-	{oneOfEach, DemoteVoter, 3, "{[{Voter id1 addr1x} {Staging id2 addr2x} {Nonvoter id3 addr3x}]}"},
-
-	// RemoveServer: was missing.
-	{singleServer, RemoveServer, 2, "{[{Voter id1 addr1x}]}"},
-	// RemoveServer: was Voter.
-	{voterPair, RemoveServer, 2, "{[{Voter id1 addr1x}]}"},
-	// RemoveServer: was Staging.
-	{oneOfEach, RemoveServer, 2, "{[{Voter id1 addr1x} {Nonvoter id3 addr3x}]}"},
-	// RemoveServer: was Nonvoter.
-	{oneOfEach, RemoveServer, 3, "{[{Voter id1 addr1x} {Staging id2 addr2x}]}"},
-
-	// Promote: was missing.
-	{singleServer, Promote, 2, "{[{Voter id1 addr1x}]}"},
-	// Promote: was Voter.
-	{singleServer, Promote, 1, "{[{Voter id1 addr1x}]}"},
-	// Promote: was Staging.
-	{oneOfEach, Promote, 2, "{[{Voter id1 addr1x} {Voter id2 addr2x} {Nonvoter id3 addr3x}]}"},
-	// Promote: was Nonvoter.
-	{oneOfEach, Promote, 3, "{[{Voter id1 addr1x} {Staging id2 addr2x} {Nonvoter id3 addr3x}]}"},
-}
-
-func TestRaft_nextConfiguration_table(t *testing.T) {
-	for i, tt := range nextConfigurationTests {
-		req := configurationChangeRequest{
-			command:       tt.command,
-			serverID:      ServerID(fmt.Sprintf("id%d", tt.serverID)),
-			serverAddress: ServerAddress(fmt.Sprintf("addr%d", tt.serverID)),
-		}
-		next, err := nextConfiguration(tt.current, 1, req)
-		if err != nil {
-			t.Errorf("nextConfiguration %d should have succeeded, got %v", i, err)
-			continue
-		}
-		if fmt.Sprintf("%v", next) != tt.next {
-			t.Errorf("nextConfiguration %d returned %v, expected %s", i, next, tt.next)
-			continue
-		}
-	}
-}
-
-func TestRaft_nextConfiguration_prevIndex(t *testing.T) {
-	// Stale prevIndex.
-	req := configurationChangeRequest{
-		command:       AddStaging,
-		serverID:      ServerID("id1"),
-		serverAddress: ServerAddress("addr1"),
-		prevIndex:     1,
-	}
-	_, err := nextConfiguration(singleServer, 2, req)
-	if err == nil || !strings.Contains(err.Error(), "changed") {
-		t.Fatalf("nextConfiguration should have failed due to intervening configuration change")
-	}
-
-	// Current prevIndex.
-	req = configurationChangeRequest{
-		command:       AddStaging,
-		serverID:      ServerID("id2"),
-		serverAddress: ServerAddress("addr2"),
-		prevIndex:     2,
-	}
-	_, err = nextConfiguration(singleServer, 2, req)
-	if err != nil {
-		t.Fatalf("nextConfiguration should have succeeded, got %v", err)
-	}
-
-	// Zero prevIndex.
-	req = configurationChangeRequest{
-		command:       AddStaging,
-		serverID:      ServerID("id3"),
-		serverAddress: ServerAddress("addr3"),
-		prevIndex:     0,
-	}
-	_, err = nextConfiguration(singleServer, 2, req)
-	if err != nil {
-		t.Fatalf("nextConfiguration should have succeeded, got %v", err)
-	}
-}
-
-func TestRaft_nextConfiguration_checkConfiguration(t *testing.T) {
-	req := configurationChangeRequest{
-		command:       AddNonvoter,
-		serverID:      ServerID("id1"),
-		serverAddress: ServerAddress("addr1"),
-	}
-	_, err := nextConfiguration(Configuration{}, 1, req)
-	if err == nil || !strings.Contains(err.Error(), "at least one voter") {
-		t.Fatalf("nextConfiguration should have failed for not having a voter")
-	}
-}
-
 func TestRaft_JoinNode(t *testing.T) {
 	// Make a cluster
 	c := MakeCluster(2, t, nil)
@@ -1209,11 +1048,11 @@ func TestRaft_RemoveFollower(t *testing.T) {
 	time.Sleep(c.propagateTimeout)
 
 	// Other nodes should have fewer peers
-	if len(leader.configurations.latest.Servers) != 2 {
-		c.FailNowf("[ERR] too many peers")
+	if configuration, _, err := leader.GetConfiguration(); err != nil || len(configuration.Servers) != 2 {
+		c.FailNowf("[ERR] too many peers (err: %v)", err)
 	}
-	if len(followers[1].configurations.latest.Servers) != 2 {
-		c.FailNowf("[ERR] too many peers")
+	if configuration, _, err := followers[1].GetConfiguration(); err != nil || len(configuration.Servers) != 2 {
+		c.FailNowf("[ERR] too many peers (err: %v)", err)
 	}
 }
 
@@ -1255,17 +1094,13 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	}
 
 	// Other nodes should have fewer peers
-	if len(newLeader.configurations.latest.Servers) != 2 {
-		c.FailNowf("[ERR] wrong number of peers %d", len(newLeader.configurations.latest.Servers))
+	if configuration, _, err := newLeader.GetConfiguration(); err != nil || len(configuration.Servers) != 2 {
+		c.FailNowf("[ERR] wrong number of peers %d (err: %v)", len(configuration.Servers), err)
 	}
 
 	// Old leader should be shutdown
 	if leader.State() != Shutdown {
 		c.FailNowf("[ERR] old leader should be shutdown")
-	}
-
-	if len(leader.configurations.latest.Servers) != 2 {
-		c.FailNowf("[ERR] old leader should have less peers")
 	}
 }
 
@@ -1306,23 +1141,25 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	time.Sleep(c.propagateTimeout)
 
 	// Other nodes should have pulled the leader.
-	if len(newLeader.configurations.latest.Servers) != 2 {
-		c.FailNowf("[ERR] too many peers")
+	configuration, _, err := newLeader.GetConfiguration()
+	if err != nil || len(configuration.Servers) != 2 {
+		c.FailNowf("[ERR] too many peers (err: %v)", err)
 	}
-	if hasVote(newLeader.configurations.latest, leader.localID) {
+	if hasVote(configuration, leader.localID) {
 		c.FailNowf("[ERR] old leader should no longer have a vote")
 	}
 
 	// Old leader should be a follower.
 	if leader.State() != Follower {
-		c.FailNowf("[ERR] leader should be shutdown")
+		c.FailNowf("[ERR] leader should be follower")
 	}
 
 	// Old leader should not include itself in its peers.
-	if len(leader.configurations.latest.Servers) != 2 {
-		c.FailNowf("[ERR] too many peers")
+	configuration, _, err = leader.GetConfiguration()
+	if err != nil || len(configuration.Servers) != 2 {
+		c.FailNowf("[ERR] too many peers (err: %v)", err)
 	}
-	if hasVote(leader.configurations.latest, leader.localID) {
+	if hasVote(configuration, leader.localID) {
 		c.FailNowf("[ERR] old leader should no longer have a vote")
 	}
 
@@ -1345,7 +1182,11 @@ func TestRaft_RemoveFollower_SplitCluster(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
 	for time.Now().Before(limit) && numServers != 4 {
 		time.Sleep(c.propagateTimeout)
-		numServers = len(leader.configurations.latest.Servers)
+		configuration, _, err := leader.GetConfiguration()
+		if err != nil {
+			c.FailNowf("[ERR] failed to get configuration: %v", err)
+		}
+		numServers = len(configuration.Servers)
 	}
 	if numServers != 4 {
 		c.FailNowf("[ERR] Leader should have 4 servers, got %d", numServers)
@@ -1374,8 +1215,12 @@ func TestRaft_AddKnownPeer(t *testing.T) {
 	// Get the leader
 	leader := c.Leader()
 	followers := c.GetInState(Follower)
-	startingConfig := leader.configurations.committed
-	startingConfigIdx := leader.configurations.committedIndex
+	configReq := leader.getConfigurations()
+	if err := configReq.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+	startingConfig := configReq.configurations.committed
+	startingConfigIdx := configReq.configurations.committedIndex
 
 	// Add a follower
 	future := leader.AddPeer(followers[0].localAddr)
@@ -1385,8 +1230,12 @@ func TestRaft_AddKnownPeer(t *testing.T) {
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] AddPeer() err: %v", err)
 	}
-	newConfig := leader.configurations.committed
-	newConfigIdx := leader.configurations.committedIndex
+	configReq = leader.getConfigurations()
+	if err := configReq.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+	newConfig := configReq.configurations.committed
+	newConfigIdx := configReq.configurations.committedIndex
 	if newConfigIdx <= startingConfigIdx {
 		c.FailNowf("[ERR] AddPeer should of written a new config entry, but configurations.commitedIndex still %d", newConfigIdx)
 	}
@@ -1402,8 +1251,12 @@ func TestRaft_RemoveUnknownPeer(t *testing.T) {
 
 	// Get the leader
 	leader := c.Leader()
-	startingConfig := leader.configurations.committed
-	startingConfigIdx := leader.configurations.committedIndex
+	configReq := leader.getConfigurations()
+	if err := configReq.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+	startingConfig := configReq.configurations.committed
+	startingConfigIdx := configReq.configurations.committedIndex
 
 	// Remove unknown
 	future := leader.RemovePeer(NewInmemAddr())
@@ -1412,8 +1265,12 @@ func TestRaft_RemoveUnknownPeer(t *testing.T) {
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] RemovePeer() err: %v", err)
 	}
-	newConfig := leader.configurations.committed
-	newConfigIdx := leader.configurations.committedIndex
+	configReq = leader.getConfigurations()
+	if err := configReq.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+	newConfig := configReq.configurations.committed
+	newConfigIdx := configReq.configurations.committedIndex
 	if newConfigIdx <= startingConfigIdx {
 		c.FailNowf("[ERR] RemovePeer should of written a new config entry, but configurations.commitedIndex still %d", newConfigIdx)
 	}
@@ -1749,11 +1606,11 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 
 	// Other nodes should have fewer peers.
 	time.Sleep(c.propagateTimeout)
-	if len(leader.configurations.latest.Servers) != 2 {
-		c.FailNowf("[ERR] too many peers: %v", leader.configurations)
+	if configuration, _, err := leader.GetConfiguration(); err != nil || len(configuration.Servers) != 2 {
+		c.FailNowf("[ERR] too many peers: %v (err: %v)", configuration, err)
 	}
-	if len(followers[1].configurations.latest.Servers) != 2 {
-		c.FailNowf("[ERR] too many peers: %v", followers[1].configurations)
+	if configuration, _, err := followers[1].GetConfiguration(); err != nil || len(configuration.Servers) != 2 {
+		c.FailNowf("[ERR] too many peers: %v (err: %v)", configuration, err)
 	}
 
 	// Get the leader. We can't use the normal stability checker here because
@@ -1783,11 +1640,11 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	// stability check here to make sure the cluster gets to a state where
 	// there's a solid leader.
 	leader = c.Leader()
-	if len(leader.configurations.latest.Servers) != 3 {
-		c.FailNowf("[ERR] missing peers: %v", leader.configurations)
+	if configuration, _, err := leader.GetConfiguration(); err != nil || len(configuration.Servers) != 3 {
+		c.FailNowf("[ERR] missing peers: %v (err: %v)", configuration, err)
 	}
-	if len(followers[1].configurations.latest.Servers) != 3 {
-		c.FailNowf("[ERR] missing peers: %v", followers[1].configurations)
+	if configuration, _, err := followers[1].GetConfiguration(); err != nil || len(configuration.Servers) != 3 {
+		c.FailNowf("[ERR] missing peers: %v (err: %v)", configuration, err)
 	}
 
 	// Should be a follower now.
