@@ -14,4 +14,7 @@ cov:
 	INTEG_TESTS=yes gocov test github.com/hashicorp/raft | gocov-html > /tmp/coverage.html
 	open /tmp/coverage.html
 
+architecture-autogen.png: architecture.svg
+	convert $< $@
+
 .PHONY: test cov integ deps
