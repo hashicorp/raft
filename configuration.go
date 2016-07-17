@@ -305,7 +305,7 @@ func decodePeers(buf []byte, trans Transport) Configuration {
 func encodeConfiguration(configuration Configuration) []byte {
 	buf, err := encodeMsgPack(configuration)
 	if err != nil {
-		panic(fmt.Errorf("failed to encode peers: %v", err))
+		panic(fmt.Errorf("failed to encode configuration: %v", err))
 	}
 	return buf.Bytes()
 }
