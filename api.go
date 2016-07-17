@@ -611,8 +611,26 @@ func (r *Raft) LastContact() time.Time {
 	return last
 }
 
-// Stats is used to return a map of various internal stats. This should only
-// be used for informative purposes or debugging.
+// Stats is used to return a map of various internal stats. This
+// should only be used for informative purposes or debugging.
+//
+// Keys are: "state", "term", "last_log_index", "last_log_term",
+// "commit_index", "applied_index", "fsm_pending",
+// "last_snapshot_index", "last_snapshot_term",
+// "latest_configuration" and "last_contact".
+//
+// The value of "state" is a numerical value representing a
+// RaftState const.
+//
+// The value of "latest_configuration" is a string which contains
+// the id of each server, its suffrage status, and its address.
+//
+// The value of "last_contact" is either "never" if there
+// has been no contact with a leader, "0" if the node is in the
+// leader state, or the time since last contact with a leader
+// formatted as a string.
+//
+// All other values are uint64s, formatted as strings.
 func (r *Raft) Stats() map[string]string {
 	toString := func(v uint64) string {
 		return strconv.FormatUint(v, 10)
@@ -633,9 +651,9 @@ func (r *Raft) Stats() map[string]string {
 
 	configuration, _, err := r.GetConfiguration()
 	if err != nil {
-		s["latest_configuration"] = fmt.Sprintf("%+v", configuration)
-	} else {
 		r.logger.Printf("[WARN] raft: could not get configuration for Stats: %v", err)
+	} else {
+		s["latest_configuration"] = fmt.Sprintf("%+v", configuration)
 	}
 
 	last := r.LastContact()
