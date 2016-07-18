@@ -523,28 +523,22 @@ WAIT:
 	goto CHECK
 }
 
-// raftToPeerSet returns the set of peers as a map.
-func (c *cluster) raftToPeerSet(r *Raft) map[ServerID]struct{} {
-	peers := make(map[ServerID]struct{})
-
+// getConfiguration returns the configuration of the given Raft instance, or
+// fails the test if there's an error
+func (c *cluster) getConfiguration(r *Raft) Configuration {
 	configuration, _, err := r.GetConfiguration()
 	if err != nil {
 		c.FailNowf("[ERR] failed to get configuration: %v", err)
-		return peers
+		return Configuration{}
 	}
 
-	for _, p := range configuration.Servers {
-		if p.Suffrage == Voter {
-			peers[p.ID] = struct{}{}
-		}
-	}
-	return peers
+	return configuration
 }
 
 // EnsureSamePeers makes sure all the rafts have the same set of peers.
 func (c *cluster) EnsureSamePeers(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
-	peerSet := c.raftToPeerSet(c.rafts[0])
+	peerSet := c.getConfiguration(c.rafts[0])
 
 CHECK:
 	for i, raft := range c.rafts {
@@ -552,10 +546,10 @@ CHECK:
 			continue
 		}
 
-		otherSet := c.raftToPeerSet(raft)
+		otherSet := c.getConfiguration(raft)
 		if !reflect.DeepEqual(peerSet, otherSet) {
 			if time.Now().After(limit) {
-				c.FailNowf("[ERR] peer mismatch: %v %v", peerSet, otherSet)
+				c.FailNowf("[ERR] peer mismatch: %+v %+v", peerSet, otherSet)
 			} else {
 				goto WAIT
 			}
@@ -1578,8 +1572,6 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	// Enable operation after a remove.
 	conf := inmemConfig(t)
 	conf.ShutdownOnRemove = false
-
-	// Make a cluster
 	c := MakeCluster(3, t, conf)
 	defer c.Close()
 
@@ -1947,6 +1939,73 @@ func TestRaft_Voting(t *testing.T) {
 	if resp.Granted {
 		c.FailNowf("[ERR] expected vote not to be granted, but was %+v", resp)
 	}
+}
+
+func TestRaft_ProtocolVersion_0(t *testing.T) {
+	// Make a cluster on the old protocol.
+	conf := inmemConfig(t)
+	conf.ProtocolVersion = 0
+	c := MakeCluster(2, t, conf)
+	defer c.Close()
+
+	// Set up another server, also speaking the old protocol.
+	c1 := MakeClusterNoBootstrap(1, t, conf)
+
+	// Merge clusters.
+	c.Merge(c1)
+	c.FullyConnect()
+
+	// Make sure the new id-based operations aren't supported in the old
+	// protocol.
+	future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 1*time.Second)
+	if err := future.Error(); err != ErrUnsupportedProtocol {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+	future = c.Leader().AddNonvoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 1*time.Second)
+	if err := future.Error(); err != ErrUnsupportedProtocol {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+	future = c.Leader().RemoveServer(c1.rafts[0].localID, 0, 1*time.Second)
+	if err := future.Error(); err != ErrUnsupportedProtocol {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+	future = c.Leader().DemoteVoter(c1.rafts[0].localID, 0, 1*time.Second)
+	if err := future.Error(); err != ErrUnsupportedProtocol {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+
+	// Now do the join using the old address-based API (this returns a
+	// different type of future).
+	{
+		future := c.Leader().AddPeer(c1.rafts[0].localAddr)
+		if err := future.Error(); err != nil {
+			c.FailNowf("[ERR] err: %v", err)
+		}
+	}
+
+	// Set up another server, this time speaking the new protocol.
+	c2 := MakeClusterNoBootstrap(1, t, nil)
+
+	// Merge this one in.
+	c.Merge(c2)
+	c.FullyConnect()
+
+	// Make sure this can join in and inter-operate with the old servers.
+	{
+		future := c.Leader().AddPeer(c2.rafts[0].localAddr)
+		if err := future.Error(); err != nil {
+			c.FailNowf("[ERR] err: %v", err)
+		}
+	}
+
+	// Check the FSMs
+	c.EnsureSame(t)
+
+	// Check the peers
+	c.EnsureSamePeers(t)
+
+	// Ensure one leader
+	c.EnsureLeader(t, c.Leader().localAddr)
 }
 
 // TODO: These are test cases we'd like to write for appendEntries().

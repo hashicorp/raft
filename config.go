@@ -7,9 +7,35 @@ import (
 	"time"
 )
 
+// These are the versions of the protocol (which includes wire protocol as
+// well as Raft-specific log entries) that this server can _understand_. Use
+// the ProtocolVersion member of the Config object to control the version of
+// the protocol to use when _speaking_ to other servers.
+//
+// Version History
+//
+// 0: Unversioned original protocol spoken until Q2 2016.
+// 1: Added server IDs and a new peer change mechanism via a new LogConfiguration
+//    log entry type. All servers must be running >= 1 in order to support new
+//    staging and nonvoter modes for servers.
+const (
+	ProtocolVersionMin uint8 = 0
+	ProtocolVersionMax       = 1
+)
+
 // Config provides any necessary configuration to
 // the Raft server
 type Config struct {
+	// ProtocolVersion allows a Raft server to inter-operate with older
+	// Raft servers running an older version of the code. This is used to
+	// version the wire protocol as well as Raft-specific log entries that
+	// the server uses when _speaking_ to other servers. There is currently
+	// no auto-negotiation of versions so all servers must be manually
+	// configured with compatible versions. See ProtocolVersionMin and
+	// ProtocolVersionMax for the versions of the protocol that this server
+	// can _understand_.
+	ProtocolVersion uint8
+
 	// HeartbeatTimeout specifies the time in follower state without
 	// a leader before we attempt an election.
 	HeartbeatTimeout time.Duration
@@ -82,6 +108,7 @@ type Config struct {
 // DefaultConfig returns a Config with usable defaults.
 func DefaultConfig() *Config {
 	return &Config{
+		ProtocolVersion:    ProtocolVersionMax,
 		HeartbeatTimeout:   1000 * time.Millisecond,
 		ElectionTimeout:    1000 * time.Millisecond,
 		CommitTimeout:      50 * time.Millisecond,
@@ -96,6 +123,9 @@ func DefaultConfig() *Config {
 
 // ValidateConfig is used to validate a sane configuration
 func ValidateConfig(config *Config) error {
+	if config.ProtocolVersion > ProtocolVersionMax {
+		return fmt.Errorf("Protocol version cannot be > %d", ProtocolVersionMax)
+	}
 	if config.HeartbeatTimeout < 5*time.Millisecond {
 		return fmt.Errorf("Heartbeat timeout is too low")
 	}

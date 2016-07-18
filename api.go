@@ -42,12 +42,20 @@ var (
 
 	// ErrNothingNewToSnapshot is returned when trying to create a snapshot
 	// but there's nothing new commited to the FSM since we started.
-	ErrNothingNewToSnapshot = errors.New("Nothing new to snapshot")
+	ErrNothingNewToSnapshot = errors.New("nothing new to snapshot")
+
+	// ErrUnsupportedProtocol is returned when an operation is attempted
+	// that's not supported by the current protocol version.
+	ErrUnsupportedProtocol = errors.New("operation not supported with current protocol version")
 )
 
 // Raft implements a Raft node.
 type Raft struct {
 	raftState
+
+	// protocolVersion is used to inter-operate with older Raft servers. See
+	// ProtocolVersion in Config for more details.
+	protocolVersion uint8
 
 	// applyCh is used to async send logs to the main thread to
 	// be committed and applied to the FSM.
@@ -207,12 +215,12 @@ func BootstrapCluster(config *Config, logs LogStore, stable StableStore, snaps S
 // Raft node.
 func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps SnapshotStore,
 	trans Transport) (*Raft, error) {
-	// Validate the configuration
+	// Validate the configuration.
 	if err := ValidateConfig(conf); err != nil {
 		return nil, err
 	}
 
-	// Ensure we have a LogOutput
+	// Ensure we have a LogOutput.
 	var logger *log.Logger
 	if conf.Logger != nil {
 		logger = conf.Logger
@@ -223,19 +231,19 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		logger = log.New(conf.LogOutput, "", log.LstdFlags)
 	}
 
-	// Try to restore the current term
+	// Try to restore the current term.
 	currentTerm, err := stable.GetUint64(keyCurrentTerm)
 	if err != nil && err.Error() != "not found" {
 		return nil, fmt.Errorf("failed to load current term: %v", err)
 	}
 
-	// Read the last log value
+	// Read the last log value.
 	lastIdx, err := logs.LastIndex()
 	if err != nil {
 		return nil, fmt.Errorf("failed to find last log: %v", err)
 	}
 
-	// Get the log
+	// Get the log.
 	var lastLog Log
 	if lastIdx > 0 {
 		if err = logs.GetLog(lastIdx, &lastLog); err != nil {
@@ -243,27 +251,33 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		}
 	}
 
+	// Make sure we have a valid server address and ID.
+	protocolVersion := conf.ProtocolVersion
 	localAddr := ServerAddress(trans.LocalAddr())
 	localID := conf.LocalID
-	if localID == "" {
-		logger.Printf("[WARN] raft: No server ID given, using network address: %v. This default will be removed in the future. Set server ID explicitly in config.",
+	if protocolVersion < 1 || localID == "" {
+		// During the transition to the new ID system, keep this as an
+		// INFO level message. Once the new scheme has been out for a
+		// while, change this to a deprecation WARN message.
+		logger.Printf("[INFO] raft: No server ID given, or ProtocolVersion < 1, using network address as server ID: %v",
 			localAddr)
 		localID = ServerID(localAddr)
 	}
 
-	// Create Raft struct
+	// Create Raft struct.
 	r := &Raft{
-		applyCh:       make(chan *logFuture),
-		conf:          conf,
-		fsm:           fsm,
-		fsmCommitCh:   make(chan commitTuple, 128),
-		fsmRestoreCh:  make(chan *restoreFuture),
-		fsmSnapshotCh: make(chan *reqSnapshotFuture),
-		leaderCh:      make(chan bool),
-		localID:       localID,
-		localAddr:     localAddr,
-		logger:        logger,
-		logs:          logs,
+		protocolVersion: protocolVersion,
+		applyCh:         make(chan *logFuture),
+		conf:            conf,
+		fsm:             fsm,
+		fsmCommitCh:     make(chan commitTuple, 128),
+		fsmRestoreCh:    make(chan *restoreFuture),
+		fsmSnapshotCh:   make(chan *reqSnapshotFuture),
+		leaderCh:        make(chan bool),
+		localID:         localID,
+		localAddr:       localAddr,
+		logger:          logger,
+		logs:            logs,
 		configurationChangeCh: make(chan *configurationChangeFuture),
 		configurations:        configurations{},
 		rpcCh:                 trans.Consumer(),
@@ -277,7 +291,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		observers:             make(map[uint64]*Observer),
 	}
 
-	// Initialize as a follower
+	// Initialize as a follower.
 	r.setState(Follower)
 
 	// Start as leader if specified. This should only be used
@@ -287,16 +301,16 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		r.setLeader(r.localAddr)
 	}
 
-	// Restore the current term and the last log
+	// Restore the current term and the last log.
 	r.setCurrentTerm(currentTerm)
 	r.setLastLog(lastLog.Index, lastLog.Term)
 
-	// Attempt to restore a snapshot if there are any
+	// Attempt to restore a snapshot if there are any.
 	if err := r.restoreSnapshot(); err != nil {
 		return nil, err
 	}
 
-	// Scan through the log for any configuration change entries
+	// Scan through the log for any configuration change entries.
 	snapshotIndex, _ := r.getLastSnapshot()
 	for index := snapshotIndex + 1; index <= lastLog.Index; index++ {
 		var entry Log
@@ -319,7 +333,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	// to be called concurrently with a blocking RPC.
 	trans.SetHeartbeatHandler(r.processHeartbeat)
 
-	// Start the background work
+	// Start the background work.
 	r.goFunc(r.run)
 	r.goFunc(r.runFSM)
 	r.goFunc(r.runSnapshots)
@@ -486,7 +500,12 @@ func (r *Raft) GetConfiguration() (Configuration, uint64, error) {
 // AddPeer (deprecated) is used to add a new peer into the cluster. This must be
 // run on the leader or it will fail. Use AddVoter/AddNonvoter instead.
 func (r *Raft) AddPeer(peer ServerAddress) Future {
-	return r.AddVoter(ServerID(peer), peer, 0, 0)
+	return r.requestConfigChange(configurationChangeRequest{
+		command:       AddStaging,
+		serverID:      ServerID(peer),
+		serverAddress: peer,
+		prevIndex:     0,
+	}, 0)
 }
 
 // RemovePeer (deprecated) is used to remove a peer from the cluster. If the
@@ -494,7 +513,11 @@ func (r *Raft) AddPeer(peer ServerAddress) Future {
 // to occur. This must be run on the leader or it will fail.
 // Use RemoveServer instead.
 func (r *Raft) RemovePeer(peer ServerAddress) Future {
-	return r.RemoveServer(ServerID(peer), 0, 0)
+	return r.requestConfigChange(configurationChangeRequest{
+		command:   RemoveServer,
+		serverID:  ServerID(peer),
+		prevIndex: 0,
+	}, 0)
 }
 
 // AddVoter will add the given server to the cluster as a staging server. If the
@@ -506,6 +529,10 @@ func (r *Raft) RemovePeer(peer ServerAddress) Future {
 // If nonzero, timeout is how long this server should wait before the
 // configuration change log entry is appended.
 func (r *Raft) AddVoter(id ServerID, address ServerAddress, prevIndex uint64, timeout time.Duration) IndexFuture {
+	if r.protocolVersion < 1 {
+		return errorFuture{ErrUnsupportedProtocol}
+	}
+
 	return r.requestConfigChange(configurationChangeRequest{
 		command:       AddStaging,
 		serverID:      id,
@@ -520,6 +547,10 @@ func (r *Raft) AddVoter(id ServerID, address ServerAddress, prevIndex uint64, ti
 // a staging server or voter, this does nothing. This must be run on the leader
 // or it will fail. For prevIndex and timeout, see AddVoter.
 func (r *Raft) AddNonvoter(id ServerID, address ServerAddress, prevIndex uint64, timeout time.Duration) IndexFuture {
+	if r.protocolVersion < 1 {
+		return errorFuture{ErrUnsupportedProtocol}
+	}
+
 	return r.requestConfigChange(configurationChangeRequest{
 		command:       AddNonvoter,
 		serverID:      id,
@@ -532,6 +563,10 @@ func (r *Raft) AddNonvoter(id ServerID, address ServerAddress, prevIndex uint64,
 // leader is being removed, it will cause a new election to occur. This must be
 // run on the leader or it will fail. For prevIndex and timeout, see AddVoter.
 func (r *Raft) RemoveServer(id ServerID, prevIndex uint64, timeout time.Duration) IndexFuture {
+	if r.protocolVersion < 1 {
+		return errorFuture{ErrUnsupportedProtocol}
+	}
+
 	return r.requestConfigChange(configurationChangeRequest{
 		command:   RemoveServer,
 		serverID:  id,
@@ -545,6 +580,10 @@ func (r *Raft) RemoveServer(id ServerID, prevIndex uint64, timeout time.Duration
 // does nothing. This must be run on the leader or it will fail. For prevIndex
 // and timeout, see AddVoter.
 func (r *Raft) DemoteVoter(id ServerID, prevIndex uint64, timeout time.Duration) IndexFuture {
+	if r.protocolVersion < 1 {
+		return errorFuture{ErrUnsupportedProtocol}
+	}
+
 	return r.requestConfigChange(configurationChangeRequest{
 		command:   DemoteVoter,
 		serverID:  id,

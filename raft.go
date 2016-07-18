@@ -628,10 +628,26 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 
 	r.logger.Printf("[INFO] raft: Updating configuration with %s (%v, %v) to %v",
 		future.req.command, future.req.serverAddress, future.req.serverID, configuration)
-	future.log = Log{
-		Type: LogConfiguration,
-		Data: encodeConfiguration(configuration),
+
+	// In pre-ID compatibility mode we translate all configuration changes
+	// in to an old remove peer message, which can handle all supported
+	// cases for peer changes in the pre-ID world (adding and removing
+	// voters). Both add peer and remove peer log entries are handled
+	// similarly on old Raft servers, but remove peer does extra checks to
+	// see if a leader needs to step down. Since they both assert the full
+	// configuration, then we can safely call remove peer for everything.
+	if r.protocolVersion < 1 {
+		future.log = Log{
+			Type: LogRemovePeerDeprecated,
+			Data: encodePeers(configuration, r.trans),
+		}
+	} else {
+		future.log = Log{
+			Type: LogConfiguration,
+			Data: encodeConfiguration(configuration),
+		}
 	}
+
 	r.dispatchLogs([]*logFuture{&future.logFuture})
 	index := future.Index()
 	r.configurations.latest = configuration
@@ -740,6 +756,7 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 	case LogRemovePeerDeprecated:
 	case LogNoop:
 		// Ignore the no-op
+
 	default:
 		r.logger.Printf("[ERR] raft: Got unrecognized log type: %#v", l)
 	}
@@ -891,13 +908,9 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 				return
 			}
 
+			// Handle any new configuration changes
 			for _, newEntry := range newEntries {
-				if newEntry.Type == LogConfiguration {
-					r.configurations.committed = r.configurations.latest
-					r.configurations.committedIndex = r.configurations.latestIndex
-					r.configurations.latest = decodeConfiguration(newEntry.Data)
-					r.configurations.latestIndex = newEntry.Index
-				}
+				r.checkAndProcessConfigurationLog(newEntry)
 			}
 
 			// Update the lastLog
@@ -925,6 +938,23 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	resp.Success = true
 	r.setLastContact()
 	return
+}
+
+// checkAndProcessConfigurationLog takes a log entry and updates the latest
+// configuration if the entry results in a new configuration. This must only be
+// called from the main thread.
+func (r *Raft) checkAndProcessConfigurationLog(entry *Log) {
+	if entry.Type == LogConfiguration {
+		r.configurations.committed = r.configurations.latest
+		r.configurations.committedIndex = r.configurations.latestIndex
+		r.configurations.latest = decodeConfiguration(entry.Data)
+		r.configurations.latestIndex = entry.Index
+	} else if entry.Type == LogAddPeerDeprecated || entry.Type == LogRemovePeerDeprecated {
+		r.configurations.committed = r.configurations.latest
+		r.configurations.committedIndex = r.configurations.latestIndex
+		r.configurations.latest = decodePeers(entry.Data, r.trans)
+		r.configurations.latestIndex = entry.Index
+	}
 }
 
 // requestVote is invoked when we get an request vote RPC call.

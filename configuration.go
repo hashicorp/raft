@@ -274,17 +274,39 @@ func nextConfiguration(current Configuration, currentIndex uint64, change config
 	return configuration, nil
 }
 
+// encodePeers is used to serialize a Configuration into the old peers format.
+// This is here for backwards compatibility when operating with a mix of old
+// servers and should be removed eventually.
+func encodePeers(configuration Configuration, trans Transport) []byte {
+	// Gather up all the voters, other suffrage types are not supported by
+	// this data format.
+	var encPeers [][]byte
+	for _, server := range configuration.Servers {
+		if server.Suffrage == Voter {
+			encPeers = append(encPeers, trans.EncodePeer(server.Address))
+		}
+	}
+
+	// Encode the entire array.
+	buf, err := encodeMsgPack(encPeers)
+	if err != nil {
+		panic(fmt.Errorf("failed to encode peers: %v", err))
+	}
+
+	return buf.Bytes()
+}
+
 // decodePeers is used to deserialize an old list of peers into a Configuration.
 // This is here for backwards compatibility with old log entries and snapshots;
 // it should be removed eventually.
 func decodePeers(buf []byte, trans Transport) Configuration {
-	// Decode the buffer first
+	// Decode the buffer first.
 	var encPeers [][]byte
 	if err := decodeMsgPack(buf, &encPeers); err != nil {
 		panic(fmt.Errorf("failed to decode peers: %v", err))
 	}
 
-	// Deserialize each peer
+	// Deserialize each peer.
 	var servers []Server
 	for _, enc := range encPeers {
 		p := trans.DecodePeer(enc)
