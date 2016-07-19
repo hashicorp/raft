@@ -627,7 +627,7 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
 		peerConf.Logger = newTestLoggerWithPrefix(t, string(configuration.Servers[i].ID))
 
 		if bootstrap {
-			err := BootstrapCluster(peerConf, logs, store, snap, configuration)
+			err := BootstrapCluster(peerConf, trans, logs, store, snap, configuration)
 			if err != nil {
 				c.FailNowf("[ERR] BootstrapCluster failed: %v", err)
 			}
@@ -1420,7 +1420,7 @@ func testRecover(t *testing.T, protocolVersion int) {
 	if err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
-	if err := RecoverCluster(r.conf, r.logs, r.trans, recovery.Configuration); err != nil {
+	if err := RecoverCluster(r.conf, r.trans, r.logs, recovery.Configuration); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 

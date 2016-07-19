@@ -154,13 +154,19 @@ type Raft struct {
 // One sane approach is to boostrap a single server with a configuration
 // listing just itself as a Voter, then invoke AddVoter() on it to add other
 // servers to the cluster.
-func BootstrapCluster(config *Config, logs LogStore, stable StableStore, snaps SnapshotStore, configuration Configuration) error {
-	// Sanity check the configuration
+func BootstrapCluster(conf *Config, trans Transport, logs LogStore,
+	stable StableStore, snaps SnapshotStore, configuration Configuration) error {
+	// Validate the Raft server config.
+	if err := ValidateConfig(conf); err != nil {
+		return err
+	}
+
+	// Sanity check the Raft peer configuration.
 	if err := checkConfiguration(configuration); err != nil {
 		return err
 	}
 
-	// Make sure we don't have a current term
+	// Make sure we don't have a current term.
 	currentTerm, err := stable.GetUint64(keyCurrentTerm)
 	if err == nil {
 		if currentTerm > 0 {
@@ -172,7 +178,7 @@ func BootstrapCluster(config *Config, logs LogStore, stable StableStore, snaps S
 		}
 	}
 
-	// Make sure we have an empty log
+	// Make sure we have an empty log.
 	lastIdx, err := logs.LastIndex()
 	if err != nil {
 		return fmt.Errorf("failed to get last log index: %v", err)
@@ -190,17 +196,22 @@ func BootstrapCluster(config *Config, logs LogStore, stable StableStore, snaps S
 		return fmt.Errorf("Bootstrap only works on new clusters, found snapshots")
 	}
 
-	// Set current term to 1
+	// Set current term to 1.
 	if err := stable.SetUint64(keyCurrentTerm, 1); err != nil {
 		return fmt.Errorf("failed to save current term: %v", err)
 	}
 
-	// Append configuration entry to log
+	// Append configuration entry to log.
 	entry := &Log{
 		Index: 1,
 		Term:  1,
-		Type:  LogConfiguration,
-		Data:  encodeConfiguration(configuration),
+	}
+	if conf.ProtocolVersion < 1 {
+		entry.Type = LogRemovePeerDeprecated
+		entry.Data = encodePeers(configuration, trans)
+	} else {
+		entry.Type = LogConfiguration
+		entry.Data = encodeConfiguration(configuration)
 	}
 	if err := logs.StoreLog(entry); err != nil {
 		return fmt.Errorf("failed to append configuration entry to log: %v", err)
@@ -213,7 +224,8 @@ func BootstrapCluster(config *Config, logs LogStore, stable StableStore, snaps S
 // recover from a loss of quorum. If this is used, ALL SERVERS in the cluster
 // must be started with the same recovery settings. Otherwise, the configuration
 // may be incorrect depending on which server is elected.
-func RecoverCluster(conf *Config, logs LogStore, trans Transport, configuration Configuration) error {
+func RecoverCluster(conf *Config, trans Transport, logs LogStore,
+	configuration Configuration) error {
 	// Validate the Raft server config.
 	if err := ValidateConfig(conf); err != nil {
 		return err
