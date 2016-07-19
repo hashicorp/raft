@@ -172,10 +172,6 @@ func (r *Raft) takeSnapshot() error {
 		return err
 	}
 
-	// Since we've snapshotted any recovery configuration, we can disarm the
-	// recovery manager, if any.
-	asyncNotifyCh(r.recoveryCh)
-
 	r.logger.Printf("[INFO] raft: Snapshot to %d complete", snapReq.index)
 	return nil
 }

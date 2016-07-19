@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"io/ioutil"
-	"log"
 	"os"
 	"path/filepath"
 )
@@ -27,26 +26,6 @@ type Recovery interface {
 	// Some recovery managers may not need this, such as if they look at the
 	// latest index when deciding to act.
 	Disarm() error
-}
-
-// runRecovery is a goroutine that handles notifying a recovery manager that it
-// has been disarmed. It'll keep trying until it has disarmed the recovery
-// manager or it has been shut down.
-func runRecovery(logger *log.Logger, recovery Recovery, recoveryCh chan struct{}, shutdownCh chan struct{}) {
-	for {
-		select {
-		case <-recoveryCh:
-			if err := recovery.Disarm(); err != nil {
-				logger.Printf("[ERR] raft: Recovery manager failed to disarm: %v", err)
-			} else {
-				logger.Printf("[INFO] raft: Recovery manager disarmed successfully")
-				return
-			}
-
-		case <-shutdownCh:
-			return
-		}
-	}
 }
 
 // PeersJSONRecovery is a recovery manager that reads the old-style peers.json

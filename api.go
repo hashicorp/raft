@@ -113,9 +113,6 @@ type Raft struct {
 	// RPC chan comes from the transport layer
 	rpcCh <-chan RPC
 
-	// recoveryCh is used to signal a recovery manager that it should disarm.
-	recoveryCh chan struct{}
-
 	// Shutdown channel to exit, protected to prevent concurrent exits
 	shutdown     bool
 	shutdownCh   chan struct{}
@@ -291,7 +288,6 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		rpcCh:                 trans.Consumer(),
 		snapshots:             snaps,
 		snapshotCh:            make(chan *snapshotFuture),
-		recoveryCh:            make(chan struct{}, 1),
 		shutdownCh:            make(chan struct{}),
 		stable:                stable,
 		trans:                 trans,
@@ -330,25 +326,37 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		r.processConfigurationLogEntry(&entry)
 	}
 
-	// Start the FSM and snapshot handlers here in case we need a recovery
-	// snapshot.
-	r.goFunc(r.runFSM)
-	r.goFunc(r.runSnapshots)
-
 	// Allow the recovery manager to intervene, if one was supplied. We force
-	// the current configuration based on the recovery override and then
-	// arrange for a no-op configuration change to happen as soon as possible
-	// in order to have the leader flush this out to the followers.
+	// the current configuration based on the recovery override and add it
+	// to the log so that followers will get it once a leader steps up.
 	if recovery != nil {
 		latest := r.configurations.latest
 		latestIndex := r.configurations.latestIndex
 		if configuration, ok := recovery.Override(latest, latestIndex); ok {
 			r.logger.Printf("[INFO] Recovering configuration: %+v", configuration)
+			fakeIndex := lastLog.Index + 1
 			r.configurations.latest = configuration
-			r.configurations.latestIndex = latestIndex
+			r.configurations.latestIndex = fakeIndex
 			r.configurations.committed = configuration
-			r.configurations.committedIndex = latestIndex
-			r.goFunc(func() { runRecovery(r.logger, recovery, r.recoveryCh, r.shutdownCh) })
+			r.configurations.committedIndex = fakeIndex
+			entry := &Log{
+				Index: fakeIndex,
+				Term:  lastLog.Term,
+			}
+			if protocolVersion < 1 {
+				entry.Type = LogRemovePeerDeprecated
+				entry.Data = encodePeers(configuration, trans)
+			} else {
+				entry.Type = LogConfiguration
+				entry.Data = encodeConfiguration(configuration)
+			}
+			if err := logs.StoreLog(entry); err != nil {
+				return nil, fmt.Errorf("failed to append configuration entry to log: %v", err)
+			}
+			r.setLastLog(fakeIndex, lastLog.Term)
+			if err := recovery.Disarm(); err != nil {
+				return nil, fmt.Errorf("failed to disarm recovery manager: %v", err)
+			}
 		}
 	}
 
@@ -359,8 +367,10 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	// to be called concurrently with a blocking RPC.
 	trans.SetHeartbeatHandler(r.processHeartbeat)
 
-	// Start the rest of the background work.
+	// Start the background work.
 	r.goFunc(r.run)
+	r.goFunc(r.runFSM)
+	r.goFunc(r.runSnapshots)
 	return r, nil
 }
 

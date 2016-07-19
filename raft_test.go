@@ -1347,16 +1347,18 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 // TODO: Need a test that has a previous format Snapshot and check that it can
 // be read/installed on the new code.
 
-// TODO: Need a test to process old-style entries when starting up.
+// TODO: Need a test to process old-style entries in the Raft log when starting
+// up.
 
-func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
-	// Make the cluster
+func testRecover(t *testing.T, protocolVersion int) {
+	// Make the cluster.
 	conf := inmemConfig(t)
+	conf.ProtocolVersion = protocolVersion
 	conf.TrailingLogs = 10
 	c := MakeCluster(3, t, conf)
 	defer c.Close()
 
-	// Commit a lot of things
+	// Commit a lot of things.
 	leader := c.Leader()
 	var future Future
 	for i := 0; i < 100; i++ {
@@ -1368,30 +1370,30 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 
-	// Take a snapshot
+	// Take a snapshot.
 	snapFuture := leader.Snapshot()
 	if err := snapFuture.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 
-	// Shutdown
+	// Shutdown.
 	shutdown := leader.Shutdown()
 	if err := shutdown.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 
-	// Make a separate cluster
+	// Make a separate cluster.
 	c2 := MakeClusterNoBootstrap(2, t, conf)
 	defer c2.Close()
 
-	// Kill the old cluster
+	// Kill the old cluster.
 	for _, sec := range c.rafts {
 		if sec != leader {
 			sec.Shutdown()
 		}
 	}
 
-	// Change the peer addresses
+	// Gather the new peer address list.
 	var peers []string
 	peers = append(peers, fmt.Sprintf("%q", leader.trans.LocalAddr()))
 	for _, sec := range c2.rafts {
@@ -1399,7 +1401,7 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	}
 	content := []byte(fmt.Sprintf("[%s]", strings.Join(peers, ",")))
 
-	// Set up a recovery manager
+	// Set up a recovery manager.
 	base, err := ioutil.TempDir("", "")
 	if err != nil {
 		c.FailNowf("[ERR] err: %v", err)
@@ -1414,10 +1416,10 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 
-	// Restart the Raft with new peers
+	// Restart the Raft with new peers.
 	r := leader
 
-	// Can't just reuse the old transport as it will be closed
+	// Can't just reuse the old transport as it will be closed.
 	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
 	r, err = NewRaft(r.conf, r.fsm, r.logs, r.stable, r.snapshots, trans2, recovery)
 	if err != nil {
@@ -1429,42 +1431,33 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	c2.fsms = append(c2.fsms, r.fsm.(*MockFSM))
 	c2.FullyConnect()
 
-	// Wait a while
+	// Wait a while.
 	time.Sleep(c.propagateTimeout)
 
-	// Ensure we elect a leader, and that we replicate
-	// to our new followers
+	// Ensure we elect a leader, and that we replicate to our new followers.
 	c2.EnsureSame(t)
 
-	// We should have restored from the snapshot! Note that there's one more
-	// index bump from the noop the leader applies when taking over.
-	if last := r.getLastApplied(); last != 103 {
+	// We should have restored from the snapshot! Note that there's one
+	// index bump from the log entry added during recovery, and another
+	// bump from the noop the leader tees up when it takes over.
+	if last := r.getLastApplied(); last != 104 {
 		c.FailNowf("[ERR] bad last: %v", last)
 	}
 
-	// TODO (slackpad) - This isn't ideal because it shifts the burden of
-	// finalizing the config override onto the application. Until they do
-	// this, or a snapshot occurs, leader elections won't work if the other
-	// servers have installed an old snapshot and don't have the right peers.
-	// We used to re-assert the configuration whenever a leader was elected
-	// which papers over this. Can we go ahead and append to the log during
-	// recovery?
-
-	// The followers will have the old configuration from the snapshot so we
-	// have to kick out one config change in order to get them the overridder
-	// configuration.
-	peerFuture := c2.Leader().AddPeer(c2.Leader().localAddr)
-	if err := peerFuture.Error(); err != nil {
-		c.FailNowf("[ERR] failed to make peer change: %v", err)
-	}
-
-	// Check the peers
+	// Check the peers.
 	c2.EnsureSamePeers(t)
 
-	// Make sure the recovery disarm step ran.
+	// Make sure the recovery disarm step ran, otherwise we could revert
+	// some configuration change that happens later.
 	_, err = os.Stat(peersFile)
 	if !os.IsNotExist(err) {
 		c.FailNowf("[ERR] peers.json file should be deleted: %v", err)
+	}
+}
+
+func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
+	for v := ProtocolVersionMin; v <= ProtocolVersionMax; v++ {
+		testRecover(t, v)
 	}
 }
 
