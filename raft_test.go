@@ -1420,7 +1420,7 @@ func testRecover(t *testing.T, protocolVersion int) {
 	if err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
-	if err := RecoverCluster(r.conf, r.logs, r.trans, recovery); err != nil {
+	if err := RecoverCluster(r.conf, r.logs, r.trans, recovery.Configuration); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 
@@ -1451,13 +1451,6 @@ func testRecover(t *testing.T, protocolVersion int) {
 
 	// Check the peers.
 	c2.EnsureSamePeers(t)
-
-	// Make sure the recovery disarm step ran, otherwise we could revert
-	// some configuration change that happens later.
-	_, err = os.Stat(peersFile)
-	if !os.IsNotExist(err) {
-		c.FailNowf("[ERR] peers.json file should be deleted: %v", err)
-	}
 }
 
 func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {

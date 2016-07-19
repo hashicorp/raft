@@ -213,9 +213,14 @@ func BootstrapCluster(config *Config, logs LogStore, stable StableStore, snaps S
 // recover from a loss of quorum. If this is used, ALL SERVERS in the cluster
 // must be started with the same recovery settings. Otherwise, the configuration
 // may be incorrect depending on which server is elected.
-func RecoverCluster(conf *Config, logs LogStore, trans Transport, recovery Recovery) error {
-	// Validate the configuration.
+func RecoverCluster(conf *Config, logs LogStore, trans Transport, configuration Configuration) error {
+	// Validate the Raft server config.
 	if err := ValidateConfig(conf); err != nil {
+		return err
+	}
+
+	// Sanity check the Raft peer configuration.
+	if err := checkConfiguration(configuration); err != nil {
 		return err
 	}
 
@@ -235,31 +240,21 @@ func RecoverCluster(conf *Config, logs LogStore, trans Transport, recovery Recov
 		return fmt.Errorf("Recover only works on non-empty logs")
 	}
 
-	// See if there's a configuration override.
-	if configuration, ok := recovery.Override(lastLog.Index); ok {
-		fakeIndex := lastLog.Index + 1
-
-		// Add a new log entry.
-		entry := &Log{
-			Index: fakeIndex,
-			Term:  lastLog.Term,
-		}
-		if conf.ProtocolVersion < 1 {
-			entry.Type = LogRemovePeerDeprecated
-			entry.Data = encodePeers(configuration, trans)
-		} else {
-			entry.Type = LogConfiguration
-			entry.Data = encodeConfiguration(configuration)
-		}
-		if err := logs.StoreLog(entry); err != nil {
-			return fmt.Errorf("failed to append configuration entry to log: %v", err)
-		}
-
-		// Disarm the recovery manager so that we won't revert a
-		// subsequent configuration change.
-		if err := recovery.Disarm(); err != nil {
-			return fmt.Errorf("failed to disarm recovery manager: %v", err)
-		}
+	// Add a new log entry.
+	fakeIndex := lastLog.Index + 1
+	entry := &Log{
+		Index: fakeIndex,
+		Term:  lastLog.Term,
+	}
+	if conf.ProtocolVersion < 1 {
+		entry.Type = LogRemovePeerDeprecated
+		entry.Data = encodePeers(configuration, trans)
+	} else {
+		entry.Type = LogConfiguration
+		entry.Data = encodeConfiguration(configuration)
+	}
+	if err := logs.StoreLog(entry); err != nil {
+		return fmt.Errorf("failed to append configuration entry to log: %v", err)
 	}
 
 	return nil

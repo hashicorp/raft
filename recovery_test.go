@@ -45,11 +45,6 @@ func TestRecovery_PeersJSON(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 
-	configuration, ok := recovery.Override(0)
-	if !ok {
-		t.Fatalf("bad: should have an override")
-	}
-
 	expected := Configuration{
 		Servers: []Server{
 			Server{
@@ -69,8 +64,8 @@ func TestRecovery_PeersJSON(t *testing.T) {
 			},
 		},
 	}
-	if !reflect.DeepEqual(configuration, expected) {
-		t.Fatalf("bad configuration: %+v != %+v", configuration, expected)
+	if !reflect.DeepEqual(recovery.Configuration, expected) {
+		t.Fatalf("bad configuration: %+v != %+v", recovery.Configuration, expected)
 	}
 
 	peersExists := func() bool {

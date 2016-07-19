@@ -8,26 +8,6 @@ import (
 	"path/filepath"
 )
 
-// Recovery is an interface for a recovery manager that runs at startup in
-// order to let operators manually put the cluster's configuration into a
-// known state after a loss of quorum outage.
-type Recovery interface {
-	// Override is called when Raft is starting up. If an override is
-	// requested, this returns true along with the new configuration. We
-	// include the last index so that the recovery manager can examine
-	// that and decide whether or not to run, such as if we want to inject a
-	// configuration only under a specific index.
-	Override(lastIndex uint64) (Configuration, bool)
-
-	// Disarm is called whenever the recovery configuration becomes durable
-	// in the Raft system, such as when another configuration change is
-	// committed or when a snapshot has taken place. This should disarm the
-	// override so it will not interfere with future configuration changes.
-	// Some recovery managers may not need this, such as if they look at the
-	// latest index when deciding to act.
-	Disarm() error
-}
-
 // PeersJSONRecovery is a recovery manager that reads the old-style peers.json
 // file. It does not support server IDs, so it should only be used along with
 // ProtocolVersion 0. Upon disarming, it'll delete the peers.json file.
@@ -35,8 +15,8 @@ type PeersJSONRecovery struct {
 	// path is the full path to the peers.json file.
 	path string
 
-	// configuration is the override configuration.
-	configuration Configuration
+	// Configuration is the override configuration.
+	Configuration Configuration
 }
 
 // NewPeersJSONRecovery takes the given base directory and parses the peers.json
@@ -78,18 +58,13 @@ func NewPeersJSONRecovery(base string) (*PeersJSONRecovery, error) {
 	// Looks good - give them a manager!
 	recovery := &PeersJSONRecovery{
 		path:          path,
-		configuration: configuration,
+		Configuration: configuration,
 	}
 	return recovery, nil
 }
 
-// See the Recovery interface documentation for Override.
-func (r *PeersJSONRecovery) Override(lastIndex uint64) (Configuration, bool) {
-	return r.configuration, true
-}
-
-// See the Recovery interface documentation for Disarm. In this case, we attempt
-// delete the peers.json file.
+// Disarm removes the peers.json file so that this won't override configuration
+// changes that occur after the recovery.
 func (r *PeersJSONRecovery) Disarm() error {
 	return os.Remove(r.path)
 }
