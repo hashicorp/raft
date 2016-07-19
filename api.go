@@ -113,6 +113,9 @@ type Raft struct {
 	// RPC chan comes from the transport layer
 	rpcCh <-chan RPC
 
+	// recoveryCh is used to signal a recovery manager that it should disarm.
+	recoveryCh chan struct{}
+
 	// Shutdown channel to exit, protected to prevent concurrent exits
 	shutdown     bool
 	shutdownCh   chan struct{}
@@ -210,11 +213,13 @@ func BootstrapCluster(config *Config, logs LogStore, stable StableStore, snaps S
 }
 
 // NewRaft is used to construct a new Raft node. It takes a configuration, as well
-// as implementations of various interfaces that are required. If we have any old state,
-// such as snapshots, logs, peers, etc, all those will be restored when creating the
-// Raft node.
+// as implementations of various interfaces that are required. If we have any
+// old state, such as snapshots, logs, peers, etc, all those will be restored
+// when creating the Raft node. The recovery manager is optional (may be nil) and
+// provides a hook for injecting an operator-specified configuration. If this is
+// used, ALL NODES in the cluster must be started with the same recovery settings.
 func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps SnapshotStore,
-	trans Transport) (*Raft, error) {
+	trans Transport, recovery Recovery) (*Raft, error) {
 	// Validate the configuration.
 	if err := ValidateConfig(conf); err != nil {
 		return nil, err
@@ -286,6 +291,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		rpcCh:                 trans.Consumer(),
 		snapshots:             snaps,
 		snapshotCh:            make(chan *snapshotFuture),
+		recoveryCh:            make(chan struct{}, 1),
 		shutdownCh:            make(chan struct{}),
 		stable:                stable,
 		trans:                 trans,
@@ -323,6 +329,29 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		}
 		r.processConfigurationLogEntry(&entry)
 	}
+
+	// Start the FSM and snapshot handlers here in case we need a recovery
+	// snapshot.
+	r.goFunc(r.runFSM)
+	r.goFunc(r.runSnapshots)
+
+	// Allow the recovery manager to intervene, if one was supplied. We force
+	// the current configuration based on the recovery override and then
+	// arrange for a no-op configuration change to happen as soon as possible
+	// in order to have the leader flush this out to the followers.
+	if recovery != nil {
+		latest := r.configurations.latest
+		latestIndex := r.configurations.latestIndex
+		if configuration, ok := recovery.Override(latest, latestIndex); ok {
+			r.logger.Printf("[INFO] Recovering configuration: %+v", configuration)
+			r.configurations.latest = configuration
+			r.configurations.latestIndex = latestIndex
+			r.configurations.committed = configuration
+			r.configurations.committedIndex = latestIndex
+			r.goFunc(func() { runRecovery(r.logger, recovery, r.recoveryCh, r.shutdownCh) })
+		}
+	}
+
 	r.logger.Printf("[INFO] NewRaft configurations: %+v", r.configurations)
 
 	// Setup a heartbeat fast-path to avoid head-of-line
@@ -330,10 +359,8 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	// to be called concurrently with a blocking RPC.
 	trans.SetHeartbeatHandler(r.processHeartbeat)
 
-	// Start the background work.
+	// Start the rest of the background work.
 	r.goFunc(r.run)
-	r.goFunc(r.runFSM)
-	r.goFunc(r.runSnapshots)
 	return r, nil
 }
 

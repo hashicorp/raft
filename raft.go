@@ -654,6 +654,10 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 	r.configurations.latestIndex = index
 	r.leaderState.commitment.setConfiguration(configuration)
 	r.startStopReplication()
+
+	// Since we've added the recovery configuration to our log, we can
+	// disarm the recovery manager, if any.
+	asyncNotifyCh(r.recoveryCh)
 }
 
 // dispatchLog is called on the leader to push a log to disk, mark it

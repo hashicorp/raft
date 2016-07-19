@@ -7,7 +7,9 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -631,7 +633,7 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
 			}
 		}
 
-		raft, err := NewRaft(peerConf, c.fsms[i], logs, store, snap, trans)
+		raft, err := NewRaft(peerConf, c.fsms[i], logs, store, snap, trans, nil)
 		if err != nil {
 			c.FailNowf("[ERR] NewRaft failed: %v", err)
 		}
@@ -1330,7 +1332,7 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 	r := leader
 	// Can't just reuse the old transport as it will be closed
 	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
-	r, err := NewRaft(r.conf, r.fsm, r.logs, r.stable, r.snapshots, trans2)
+	r, err := NewRaft(r.conf, r.fsm, r.logs, r.stable, r.snapshots, trans2, nil)
 	if err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -1348,10 +1350,6 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 // TODO: Need a test to process old-style entries when starting up.
 
 func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
-	// TODO - Fix broken test. This needs a story about how we recover and
-	// manually let the operator adjust the quorum before we can proceed.
-	return
-
 	// Make the cluster
 	conf := inmemConfig(t)
 	conf.TrailingLogs = 10
@@ -1394,16 +1392,34 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	}
 
 	// Change the peer addresses
-	peers := []ServerAddress{leader.trans.LocalAddr()}
+	var peers []string
+	peers = append(peers, fmt.Sprintf("%q", leader.trans.LocalAddr()))
 	for _, sec := range c2.rafts {
-		peers = append(peers, sec.trans.LocalAddr())
+		peers = append(peers, fmt.Sprintf("%q", sec.trans.LocalAddr()))
+	}
+	content := []byte(fmt.Sprintf("[%s]", strings.Join(peers, ",")))
+
+	// Set up a recovery manager
+	base, err := ioutil.TempDir("", "")
+	if err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+	defer os.RemoveAll(base)
+	peersFile := filepath.Join(base, "peers.json")
+	if err := ioutil.WriteFile(peersFile, content, 0666); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+	recovery, err := NewPeersJSONRecovery(base)
+	if err != nil {
+		c.FailNowf("[ERR] err: %v", err)
 	}
 
 	// Restart the Raft with new peers
 	r := leader
+
 	// Can't just reuse the old transport as it will be closed
 	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
-	r, err := NewRaft(r.conf, r.fsm, r.logs, r.stable, r.snapshots, trans2)
+	r, err = NewRaft(r.conf, r.fsm, r.logs, r.stable, r.snapshots, trans2, recovery)
 	if err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -1420,9 +1436,35 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	// to our new followers
 	c2.EnsureSame(t)
 
-	// We should have restored from the snapshot!
-	if last := r.getLastApplied(); last != 102 {
+	// We should have restored from the snapshot! Note that there's one more
+	// index bump from the noop the leader applies when taking over.
+	if last := r.getLastApplied(); last != 103 {
 		c.FailNowf("[ERR] bad last: %v", last)
+	}
+
+	// TODO (slackpad) - This isn't ideal because it shifts the burden of
+	// finalizing the config override onto the application. Until they do
+	// this, or a snapshot occurs, leader elections won't work if the other
+	// servers have installed an old snapshot and don't have the right peers.
+	// We used to re-assert the configuration whenever a leader was elected
+	// which papers over this. Can we go ahead and append to the log during
+	// recovery?
+
+	// The followers will have the old configuration from the snapshot so we
+	// have to kick out one config change in order to get them the overridder
+	// configuration.
+	peerFuture := c2.Leader().AddPeer(c2.Leader().localAddr)
+	if err := peerFuture.Error(); err != nil {
+		c.FailNowf("[ERR] failed to make peer change: %v", err)
+	}
+
+	// Check the peers
+	c2.EnsureSamePeers(t)
+
+	// Make sure the recovery disarm step ran.
+	_, err = os.Stat(peersFile)
+	if !os.IsNotExist(err) {
+		c.FailNowf("[ERR] peers.json file should be deleted: %v", err)
 	}
 }
 
