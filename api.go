@@ -318,13 +318,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 			r.logger.Printf("[ERR] raft: Failed to get log at %d: %v", index, err)
 			panic(err)
 		}
-		// TODO: support LogAddPeer, LogRemovePeer too
-		if entry.Type == LogConfiguration {
-			r.configurations.committed = r.configurations.latest
-			r.configurations.committedIndex = r.configurations.latestIndex
-			r.configurations.latest = decodeConfiguration(entry.Data)
-			r.configurations.latestIndex = entry.Index
-		}
+		r.checkAndProcessConfigurationLog(&entry)
 	}
 	r.logger.Printf("[INFO] NewRaft configurations: %+v", r.configurations)
 

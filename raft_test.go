@@ -1332,7 +1332,10 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 	}
 }
 
-// TODO: Need a test that has a previous format Snapshot and check that it can be read/installed on the new code.
+// TODO: Need a test that has a previous format Snapshot and check that it can
+// be read/installed on the new code.
+
+// TODO: Need a test to process old-style entries when starting up.
 
 func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	// TODO - Fix broken test. This needs a story about how we recover and
