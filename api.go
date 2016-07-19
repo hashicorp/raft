@@ -333,12 +333,17 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		latest := r.configurations.latest
 		latestIndex := r.configurations.latestIndex
 		if configuration, ok := recovery.Override(latest, latestIndex); ok {
-			r.logger.Printf("[INFO] Recovering configuration: %+v", configuration)
 			fakeIndex := lastLog.Index + 1
+			r.logger.Printf("[INFO] Recovering configuration by adding new log at index %d: %+v", fakeIndex, configuration)
+
+			// Make this is active configuration, and make it look like
+			// it was committed.
 			r.configurations.latest = configuration
 			r.configurations.latestIndex = fakeIndex
 			r.configurations.committed = configuration
 			r.configurations.committedIndex = fakeIndex
+
+			// Add a new log entry.
 			entry := &Log{
 				Index: fakeIndex,
 				Term:  lastLog.Term,
@@ -354,6 +359,9 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 				return nil, fmt.Errorf("failed to append configuration entry to log: %v", err)
 			}
 			r.setLastLog(fakeIndex, lastLog.Term)
+
+			// Disarm the recovery manager so that we won't revert a
+			// subsequent configuration change.
 			if err := recovery.Disarm(); err != nil {
 				return nil, fmt.Errorf("failed to disarm recovery manager: %v", err)
 			}
