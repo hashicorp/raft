@@ -55,7 +55,7 @@ type Raft struct {
 
 	// protocolVersion is used to inter-operate with older Raft servers. See
 	// ProtocolVersion in Config for more details.
-	protocolVersion uint8
+	protocolVersion int
 
 	// applyCh is used to async send logs to the main thread to
 	// be committed and applied to the FSM.
@@ -255,6 +255,9 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	protocolVersion := conf.ProtocolVersion
 	localAddr := ServerAddress(trans.LocalAddr())
 	localID := conf.LocalID
+
+	// TODO (slackpad) - When we deprecate protocol version 0, remove this
+	// along with the AddPeer() and RemovePeer() APIs.
 	if protocolVersion < 1 || localID == "" {
 		// During the transition to the new ID system, keep this as an
 		// INFO level message. Once the new scheme has been out for a

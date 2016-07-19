@@ -19,8 +19,8 @@ import (
 //    log entry type. All servers must be running >= 1 in order to support new
 //    staging and nonvoter modes for servers.
 const (
-	ProtocolVersionMin uint8 = 0
-	ProtocolVersionMax       = 1
+	ProtocolVersionMin = 0
+	ProtocolVersionMax = 1
 )
 
 // Config provides any necessary configuration to
@@ -34,7 +34,7 @@ type Config struct {
 	// configured with compatible versions. See ProtocolVersionMin and
 	// ProtocolVersionMax for the versions of the protocol that this server
 	// can _understand_.
-	ProtocolVersion uint8
+	ProtocolVersion int
 
 	// HeartbeatTimeout specifies the time in follower state without
 	// a leader before we attempt an election.
@@ -123,8 +123,10 @@ func DefaultConfig() *Config {
 
 // ValidateConfig is used to validate a sane configuration
 func ValidateConfig(config *Config) error {
-	if config.ProtocolVersion > ProtocolVersionMax {
-		return fmt.Errorf("Protocol version cannot be > %d", ProtocolVersionMax)
+	if config.ProtocolVersion < ProtocolVersionMin ||
+		config.ProtocolVersion > ProtocolVersionMax {
+		return fmt.Errorf("Protocol version %d must be >= %d and <= %d",
+			config.ProtocolVersion, ProtocolVersionMin, ProtocolVersionMax)
 	}
 	if config.HeartbeatTimeout < 5*time.Millisecond {
 		return fmt.Errorf("Heartbeat timeout is too low")
