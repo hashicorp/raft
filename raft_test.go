@@ -633,7 +633,7 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
 			}
 		}
 
-		raft, err := NewRaft(peerConf, c.fsms[i], logs, store, snap, trans, nil)
+		raft, err := NewRaft(peerConf, c.fsms[i], logs, store, snap, trans)
 		if err != nil {
 			c.FailNowf("[ERR] NewRaft failed: %v", err)
 		}
@@ -1332,7 +1332,7 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 	r := leader
 	// Can't just reuse the old transport as it will be closed
 	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
-	r, err := NewRaft(r.conf, r.fsm, r.logs, r.stable, r.snapshots, trans2, nil)
+	r, err := NewRaft(r.conf, r.fsm, r.logs, r.stable, r.snapshots, trans2)
 	if err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -1349,6 +1349,8 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 
 // TODO: Need a test to process old-style entries in the Raft log when starting
 // up.
+
+// TODO: Add a dedicated test for RecoverCluster() hitting the edges.
 
 func testRecover(t *testing.T, protocolVersion int) {
 	// Make the cluster.
@@ -1393,6 +1395,9 @@ func testRecover(t *testing.T, protocolVersion int) {
 		}
 	}
 
+	// Restart the Raft with new peers.
+	r := leader
+
 	// Gather the new peer address list.
 	var peers []string
 	peers = append(peers, fmt.Sprintf("%q", leader.trans.LocalAddr()))
@@ -1401,7 +1406,7 @@ func testRecover(t *testing.T, protocolVersion int) {
 	}
 	content := []byte(fmt.Sprintf("[%s]", strings.Join(peers, ",")))
 
-	// Set up a recovery manager.
+	// Perform a manual recovery on the cluster.
 	base, err := ioutil.TempDir("", "")
 	if err != nil {
 		c.FailNowf("[ERR] err: %v", err)
@@ -1415,13 +1420,13 @@ func testRecover(t *testing.T, protocolVersion int) {
 	if err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
-
-	// Restart the Raft with new peers.
-	r := leader
+	if err := RecoverCluster(r.conf, r.logs, r.trans, recovery); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
 
 	// Can't just reuse the old transport as it will be closed.
 	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
-	r, err = NewRaft(r.conf, r.fsm, r.logs, r.stable, r.snapshots, trans2, recovery)
+	r, err = NewRaft(r.conf, r.fsm, r.logs, r.stable, r.snapshots, trans2)
 	if err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}

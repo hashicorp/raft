@@ -45,7 +45,7 @@ func TestRecovery_PeersJSON(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 
-	configuration, ok := recovery.Override(Configuration{}, 0)
+	configuration, ok := recovery.Override(0)
 	if !ok {
 		t.Fatalf("bad: should have an override")
 	}

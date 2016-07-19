@@ -14,10 +14,10 @@ import (
 type Recovery interface {
 	// Override is called when Raft is starting up. If an override is
 	// requested, this returns true along with the new configuration. We
-	// include the latest configuration and index so that the recovery
-	// manager can examine those and decide whether or not to run, such as
-	// if we want to inject a configuration only under a specific index.
-	Override(latest Configuration, latestIndex uint64) (Configuration, bool)
+	// include the last index so that the recovery manager can examine
+	// that and decide whether or not to run, such as if we want to inject a
+	// configuration only under a specific index.
+	Override(lastIndex uint64) (Configuration, bool)
 
 	// Disarm is called whenever the recovery configuration becomes durable
 	// in the Raft system, such as when another configuration change is
@@ -84,7 +84,7 @@ func NewPeersJSONRecovery(base string) (*PeersJSONRecovery, error) {
 }
 
 // See the Recovery interface documentation for Override.
-func (r *PeersJSONRecovery) Override(latest Configuration, latestIndex uint64) (Configuration, bool) {
+func (r *PeersJSONRecovery) Override(lastIndex uint64) (Configuration, bool) {
 	return r.configuration, true
 }
 

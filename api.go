@@ -209,14 +209,67 @@ func BootstrapCluster(config *Config, logs LogStore, stable StableStore, snaps S
 	return nil
 }
 
+// RecoverCluster is used to manually force a new configuration in order to
+// recover from a loss of quorum. If this is used, ALL SERVERS in the cluster
+// must be started with the same recovery settings. Otherwise, the configuration
+// may be incorrect depending on which server is elected.
+func RecoverCluster(conf *Config, logs LogStore, trans Transport, recovery Recovery) error {
+	// Validate the configuration.
+	if err := ValidateConfig(conf); err != nil {
+		return err
+	}
+
+	// Read the last log value.
+	lastIdx, err := logs.LastIndex()
+	if err != nil {
+		return fmt.Errorf("failed to find last log: %v", err)
+	}
+
+	// Get the log.
+	var lastLog Log
+	if lastIdx > 0 {
+		if err = logs.GetLog(lastIdx, &lastLog); err != nil {
+			return fmt.Errorf("failed to get last log: %v", err)
+		}
+	} else {
+		return fmt.Errorf("Recover only works on non-empty logs")
+	}
+
+	// See if there's a configuration override.
+	if configuration, ok := recovery.Override(lastLog.Index); ok {
+		fakeIndex := lastLog.Index + 1
+
+		// Add a new log entry.
+		entry := &Log{
+			Index: fakeIndex,
+			Term:  lastLog.Term,
+		}
+		if conf.ProtocolVersion < 1 {
+			entry.Type = LogRemovePeerDeprecated
+			entry.Data = encodePeers(configuration, trans)
+		} else {
+			entry.Type = LogConfiguration
+			entry.Data = encodeConfiguration(configuration)
+		}
+		if err := logs.StoreLog(entry); err != nil {
+			return fmt.Errorf("failed to append configuration entry to log: %v", err)
+		}
+
+		// Disarm the recovery manager so that we won't revert a
+		// subsequent configuration change.
+		if err := recovery.Disarm(); err != nil {
+			return fmt.Errorf("failed to disarm recovery manager: %v", err)
+		}
+	}
+
+	return nil
+}
+
 // NewRaft is used to construct a new Raft node. It takes a configuration, as well
 // as implementations of various interfaces that are required. If we have any
 // old state, such as snapshots, logs, peers, etc, all those will be restored
-// when creating the Raft node. The recovery manager is optional (may be nil) and
-// provides a hook for injecting an operator-specified configuration. If this is
-// used, ALL NODES in the cluster must be started with the same recovery settings.
-func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps SnapshotStore,
-	trans Transport, recovery Recovery) (*Raft, error) {
+// when creating the Raft node.
+func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps SnapshotStore, trans Transport) (*Raft, error) {
 	// Validate the configuration.
 	if err := ValidateConfig(conf); err != nil {
 		return nil, err
@@ -325,49 +378,6 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		}
 		r.processConfigurationLogEntry(&entry)
 	}
-
-	// Allow the recovery manager to intervene, if one was supplied. We force
-	// the current configuration based on the recovery override and add it
-	// to the log so that followers will get it once a leader steps up.
-	if recovery != nil {
-		latest := r.configurations.latest
-		latestIndex := r.configurations.latestIndex
-		if configuration, ok := recovery.Override(latest, latestIndex); ok {
-			fakeIndex := lastLog.Index + 1
-			r.logger.Printf("[INFO] Recovering configuration by adding new log at index %d: %+v", fakeIndex, configuration)
-
-			// Make this is active configuration, and make it look like
-			// it was committed.
-			r.configurations.latest = configuration
-			r.configurations.latestIndex = fakeIndex
-			r.configurations.committed = configuration
-			r.configurations.committedIndex = fakeIndex
-
-			// Add a new log entry.
-			entry := &Log{
-				Index: fakeIndex,
-				Term:  lastLog.Term,
-			}
-			if protocolVersion < 1 {
-				entry.Type = LogRemovePeerDeprecated
-				entry.Data = encodePeers(configuration, trans)
-			} else {
-				entry.Type = LogConfiguration
-				entry.Data = encodeConfiguration(configuration)
-			}
-			if err := logs.StoreLog(entry); err != nil {
-				return nil, fmt.Errorf("failed to append configuration entry to log: %v", err)
-			}
-			r.setLastLog(fakeIndex, lastLog.Term)
-
-			// Disarm the recovery manager so that we won't revert a
-			// subsequent configuration change.
-			if err := recovery.Disarm(); err != nil {
-				return nil, fmt.Errorf("failed to disarm recovery manager: %v", err)
-			}
-		}
-	}
-
 	r.logger.Printf("[INFO] NewRaft configurations: %+v", r.configurations)
 
 	// Setup a heartbeat fast-path to avoid head-of-line
