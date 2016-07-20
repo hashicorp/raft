@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"errors"
 	"io"
 	"time"
 )
@@ -23,6 +24,13 @@ func (r *RPC) Respond(resp interface{}, err error) {
 	r.RespChan <- RPCResponse{resp, err}
 }
 
+var (
+	// ErrPipelineReplicationNotSupported can be returned by the transport to
+	// signal that pipeline replication is not supported in general, and that
+	// no error message should be produced.
+	ErrPipelineReplicationNotSupported = errors.New("pipeline replication not supported")
+)
+
 // Transport provides an interface for network transports
 // to allow Raft to communicate with other nodes.
 type Transport interface {
@@ -34,7 +42,8 @@ type Transport interface {
 	LocalAddr() ServerAddress
 
 	// AppendEntriesPipeline returns an interface that can be used to pipeline
-	// AppendEntries requests.
+	// AppendEntries requests. It may alternatively return
+	// ErrPipelineReplicationNotSupported or other errors.
 	AppendEntriesPipeline(target ServerAddress) (AppendPipeline, error)
 
 	// AppendEntries sends the appropriate RPC to the target node.

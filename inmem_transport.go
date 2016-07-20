@@ -10,7 +10,7 @@ import (
 // NewInmemAddr returns a new in-memory addr with
 // a randomly generate UUID as the ID.
 func NewInmemAddr() ServerAddress {
-	return ServerAddress(generateUUID())
+	return ServerAddress(generateUUID()[:4])
 }
 
 // inmemPipeline is used to pipeline requests for the in-mem transport.
@@ -139,11 +139,18 @@ func (i *InmemTransport) makeRPC(target ServerAddress, args interface{}, r io.Re
 	}
 
 	// Send the RPC over
-	respCh := make(chan RPCResponse)
-	peer.consumerCh <- RPC{
+	respCh := make(chan RPCResponse, 1)
+	rpc := RPC{
 		Command:  args,
 		Reader:   r,
 		RespChan: respCh,
+	}
+	timer := time.After(timeout)
+	select {
+	case peer.consumerCh <- rpc:
+	case <-timer:
+		err = fmt.Errorf("command timed out")
+		return
 	}
 
 	// Wait for a response
@@ -152,7 +159,7 @@ func (i *InmemTransport) makeRPC(target ServerAddress, args interface{}, r io.Re
 		if rpcResp.Error != nil {
 			err = rpcResp.Error
 		}
-	case <-time.After(timeout):
+	case <-timer:
 		err = fmt.Errorf("command timed out")
 	}
 	return
@@ -221,7 +228,7 @@ func newInmemPipeline(trans *InmemTransport, peer *InmemTransport, addr ServerAd
 		peer:         peer,
 		peerAddr:     addr,
 		doneCh:       make(chan AppendFuture, 16),
-		inprogressCh: make(chan *inmemPipelineInflight, 16),
+		inprogressCh: make(chan *inmemPipelineInflight),
 		shutdownCh:   make(chan struct{}),
 	}
 	go i.decodeResponses()
@@ -248,6 +255,7 @@ func (i *inmemPipeline) decodeResponses() {
 				case i.doneCh <- inp.future:
 				case <-i.shutdownCh:
 					return
+				default: // can't write to doneCh, probably because it filled up. meh.
 				}
 
 			case <-timeoutCh:
@@ -256,9 +264,11 @@ func (i *inmemPipeline) decodeResponses() {
 				case i.doneCh <- inp.future:
 				case <-i.shutdownCh:
 					return
+				default: // can't write to doneCh, probably because it filled up. meh.
 				}
 
 			case <-i.shutdownCh:
+				inp.future.respond(fmt.Errorf("shutdown"))
 				return
 			}
 		case <-i.shutdownCh:
@@ -301,6 +311,7 @@ func (i *inmemPipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEn
 	case i.inprogressCh <- &inmemPipelineInflight{future, respCh}:
 		return future, nil
 	case <-i.shutdownCh:
+		future.respond(fmt.Errorf("shutdown"))
 		return nil, ErrPipelineShutdown
 	}
 }

@@ -62,11 +62,11 @@ type raftState struct {
 	lastLogIndex uint64
 	lastLogTerm  uint64
 
-	// Tracks running goroutines
-	routinesGroup sync.WaitGroup
-
 	// The current state
 	state RaftState
+
+	// Tracks running goroutines
+	goRoutines *waitGroup
 }
 
 func (r *raftState) getState() RaftState {
@@ -131,20 +131,6 @@ func (r *raftState) getLastApplied() uint64 {
 
 func (r *raftState) setLastApplied(index uint64) {
 	atomic.StoreUint64(&r.lastApplied, index)
-}
-
-// Start a goroutine and properly handle the race between a routine
-// starting and incrementing, and exiting and decrementing.
-func (r *raftState) goFunc(f func()) {
-	r.routinesGroup.Add(1)
-	go func() {
-		defer r.routinesGroup.Done()
-		f()
-	}()
-}
-
-func (r *raftState) waitShutdown() {
-	r.routinesGroup.Wait()
 }
 
 // getLastIndex returns the last index in stable storage.
