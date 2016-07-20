@@ -154,8 +154,8 @@ type Raft struct {
 // One sane approach is to boostrap a single server with a configuration
 // listing just itself as a Voter, then invoke AddVoter() on it to add other
 // servers to the cluster.
-func BootstrapCluster(conf *Config, trans Transport, logs LogStore,
-	stable StableStore, snaps SnapshotStore, configuration Configuration) error {
+func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
+	snaps SnapshotStore, trans Transport, configuration Configuration) error {
 	// Validate the Raft server config.
 	if err := ValidateConfig(conf); err != nil {
 		return err
@@ -224,7 +224,7 @@ func BootstrapCluster(conf *Config, trans Transport, logs LogStore,
 // recover from a loss of quorum. If this is used, ALL SERVERS in the cluster
 // must be started with the same recovery settings. Otherwise, the configuration
 // may be incorrect depending on which server is elected.
-func RecoverCluster(conf *Config, trans Transport, logs LogStore,
+func RecoverCluster(conf *Config, logs LogStore, trans Transport,
 	configuration Configuration) error {
 	// Validate the Raft server config.
 	if err := ValidateConfig(conf); err != nil {
