@@ -1352,10 +1352,10 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 
 // TODO: Add a dedicated test for RecoverCluster() hitting the edges.
 
-func testRecover(t *testing.T, protocolVersion int) {
+func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	// Make the cluster.
 	conf := inmemConfig(t)
-	conf.ProtocolVersion = protocolVersion
+	conf.ProtocolVersion = 0
 	conf.TrailingLogs = 10
 	c := MakeCluster(3, t, conf)
 	defer c.Close()
@@ -1451,12 +1451,6 @@ func testRecover(t *testing.T, protocolVersion int) {
 
 	// Check the peers.
 	c2.EnsureSamePeers(t)
-}
-
-func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
-	for v := ProtocolVersionMin; v <= ProtocolVersionMax; v++ {
-		testRecover(t, v)
-	}
 }
 
 func TestRaft_AutoSnapshot(t *testing.T) {
