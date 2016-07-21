@@ -497,6 +497,10 @@ func (r *Raft) GetConfiguration() (Configuration, uint64, error) {
 // AddPeer (deprecated) is used to add a new peer into the cluster. This must be
 // run on the leader or it will fail. Use AddVoter/AddNonvoter instead.
 func (r *Raft) AddPeer(peer ServerAddress) Future {
+	if r.protocolVersion > 0 {
+		return errorFuture{ErrUnsupportedProtocol}
+	}
+
 	return r.requestConfigChange(configurationChangeRequest{
 		command:       AddStaging,
 		serverID:      ServerID(peer),
@@ -510,6 +514,10 @@ func (r *Raft) AddPeer(peer ServerAddress) Future {
 // to occur. This must be run on the leader or it will fail.
 // Use RemoveServer instead.
 func (r *Raft) RemovePeer(peer ServerAddress) Future {
+	if r.protocolVersion > 0 {
+		return errorFuture{ErrUnsupportedProtocol}
+	}
+
 	return r.requestConfigChange(configurationChangeRequest{
 		command:   RemoveServer,
 		serverID:  ServerID(peer),
