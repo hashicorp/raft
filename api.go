@@ -321,7 +321,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 			r.logger.Printf("[ERR] raft: Failed to get log at %d: %v", index, err)
 			panic(err)
 		}
-		r.checkAndProcessConfigurationLog(&entry)
+		r.processConfigurationLogEntry(&entry)
 	}
 	r.logger.Printf("[INFO] NewRaft configurations: %+v", r.configurations)
 

@@ -910,7 +910,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 
 			// Handle any new configuration changes
 			for _, newEntry := range newEntries {
-				r.checkAndProcessConfigurationLog(newEntry)
+				r.processConfigurationLogEntry(newEntry)
 			}
 
 			// Update the lastLog
@@ -940,10 +940,10 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	return
 }
 
-// checkAndProcessConfigurationLog takes a log entry and updates the latest
+// processConfigurationLogEntry takes a log entry and updates the latest
 // configuration if the entry results in a new configuration. This must only be
 // called from the main thread, or from NewRaft() before any threads have begun.
-func (r *Raft) checkAndProcessConfigurationLog(entry *Log) {
+func (r *Raft) processConfigurationLogEntry(entry *Log) {
 	if entry.Type == LogConfiguration {
 		r.configurations.committed = r.configurations.latest
 		r.configurations.committedIndex = r.configurations.latestIndex
