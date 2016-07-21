@@ -154,13 +154,19 @@ type Raft struct {
 // One sane approach is to boostrap a single server with a configuration
 // listing just itself as a Voter, then invoke AddVoter() on it to add other
 // servers to the cluster.
-func BootstrapCluster(config *Config, logs LogStore, stable StableStore, snaps SnapshotStore, configuration Configuration) error {
-	// Sanity check the configuration
+func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
+	snaps SnapshotStore, trans Transport, configuration Configuration) error {
+	// Validate the Raft server config.
+	if err := ValidateConfig(conf); err != nil {
+		return err
+	}
+
+	// Sanity check the Raft peer configuration.
 	if err := checkConfiguration(configuration); err != nil {
 		return err
 	}
 
-	// Make sure we don't have a current term
+	// Make sure we don't have a current term.
 	currentTerm, err := stable.GetUint64(keyCurrentTerm)
 	if err == nil {
 		if currentTerm > 0 {
@@ -172,7 +178,7 @@ func BootstrapCluster(config *Config, logs LogStore, stable StableStore, snaps S
 		}
 	}
 
-	// Make sure we have an empty log
+	// Make sure we have an empty log.
 	lastIdx, err := logs.LastIndex()
 	if err != nil {
 		return fmt.Errorf("failed to get last log index: %v", err)
@@ -190,17 +196,74 @@ func BootstrapCluster(config *Config, logs LogStore, stable StableStore, snaps S
 		return fmt.Errorf("Bootstrap only works on new clusters, found snapshots")
 	}
 
-	// Set current term to 1
+	// Set current term to 1.
 	if err := stable.SetUint64(keyCurrentTerm, 1); err != nil {
 		return fmt.Errorf("failed to save current term: %v", err)
 	}
 
-	// Append configuration entry to log
+	// Append configuration entry to log.
 	entry := &Log{
 		Index: 1,
 		Term:  1,
-		Type:  LogConfiguration,
-		Data:  encodeConfiguration(configuration),
+	}
+	if conf.ProtocolVersion < 1 {
+		entry.Type = LogRemovePeerDeprecated
+		entry.Data = encodePeers(configuration, trans)
+	} else {
+		entry.Type = LogConfiguration
+		entry.Data = encodeConfiguration(configuration)
+	}
+	if err := logs.StoreLog(entry); err != nil {
+		return fmt.Errorf("failed to append configuration entry to log: %v", err)
+	}
+
+	return nil
+}
+
+// RecoverCluster is used to manually force a new configuration in order to
+// recover from a loss of quorum. If this is used, ALL SERVERS in the cluster
+// must be started with the same recovery settings. Otherwise, the configuration
+// may be incorrect depending on which server is elected.
+func RecoverCluster(conf *Config, logs LogStore, trans Transport,
+	configuration Configuration) error {
+	// Validate the Raft server config.
+	if err := ValidateConfig(conf); err != nil {
+		return err
+	}
+
+	// Sanity check the Raft peer configuration.
+	if err := checkConfiguration(configuration); err != nil {
+		return err
+	}
+
+	// Read the last log value.
+	lastIdx, err := logs.LastIndex()
+	if err != nil {
+		return fmt.Errorf("failed to find last log: %v", err)
+	}
+
+	// Get the log.
+	var lastLog Log
+	if lastIdx > 0 {
+		if err = logs.GetLog(lastIdx, &lastLog); err != nil {
+			return fmt.Errorf("failed to get last log: %v", err)
+		}
+	} else {
+		return fmt.Errorf("Recover only works on non-empty logs")
+	}
+
+	// Add a new log entry.
+	fakeIndex := lastLog.Index + 1
+	entry := &Log{
+		Index: fakeIndex,
+		Term:  lastLog.Term,
+	}
+	if conf.ProtocolVersion < 1 {
+		entry.Type = LogRemovePeerDeprecated
+		entry.Data = encodePeers(configuration, trans)
+	} else {
+		entry.Type = LogConfiguration
+		entry.Data = encodeConfiguration(configuration)
 	}
 	if err := logs.StoreLog(entry); err != nil {
 		return fmt.Errorf("failed to append configuration entry to log: %v", err)
@@ -210,11 +273,10 @@ func BootstrapCluster(config *Config, logs LogStore, stable StableStore, snaps S
 }
 
 // NewRaft is used to construct a new Raft node. It takes a configuration, as well
-// as implementations of various interfaces that are required. If we have any old state,
-// such as snapshots, logs, peers, etc, all those will be restored when creating the
-// Raft node.
-func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps SnapshotStore,
-	trans Transport) (*Raft, error) {
+// as implementations of various interfaces that are required. If we have any
+// old state, such as snapshots, logs, peers, etc, all those will be restored
+// when creating the Raft node.
+func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps SnapshotStore, trans Transport) (*Raft, error) {
 	// Validate the configuration.
 	if err := ValidateConfig(conf); err != nil {
 		return nil, err

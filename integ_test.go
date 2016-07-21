@@ -83,7 +83,7 @@ func MakeRaft(t *testing.T, conf *Config, bootstrap bool) *RaftEnv {
 			ID:       conf.LocalID,
 			Address:  trans.LocalAddr(),
 		})
-		err = BootstrapCluster(conf, stable, stable, snap, configuration)
+		err = BootstrapCluster(conf, stable, stable, snap, trans, configuration)
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}

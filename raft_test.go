@@ -7,7 +7,9 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -625,7 +627,7 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
 		peerConf.Logger = newTestLoggerWithPrefix(t, string(configuration.Servers[i].ID))
 
 		if bootstrap {
-			err := BootstrapCluster(peerConf, logs, store, snap, configuration)
+			err := BootstrapCluster(peerConf, logs, store, snap, trans, configuration)
 			if err != nil {
 				c.FailNowf("[ERR] BootstrapCluster failed: %v", err)
 			}
@@ -1345,20 +1347,20 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 // TODO: Need a test that has a previous format Snapshot and check that it can
 // be read/installed on the new code.
 
-// TODO: Need a test to process old-style entries when starting up.
+// TODO: Need a test to process old-style entries in the Raft log when starting
+// up.
+
+// TODO: Add a dedicated test for RecoverCluster() hitting the edges.
 
 func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
-	// TODO - Fix broken test. This needs a story about how we recover and
-	// manually let the operator adjust the quorum before we can proceed.
-	return
-
-	// Make the cluster
+	// Make the cluster.
 	conf := inmemConfig(t)
+	conf.ProtocolVersion = 0
 	conf.TrailingLogs = 10
 	c := MakeCluster(3, t, conf)
 	defer c.Close()
 
-	// Commit a lot of things
+	// Commit a lot of things.
 	leader := c.Leader()
 	var future Future
 	for i := 0; i < 100; i++ {
@@ -1370,40 +1372,61 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 
-	// Take a snapshot
+	// Take a snapshot.
 	snapFuture := leader.Snapshot()
 	if err := snapFuture.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 
-	// Shutdown
+	// Shutdown.
 	shutdown := leader.Shutdown()
 	if err := shutdown.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 
-	// Make a separate cluster
+	// Make a separate cluster.
 	c2 := MakeClusterNoBootstrap(2, t, conf)
 	defer c2.Close()
 
-	// Kill the old cluster
+	// Kill the old cluster.
 	for _, sec := range c.rafts {
 		if sec != leader {
 			sec.Shutdown()
 		}
 	}
 
-	// Change the peer addresses
-	peers := []ServerAddress{leader.trans.LocalAddr()}
+	// Restart the Raft with new peers.
+	r := leader
+
+	// Gather the new peer address list.
+	var peers []string
+	peers = append(peers, fmt.Sprintf("%q", leader.trans.LocalAddr()))
 	for _, sec := range c2.rafts {
-		peers = append(peers, sec.trans.LocalAddr())
+		peers = append(peers, fmt.Sprintf("%q", sec.trans.LocalAddr()))
+	}
+	content := []byte(fmt.Sprintf("[%s]", strings.Join(peers, ",")))
+
+	// Perform a manual recovery on the cluster.
+	base, err := ioutil.TempDir("", "")
+	if err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+	defer os.RemoveAll(base)
+	peersFile := filepath.Join(base, "peers.json")
+	if err := ioutil.WriteFile(peersFile, content, 0666); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+	recovery, err := NewPeersJSONRecovery(base)
+	if err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+	if err := RecoverCluster(r.conf, r.logs, r.trans, recovery.Configuration); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
 	}
 
-	// Restart the Raft with new peers
-	r := leader
-	// Can't just reuse the old transport as it will be closed
+	// Can't just reuse the old transport as it will be closed.
 	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
-	r, err := NewRaft(r.conf, r.fsm, r.logs, r.stable, r.snapshots, trans2)
+	r, err = NewRaft(r.conf, r.fsm, r.logs, r.stable, r.snapshots, trans2)
 	if err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -1413,17 +1436,21 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	c2.fsms = append(c2.fsms, r.fsm.(*MockFSM))
 	c2.FullyConnect()
 
-	// Wait a while
+	// Wait a while.
 	time.Sleep(c.propagateTimeout)
 
-	// Ensure we elect a leader, and that we replicate
-	// to our new followers
+	// Ensure we elect a leader, and that we replicate to our new followers.
 	c2.EnsureSame(t)
 
-	// We should have restored from the snapshot!
-	if last := r.getLastApplied(); last != 102 {
+	// We should have restored from the snapshot! Note that there's one
+	// index bump from the log entry added during recovery, and another
+	// bump from the noop the leader tees up when it takes over.
+	if last := r.getLastApplied(); last != 104 {
 		c.FailNowf("[ERR] bad last: %v", last)
 	}
+
+	// Check the peers.
+	c2.EnsureSamePeers(t)
 }
 
 func TestRaft_AutoSnapshot(t *testing.T) {
