@@ -7,10 +7,11 @@ import (
 	"time"
 )
 
-// These are the versions of the protocol (which includes wire protocol as
+// These are the versions of the protocol (which includes RPC messages as
 // well as Raft-specific log entries) that this server can _understand_. Use
 // the ProtocolVersion member of the Config object to control the version of
-// the protocol to use when _speaking_ to other servers.
+// the protocol to use when _speaking_ to other servers. This is not currently
+// written into snapshots so they are unversioned.
 //
 // Version History
 //
