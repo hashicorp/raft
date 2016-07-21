@@ -621,6 +621,7 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
 		trans := c.trans[i]
 
 		peerConf := conf
+		peerConf.LocalID = configuration.Servers[i].ID
 		peerConf.Logger = newTestLoggerWithPrefix(t, string(configuration.Servers[i].ID))
 
 		if bootstrap {

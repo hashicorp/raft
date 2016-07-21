@@ -86,9 +86,10 @@ type Config struct {
 	// never be used except for testing purposes, as it can cause a split-brain.
 	StartAsLeader bool
 
-	// The unique ID for this server across all time. For now, this defaults to
-	// an empty string, indicating the server's network address should be used
-	// here. That default will be removed in the future.
+	// The unique ID for this server across all time. If using protocol
+	// version 0 this is optional and will be populated with the server's
+	// network address if not given. For protocol version > 0 this is
+	// required.
 	LocalID ServerID
 
 	// NotifyCh is used to provide a channel that will be notified of leadership
@@ -127,6 +128,9 @@ func ValidateConfig(config *Config) error {
 		config.ProtocolVersion > ProtocolVersionMax {
 		return fmt.Errorf("Protocol version %d must be >= %d and <= %d",
 			config.ProtocolVersion, ProtocolVersionMin, ProtocolVersionMax)
+	}
+	if config.ProtocolVersion > 0 && len(config.LocalID) == 0 {
+		return fmt.Errorf("LocalID must be supplied with protocol version > 0")
 	}
 	if config.HeartbeatTimeout < 5*time.Millisecond {
 		return fmt.Errorf("Heartbeat timeout is too low")
