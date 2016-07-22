@@ -1982,10 +1982,6 @@ func TestRaft_Voting(t *testing.T) {
 }
 
 func TestRaft_ProtocolVersion_0(t *testing.T) {
-	// TODO (slackpad) - Fix broken test. We need to rebase #140 with this
-	// and continue the work over there.
-	return
-
 	// Make a cluster on the old protocol.
 	conf := inmemConfig(t)
 	conf.ProtocolVersion = 0
