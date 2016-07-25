@@ -276,7 +276,7 @@ func nextConfiguration(current Configuration, currentIndex uint64, change config
 
 // encodePeers is used to serialize a Configuration into the old peers format.
 // This is here for backwards compatibility when operating with a mix of old
-// servers and should be removed once we deprecate support for protocol version 0.
+// servers and should be removed once we deprecate support for protocol version 1.
 func encodePeers(configuration Configuration, trans Transport) []byte {
 	// Gather up all the voters, other suffrage types are not supported by
 	// this data format.
