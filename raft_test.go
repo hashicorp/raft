@@ -1958,6 +1958,7 @@ func TestRaft_Voting(t *testing.T) {
 	ldrT := c.trans[c.IndexOf(ldr)]
 
 	reqVote := RequestVoteRequest{
+		VersionInfo:  ldr.getVersionInfo(),
 		Term:         ldr.getCurrentTerm() + 10,
 		Candidate:    ldrT.EncodePeer(ldr.localAddr),
 		LastLogIndex: ldr.LastIndex(),
@@ -1998,29 +1999,37 @@ func TestRaft_ProtocolVersion_RejectRPC(t *testing.T) {
 		LastLogTerm:  ldr.getCurrentTerm(),
 	}
 
-	// Try the vote and make sure the request gets an error back.
+	// Reject a message from a future version we don't understand.
 	var resp RequestVoteResponse
 	err := ldrT.RequestVote(followers[0].localAddr, &reqVote, &resp)
 	if err == nil || !strings.Contains(err.Error(), "protocol version") {
 		c.FailNowf("[ERR] expected RPC to get rejected: %v", err)
 	}
+
+	// Reject a message that's too old.
+	reqVote.VersionInfo.ProtocolVersion = followers[0].protocolVersion - 2
+	err = ldrT.RequestVote(followers[0].localAddr, &reqVote, &resp)
+	if err == nil || !strings.Contains(err.Error(), "protocol version") {
+		c.FailNowf("[ERR] expected RPC to get rejected: %v", err)
+	}
 }
 
-func TestRaft_ProtocolVersion_0(t *testing.T) {
-	// Make a cluster on the old protocol.
+func TestRaft_ProtocolVersion_Upgrade_0_1(t *testing.T) {
+	// Make a cluster back on protocol version 0.
 	conf := inmemConfig(t)
 	conf.ProtocolVersion = 0
 	c := MakeCluster(2, t, conf)
 	defer c.Close()
 
-	// Set up another server, also speaking the old protocol.
+	// Set up another server speaking protocol version 1.
+	conf.ProtocolVersion = 1
 	c1 := MakeClusterNoBootstrap(1, t, conf)
 
 	// Merge clusters.
 	c.Merge(c1)
 	c.FullyConnect()
 
-	// Make sure the new id-based operations aren't supported in the old
+	// Make sure the new ID-based operations aren't supported in the old
 	// protocol.
 	future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 1*time.Second)
 	if err := future.Error(); err != ErrUnsupportedProtocol {
@@ -2039,38 +2048,53 @@ func TestRaft_ProtocolVersion_0(t *testing.T) {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 
-	// Now do the join using the old address-based API (this returns a
-	// different type of future).
-	{
-		future := c.Leader().AddPeer(c1.rafts[0].localAddr)
-		if err := future.Error(); err != nil {
-			c.FailNowf("[ERR] err: %v", err)
-		}
+	// Now do the join using the old address-based API.
+	if future := c.Leader().AddPeer(c1.rafts[0].localAddr); future.Error() != nil {
+		c.FailNowf("[ERR] err: %v", future.Error())
 	}
 
-	// Set up another server, this time speaking the new protocol.
-	c2 := MakeClusterNoBootstrap(1, t, nil)
+	// Sanity check the cluster.
+	c.EnsureSame(t)
+	c.EnsureSamePeers(t)
+	c.EnsureLeader(t, c.Leader().localAddr)
 
-	// Merge this one in.
-	c.Merge(c2)
+	// Now do the remove using the old address-based API.
+	if future := c.Leader().RemovePeer(c1.rafts[0].localAddr); future.Error() != nil {
+		c.FailNowf("[ERR] err: %v", future.Error())
+	}
+}
+
+func TestRaft_ProtocolVersion_Upgrade_1_2(t *testing.T) {
+	// Make a cluster back on protocol version 1.
+	conf := inmemConfig(t)
+	conf.ProtocolVersion = 1
+	c := MakeCluster(2, t, conf)
+	defer c.Close()
+	oldAddr := c.Followers()[0].localAddr
+
+	// Set up another server speaking protocol version 2.
+	conf.ProtocolVersion = 2
+	c1 := MakeClusterNoBootstrap(1, t, conf)
+
+	// Merge clusters.
+	c.Merge(c1)
 	c.FullyConnect()
 
-	// Make sure this can join in and inter-operate with the old servers.
-	{
-		future := c.Leader().AddPeer(c2.rafts[0].localAddr)
-		if err := future.Error(); err != nil {
-			c.FailNowf("[ERR] err: %v", err)
-		}
+	// Use the new ID-based API to add the server with its ID.
+	future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 1*time.Second)
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
 	}
 
-	// Check the FSMs
+	// Sanity check the cluster.
 	c.EnsureSame(t)
-
-	// Check the peers
 	c.EnsureSamePeers(t)
-
-	// Ensure one leader
 	c.EnsureLeader(t, c.Leader().localAddr)
+
+	// Remove an old server using the old address-based API.
+	if future := c.Leader().RemovePeer(oldAddr); future.Error() != nil {
+		c.FailNowf("[ERR] err: %v", future.Error())
+	}
 }
 
 // TODO: These are test cases we'd like to write for appendEntries().

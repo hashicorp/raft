@@ -11,17 +11,55 @@ import (
 // well as Raft-specific log entries) that this server can _understand_. Use
 // the ProtocolVersion member of the Config object to control the version of
 // the protocol to use when _speaking_ to other servers. This is not currently
-// written into snapshots so they are unversioned.
+// written into snapshots so they are unversioned. Note that depending on the
+// protocol version being spoken, some otherwise understood RPC messages may be
+// refused. See isVersionCompatible for details of this logic.
+//
+// There are notes about the upgrade path in the description of the versions
+// below. If you are starting a fresh cluster then there's no reason not to
+// jump right to the latest protocol version. If you need to interoperate with
+// older, unversioned Raft servers you'll need to drive the cluster through the
+// different versions in order. This may best be done by moving forward across a
+// series of releases of your application.
 //
 // Version History
 //
-// 0: Unversioned original protocol spoken until Q2 2016.
-// 1: Added server IDs and a new peer change mechanism via a new LogConfiguration
-//    log entry type. All servers must be running >= 1 in order to support new
-//    staging and nonvoter modes for servers.
+// 0: Unversioned, original protocol, used to interoperate with unversioned
+//    Raft servers. Under this version all configuration changes are propagated
+//    using the deprecated RemovePeerDeprecated Raft log entry. This means that
+//    server IDs are always set to be the same as the server addresses (since
+//    the old log entry type cannot transmit an ID), and only AddPeer/RemovePeer
+//    APIs are supported. This version can understand the new LogConfiguration
+//    Raft log entry but it will never generate one.
+// 1: Transitional protocol used when migrating an existing cluster to the new
+//    server ID system. Server IDs are still set to be the same as server
+//    addresses, but all configuration changes are propagated using the new
+//    LogConfiguration Raft log entry type, which can carry full ID information.
+//    This version supports the old AddPeer/RemovePeer APIs as well as the new
+//    ID-based AddVoter/RemoveServer APIs which should be used when adding
+//    version 2 servers to the cluster later. Note that non-voting roles are not
+//    yet supported. This version sheds all interoperability with unversioned
+//    Raft servers, but can interoperate with newer Raft servers running with
+//    protocol version 0 since they can understand the new LogConfiguration Raft
+//    log entry, and this version can still understand their RemovePeerDeprecated
+//    Raft log entries. We need this protocol version as an intermediate step
+//    between 0 and 2 so that servers will propagate the ID information that
+//    will come from newly-added (or -cycled) servers using protocol version 2,
+//    but since they are still using their address-based IDs from the previous
+//    step they will still be able to track commitments and their own voting
+//    status properly. If we skipped this step, servers would be started with
+//    their new IDs, but they wouldn't see themselves in the old address-based
+//    configuration, so none of the servers would think they had a vote.
+// 2: Protocol adding full support for server IDs and new ID-based server APIs
+//    (AddVoter, AddNonvoter, etc.), old AddPeer/RemovePeer APIs are no longer
+//    supported. Version 1 servers should be swapped out by removing them from
+//    the cluster one-by-one and re-adding them with updated configuration for
+//    this protocol version, along with their server ID. The remove/add cycle
+//    is required to populate their server ID. Note that removing must be done
+//    by ID, which will be the old server's address.
 const (
 	ProtocolVersionMin = 0
-	ProtocolVersionMax = 1
+	ProtocolVersionMax = 2
 )
 
 // Config provides any necessary configuration to
@@ -131,7 +169,7 @@ func ValidateConfig(config *Config) error {
 			config.ProtocolVersion, ProtocolVersionMin, ProtocolVersionMax)
 	}
 	if config.ProtocolVersion > 0 && len(config.LocalID) == 0 {
-		return fmt.Errorf("LocalID must be supplied with protocol version > 0")
+		return fmt.Errorf("LocalID cannot be empty")
 	}
 	if config.HeartbeatTimeout < 5*time.Millisecond {
 		return fmt.Errorf("Heartbeat timeout is too low")

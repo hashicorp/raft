@@ -21,11 +21,31 @@ var (
 )
 
 // getVersionInfo returns an initialized VersionInfo struct for the given
-// Raft instance.
+// Raft instance. This structure is sent along with RPC requests and
+// responses.
 func (r *Raft) getVersionInfo() VersionInfo {
 	return VersionInfo{
 		ProtocolVersion: r.conf.ProtocolVersion,
 	}
+}
+
+// isVersionCompatible houses logic about whether this instance of Raft can
+// process an RPC message with the given version.
+func (r *Raft) isVersionCompatible(vi VersionInfo) bool {
+	// First check is to just make sure the code can understand the
+	// protocol at all.
+	if vi.ProtocolVersion < ProtocolVersionMin ||
+		vi.ProtocolVersion > ProtocolVersionMax {
+		return false
+	}
+
+	// Second check is whether we should support this message, given the
+	// current protocol we are configured to run. This will drop support
+	// for protocol version 0 starting at protocol version 2, which is
+	// currently what we want, and in general support one version back. We
+	// may need to revisit this policy depending on how future protocol
+	// changes evolve.
+	return vi.ProtocolVersion > r.conf.ProtocolVersion-1
 }
 
 // commitTuple is used to send an index that was committed,
@@ -635,7 +655,7 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 	}
 
 	r.logger.Printf("[INFO] raft: Updating configuration with %s (%v, %v) to %v",
-		future.req.command, future.req.serverAddress, future.req.serverID, configuration)
+		future.req.command, future.req.serverID, future.req.serverAddress, configuration)
 
 	// In pre-ID compatibility mode we translate all configuration changes
 	// in to an old remove peer message, which can handle all supported
@@ -779,9 +799,8 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 // called from the main thread.
 func (r *Raft) processRPC(rpc RPC) {
 	if v, ok := rpc.Command.(WithVersionInfo); ok {
-		pv := v.GetVersionInfo().ProtocolVersion
-		if pv < ProtocolVersionMin || pv > ProtocolVersionMax {
-			r.logger.Printf("[ERR] raft: Ignoring unsupported protocol version %d for command: %#v", pv, rpc.Command)
+		if !r.isVersionCompatible(v.GetVersionInfo()) {
+			r.logger.Printf("[ERR] raft: Ignoring unsupported %#v for command: %#v", v, rpc.Command)
 			rpc.Respond(nil, ErrUnsupportedProtocol)
 			return
 		}
