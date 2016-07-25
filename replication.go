@@ -328,8 +328,9 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 	var failures uint64
 	req := AppendEntriesRequest{
-		Term:   s.currentTerm,
-		Leader: r.trans.EncodePeer(r.localAddr),
+		VersionInfo: r.getVersionInfo(),
+		Term:        s.currentTerm,
+		Leader:      r.trans.EncodePeer(r.localAddr),
 	}
 	var resp AppendEntriesResponse
 	for {
@@ -471,6 +472,7 @@ func (r *Raft) pipelineDecode(s *followerReplication, p AppendPipeline, stopCh, 
 
 // setupAppendEntries is used to setup an append entries request.
 func (r *Raft) setupAppendEntries(s *followerReplication, req *AppendEntriesRequest, nextIndex, lastIndex uint64) error {
+	req.VersionInfo = r.getVersionInfo()
 	req.Term = s.currentTerm
 	req.Leader = r.trans.EncodePeer(r.localAddr)
 	req.LeaderCommitIndex = r.getCommitIndex()

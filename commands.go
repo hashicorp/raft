@@ -1,8 +1,24 @@
 package raft
 
+// VersionInfo is a common sub-structure used to pass along
+// protocol version information. For older Raft implementations before
+// versioning was added this will default to protocol version 0.
+type VersionInfo struct {
+	// ProtocolVersion is the version of the protocol the sender is
+	// speaking.
+	ProtocolVersion int
+}
+
+// WithVersionInfo is an interface that exposes version info.
+type WithVersionInfo interface {
+	GetVersionInfo() VersionInfo
+}
+
 // AppendEntriesRequest is the command used to append entries to the
 // replicated log.
 type AppendEntriesRequest struct {
+	VersionInfo
+
 	// Provide the current term and leader
 	Term   uint64
 	Leader []byte
@@ -18,9 +34,16 @@ type AppendEntriesRequest struct {
 	LeaderCommitIndex uint64
 }
 
+// See WithVersionInfo.
+func (r *AppendEntriesRequest) GetVersionInfo() VersionInfo {
+	return r.VersionInfo
+}
+
 // AppendEntriesResponse is the response returned from an
 // AppendEntriesRequest.
 type AppendEntriesResponse struct {
+	VersionInfo
+
 	// Newer term if leader is out of date
 	Term uint64
 
@@ -35,9 +58,16 @@ type AppendEntriesResponse struct {
 	NoRetryBackoff bool
 }
 
+// See WithVersionInfo.
+func (r *AppendEntriesResponse) GetVersionInfo() VersionInfo {
+	return r.VersionInfo
+}
+
 // RequestVoteRequest is the command used by a candidate to ask a Raft peer
 // for a vote in an election.
 type RequestVoteRequest struct {
+	VersionInfo
+
 	// Provide the term and our id
 	Term      uint64
 	Candidate []byte
@@ -47,8 +77,15 @@ type RequestVoteRequest struct {
 	LastLogTerm  uint64
 }
 
+// See WithVersionInfo.
+func (r *RequestVoteRequest) GetVersionInfo() VersionInfo {
+	return r.VersionInfo
+}
+
 // RequestVoteResponse is the response returned from a RequestVoteRequest.
 type RequestVoteResponse struct {
+	VersionInfo
+
 	// Newer term if leader is out of date
 	Term uint64
 
@@ -56,9 +93,16 @@ type RequestVoteResponse struct {
 	Granted bool
 }
 
+// See WithVersionInfo.
+func (r *RequestVoteResponse) GetVersionInfo() VersionInfo {
+	return r.VersionInfo
+}
+
 // InstallSnapshotRequest is the command sent to a Raft peer to bootstrap its
 // log (and state machine) from a snapshot on another peer.
 type InstallSnapshotRequest struct {
+	VersionInfo
+
 	Term   uint64
 	Leader []byte
 
@@ -80,9 +124,21 @@ type InstallSnapshotRequest struct {
 	Size int64
 }
 
+// See WithVersionInfo.
+func (r *InstallSnapshotRequest) GetVersionInfo() VersionInfo {
+	return r.VersionInfo
+}
+
 // InstallSnapshotResponse is the response returned from an
 // InstallSnapshotRequest.
 type InstallSnapshotResponse struct {
+	VersionInfo
+
 	Term    uint64
 	Success bool
+}
+
+// See WithVersionInfo.
+func (r *InstallSnapshotResponse) GetVersionInfo() VersionInfo {
+	return r.VersionInfo
 }

@@ -20,6 +20,14 @@ var (
 	keyLastVoteCand = []byte("LastVoteCand")
 )
 
+// getVersionInfo returns an initialized VersionInfo struct for the given
+// Raft instance.
+func (r *Raft) getVersionInfo() VersionInfo {
+	return VersionInfo{
+		ProtocolVersion: r.conf.ProtocolVersion,
+	}
+}
+
 // commitTuple is used to send an index that was committed,
 // with an optional associated future that should be invoked.
 type commitTuple struct {
@@ -770,6 +778,20 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 // processRPC is called to handle an incoming RPC request. This must only be
 // called from the main thread.
 func (r *Raft) processRPC(rpc RPC) {
+	if v, ok := rpc.Command.(WithVersionInfo); ok {
+		pv := v.GetVersionInfo().ProtocolVersion
+		if pv < ProtocolVersionMin || pv > ProtocolVersionMax {
+			r.logger.Printf("[ERR] raft: Ignoring unsupported protocol version %d for command: %#v", pv, rpc.Command)
+			rpc.Respond(nil, ErrUnsupportedProtocol)
+			return
+		}
+
+	} else {
+		r.logger.Printf("[ERR] raft: Ignoring un-versioned command: %#v", rpc.Command)
+		rpc.Respond(nil, fmt.Errorf("unversioned command"))
+		return
+	}
+
 	switch cmd := rpc.Command.(type) {
 	case *AppendEntriesRequest:
 		r.appendEntries(rpc, cmd)
@@ -812,6 +834,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "appendEntries"}, time.Now())
 	// Setup a response
 	resp := &AppendEntriesResponse{
+		VersionInfo:    r.getVersionInfo(),
 		Term:           r.getCurrentTerm(),
 		LastLog:        r.getLastIndex(),
 		Success:        false,
@@ -964,8 +987,9 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 
 	// Setup a response
 	resp := &RequestVoteResponse{
-		Term:    r.getCurrentTerm(),
-		Granted: false,
+		VersionInfo: r.getVersionInfo(),
+		Term:        r.getCurrentTerm(),
+		Granted:     false,
 	}
 	var rpcErr error
 	defer func() {
@@ -1181,6 +1205,7 @@ func (r *Raft) electSelf() <-chan *voteResult {
 	// Construct the request
 	lastIdx, lastTerm := r.getLastEntry()
 	req := &RequestVoteRequest{
+		VersionInfo:  r.getVersionInfo(),
 		Term:         r.getCurrentTerm(),
 		Candidate:    r.trans.EncodePeer(r.localAddr),
 		LastLogIndex: lastIdx,
@@ -1214,8 +1239,9 @@ func (r *Raft) electSelf() <-chan *voteResult {
 				// Include our own vote
 				respCh <- &voteResult{
 					RequestVoteResponse: RequestVoteResponse{
-						Term:    req.Term,
-						Granted: true,
+						VersionInfo: r.getVersionInfo(),
+						Term:        req.Term,
+						Granted:     true,
 					},
 					voterID: r.localID,
 				}

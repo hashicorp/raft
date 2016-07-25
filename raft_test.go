@@ -1981,6 +1981,31 @@ func TestRaft_Voting(t *testing.T) {
 	}
 }
 
+func TestRaft_ProtocolVersion_RejectRPC(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+	followers := c.Followers()
+	ldr := c.Leader()
+	ldrT := c.trans[c.IndexOf(ldr)]
+
+	reqVote := RequestVoteRequest{
+		VersionInfo: VersionInfo{
+			ProtocolVersion: ProtocolVersionMax + 1,
+		},
+		Term:         ldr.getCurrentTerm() + 10,
+		Candidate:    ldrT.EncodePeer(ldr.localAddr),
+		LastLogIndex: ldr.LastIndex(),
+		LastLogTerm:  ldr.getCurrentTerm(),
+	}
+
+	// Try the vote and make sure the request gets an error back.
+	var resp RequestVoteResponse
+	err := ldrT.RequestVote(followers[0].localAddr, &reqVote, &resp)
+	if err == nil || !strings.Contains(err.Error(), "protocol version") {
+		c.FailNowf("[ERR] expected RPC to get rejected: %v", err)
+	}
+}
+
 func TestRaft_ProtocolVersion_0(t *testing.T) {
 	// Make a cluster on the old protocol.
 	conf := inmemConfig(t)
