@@ -166,34 +166,13 @@ func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
 		return err
 	}
 
-	// Make sure we don't have a current term.
-	currentTerm, err := stable.GetUint64(keyCurrentTerm)
-	if err == nil {
-		if currentTerm > 0 {
-			return fmt.Errorf("Bootstrap only works on new clusters, found current term: %v", currentTerm)
-		}
-	} else {
-		if err.Error() != "not found" {
-			return fmt.Errorf("failed to read current term: %v", err)
-		}
-	}
-
-	// Make sure we have an empty log.
-	lastIdx, err := logs.LastIndex()
+	// Make sure the cluster is in a clean state.
+	bs, err := IsClusterBootstrapped(logs, stable, snaps)
 	if err != nil {
-		return fmt.Errorf("failed to get last log index: %v", err)
+		return err
 	}
-	if lastIdx > 0 {
-		return fmt.Errorf("Bootstrap only works on new clusters, found non-empty log, last index: %v", lastIdx)
-	}
-
-	// Make sure we have no snapshots
-	snapshots, err := snaps.List()
-	if err != nil {
-		return fmt.Errorf("failed to list snapshots: %v", err)
-	}
-	if len(snapshots) > 0 {
-		return fmt.Errorf("Bootstrap only works on new clusters, found snapshots")
+	if bs {
+		return fmt.Errorf("bootstrap only works on new clusters, cluster has been bootstrapped previously")
 	}
 
 	// Set current term to 1.
@@ -221,9 +200,11 @@ func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
 }
 
 // RecoverCluster is used to manually force a new configuration in order to
-// recover from a loss of quorum. If this is used, ALL SERVERS in the cluster
-// must be started with the same recovery settings. Otherwise, the configuration
-// may be incorrect depending on which server is elected.
+// recover from a loss of quorum where the current configuration cannot be
+// restored, such as when several servers die at the same time. If this is used,
+// ALL SERVERS in the cluster must be started with the same recovery settings.
+// Otherwise, the configuration may be incorrect depending on which server gets
+// elected.
 func RecoverCluster(conf *Config, logs LogStore, trans Transport,
 	configuration Configuration) error {
 	// Validate the Raft server config.
@@ -270,6 +251,42 @@ func RecoverCluster(conf *Config, logs LogStore, trans Transport,
 	}
 
 	return nil
+}
+
+// IsClusterBootstrapped returns true if the cluster has been bootstrapped
+// before.
+func IsClusterBootstrapped(logs LogStore, stable StableStore, snaps SnapshotStore) (bool, error) {
+	// Make sure we don't have a current term.
+	currentTerm, err := stable.GetUint64(keyCurrentTerm)
+	if err == nil {
+		if currentTerm > 0 {
+			return true, nil
+		}
+	} else {
+		if err.Error() != "not found" {
+			return false, fmt.Errorf("failed to read current term: %v", err)
+		}
+	}
+
+	// Make sure we have an empty log.
+	lastIdx, err := logs.LastIndex()
+	if err != nil {
+		return false, fmt.Errorf("failed to get last log index: %v", err)
+	}
+	if lastIdx > 0 {
+		return true, nil
+	}
+
+	// Make sure we have no snapshots
+	snapshots, err := snaps.List()
+	if err != nil {
+		return false, fmt.Errorf("failed to list snapshots: %v", err)
+	}
+	if len(snapshots) > 0 {
+		return true, nil
+	}
+
+	return false, nil
 }
 
 // NewRaft is used to construct a new Raft node. It takes a configuration, as well

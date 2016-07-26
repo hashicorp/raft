@@ -699,6 +699,46 @@ func TestRaft_AfterShutdown(t *testing.T) {
 
 }
 
+func TestRaft_IsClusterBootstrapped(t *testing.T) {
+	// Make a cluster.
+	c := MakeCluster(2, t, nil)
+	defer c.Close()
+
+	// Make a new cluster of 1.
+	c1 := MakeClusterNoBootstrap(1, t, nil)
+
+	// Make sure the initial state is clean.
+	bs, err := IsClusterBootstrapped(c1.rafts[0].logs, c1.rafts[0].stable, c1.rafts[0].snapshots)
+	if err != nil || bs {
+		c.FailNowf("[ERR] should not be bootstrapped, %v", err)
+	}
+
+	// Merge clusters.
+	c.Merge(c1)
+	c.FullyConnect()
+
+	// Join the new node in.
+	future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 0)
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+
+	// Check the FSMs.
+	c.EnsureSame(t)
+
+	// Check the peers.
+	c.EnsureSamePeers(t)
+
+	// Ensure one leader.
+	c.EnsureLeader(t, c.Leader().localAddr)
+
+	// Make sure it's not clean.
+	bs, err = IsClusterBootstrapped(c1.rafts[0].logs, c1.rafts[0].stable, c1.rafts[0].snapshots)
+	if err != nil || !bs {
+		c.FailNowf("[ERR] should be bootstrapped, %v", err)
+	}
+}
+
 func TestRaft_SingleNode(t *testing.T) {
 	conf := inmemConfig(t)
 	c := MakeCluster(1, t, conf)
