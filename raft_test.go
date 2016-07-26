@@ -699,7 +699,7 @@ func TestRaft_AfterShutdown(t *testing.T) {
 
 }
 
-func TestRaft_IsClusterBootstrapped(t *testing.T) {
+func TestRaft_HasExistingState(t *testing.T) {
 	// Make a cluster.
 	c := MakeCluster(2, t, nil)
 	defer c.Close()
@@ -708,9 +708,9 @@ func TestRaft_IsClusterBootstrapped(t *testing.T) {
 	c1 := MakeClusterNoBootstrap(1, t, nil)
 
 	// Make sure the initial state is clean.
-	bs, err := IsClusterBootstrapped(c1.rafts[0].logs, c1.rafts[0].stable, c1.rafts[0].snapshots)
-	if err != nil || bs {
-		c.FailNowf("[ERR] should not be bootstrapped, %v", err)
+	state, err := HasExistingState(c1.rafts[0].logs, c1.rafts[0].stable, c1.rafts[0].snapshots)
+	if err != nil || state {
+		c.FailNowf("[ERR] should not have any existing state, %v", err)
 	}
 
 	// Merge clusters.
@@ -733,9 +733,9 @@ func TestRaft_IsClusterBootstrapped(t *testing.T) {
 	c.EnsureLeader(t, c.Leader().localAddr)
 
 	// Make sure it's not clean.
-	bs, err = IsClusterBootstrapped(c1.rafts[0].logs, c1.rafts[0].stable, c1.rafts[0].snapshots)
-	if err != nil || !bs {
-		c.FailNowf("[ERR] should be bootstrapped, %v", err)
+	state, err = HasExistingState(c1.rafts[0].logs, c1.rafts[0].stable, c1.rafts[0].snapshots)
+	if err != nil || !state {
+		c.FailNowf("[ERR] should have some existing state, %v", err)
 	}
 }
 

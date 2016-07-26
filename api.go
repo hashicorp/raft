@@ -167,11 +167,11 @@ func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
 	}
 
 	// Make sure the cluster is in a clean state.
-	bs, err := IsClusterBootstrapped(logs, stable, snaps)
+	state, err := HasExistingState(logs, stable, snaps)
 	if err != nil {
 		return err
 	}
-	if bs {
+	if state {
 		return fmt.Errorf("bootstrap only works on new clusters, cluster has been bootstrapped previously")
 	}
 
@@ -253,9 +253,9 @@ func RecoverCluster(conf *Config, logs LogStore, trans Transport,
 	return nil
 }
 
-// IsClusterBootstrapped returns true if the cluster has been bootstrapped
-// before.
-func IsClusterBootstrapped(logs LogStore, stable StableStore, snaps SnapshotStore) (bool, error) {
+// HasExistingState returns true if the cluster has any existing state (logs,
+// knowledge of a current term, or any snapshots).
+func HasExistingState(logs LogStore, stable StableStore, snaps SnapshotStore) (bool, error) {
 	// Make sure we don't have a current term.
 	currentTerm, err := stable.GetUint64(keyCurrentTerm)
 	if err == nil {
