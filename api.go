@@ -767,6 +767,7 @@ func (r *Raft) Stats() map[string]string {
 		"fsm_pending":         toString(uint64(len(r.fsmCommitCh))),
 		"last_snapshot_index": toString(lastSnapIndex),
 		"last_snapshot_term":  toString(lastSnapTerm),
+		"protocol_version":    toString(uint64(r.protocolVersion)),
 	}
 
 	configuration, _, err := r.GetConfiguration()
