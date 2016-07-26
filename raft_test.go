@@ -2062,6 +2062,7 @@ func TestRaft_ProtocolVersion_Upgrade_0_1(t *testing.T) {
 	defer c.Close()
 
 	// Set up another server speaking protocol version 1.
+	conf = inmemConfig(t)
 	conf.ProtocolVersion = 1
 	c1 := MakeClusterNoBootstrap(1, t, conf)
 
@@ -2071,15 +2072,7 @@ func TestRaft_ProtocolVersion_Upgrade_0_1(t *testing.T) {
 
 	// Make sure the new ID-based operations aren't supported in the old
 	// protocol.
-	future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 1*time.Second)
-	if err := future.Error(); err != ErrUnsupportedProtocol {
-		c.FailNowf("[ERR] err: %v", err)
-	}
-	future = c.Leader().AddNonvoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 1*time.Second)
-	if err := future.Error(); err != ErrUnsupportedProtocol {
-		c.FailNowf("[ERR] err: %v", err)
-	}
-	future = c.Leader().RemoveServer(c1.rafts[0].localID, 0, 1*time.Second)
+	future := c.Leader().AddNonvoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 1*time.Second)
 	if err := future.Error(); err != ErrUnsupportedProtocol {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -2113,6 +2106,7 @@ func TestRaft_ProtocolVersion_Upgrade_1_2(t *testing.T) {
 	oldAddr := c.Followers()[0].localAddr
 
 	// Set up another server speaking protocol version 2.
+	conf = inmemConfig(t)
 	conf.ProtocolVersion = 2
 	c1 := MakeClusterNoBootstrap(1, t, conf)
 

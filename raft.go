@@ -45,7 +45,7 @@ func (r *Raft) isVersionCompatible(vi VersionInfo) bool {
 	// currently what we want, and in general support one version back. We
 	// may need to revisit this policy depending on how future protocol
 	// changes evolve.
-	return vi.ProtocolVersion > r.conf.ProtocolVersion-1
+	return vi.ProtocolVersion >= r.conf.ProtocolVersion-1
 }
 
 // commitTuple is used to send an index that was committed,
