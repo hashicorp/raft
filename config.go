@@ -29,8 +29,10 @@ import (
 //    using the deprecated RemovePeerDeprecated Raft log entry. This means that
 //    server IDs are always set to be the same as the server addresses (since
 //    the old log entry type cannot transmit an ID), and only AddPeer/RemovePeer
-//    APIs are supported. This version can understand the new LogConfiguration
-//    Raft log entry but it will never generate one.
+//    APIs are supported. Newer Raft servers running at protocol version 0 can
+//    understand the new LogConfiguration Raft log entry but will never generate
+//    one so they can remain compatible with unversioned Raft servers in the
+//    cluster.
 // 1: Transitional protocol used when migrating an existing cluster to the new
 //    server ID system. Server IDs are still set to be the same as server
 //    addresses, but all configuration changes are propagated using the new
