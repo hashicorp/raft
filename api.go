@@ -62,7 +62,7 @@ type Raft struct {
 	applyCh chan *logFuture
 
 	// Configuration provided at Raft initialization
-	conf *Config
+	conf Config
 
 	// FSM is the client state machine to apply commands to
 	fsm FSM
@@ -221,7 +221,7 @@ func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
 // the sole voter, and then join up other new clean-state peer servers using
 // the usual APIs in order to bring the cluster back into a known state.
 func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
-	snaps SnapshotStore, trans Transport, configuration Configuration) error {
+	snaps SnapshotStore, configuration Configuration) error {
 	// Validate the Raft server config.
 	if err := ValidateConfig(conf); err != nil {
 		return err
@@ -423,7 +423,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	r := &Raft{
 		protocolVersion: protocolVersion,
 		applyCh:         make(chan *logFuture),
-		conf:            conf,
+		conf:            *conf,
 		fsm:             fsm,
 		fsmCommitCh:     make(chan commitTuple, 128),
 		fsmRestoreCh:    make(chan *restoreFuture),
@@ -475,7 +475,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		}
 		r.processConfigurationLogEntry(&entry)
 	}
-	r.logger.Printf("[INFO] NewRaft configurations: %+v", r.configurations)
+	r.logger.Printf("[INFO] raft: Initial configurations: %+v", r.configurations)
 
 	// Setup a heartbeat fast-path to avoid head-of-line
 	// blocking where possible. It MUST be safe for this

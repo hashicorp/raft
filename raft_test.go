@@ -699,6 +699,87 @@ func TestRaft_AfterShutdown(t *testing.T) {
 
 }
 
+func TestRaft_RecoverCluster_NoState(t *testing.T) {
+	c := MakeClusterNoBootstrap(1, t, nil)
+	defer c.Close()
+
+	r := c.rafts[0]
+	configuration := Configuration{
+		Servers: []Server{
+			Server{
+				ID:      r.localID,
+				Address: r.localAddr,
+			},
+		},
+	}
+	err := RecoverCluster(&r.conf, &MockFSM{}, r.logs, r.stable,
+		r.snapshots, configuration)
+	if err == nil || !strings.Contains(err.Error(), "no initial state") {
+		c.FailNowf("[ERR] should have failed for no initial state: %v", err)
+	}
+}
+
+func TestRaft_RecoverCluster(t *testing.T) {
+	// Run with different number of applies which will cover no snapshot and
+	// snapshot + log scenarios. By sweeping through the trailing logs value
+	// we will also hit the case where we have a snapshot only.
+	runRecover := func(applies int) {
+		conf := inmemConfig(t)
+		conf.TrailingLogs = 10
+		c := MakeCluster(3, t, conf)
+		defer c.Close()
+
+		// Perform some commits.
+		c.logger.Printf("[DEBUG] Running with applies=%d", applies)
+		leader := c.Leader()
+		for i := 0; i < applies; i++ {
+			future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+			if err := future.Error(); err != nil {
+				c.FailNowf("[ERR] apply err: %v", err)
+			}
+		}
+
+		// Snap the configuration and then shut down the cluster.
+		configuration, _, err := leader.GetConfiguration()
+		if err != nil {
+			c.FailNowf("[ERR] get configuration err: %v", err)
+		}
+		for _, sec := range c.rafts {
+			if err := sec.Shutdown().Error(); err != nil {
+				c.FailNowf("[ERR] shutdown err: %v", err)
+			}
+		}
+
+		// Recover the cluster. We need to replace the transport and we
+		// replace the FSM so no state can carry over.
+		for i, r := range c.rafts {
+			if err := RecoverCluster(&r.conf, &MockFSM{}, r.logs, r.stable,
+				r.snapshots, configuration); err != nil {
+				c.FailNowf("[ERR] err: %v", err)
+			}
+
+			_, trans := NewInmemTransport(r.localAddr)
+			r2, err := NewRaft(&r.conf, &MockFSM{}, r.logs, r.stable, r.snapshots, trans)
+			if err != nil {
+				c.FailNowf("[ERR] err: %v", err)
+			}
+			c.rafts[i] = r2
+			c.trans[i] = r2.trans.(*InmemTransport)
+			c.fsms[i] = r2.fsm.(*MockFSM)
+		}
+		c.FullyConnect()
+		time.Sleep(c.propagateTimeout)
+
+		// Let things settle and make sure we recovered.
+		c.EnsureLeader(t, c.Leader().localAddr)
+		c.EnsureSame(t)
+		c.EnsureSamePeers(t)
+	}
+	for applies := 0; applies < 20; applies++ {
+		runRecover(applies)
+	}
+}
+
 func TestRaft_HasExistingState(t *testing.T) {
 	// Make a cluster.
 	c := MakeCluster(2, t, nil)
@@ -1372,7 +1453,7 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 	r := leader
 	// Can't just reuse the old transport as it will be closed
 	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
-	r, err := NewRaft(r.conf, r.fsm, r.logs, r.stable, r.snapshots, trans2)
+	r, err := NewRaft(&r.conf, r.fsm, r.logs, r.stable, r.snapshots, trans2)
 	if err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -1389,8 +1470,6 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 
 // TODO: Need a test to process old-style entries in the Raft log when starting
 // up.
-
-// TODO: Add a dedicated test for RecoverCluster() hitting the edges.
 
 func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	// Make the cluster.
@@ -1431,7 +1510,9 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	// Kill the old cluster.
 	for _, sec := range c.rafts {
 		if sec != leader {
-			sec.Shutdown()
+			if err := sec.Shutdown().Error(); err != nil {
+				c.FailNowf("[ERR] shutdown err: %v", err)
+			}
 		}
 	}
 
@@ -1460,14 +1541,15 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	if err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
-	if err := RecoverCluster(r.conf, &MockFSM{}, r.logs, r.stable,
-		r.snapshots, r.trans, recovery.Configuration); err != nil {
+	if err := RecoverCluster(&r.conf, &MockFSM{}, r.logs, r.stable,
+		r.snapshots, recovery.Configuration); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 
-	// Can't just reuse the old transport as it will be closed.
-	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
-	r, err = NewRaft(r.conf, r.fsm, r.logs, r.stable, r.snapshots, trans2)
+	// Can't just reuse the old transport as it will be closed. We also start
+	// with a fresh FSM for good measure so no state can carry over.
+	_, trans := NewInmemTransport(r.localAddr)
+	r, err = NewRaft(&r.conf, &MockFSM{}, r.logs, r.stable, r.snapshots, trans)
 	if err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
