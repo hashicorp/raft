@@ -82,6 +82,10 @@ func (i *InmemStore) DeleteRange(min, max uint64) error {
 		delete(i.logs, j)
 	}
 	i.lowIndex = max + 1
+	if i.lowIndex > i.highIndex {
+		i.lowIndex = 0
+		i.highIndex = 0
+	}
 	return nil
 }
 
