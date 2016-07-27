@@ -19,8 +19,21 @@ import (
 // below. If you are starting a fresh cluster then there's no reason not to
 // jump right to the latest protocol version. If you need to interoperate with
 // older, unversioned Raft servers you'll need to drive the cluster through the
-// different versions in order. This may best be done by moving forward across a
-// series of releases of your application.
+// different versions in order.
+//
+// The version details are complicated, but here's a summary of what's required
+// to get from an unversioned cluster to version 2:
+//
+// 1. In version N of your app that starts using the new Raft library with
+//    versioning, set ProtocolVersion to 0.
+// 2. Make version N+1 of your app require version N as a prerequisite (all
+//    servers must be upgraded). For version N+1 of your app set ProtocolVersion
+//    to 1.
+// 3. Similarly, make version N+2 of your app require version N+1 as a
+//    prerequisite. For version N+2 of your app, set ProtocolVersion to 2. Also,
+//    for this upgrade users need to remove each server from the cluster by
+//    address before upgrading that server, and then add it back by ID after the
+//    upgrade.
 //
 // Version History
 //
