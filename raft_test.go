@@ -708,8 +708,8 @@ func TestRaft_HasExistingState(t *testing.T) {
 	c1 := MakeClusterNoBootstrap(1, t, nil)
 
 	// Make sure the initial state is clean.
-	state, err := HasExistingState(c1.rafts[0].logs, c1.rafts[0].stable, c1.rafts[0].snapshots)
-	if err != nil || state {
+	hasState, err := HasExistingState(c1.rafts[0].logs, c1.rafts[0].stable, c1.rafts[0].snapshots)
+	if err != nil || hasState {
 		c.FailNowf("[ERR] should not have any existing state, %v", err)
 	}
 
@@ -733,8 +733,8 @@ func TestRaft_HasExistingState(t *testing.T) {
 	c.EnsureLeader(t, c.Leader().localAddr)
 
 	// Make sure it's not clean.
-	state, err = HasExistingState(c1.rafts[0].logs, c1.rafts[0].stable, c1.rafts[0].snapshots)
-	if err != nil || !state {
+	hasState, err = HasExistingState(c1.rafts[0].logs, c1.rafts[0].stable, c1.rafts[0].snapshots)
+	if err != nil || !hasState {
 		c.FailNowf("[ERR] should have some existing state, %v", err)
 	}
 }
@@ -1460,7 +1460,8 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	if err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
-	if err := RecoverCluster(r.conf, r.logs, r.trans, recovery.Configuration); err != nil {
+	if err := RecoverCluster(r.conf, &MockFSM{}, r.logs, r.stable,
+		r.snapshots, r.trans, recovery.Configuration); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 
@@ -1483,9 +1484,8 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	c2.EnsureSame(t)
 
 	// We should have restored from the snapshot! Note that there's one
-	// index bump from the log entry added during recovery, and another
-	// bump from the noop the leader tees up when it takes over.
-	if last := r.getLastApplied(); last != 104 {
+	// index bump from the noop the leader tees up when it takes over.
+	if last := r.getLastApplied(); last != 103 {
 		c.FailNowf("[ERR] bad last: %v", last)
 	}
 

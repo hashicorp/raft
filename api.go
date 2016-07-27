@@ -167,11 +167,11 @@ func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
 	}
 
 	// Make sure the cluster is in a clean state.
-	state, err := HasExistingState(logs, stable, snaps)
+	hasState, err := HasExistingState(logs, stable, snaps)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to check for existing state: %v", err)
 	}
-	if state {
+	if hasState {
 		return fmt.Errorf("bootstrap only works on new clusters, cluster has been bootstrapped previously")
 	}
 
@@ -201,12 +201,27 @@ func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
 
 // RecoverCluster is used to manually force a new configuration in order to
 // recover from a loss of quorum where the current configuration cannot be
-// restored, such as when several servers die at the same time. If this is used,
-// ALL SERVERS in the cluster must be started with the same recovery settings.
-// Otherwise, the configuration may be incorrect depending on which server gets
-// elected.
-func RecoverCluster(conf *Config, logs LogStore, trans Transport,
-	configuration Configuration) error {
+// restored, such as when several servers die at the same time. This works by
+// reading all the current state for this server, creating a snapshot with the
+// supplied configuration, and then truncating the Raft log. This is the only
+// safe way to force a given configuration without actually altering the log to
+// insert any new entries, which could cause conflicts with other servers with
+// different state.
+//
+// Note the FSM passed here is used for the snapshot operations and will be
+// left in a state that should not be used by the application. Be sure to
+// discard this FSM and any associated state and provide a fresh one when
+// calling NewRaft later.
+//
+// A typical way to recover the cluster is to shut down all servers and then
+// run RecoverCluster on every server using an identical configuration. When
+// the cluster is then restarted, and election should occur and then Raft will
+// resume normal operation. If it's desired to make a particular server the
+// leader, this can be used to inject a new configuration with that server as
+// the sole voter, and then join up other new clean-state peer servers using
+// the usual APIs in order to bring the cluster back into a known state.
+func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
+	snaps SnapshotStore, trans Transport, configuration Configuration) error {
 	// Validate the Raft server config.
 	if err := ValidateConfig(conf); err != nil {
 		return err
@@ -217,37 +232,98 @@ func RecoverCluster(conf *Config, logs LogStore, trans Transport,
 		return err
 	}
 
-	// Read the last log value.
-	lastIdx, err := logs.LastIndex()
+	// Refuse to recover if there's no existing state; this isn't safe to
+	// do because we'd have to synthesize a log entry.
+	hasState, err := HasExistingState(logs, stable, snaps)
+	if err != nil {
+		return fmt.Errorf("failed to check for existing state: %v", err)
+	}
+	if !hasState {
+		return fmt.Errorf("cannot recover cluster with no initial state")
+	}
+
+	// Attempt to restore any snapshots we find, newest to oldest.
+	var snapshotIndex uint64
+	var snapshotTerm uint64
+	snapshots, err := snaps.List()
+	if err != nil {
+		return fmt.Errorf("failed to list snapshots: %v", err)
+	}
+	for _, snapshot := range snapshots {
+		_, source, err := snaps.Open(snapshot.ID)
+		if err != nil {
+			// Skip this one and try the next. We will detect if we
+			// couldn't open any snapshots.
+			continue
+		}
+		defer source.Close()
+
+		if err := fsm.Restore(source); err != nil {
+			// Same here, skip and try the next one.
+			continue
+		}
+
+		snapshotIndex = snapshot.Index
+		snapshotTerm = snapshot.Term
+		break
+	}
+	if len(snapshots) > 0 && (snapshotIndex == 0 || snapshotTerm == 0) {
+		return fmt.Errorf("failed to restore any of the available snapshots")
+	}
+
+	// The snapshot information is the best known end point for the data
+	// until we play back the Raft log.
+	finalIndex := snapshotIndex
+	finalTerm := snapshotTerm
+
+	// Apply any Raft log entries past the snapshot.
+	lastLogIndex, err := logs.LastIndex()
 	if err != nil {
 		return fmt.Errorf("failed to find last log: %v", err)
 	}
-
-	// Get the log.
 	var lastLog Log
-	if lastIdx > 0 {
-		if err = logs.GetLog(lastIdx, &lastLog); err != nil {
-			return fmt.Errorf("failed to get last log: %v", err)
+	if lastLogIndex > 0 {
+		if err = logs.GetLog(lastLogIndex, &lastLog); err != nil {
+			return fmt.Errorf("failed to get last log at index %d: %v", lastLogIndex, err)
 		}
-	} else {
-		return fmt.Errorf("Recover only works on non-empty logs")
+	}
+	for index := snapshotIndex + 1; index <= lastLog.Index; index++ {
+		var entry Log
+		if err := logs.GetLog(index, &entry); err != nil {
+			return fmt.Errorf("failed to get log at index %d: %v", index, err)
+		}
+		if entry.Type == LogCommand {
+			_ = fsm.Apply(&entry)
+		}
+		finalIndex = entry.Index
+		finalTerm = entry.Term
 	}
 
-	// Add a new log entry.
-	fakeIndex := lastLog.Index + 1
-	entry := &Log{
-		Index: fakeIndex,
-		Term:  lastLog.Term,
+	// Create a new snapshot, placing the configuration in as if it was
+	// committed at index 1.
+	snapshot, err := fsm.Snapshot()
+	if err != nil {
+		return fmt.Errorf("failed to snapshot FSM: %v", err)
 	}
-	if conf.ProtocolVersion < 2 {
-		entry.Type = LogRemovePeerDeprecated
-		entry.Data = encodePeers(configuration, trans)
-	} else {
-		entry.Type = LogConfiguration
-		entry.Data = encodeConfiguration(configuration)
+	sink, err := snaps.Create(finalIndex, finalTerm, configuration, 1)
+	if err != nil {
+		return fmt.Errorf("failed to create snapshot: %v", err)
 	}
-	if err := logs.StoreLog(entry); err != nil {
-		return fmt.Errorf("failed to append configuration entry to log: %v", err)
+	if err := snapshot.Persist(sink); err != nil {
+		return fmt.Errorf("failed to persist snapshot: %v", err)
+	}
+	if err := sink.Close(); err != nil {
+		return fmt.Errorf("failed to finalize snapshot: %v", err)
+	}
+
+	// Compact the logs so that we don't get bad interference from any
+	// configuration change log entries that might be there.
+	firstLogIndex, err := logs.FirstIndex()
+	if err != nil {
+		return fmt.Errorf("failed to get first log index: %v", err)
+	}
+	if err := logs.DeleteRange(firstLogIndex, lastLogIndex); err != nil {
+		return fmt.Errorf("log compaction failed: %v", err)
 	}
 
 	return nil
@@ -269,11 +345,11 @@ func HasExistingState(logs LogStore, stable StableStore, snaps SnapshotStore) (b
 	}
 
 	// Make sure we have an empty log.
-	lastIdx, err := logs.LastIndex()
+	lastIndex, err := logs.LastIndex()
 	if err != nil {
 		return false, fmt.Errorf("failed to get last log index: %v", err)
 	}
-	if lastIdx > 0 {
+	if lastIndex > 0 {
 		return true, nil
 	}
 
@@ -317,16 +393,16 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	}
 
 	// Read the last log value.
-	lastIdx, err := logs.LastIndex()
+	lastIndex, err := logs.LastIndex()
 	if err != nil {
 		return nil, fmt.Errorf("failed to find last log: %v", err)
 	}
 
 	// Get the log.
 	var lastLog Log
-	if lastIdx > 0 {
-		if err = logs.GetLog(lastIdx, &lastLog); err != nil {
-			return nil, fmt.Errorf("failed to get last log: %v", err)
+	if lastIndex > 0 {
+		if err = logs.GetLog(lastIndex, &lastLog); err != nil {
+			return nil, fmt.Errorf("failed to get last log at index %d: %v", lastIndex, err)
 		}
 	}
 
