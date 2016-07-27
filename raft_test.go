@@ -753,15 +753,42 @@ func TestRaft_RecoverCluster(t *testing.T) {
 		// Recover the cluster. We need to replace the transport and we
 		// replace the FSM so no state can carry over.
 		for i, r := range c.rafts {
+			before, err := r.snapshots.List()
+			if err != nil {
+				c.FailNowf("[ERR] snapshot list err: %v", err)
+			}
 			if err := RecoverCluster(&r.conf, &MockFSM{}, r.logs, r.stable,
 				r.snapshots, configuration); err != nil {
-				c.FailNowf("[ERR] err: %v", err)
+				c.FailNowf("[ERR] recover err: %v", err)
 			}
 
+			// Make sure the recovery looks right.
+			after, err := r.snapshots.List()
+			if err != nil {
+				c.FailNowf("[ERR] snapshot list err: %v", err)
+			}
+			if len(after) != len(before)+1 {
+				c.FailNowf("[ERR] expected a new snapshot, %d vs. %d", len(before), len(after))
+			}
+			first, err := r.logs.FirstIndex()
+			if err != nil {
+				c.FailNowf("[ERR] first log index err: %v", err)
+			}
+			last, err := r.logs.LastIndex()
+			if err != nil {
+				c.FailNowf("[ERR] last log index err: %v", err)
+			}
+			if first != 0 || last != 0 {
+				c.FailNowf("[ERR] expected empty logs, got %d/%d", first, last)
+			}
+
+			// Fire up the recovered Raft instance. We have to patch
+			// up the cluster state manually since this is an unusual
+			// operation.
 			_, trans := NewInmemTransport(r.localAddr)
 			r2, err := NewRaft(&r.conf, &MockFSM{}, r.logs, r.stable, r.snapshots, trans)
 			if err != nil {
-				c.FailNowf("[ERR] err: %v", err)
+				c.FailNowf("[ERR] new raft err: %v", err)
 			}
 			c.rafts[i] = r2
 			c.trans[i] = r2.trans.(*InmemTransport)
