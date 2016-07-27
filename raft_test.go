@@ -1055,14 +1055,14 @@ func TestRaft_JoinNode(t *testing.T) {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 
+	// Ensure one leader
+	c.EnsureLeader(t, c.Leader().localAddr)
+
 	// Check the FSMs
 	c.EnsureSame(t)
 
 	// Check the peers
 	c.EnsureSamePeers(t)
-
-	// Ensure one leader
-	c.EnsureLeader(t, c.Leader().localAddr)
 }
 
 func TestRaft_RemoveFollower(t *testing.T) {
