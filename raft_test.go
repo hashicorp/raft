@@ -703,6 +703,46 @@ func TestRaft_AfterShutdown(t *testing.T) {
 
 }
 
+func TestRaft_LiveBootstrap(t *testing.T) {
+	// Make the cluster.
+	c := MakeClusterNoBootstrap(3, t, nil)
+	defer c.Close()
+
+	// Build the configuration.
+	configuration := Configuration{}
+	for _, r := range c.rafts {
+		server := Server{
+			ID:      r.localID,
+			Address: r.localAddr,
+		}
+		configuration.Servers = append(configuration.Servers, server)
+	}
+
+	// Bootstrap one of the nodes live.
+	boot := c.rafts[0].BootstrapCluster(configuration)
+	if err := boot.Error(); err != nil {
+		c.FailNowf("[ERR] bootstrap err: %v", err)
+	}
+
+	// Should be one leader.
+	c.Followers()
+	leader := c.Leader()
+	c.EnsureLeader(t, leader.localAddr)
+
+	// Should be able to apply.
+	future := leader.Apply([]byte("test"), c.conf.CommitTimeout)
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] apply err: %v", err)
+	}
+	c.WaitForReplication(1)
+
+	// Make sure the live bootstrap fails now that things are started up.
+	boot = c.rafts[0].BootstrapCluster(configuration)
+	if err := boot.Error(); err != ErrCantBootstrap {
+		c.FailNowf("[ERR] bootstrap should have failed: %v", err)
+	}
+}
+
 func TestRaft_RecoverCluster_NoState(t *testing.T) {
 	c := MakeClusterNoBootstrap(1, t, nil)
 	defer c.Close()

@@ -144,6 +144,10 @@ type Raft struct {
 	// outside of the main thread.
 	configurationsCh chan *configurationsFuture
 
+	// bootstrapCh is used to attempt an initial bootstrap safely from
+	// outside of the main thread.
+	bootstrapCh chan *bootstrapFuture
+
 	// List of observers and the mutex that protects them. The observers list
 	// is indexed by an artificial ID which is used for deregistration.
 	observersLock sync.RWMutex
@@ -444,6 +448,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		trans:                 trans,
 		verifyCh:              make(chan *verifyFuture, 64),
 		configurationsCh:      make(chan *configurationsFuture, 8),
+		bootstrapCh:           make(chan *bootstrapFuture),
 		observers:             make(map[uint64]*Observer),
 	}
 
@@ -546,6 +551,24 @@ func (r *Raft) restoreSnapshot() error {
 		return fmt.Errorf("failed to load any existing snapshots")
 	}
 	return nil
+}
+
+// BootstrapCluster is equivalent to non-member BootstrapCluster but can be
+// called on an un-bootstrapped Raft instance after it has been created. This
+// should only be called at the beginning of time for the cluster, and you
+// absolutely must make sure that you call it with the same configuration on all
+// the Voter servers. There is no need to bootstrap Nonvoter and Staging
+// servers.
+func (r *Raft) BootstrapCluster(configuration Configuration) Future {
+	bootstrapReq := &bootstrapFuture{}
+	bootstrapReq.init()
+	bootstrapReq.configuration = configuration
+	select {
+	case <-r.shutdownCh:
+		return errorFuture{ErrRaftShutdown}
+	case r.bootstrapCh <- bootstrapReq:
+		return bootstrapReq
+	}
 }
 
 // Leader is used to return the current leader of the cluster.

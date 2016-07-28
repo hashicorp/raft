@@ -164,6 +164,9 @@ func (r *Raft) runFollower() {
 			c.configurations = r.configurations.Clone()
 			c.respond(nil)
 
+		case b := <-r.bootstrapCh:
+			b.respond(r.liveBootstrap(b.configuration))
+
 		case <-heartbeatTimer:
 			// Restart the heartbeat timer
 			heartbeatTimer = randomTimeout(r.conf.HeartbeatTimeout)
@@ -200,6 +203,47 @@ func (r *Raft) runFollower() {
 			return
 		}
 	}
+}
+
+// liveBootstrap attempts to seed an initial configuration for the cluster. See
+// the Raft object's member BootstrapCluster for more details. This must only be
+// called on the main thread, and only makes sense in the follower state.
+func (r *Raft) liveBootstrap(configuration Configuration) error {
+	// Sanity check the Raft peer configuration.
+	if err := checkConfiguration(configuration); err != nil {
+		return err
+	}
+
+	// Refuse to bootstrap if there's any existing state present.
+	hasState, err := HasExistingState(r.logs, r.stable, r.snapshots)
+	if err != nil {
+		return fmt.Errorf("failed to check for existing state: %v", err)
+	}
+	if hasState {
+		return ErrCantBootstrap
+	}
+
+	// Apply the configuration entry to the log.
+	entry := &Log{
+		Index: 1,
+		Term:  1,
+	}
+	if r.protocolVersion < 2 {
+		entry.Type = LogRemovePeerDeprecated
+		entry.Data = encodePeers(configuration, r.trans)
+	} else {
+		entry.Type = LogConfiguration
+		entry.Data = encodeConfiguration(configuration)
+	}
+	if err := r.logs.StoreLog(entry); err != nil {
+		return fmt.Errorf("failed to append configuration entry to log: %v", err)
+	}
+
+	// Make the configuration live.
+	r.setCurrentTerm(1)
+	r.setLastLog(entry.Index, entry.Term)
+	r.processConfigurationLogEntry(entry)
+	return nil
 }
 
 // runCandidate runs the FSM for a candidate.
@@ -261,6 +305,9 @@ func (r *Raft) runCandidate() {
 		case c := <-r.configurationsCh:
 			c.configurations = r.configurations.Clone()
 			c.respond(nil)
+
+		case b := <-r.bootstrapCh:
+			b.respond(ErrCantBootstrap)
 
 		case <-electionTimer:
 			// Election failed! Restart the election. We simply return,
@@ -528,6 +575,9 @@ func (r *Raft) leaderLoop() {
 
 		case future := <-r.configurationChangeChIfStable():
 			r.appendConfigurationEntry(future)
+
+		case b := <-r.bootstrapCh:
+			b.respond(ErrCantBootstrap)
 
 		case newLog := <-r.applyCh:
 			// Group commit, gather all the ready commits

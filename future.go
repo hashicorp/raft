@@ -113,6 +113,15 @@ type configurationChangeFuture struct {
 	req configurationChangeRequest
 }
 
+// bootstrapFuture is used to attempt a live bootstrap of the cluster. See the
+// Raft object's BootstrapCluster member function for more details.
+type bootstrapFuture struct {
+	deferError
+
+	// configuration is the proposed bootstrap configuration to apply.
+	configuration Configuration
+}
+
 // logFuture is used to apply a log entry and waits until
 // the log is considered committed.
 type logFuture struct {
