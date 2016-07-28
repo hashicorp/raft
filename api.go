@@ -47,6 +47,10 @@ var (
 	// ErrUnsupportedProtocol is returned when an operation is attempted
 	// that's not supported by the current protocol version.
 	ErrUnsupportedProtocol = errors.New("operation not supported with current protocol version")
+
+	// ErrCantBootstrap is returned when attempt is made to bootstrap a
+	// cluster that already has state present.
+	ErrCantBootstrap = errors.New("bootstrap only works on new clusters")
 )
 
 // Raft implements a Raft node.
@@ -173,7 +177,7 @@ func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
 		return fmt.Errorf("failed to check for existing state: %v", err)
 	}
 	if hasState {
-		return fmt.Errorf("bootstrap only works on new clusters, cluster has been bootstrapped previously")
+		return ErrCantBootstrap
 	}
 
 	// Set current term to 1.
@@ -633,14 +637,16 @@ func (r *Raft) VerifyLeader() Future {
 // GetConfiguration returns the latest configuration and its associated index
 // currently in use. This may not yet be committed. This must not be called on
 // the main thread (which can access the information directly).
-func (r *Raft) GetConfiguration() (Configuration, uint64, error) {
-	configurationsFuture := r.getConfigurations()
-	if err := configurationsFuture.Error(); err != nil {
-		return Configuration{}, 0, err
+func (r *Raft) GetConfiguration() ConfigurationFuture {
+	configReq := &configurationsFuture{}
+	configReq.init()
+	select {
+	case <-r.shutdownCh:
+		configReq.respond(ErrRaftShutdown)
+		return configReq
+	case r.configurationsCh <- configReq:
+		return configReq
 	}
-
-	configurations := &configurationsFuture.configurations
-	return configurations.latest, configurations.latestIndex, nil
 }
 
 // AddPeer (deprecated) is used to add a new peer into the cluster. This must be
@@ -843,11 +849,11 @@ func (r *Raft) Stats() map[string]string {
 		"protocol_version":    toString(uint64(r.protocolVersion)),
 	}
 
-	configuration, _, err := r.GetConfiguration()
-	if err != nil {
+	future := r.GetConfiguration()
+	if err := future.Error(); err != nil {
 		r.logger.Printf("[WARN] raft: could not get configuration for Stats: %v", err)
 	} else {
-		s["latest_configuration"] = fmt.Sprintf("%+v", configuration)
+		s["latest_configuration"] = fmt.Sprintf("%+v", future.Configuration())
 	}
 
 	last := r.LastContact()

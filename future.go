@@ -16,7 +16,8 @@ type Future interface {
 	Error() error
 }
 
-// IndexFuture is used for future actions that can result in a raft log entry being created.
+// IndexFuture is used for future actions that can result in a raft log entry
+// being created.
 type IndexFuture interface {
 	Future
 
@@ -25,7 +26,7 @@ type IndexFuture interface {
 	Index() uint64
 }
 
-// ApplyFuture is used for Apply() and can return the FSM response.
+// ApplyFuture is used for Apply and can return the FSM response.
 type ApplyFuture interface {
 	IndexFuture
 
@@ -33,6 +34,20 @@ type ApplyFuture interface {
 	// by the FSM.Apply method. This must not be called
 	// until after the Error method has returned.
 	Response() interface{}
+}
+
+// ConfigurationFuture is used for GetConfiguration and can return the
+// latest configuration in use by Raft.
+type ConfigurationFuture interface {
+	Future
+
+	// Configuration contains the latest configuration. This must
+	// not be called until after the Error method has returned.
+	Configuration() Configuration
+
+	// Index returns the index of the latest configuration. This
+	// must not be called until after the Error method has returned.
+	Index() uint64
 }
 
 // errorFuture is used to return a static error.
@@ -168,6 +183,16 @@ type verifyFuture struct {
 type configurationsFuture struct {
 	deferError
 	configurations configurations
+}
+
+// Configuration returns the latest configuration in use by Raft.
+func (c *configurationsFuture) Configuration() Configuration {
+	return c.configurations.latest
+}
+
+// Index returns the index of the latest configuration in use by Raft.
+func (c *configurationsFuture) Index() uint64 {
+	return c.configurations.latestIndex
 }
 
 // vote is used to respond to a verifyFuture.

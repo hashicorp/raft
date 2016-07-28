@@ -91,20 +91,6 @@ func (r *Raft) setLeader(leader ServerAddress) {
 	r.leaderLock.Unlock()
 }
 
-// getConfigurations returns the full configuration information. This must not
-// be called on the main thread (which can access the information directly).
-func (r *Raft) getConfigurations() *configurationsFuture {
-	configurationsFuture := &configurationsFuture{}
-	configurationsFuture.init()
-	select {
-	case <-r.shutdownCh:
-		configurationsFuture.respond(ErrRaftShutdown)
-		return configurationsFuture
-	case r.configurationsCh <- configurationsFuture:
-		return configurationsFuture
-	}
-}
-
 // requestConfigChange is a helper for the above functions that make
 // configuration change requests. 'req' describes the change. For timeout,
 // see AddVoter.
