@@ -32,14 +32,6 @@ var (
 	// ErrEnqueueTimeout is returned when a command fails due to a timeout.
 	ErrEnqueueTimeout = errors.New("timed out enqueuing operation")
 
-	// ErrKnownPeer is returned when trying to add a peer to the configuration
-	// that already exists.
-	ErrKnownPeer = errors.New("peer already known")
-
-	// ErrUnknownPeer is returned when trying to remove a peer from the
-	// configuration that doesn't exist.
-	ErrUnknownPeer = errors.New("peer is unknown")
-
 	// ErrNothingNewToSnapshot is returned when trying to create a snapshot
 	// but there's nothing new commited to the FSM since we started.
 	ErrNothingNewToSnapshot = errors.New("nothing new to snapshot")
