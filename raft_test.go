@@ -763,6 +763,65 @@ func TestRaft_RecoverCluster_NoState(t *testing.T) {
 	}
 }
 
+func TestRaft_RecoverCluster_EmptyConfiguration(t *testing.T) {
+	conf := inmemConfig(t)
+	conf.TrailingLogs = 10
+	c := MakeCluster(3, t, conf)
+	defer c.Close()
+
+	// Perform some commits.
+	leader := c.Leader()
+	for i := 0; i < 100; i++ {
+		future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+		if err := future.Error(); err != nil {
+			c.FailNowf("[ERR] apply err: %v", err)
+		}
+	}
+
+	// Remove the first Raft server from the cluster.
+	r := c.rafts[0]
+	future := leader.RemoveServer(r.localID, 0, 0)
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] remove err: %v", err)
+	}
+
+	// Shut down the first Raft server.
+	if err := r.Shutdown().Error(); err != nil {
+		c.FailNowf("[ERR] shutdown err: %v", err)
+	}
+
+	// Run recovery with an empty configuration.
+	if err := RecoverCluster(&r.conf, &MockFSM{}, r.logs, r.stable,
+		r.snapshots, Configuration{}); err != nil {
+		c.FailNowf("[ERR] recover err: %v", err)
+	}
+
+	// Fire up the recovered Raft server. We have to patch
+	// up the cluster state manually since this is an unusual
+	// operation.
+	_, trans := NewInmemTransport(r.localAddr)
+	r2, err := NewRaft(&r.conf, &MockFSM{}, r.logs, r.stable, r.snapshots, trans)
+	if err != nil {
+		c.FailNowf("[ERR] new raft err: %v", err)
+	}
+	c.rafts[0] = r2
+	c.trans[0] = r2.trans.(*InmemTransport)
+	c.fsms[0] = r2.fsm.(*MockFSM)
+
+	// Fire it up and join it back in.
+	c.FullyConnect()
+	time.Sleep(c.propagateTimeout)
+	future = c.Leader().AddVoter(r2.localID, r2.localAddr, 0, 0)
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] add server err: %v", err)
+	}
+
+	// Let things settle and make sure we recovered.
+	c.EnsureLeader(t, c.Leader().localAddr)
+	c.EnsureSame(t)
+	c.EnsureSamePeers(t)
+}
+
 func TestRaft_RecoverCluster(t *testing.T) {
 	// Run with different number of applies which will cover no snapshot and
 	// snapshot + log scenarios. By sweeping through the trailing logs value

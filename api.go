@@ -228,9 +228,15 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 		return err
 	}
 
-	// Sanity check the Raft peer configuration.
-	if err := checkConfiguration(configuration); err != nil {
-		return err
+	// Sanity check the Raft peer configuration. Note that it's ok to
+	// recover to an empty configuration if you want to keep the data
+	// but not allow a given server to participate any more (you'd have
+	// to recover again, or add it back into the existing quorum from
+	// another server to use this server).
+	if len(configuration.Servers) > 0 {
+		if err := checkConfiguration(configuration); err != nil {
+			return err
+		}
 	}
 
 	// Refuse to recover if there's no existing state. This would be safe to
