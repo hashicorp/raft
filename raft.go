@@ -709,8 +709,8 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 		return
 	}
 
-	r.logger.Printf("[INFO] raft: Updating configuration with %s (%v, %v) to %v",
-		future.req.command, future.req.serverID, future.req.serverAddress, configuration)
+	r.logger.Printf("[INFO] raft: Updating configuration with %s (%v, %v) to %+v",
+		future.req.command, future.req.serverID, future.req.serverAddress, configuration.Servers)
 
 	// In pre-ID compatibility mode we translate all configuration changes
 	// in to an old remove peer message, which can handle all supported
