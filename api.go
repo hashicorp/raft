@@ -473,7 +473,8 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		}
 		r.processConfigurationLogEntry(&entry)
 	}
-	r.logger.Printf("[INFO] raft: Initial configurations: %+v", r.configurations)
+	r.logger.Printf("[INFO] raft: Initial configuration (index=%d): %+v",
+		r.configurations.latestIndex, r.configurations.latest)
 
 	// Setup a heartbeat fast-path to avoid head-of-line
 	// blocking where possible. It MUST be safe for this
