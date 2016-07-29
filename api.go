@@ -832,7 +832,7 @@ func (r *Raft) LastContact() time.Time {
 // Keys are: "state", "term", "last_log_index", "last_log_term",
 // "commit_index", "applied_index", "fsm_pending",
 // "last_snapshot_index", "last_snapshot_term",
-// "latest_configuration" and "last_contact".
+// "latest_configuration", "last_contact", and "num_peers".
 //
 // The value of "state" is a numerical value representing a
 // RaftState const.
@@ -844,6 +844,10 @@ func (r *Raft) LastContact() time.Time {
 // has been no contact with a leader, "0" if the node is in the
 // leader state, or the time since last contact with a leader
 // formatted as a string.
+//
+// The value of "num_peers" is the number of other voting servers in the
+// cluster, not including this node. If this node isn't part of the
+// configuration then this will be "0".
 //
 // All other values are uint64s, formatted as strings.
 func (r *Raft) Stats() map[string]string {
@@ -869,7 +873,25 @@ func (r *Raft) Stats() map[string]string {
 	if err := future.Error(); err != nil {
 		r.logger.Printf("[WARN] raft: could not get configuration for Stats: %v", err)
 	} else {
-		s["latest_configuration"] = fmt.Sprintf("%+v", future.Configuration())
+		configuration := future.Configuration()
+		s["latest_configuration"] = fmt.Sprintf("%+v", configuration)
+
+		// This is a legacy metric that we've seen people use in the wild.
+		hasUs := false
+		numPeers := 0
+		for _, server := range configuration.Servers {
+			if server.Suffrage == Voter {
+				if server.ID == r.localID {
+					hasUs = true
+				} else {
+					numPeers++
+				}
+			}
+		}
+		if !hasUs {
+			numPeers = 0
+		}
+		s["num_peers"] = toString(uint64(numPeers))
 	}
 
 	last := r.LastContact()
