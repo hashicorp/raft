@@ -857,16 +857,18 @@ func (r *Raft) Stats() map[string]string {
 	lastLogIndex, lastLogTerm := r.getLastLog()
 	lastSnapIndex, lastSnapTerm := r.getLastSnapshot()
 	s := map[string]string{
-		"state":               r.getState().String(),
-		"term":                toString(r.getCurrentTerm()),
-		"last_log_index":      toString(lastLogIndex),
-		"last_log_term":       toString(lastLogTerm),
-		"commit_index":        toString(r.getCommitIndex()),
-		"applied_index":       toString(r.getLastApplied()),
-		"fsm_pending":         toString(uint64(len(r.fsmCommitCh))),
-		"last_snapshot_index": toString(lastSnapIndex),
-		"last_snapshot_term":  toString(lastSnapTerm),
-		"protocol_version":    toString(uint64(r.protocolVersion)),
+		"state":                r.getState().String(),
+		"term":                 toString(r.getCurrentTerm()),
+		"last_log_index":       toString(lastLogIndex),
+		"last_log_term":        toString(lastLogTerm),
+		"commit_index":         toString(r.getCommitIndex()),
+		"applied_index":        toString(r.getLastApplied()),
+		"fsm_pending":          toString(uint64(len(r.fsmCommitCh))),
+		"last_snapshot_index":  toString(lastSnapIndex),
+		"last_snapshot_term":   toString(lastSnapTerm),
+		"protocol_version":     toString(uint64(r.protocolVersion)),
+		"protocol_version_min": toString(uint64(ProtocolVersionMin)),
+		"protocol_version_max": toString(uint64(ProtocolVersionMax)),
 	}
 
 	future := r.GetConfiguration()
