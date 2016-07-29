@@ -39,15 +39,11 @@ type ApplyFuture interface {
 // ConfigurationFuture is used for GetConfiguration and can return the
 // latest configuration in use by Raft.
 type ConfigurationFuture interface {
-	Future
+	IndexFuture
 
 	// Configuration contains the latest configuration. This must
 	// not be called until after the Error method has returned.
 	Configuration() Configuration
-
-	// Index returns the index of the latest configuration. This
-	// must not be called until after the Error method has returned.
-	Index() uint64
 }
 
 // errorFuture is used to return a static error.

@@ -474,7 +474,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		r.processConfigurationLogEntry(&entry)
 	}
 	r.logger.Printf("[INFO] raft: Initial configuration (index=%d): %+v",
-		r.configurations.latestIndex, r.configurations.latest)
+		r.configurations.latestIndex, r.configurations.latest.Servers)
 
 	// Setup a heartbeat fast-path to avoid head-of-line
 	// blocking where possible. It MUST be safe for this
@@ -876,7 +876,8 @@ func (r *Raft) Stats() map[string]string {
 		r.logger.Printf("[WARN] raft: could not get configuration for Stats: %v", err)
 	} else {
 		configuration := future.Configuration()
-		s["latest_configuration"] = fmt.Sprintf("%+v", configuration)
+		s["latest_configuration_index"] = toString(future.Index())
+		s["latest_configuration"] = fmt.Sprintf("%+v", configuration.Servers)
 
 		// This is a legacy metric that we've seen people use in the wild.
 		hasUs := false
