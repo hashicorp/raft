@@ -326,7 +326,7 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 	return nil
 }
 
-// HasExistingState returns true if the cluster has any existing state (logs,
+// HasExistingState returns true if the server has any existing state (logs,
 // knowledge of a current term, or any snapshots).
 func HasExistingState(logs LogStore, stable StableStore, snaps SnapshotStore) (bool, error) {
 	// Make sure we don't have a current term.
