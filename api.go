@@ -53,8 +53,9 @@ var (
 type Raft struct {
 	raftState
 
-	// protocolVersion is used to inter-operate with older Raft servers. See
-	// ProtocolVersion in Config for more details.
+	// protocolVersion is used to inter-operate with Raft servers running
+	// different versions of the library. See comments in config.go for more
+	// details.
 	protocolVersion int
 
 	// applyCh is used to async send logs to the main thread to
@@ -185,7 +186,7 @@ func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
 		Index: 1,
 		Term:  1,
 	}
-	if conf.ProtocolVersion < 2 {
+	if conf.ProtocolVersion < 3 {
 		entry.Type = LogRemovePeerDeprecated
 		entry.Data = encodePeers(configuration, trans)
 	} else {
@@ -408,10 +409,10 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	localAddr := ServerAddress(trans.LocalAddr())
 	localID := conf.LocalID
 
-	// TODO (slackpad) - When we deprecate protocol version 1, remove this
+	// TODO (slackpad) - When we deprecate protocol version 2, remove this
 	// along with the AddPeer() and RemovePeer() APIs.
-	if protocolVersion < 2 {
-		logger.Printf("[INFO] raft: Configured ProtocolVersion < 2, using network address as LocalID: %v",
+	if protocolVersion < 3 {
+		logger.Printf("[INFO] raft: Configured ProtocolVersion < 3, using network address as LocalID: %v",
 			localAddr)
 		localID = ServerID(localAddr)
 	}
@@ -646,7 +647,7 @@ func (r *Raft) GetConfiguration() (Configuration, uint64, error) {
 // AddPeer (deprecated) is used to add a new peer into the cluster. This must be
 // run on the leader or it will fail. Use AddVoter/AddNonvoter instead.
 func (r *Raft) AddPeer(peer ServerAddress) Future {
-	if r.protocolVersion > 1 {
+	if r.protocolVersion > 2 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
@@ -663,7 +664,7 @@ func (r *Raft) AddPeer(peer ServerAddress) Future {
 // to occur. This must be run on the leader or it will fail.
 // Use RemoveServer instead.
 func (r *Raft) RemovePeer(peer ServerAddress) Future {
-	if r.protocolVersion > 1 {
+	if r.protocolVersion > 2 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
@@ -683,7 +684,7 @@ func (r *Raft) RemovePeer(peer ServerAddress) Future {
 // If nonzero, timeout is how long this server should wait before the
 // configuration change log entry is appended.
 func (r *Raft) AddVoter(id ServerID, address ServerAddress, prevIndex uint64, timeout time.Duration) IndexFuture {
-	if r.protocolVersion < 1 {
+	if r.protocolVersion < 2 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
@@ -701,7 +702,7 @@ func (r *Raft) AddVoter(id ServerID, address ServerAddress, prevIndex uint64, ti
 // a staging server or voter, this does nothing. This must be run on the leader
 // or it will fail. For prevIndex and timeout, see AddVoter.
 func (r *Raft) AddNonvoter(id ServerID, address ServerAddress, prevIndex uint64, timeout time.Duration) IndexFuture {
-	if r.protocolVersion < 2 {
+	if r.protocolVersion < 3 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
@@ -717,7 +718,7 @@ func (r *Raft) AddNonvoter(id ServerID, address ServerAddress, prevIndex uint64,
 // leader is being removed, it will cause a new election to occur. This must be
 // run on the leader or it will fail. For prevIndex and timeout, see AddVoter.
 func (r *Raft) RemoveServer(id ServerID, prevIndex uint64, timeout time.Duration) IndexFuture {
-	if r.protocolVersion < 1 {
+	if r.protocolVersion < 2 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
@@ -734,7 +735,7 @@ func (r *Raft) RemoveServer(id ServerID, prevIndex uint64, timeout time.Duration
 // does nothing. This must be run on the leader or it will fail. For prevIndex
 // and timeout, see AddVoter.
 func (r *Raft) DemoteVoter(id ServerID, prevIndex uint64, timeout time.Duration) IndexFuture {
-	if r.protocolVersion < 2 {
+	if r.protocolVersion < 3 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 

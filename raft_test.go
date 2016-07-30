@@ -1501,7 +1501,7 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	// Make the cluster.
 	conf := inmemConfig(t)
-	conf.ProtocolVersion = 0
+	conf.ProtocolVersion = 1
 	conf.TrailingLogs = 10
 	c := MakeCluster(3, t, conf)
 	defer c.Close()
@@ -2163,16 +2163,16 @@ func TestRaft_ProtocolVersion_RejectRPC(t *testing.T) {
 	}
 }
 
-func TestRaft_ProtocolVersion_Upgrade_0_1(t *testing.T) {
-	// Make a cluster back on protocol version 0.
+func TestRaft_ProtocolVersion_Upgrade_1_2(t *testing.T) {
+	// Make a cluster back on protocol version 1.
 	conf := inmemConfig(t)
-	conf.ProtocolVersion = 0
+	conf.ProtocolVersion = 1
 	c := MakeCluster(2, t, conf)
 	defer c.Close()
 
-	// Set up another server speaking protocol version 1.
+	// Set up another server speaking protocol version 2.
 	conf = inmemConfig(t)
-	conf.ProtocolVersion = 1
+	conf.ProtocolVersion = 2
 	c1 := MakeClusterNoBootstrap(1, t, conf)
 
 	// Merge clusters.
@@ -2206,17 +2206,17 @@ func TestRaft_ProtocolVersion_Upgrade_0_1(t *testing.T) {
 	}
 }
 
-func TestRaft_ProtocolVersion_Upgrade_1_2(t *testing.T) {
-	// Make a cluster back on protocol version 1.
+func TestRaft_ProtocolVersion_Upgrade_2_3(t *testing.T) {
+	// Make a cluster back on protocol version 2.
 	conf := inmemConfig(t)
-	conf.ProtocolVersion = 1
+	conf.ProtocolVersion = 2
 	c := MakeCluster(2, t, conf)
 	defer c.Close()
 	oldAddr := c.Followers()[0].localAddr
 
-	// Set up another server speaking protocol version 2.
+	// Set up another server speaking protocol version 3.
 	conf = inmemConfig(t)
-	conf.ProtocolVersion = 2
+	conf.ProtocolVersion = 3
 	c1 := MakeClusterNoBootstrap(1, t, conf)
 
 	// Merge clusters.

@@ -25,56 +25,68 @@ import (
 // to get from an unversioned cluster to version 2:
 //
 // 1. In version N of your app that starts using the new Raft library with
-//    versioning, set ProtocolVersion to 0.
+//    versioning, set ProtocolVersion to 1.
 // 2. Make version N+1 of your app require version N as a prerequisite (all
 //    servers must be upgraded). For version N+1 of your app set ProtocolVersion
-//    to 1.
+//    to 2.
 // 3. Similarly, make version N+2 of your app require version N+1 as a
-//    prerequisite. For version N+2 of your app, set ProtocolVersion to 2. Also,
-//    for this upgrade users need to remove each server from the cluster by
-//    address before upgrading that server, and then add it back by ID after the
-//    upgrade.
+//    prerequisite. For version N+2 of your app, set ProtocolVersion to 3.
+//
+// During this upgrade, older cluster members will still have Server IDs equal
+// to their network addresses. To upgrade an older member and give it an ID, it
+// needs to leave the cluster and re-enter:
+//
+// 1. Remove the server from the cluster with RemoveServer, using its network
+//    address as its ServerID.
+// 2. Update the server's config to a better ID (restarting the server).
+// 3. Add the server back to the cluster with AddVoter, using its new ID.
+//
+// You can do this during the rolling upgrade from N+1 to N+2 of your app, or
+// as a rolling change at any time after the upgrade.
 //
 // Version History
 //
-// 0: Unversioned, original protocol, used to interoperate with unversioned
-//    Raft servers. Under this version all configuration changes are propagated
-//    using the deprecated RemovePeerDeprecated Raft log entry. This means that
-//    server IDs are always set to be the same as the server addresses (since
-//    the old log entry type cannot transmit an ID), and only AddPeer/RemovePeer
-//    APIs are supported. Newer Raft servers running at protocol version 0 can
-//    understand the new LogConfiguration Raft log entry but will never generate
-//    one so they can remain compatible with unversioned Raft servers in the
-//    cluster.
-// 1: Transitional protocol used when migrating an existing cluster to the new
+// 0: Original Raft library before versioning was added. Servers running this
+//    version of the Raft library use AddPeerDeprecated/RemovePeerDeprecated
+//    for all configuration changes, and have no support for LogConfiguration.
+// 1: First versioned protocol, used to interoperate with old servers, and begin
+//    the migration path to newer versions of the protocol. Under this version
+//    all configuration changes are propagated using the now-deprecated
+//    RemovePeerDeprecated Raft log entry. This means that server IDs are always
+//    set to be the same as the server addresses (since the old log entry type
+//    cannot transmit an ID), and only AddPeer/RemovePeer APIs are supported.
+//    Servers running this version of the protocol can understand the new
+//    LogConfiguration Raft log entry but will never generate one so they can
+//    remain compatible with version 0 Raft servers in the cluster.
+// 2: Transitional protocol used when migrating an existing cluster to the new
 //    server ID system. Server IDs are still set to be the same as server
 //    addresses, but all configuration changes are propagated using the new
 //    LogConfiguration Raft log entry type, which can carry full ID information.
 //    This version supports the old AddPeer/RemovePeer APIs as well as the new
 //    ID-based AddVoter/RemoveServer APIs which should be used when adding
-//    version 2 servers to the cluster later. Note that non-voting roles are not
-//    yet supported. This version sheds all interoperability with unversioned
-//    Raft servers, but can interoperate with newer Raft servers running with
-//    protocol version 0 since they can understand the new LogConfiguration Raft
-//    log entry, and this version can still understand their RemovePeerDeprecated
-//    Raft log entries. We need this protocol version as an intermediate step
-//    between 0 and 2 so that servers will propagate the ID information that
-//    will come from newly-added (or -cycled) servers using protocol version 2,
-//    but since they are still using their address-based IDs from the previous
-//    step they will still be able to track commitments and their own voting
-//    status properly. If we skipped this step, servers would be started with
-//    their new IDs, but they wouldn't see themselves in the old address-based
-//    configuration, so none of the servers would think they had a vote.
+//    version 3 servers to the cluster later. This version sheds all
+//    interoperability with version 0 servers, but can interoperate with newer
+//    Raft servers running with protocol version 1 since they can understand the
+//    new LogConfiguration Raft log entry, and this version can still understand
+//    their RemovePeerDeprecated Raft log entries. We need this protocol version
+//    as an intermediate step between 1 and 3 so that servers will propagate the
+//    ID information that will come from newly-added (or -rolled) servers using
+//    protocol version 3, but since they are still using their address-based IDs
+//    from the previous step they will still be able to track commitments and
+//    their own voting status properly. If we skipped this step, servers would
+//    be started with their new IDs, but they wouldn't see themselves in the old
+//    address-based configuration, so none of the servers would think they had a
+//    vote.
 // 2: Protocol adding full support for server IDs and new ID-based server APIs
 //    (AddVoter, AddNonvoter, etc.), old AddPeer/RemovePeer APIs are no longer
-//    supported. Version 1 servers should be swapped out by removing them from
+//    supported. Version 2 servers should be swapped out by removing them from
 //    the cluster one-by-one and re-adding them with updated configuration for
 //    this protocol version, along with their server ID. The remove/add cycle
 //    is required to populate their server ID. Note that removing must be done
 //    by ID, which will be the old server's address.
 const (
 	ProtocolVersionMin = 0
-	ProtocolVersionMax = 2
+	ProtocolVersionMax = 3
 )
 
 // Config provides any necessary configuration to
@@ -177,10 +189,16 @@ func DefaultConfig() *Config {
 
 // ValidateConfig is used to validate a sane configuration
 func ValidateConfig(config *Config) error {
-	if config.ProtocolVersion < ProtocolVersionMin ||
+	// We don't actually support running as 0 in the library any more, but
+	// we do understand it.
+	protocolMin := ProtocolVersionMin
+	if protocolMin == 0 {
+		protocolMin = 1
+	}
+	if config.ProtocolVersion < protocolMin ||
 		config.ProtocolVersion > ProtocolVersionMax {
 		return fmt.Errorf("Protocol version %d must be >= %d and <= %d",
-			config.ProtocolVersion, ProtocolVersionMin, ProtocolVersionMax)
+			config.ProtocolVersion, protocolMin, ProtocolVersionMax)
 	}
 	if config.ProtocolVersion > 1 && len(config.LocalID) == 0 {
 		return fmt.Errorf("LocalID cannot be empty")

@@ -664,7 +664,7 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 	// similarly on old Raft servers, but remove peer does extra checks to
 	// see if a leader needs to step down. Since they both assert the full
 	// configuration, then we can safely call remove peer for everything.
-	if r.protocolVersion < 1 {
+	if r.protocolVersion < 2 {
 		future.log = Log{
 			Type: LogRemovePeerDeprecated,
 			Data: encodePeers(configuration, r.trans),
