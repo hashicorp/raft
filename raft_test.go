@@ -604,9 +604,13 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
 
 		addr, trans := NewInmemTransport("")
 		c.trans = append(c.trans, trans)
+		localID := ServerID(fmt.Sprintf("server-%s", addr))
+		if conf.ProtocolVersion < 3 {
+			localID = ServerID(addr)
+		}
 		configuration.Servers = append(configuration.Servers, Server{
 			Suffrage: Voter,
-			ID:       ServerID(fmt.Sprintf("server-%s", addr)),
+			ID:       localID,
 			Address:  addr,
 		})
 	}

@@ -411,10 +411,8 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 
 	// TODO (slackpad) - When we deprecate protocol version 2, remove this
 	// along with the AddPeer() and RemovePeer() APIs.
-	if protocolVersion < 3 {
-		logger.Printf("[INFO] raft: Configured ProtocolVersion < 3, using network address as LocalID: %v",
-			localAddr)
-		localID = ServerID(localAddr)
+	if protocolVersion < 3 && string(localID) != string(localAddr) {
+		return nil, fmt.Errorf("when running with ProtocolVersion < 3, LocalID must be set to the network address")
 	}
 
 	// Create Raft struct.
