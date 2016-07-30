@@ -77,7 +77,7 @@ import (
 //    be started with their new IDs, but they wouldn't see themselves in the old
 //    address-based configuration, so none of the servers would think they had a
 //    vote.
-// 2: Protocol adding full support for server IDs and new ID-based server APIs
+// 3: Protocol adding full support for server IDs and new ID-based server APIs
 //    (AddVoter, AddNonvoter, etc.), old AddPeer/RemovePeer APIs are no longer
 //    supported. Version 2 servers should be swapped out by removing them from
 //    the cluster one-by-one and re-adding them with updated configuration for
