@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestRecovery_PeersJSON_BadConfiguration(t *testing.T) {
+func TestPeersJSON_BadConfiguration(t *testing.T) {
 	base, err := ioutil.TempDir("", "")
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -21,13 +21,13 @@ func TestRecovery_PeersJSON_BadConfiguration(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 
-	_, err = NewPeersJSONRecovery(base)
+	_, err = ReadPeersJSON(peers)
 	if err == nil || !strings.Contains(err.Error(), "at least one voter") {
 		t.Fatalf("err: %v", err)
 	}
 }
 
-func TestRecovery_PeersJSON(t *testing.T) {
+func Test_PeersJSON(t *testing.T) {
 	base, err := ioutil.TempDir("", "")
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -40,7 +40,7 @@ func TestRecovery_PeersJSON(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 
-	recovery, err := NewPeersJSONRecovery(base)
+	configuration, err := ReadPeersJSON(peers)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -64,28 +64,7 @@ func TestRecovery_PeersJSON(t *testing.T) {
 			},
 		},
 	}
-	if !reflect.DeepEqual(recovery.Configuration, expected) {
-		t.Fatalf("bad configuration: %+v != %+v", recovery.Configuration, expected)
-	}
-
-	peersExists := func() bool {
-		_, err := os.Stat(peers)
-		if err == nil {
-			return true
-		} else if os.IsNotExist(err) {
-			return false
-		} else {
-			t.Fatalf("bad: problem checking peers file: %v", err)
-			return false
-		}
-	}
-	if !peersExists() {
-		t.Fatalf("peers file should exist")
-	}
-	if err := recovery.Disarm(); err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if peersExists() {
-		t.Fatalf("peers file should no longer exist")
+	if !reflect.DeepEqual(configuration, expected) {
+		t.Fatalf("bad configuration: %+v != %+v", configuration, expected)
 	}
 }

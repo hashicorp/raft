@@ -1564,12 +1564,12 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	if err := ioutil.WriteFile(peersFile, content, 0666); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
-	recovery, err := NewPeersJSONRecovery(base)
+	configuration, err := ReadPeersJSON(peersFile)
 	if err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 	if err := RecoverCluster(&r.conf, &MockFSM{}, r.logs, r.stable,
-		r.snapshots, recovery.Configuration); err != nil {
+		r.snapshots, configuration); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 
