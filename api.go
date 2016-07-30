@@ -276,21 +276,15 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 
 	// The snapshot information is the best known end point for the data
 	// until we play back the Raft log.
-	finalIndex := snapshotIndex
-	finalTerm := snapshotTerm
+	lastIndex := snapshotIndex
+	lastTerm := snapshotTerm
 
 	// Apply any Raft log entries past the snapshot.
 	lastLogIndex, err := logs.LastIndex()
 	if err != nil {
 		return fmt.Errorf("failed to find last log: %v", err)
 	}
-	var lastLog Log
-	if lastLogIndex > 0 {
-		if err = logs.GetLog(lastLogIndex, &lastLog); err != nil {
-			return fmt.Errorf("failed to get last log at index %d: %v", lastLogIndex, err)
-		}
-	}
-	for index := snapshotIndex + 1; index <= lastLog.Index; index++ {
+	for index := snapshotIndex + 1; index <= lastLogIndex; index++ {
 		var entry Log
 		if err := logs.GetLog(index, &entry); err != nil {
 			return fmt.Errorf("failed to get log at index %d: %v", index, err)
@@ -298,8 +292,8 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 		if entry.Type == LogCommand {
 			_ = fsm.Apply(&entry)
 		}
-		finalIndex = entry.Index
-		finalTerm = entry.Term
+		lastIndex = entry.Index
+		lastTerm = entry.Term
 	}
 
 	// Create a new snapshot, placing the configuration in as if it was
@@ -308,7 +302,7 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 	if err != nil {
 		return fmt.Errorf("failed to snapshot FSM: %v", err)
 	}
-	sink, err := snaps.Create(finalIndex, finalTerm, configuration, 1)
+	sink, err := snaps.Create(lastIndex, lastTerm, configuration, 1)
 	if err != nil {
 		return fmt.Errorf("failed to create snapshot: %v", err)
 	}
