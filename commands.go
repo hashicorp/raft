@@ -1,23 +1,24 @@
 package raft
 
-// VersionInfo is a common sub-structure used to pass along
-// protocol version information. For older Raft implementations before
-// versioning was added this will default to protocol version 0.
-type VersionInfo struct {
+// RPCHeader is a common sub-structure used to pass along protocol version and
+// other information about the cluster. For older Raft implementations before
+// versioning was added this will default to a zero-valued structure when read
+// by newer Raft versions.
+type RPCHeader struct {
 	// ProtocolVersion is the version of the protocol the sender is
 	// speaking.
 	ProtocolVersion int
 }
 
-// WithVersionInfo is an interface that exposes version info.
-type WithVersionInfo interface {
-	GetVersionInfo() VersionInfo
+// WithRPCHeader is an interface that exposes the RPC header.
+type WithRPCHeader interface {
+	GetRPCHeader() RPCHeader
 }
 
 // AppendEntriesRequest is the command used to append entries to the
 // replicated log.
 type AppendEntriesRequest struct {
-	VersionInfo
+	RPCHeader
 
 	// Provide the current term and leader
 	Term   uint64
@@ -34,15 +35,15 @@ type AppendEntriesRequest struct {
 	LeaderCommitIndex uint64
 }
 
-// See WithVersionInfo.
-func (r *AppendEntriesRequest) GetVersionInfo() VersionInfo {
-	return r.VersionInfo
+// See WithRPCHeader.
+func (r *AppendEntriesRequest) GetRPCHeader() RPCHeader {
+	return r.RPCHeader
 }
 
 // AppendEntriesResponse is the response returned from an
 // AppendEntriesRequest.
 type AppendEntriesResponse struct {
-	VersionInfo
+	RPCHeader
 
 	// Newer term if leader is out of date
 	Term uint64
@@ -58,15 +59,15 @@ type AppendEntriesResponse struct {
 	NoRetryBackoff bool
 }
 
-// See WithVersionInfo.
-func (r *AppendEntriesResponse) GetVersionInfo() VersionInfo {
-	return r.VersionInfo
+// See WithRPCHeader.
+func (r *AppendEntriesResponse) GetRPCHeader() RPCHeader {
+	return r.RPCHeader
 }
 
 // RequestVoteRequest is the command used by a candidate to ask a Raft peer
 // for a vote in an election.
 type RequestVoteRequest struct {
-	VersionInfo
+	RPCHeader
 
 	// Provide the term and our id
 	Term      uint64
@@ -77,14 +78,14 @@ type RequestVoteRequest struct {
 	LastLogTerm  uint64
 }
 
-// See WithVersionInfo.
-func (r *RequestVoteRequest) GetVersionInfo() VersionInfo {
-	return r.VersionInfo
+// See WithRPCHeader.
+func (r *RequestVoteRequest) GetRPCHeader() RPCHeader {
+	return r.RPCHeader
 }
 
 // RequestVoteResponse is the response returned from a RequestVoteRequest.
 type RequestVoteResponse struct {
-	VersionInfo
+	RPCHeader
 
 	// Newer term if leader is out of date
 	Term uint64
@@ -93,15 +94,15 @@ type RequestVoteResponse struct {
 	Granted bool
 }
 
-// See WithVersionInfo.
-func (r *RequestVoteResponse) GetVersionInfo() VersionInfo {
-	return r.VersionInfo
+// See WithRPCHeader.
+func (r *RequestVoteResponse) GetRPCHeader() RPCHeader {
+	return r.RPCHeader
 }
 
 // InstallSnapshotRequest is the command sent to a Raft peer to bootstrap its
 // log (and state machine) from a snapshot on another peer.
 type InstallSnapshotRequest struct {
-	VersionInfo
+	RPCHeader
 
 	Term   uint64
 	Leader []byte
@@ -124,21 +125,21 @@ type InstallSnapshotRequest struct {
 	Size int64
 }
 
-// See WithVersionInfo.
-func (r *InstallSnapshotRequest) GetVersionInfo() VersionInfo {
-	return r.VersionInfo
+// See WithRPCHeader.
+func (r *InstallSnapshotRequest) GetRPCHeader() RPCHeader {
+	return r.RPCHeader
 }
 
 // InstallSnapshotResponse is the response returned from an
 // InstallSnapshotRequest.
 type InstallSnapshotResponse struct {
-	VersionInfo
+	RPCHeader
 
 	Term    uint64
 	Success bool
 }
 
-// See WithVersionInfo.
-func (r *InstallSnapshotResponse) GetVersionInfo() VersionInfo {
-	return r.VersionInfo
+// See WithRPCHeader.
+func (r *InstallSnapshotResponse) GetRPCHeader() RPCHeader {
+	return r.RPCHeader
 }

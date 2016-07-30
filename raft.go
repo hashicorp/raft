@@ -20,22 +20,22 @@ var (
 	keyLastVoteCand = []byte("LastVoteCand")
 )
 
-// getVersionInfo returns an initialized VersionInfo struct for the given
+// getRPCHeader returns an initialized RPCHeader struct for the given
 // Raft instance. This structure is sent along with RPC requests and
 // responses.
-func (r *Raft) getVersionInfo() VersionInfo {
-	return VersionInfo{
+func (r *Raft) getRPCHeader() RPCHeader {
+	return RPCHeader{
 		ProtocolVersion: r.conf.ProtocolVersion,
 	}
 }
 
-// isVersionCompatible houses logic about whether this instance of Raft can
-// process an RPC message with the given version.
-func (r *Raft) isVersionCompatible(vi VersionInfo) bool {
+// isCompatible houses logic about whether this instance of Raft can process
+// an RPC message with the given header.
+func (r *Raft) isCompatible(header RPCHeader) bool {
 	// First check is to just make sure the code can understand the
 	// protocol at all.
-	if vi.ProtocolVersion < ProtocolVersionMin ||
-		vi.ProtocolVersion > ProtocolVersionMax {
+	if header.ProtocolVersion < ProtocolVersionMin ||
+		header.ProtocolVersion > ProtocolVersionMax {
 		return false
 	}
 
@@ -45,7 +45,7 @@ func (r *Raft) isVersionCompatible(vi VersionInfo) bool {
 	// currently what we want, and in general support one version back. We
 	// may need to revisit this policy depending on how future protocol
 	// changes evolve.
-	return vi.ProtocolVersion >= r.conf.ProtocolVersion-1
+	return header.ProtocolVersion >= r.conf.ProtocolVersion-1
 }
 
 // commitTuple is used to send an index that was committed,
@@ -798,9 +798,9 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 // processRPC is called to handle an incoming RPC request. This must only be
 // called from the main thread.
 func (r *Raft) processRPC(rpc RPC) {
-	if v, ok := rpc.Command.(WithVersionInfo); ok {
-		if !r.isVersionCompatible(v.GetVersionInfo()) {
-			r.logger.Printf("[ERR] raft: Ignoring unsupported %#v for command: %#v", v, rpc.Command)
+	if wh, ok := rpc.Command.(WithRPCHeader); ok {
+		if !r.isCompatible(wh.GetRPCHeader()) {
+			r.logger.Printf("[ERR] raft: Ignoring unsupported RPC %#v for command: %#v", wh, rpc.Command)
 			rpc.Respond(nil, ErrUnsupportedProtocol)
 			return
 		}
@@ -853,7 +853,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "appendEntries"}, time.Now())
 	// Setup a response
 	resp := &AppendEntriesResponse{
-		VersionInfo:    r.getVersionInfo(),
+		RPCHeader:      r.getRPCHeader(),
 		Term:           r.getCurrentTerm(),
 		LastLog:        r.getLastIndex(),
 		Success:        false,
@@ -1006,9 +1006,9 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 
 	// Setup a response
 	resp := &RequestVoteResponse{
-		VersionInfo: r.getVersionInfo(),
-		Term:        r.getCurrentTerm(),
-		Granted:     false,
+		RPCHeader: r.getRPCHeader(),
+		Term:      r.getCurrentTerm(),
+		Granted:   false,
 	}
 	var rpcErr error
 	defer func() {
@@ -1224,7 +1224,7 @@ func (r *Raft) electSelf() <-chan *voteResult {
 	// Construct the request
 	lastIdx, lastTerm := r.getLastEntry()
 	req := &RequestVoteRequest{
-		VersionInfo:  r.getVersionInfo(),
+		RPCHeader:    r.getRPCHeader(),
 		Term:         r.getCurrentTerm(),
 		Candidate:    r.trans.EncodePeer(r.localAddr),
 		LastLogIndex: lastIdx,
@@ -1258,9 +1258,9 @@ func (r *Raft) electSelf() <-chan *voteResult {
 				// Include our own vote
 				respCh <- &voteResult{
 					RequestVoteResponse: RequestVoteResponse{
-						VersionInfo: r.getVersionInfo(),
-						Term:        req.Term,
-						Granted:     true,
+						RPCHeader: r.getRPCHeader(),
+						Term:      req.Term,
+						Granted:   true,
 					},
 					voterID: r.localID,
 				}
