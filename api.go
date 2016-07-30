@@ -275,7 +275,7 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 	}
 
 	// The snapshot information is the best known end point for the data
-	// until we play back the Raft log.
+	// until we play back the Raft log entries.
 	lastIndex := snapshotIndex
 	lastTerm := snapshotTerm
 
@@ -313,7 +313,7 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 		return fmt.Errorf("failed to finalize snapshot: %v", err)
 	}
 
-	// Compact the logs so that we don't get bad interference from any
+	// Compact the log so that we don't get bad interference from any
 	// configuration change log entries that might be there.
 	firstLogIndex, err := logs.FirstIndex()
 	if err != nil {
@@ -389,13 +389,13 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		return nil, fmt.Errorf("failed to load current term: %v", err)
 	}
 
-	// Read the last log value.
+	// Read the index of the last log entry.
 	lastIndex, err := logs.LastIndex()
 	if err != nil {
 		return nil, fmt.Errorf("failed to find last log: %v", err)
 	}
 
-	// Get the log.
+	// Get the last log entry.
 	var lastLog Log
 	if lastIndex > 0 {
 		if err = logs.GetLog(lastIndex, &lastLog); err != nil {
