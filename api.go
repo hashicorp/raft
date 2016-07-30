@@ -232,14 +232,17 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 		return err
 	}
 
-	// Refuse to recover if there's no existing state; this isn't safe to
-	// do because we'd have to synthesize a log entry.
+	// Refuse to recover if there's no existing state. This would be safe to
+	// do, but it is likely an indication of an operator error where they
+	// expect data to be there and it's not. By refusing, we force them
+	// to show intent to start a cluster fresh by explicitly doing a
+	// bootstrap, rather than quietly fire up a fresh cluster here.
 	hasState, err := HasExistingState(logs, stable, snaps)
 	if err != nil {
 		return fmt.Errorf("failed to check for existing state: %v", err)
 	}
 	if !hasState {
-		return fmt.Errorf("cannot recover cluster with no initial state")
+		return fmt.Errorf("refused to recover cluster with no initial state, this is probably an operator error")
 	}
 
 	// Attempt to restore any snapshots we find, newest to oldest.
