@@ -18,11 +18,11 @@ import (
 // There are notes about the upgrade path in the description of the versions
 // below. If you are starting a fresh cluster then there's no reason not to
 // jump right to the latest protocol version. If you need to interoperate with
-// older, unversioned Raft servers you'll need to drive the cluster through the
+// older, version 0 Raft servers you'll need to drive the cluster through the
 // different versions in order.
 //
 // The version details are complicated, but here's a summary of what's required
-// to get from an unversioned cluster to version 2:
+// to get from a version 0 cluster to version 3:
 //
 // 1. In version N of your app that starts using the new Raft library with
 //    versioning, set ProtocolVersion to 1.
