@@ -1015,6 +1015,12 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 		rpc.Respond(resp, rpcErr)
 	}()
 
+	// Version 0 servers will panic unless the peers is present. It's only
+	// used on them to produce a warning message.
+	if r.protocolVersion < 2 {
+		resp.Peers = encodePeers(r.configurations.latest, r.trans)
+	}
+
 	// Check if we have an existing leader [who's not the candidate]
 	candidate := r.trans.DecodePeer(req.Candidate)
 	if leader := r.Leader(); leader != "" && leader != candidate {

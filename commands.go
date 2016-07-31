@@ -87,10 +87,15 @@ func (r *RequestVoteRequest) GetRPCHeader() RPCHeader {
 type RequestVoteResponse struct {
 	RPCHeader
 
-	// Newer term if leader is out of date
+	// Newer term if leader is out of date.
 	Term uint64
 
-	// Is the vote granted
+	// Peers is deprecated, but required by servers that only understand
+	// protocol version 0. This is not populated in protocol version 2
+	// and later.
+	Peers []byte
+
+	// Is the vote granted.
 	Granted bool
 }
 
