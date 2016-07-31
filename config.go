@@ -89,17 +89,15 @@ const (
 )
 
 // These are versions of snapshots that this server can _understand_. Currently,
-// it is always assumed that this server is creating the latest version, though
-// this may be changed in the future to include a configurable version. Support
-// for different snapshot versions is tied to the current protocol version, as
-// noted below.
+// it is always assumed that this server generates the latest version, though
+// this may be changed in the future to include a configurable version.
 //
 // Version History
 //
 // 0: Original Raft library before versioning was added. The peers portion of
 //    these snapshots is encoded in the legacy format which requires decodePeers
-//    to parse, and only should be seen when interoperating with servers running
-//    protocol versions 0 and 1.
+//    to parse. This version of snapshots should only be produced by the
+//    unversioned Raft library.
 // 1: New format which adds support for a full configuration structure and its
 //    associated log index, with support for server IDs and non-voting server
 //    modes. To ease upgrades, this also includes the legacy peers structure but
