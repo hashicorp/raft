@@ -875,6 +875,8 @@ func (r *Raft) Stats() map[string]string {
 		"protocol_version":     toString(uint64(r.protocolVersion)),
 		"protocol_version_min": toString(uint64(ProtocolVersionMin)),
 		"protocol_version_max": toString(uint64(ProtocolVersionMax)),
+		"snapshot_version_min": toString(uint64(SnapshotVersionMin)),
+		"snapshot_version_max": toString(uint64(SnapshotVersionMax)),
 	}
 
 	future := r.GetConfiguration()
