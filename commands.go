@@ -103,6 +103,7 @@ func (r *RequestVoteResponse) GetRPCHeader() RPCHeader {
 // log (and state machine) from a snapshot on another peer.
 type InstallSnapshotRequest struct {
 	RPCHeader
+	SnapshotVersion int
 
 	Term   uint64
 	Leader []byte

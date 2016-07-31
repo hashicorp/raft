@@ -29,9 +29,9 @@ func (r *Raft) getRPCHeader() RPCHeader {
 	}
 }
 
-// isCompatible houses logic about whether this instance of Raft can process
+// dispositionRPC houses logic about whether this instance of Raft can process
 // an RPC message with the given header.
-func (r *Raft) isCompatible(header RPCHeader) bool {
+func (r *Raft) dispositionRPC(header RPCHeader) bool {
 	// First check is to just make sure the code can understand the
 	// protocol at all.
 	if header.ProtocolVersion < ProtocolVersionMin ||
@@ -799,7 +799,7 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 // called from the main thread.
 func (r *Raft) processRPC(rpc RPC) {
 	if wh, ok := rpc.Command.(WithRPCHeader); ok {
-		if !r.isCompatible(wh.GetRPCHeader()) {
+		if ok := r.dispositionRPC(wh.GetRPCHeader()); !ok {
 			r.logger.Printf("[ERR] raft: Ignoring unsupported RPC %#v for command: %#v", wh, rpc.Command)
 			rpc.Respond(nil, ErrUnsupportedProtocol)
 			return
@@ -1099,6 +1099,13 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 		rpc.Respond(resp, rpcErr)
 	}()
 
+	// Sanity check the version
+	if req.SnapshotVersion < SnapshotVersionMin ||
+		req.SnapshotVersion > SnapshotVersionMax {
+		rpcErr = fmt.Errorf("unsupported snapshot version %d", req.SnapshotVersion)
+		return
+	}
+
 	// Ignore an older term
 	if req.Term < r.getCurrentTerm() {
 		return
@@ -1118,7 +1125,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	// Create a new snapshot
 	var reqConfiguration Configuration
 	var reqConfigurationIndex uint64
-	if req.ConfigurationIndex > 0 {
+	if req.SnapshotVersion > 0 {
 		reqConfiguration = decodeConfiguration(req.Configuration)
 		reqConfigurationIndex = req.ConfigurationIndex
 	} else {
@@ -1126,7 +1133,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 		reqConfigurationIndex = req.LastLogIndex
 	}
 	sink, err := r.snapshots.Create(req.LastLogIndex, req.LastLogTerm,
-		reqConfiguration, reqConfigurationIndex)
+		reqConfiguration, reqConfigurationIndex, r.trans)
 	if err != nil {
 		r.logger.Printf("[ERR] raft: Failed to create snapshot to install: %v", err)
 		rpcErr = fmt.Errorf("failed to create snapshot: %v", err)

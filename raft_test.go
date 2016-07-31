@@ -717,7 +717,7 @@ func TestRaft_RecoverCluster_NoState(t *testing.T) {
 		},
 	}
 	err := RecoverCluster(&r.conf, &MockFSM{}, r.logs, r.stable,
-		r.snapshots, configuration)
+		r.snapshots, r.trans, configuration)
 	if err == nil || !strings.Contains(err.Error(), "no initial state") {
 		c.FailNowf("[ERR] should have failed for no initial state: %v", err)
 	}
@@ -762,7 +762,7 @@ func TestRaft_RecoverCluster(t *testing.T) {
 				c.FailNowf("[ERR] snapshot list err: %v", err)
 			}
 			if err := RecoverCluster(&r.conf, &MockFSM{}, r.logs, r.stable,
-				r.snapshots, configuration); err != nil {
+				r.snapshots, r.trans, configuration); err != nil {
 				c.FailNowf("[ERR] recover err: %v", err)
 			}
 
@@ -1573,7 +1573,7 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 	if err := RecoverCluster(&r.conf, &MockFSM{}, r.logs, r.stable,
-		r.snapshots, configuration); err != nil {
+		r.snapshots, r.trans, configuration); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 

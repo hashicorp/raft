@@ -222,7 +222,7 @@ func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
 // the sole voter, and then join up other new clean-state peer servers using
 // the usual APIs in order to bring the cluster back into a known state.
 func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
-	snaps SnapshotStore, configuration Configuration) error {
+	snaps SnapshotStore, trans Transport, configuration Configuration) error {
 	// Validate the Raft server config.
 	if err := ValidateConfig(conf); err != nil {
 		return err
@@ -303,7 +303,7 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 	if err != nil {
 		return fmt.Errorf("failed to snapshot FSM: %v", err)
 	}
-	sink, err := snaps.Create(lastIndex, lastTerm, configuration, 1)
+	sink, err := snaps.Create(lastIndex, lastTerm, configuration, 1, trans)
 	if err != nil {
 		return fmt.Errorf("failed to create snapshot: %v", err)
 	}
@@ -519,7 +519,7 @@ func (r *Raft) restoreSnapshot() error {
 		r.setLastSnapshot(snapshot.Index, snapshot.Term)
 
 		// Update the configuration
-		if snapshot.ConfigurationIndex > 0 {
+		if snapshot.Version > 0 {
 			r.configurations.committed = snapshot.Configuration
 			r.configurations.committedIndex = snapshot.ConfigurationIndex
 			r.configurations.latest = snapshot.Configuration

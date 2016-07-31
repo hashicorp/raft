@@ -276,6 +276,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	// Setup the request
 	req := InstallSnapshotRequest{
 		RPCHeader:          r.getRPCHeader(),
+		SnapshotVersion:    meta.Version,
 		Term:               s.currentTerm,
 		Leader:             r.trans.EncodePeer(r.localAddr),
 		LastLogIndex:       meta.Index,

@@ -10,10 +10,9 @@ import (
 // These are the versions of the protocol (which includes RPC messages as
 // well as Raft-specific log entries) that this server can _understand_. Use
 // the ProtocolVersion member of the Config object to control the version of
-// the protocol to use when _speaking_ to other servers. This is not currently
-// written into snapshots so they are unversioned. Note that depending on the
-// protocol version being spoken, some otherwise understood RPC messages may be
-// refused. See isVersionCompatible for details of this logic.
+// the protocol to use when _speaking_ to other servers. Note that depending on
+// the protocol version being spoken, some otherwise understood RPC messages
+// may be refused. See dispositionRPC for details of this logic.
 //
 // There are notes about the upgrade path in the description of the versions
 // below. If you are starting a fresh cluster then there's no reason not to
@@ -89,8 +88,31 @@ const (
 	ProtocolVersionMax = 3
 )
 
-// Config provides any necessary configuration to
-// the Raft server
+// These are versions of snapshots that this server can _understand_. Currently,
+// it is always assumed that this server is creating the latest version, though
+// this may be changed in the future to include a configurable version. Support
+// for different snapshot versions is tied to the current protocol version, as
+// noted below.
+//
+// Version History
+//
+// 0: Original Raft library before versioning was added. The peers portion of
+//    these snapshots is encoded in the legacy format which requires decodePeers
+//    to parse, and only should be seen when interoperating with servers running
+//    protocol versions 0 and 1.
+// 1: New format which adds support for a full configuration structure and its
+//    associated log index, with support for server IDs and non-voting server
+//    modes. To ease upgrades, this also includes the legacy peers structure but
+//    that will never be used by servers that understand version 1 snapshots.
+//    Since the original Raft library didn't enforce any versioning, we must
+//    include the legacy peers structure for this version, but we can deprecate
+//    it in the next snapshot version.
+const (
+	SnapshotVersionMin = 0
+	SnapshotVersionMax = 1
+)
+
+// Config provides any necessary configuration for the Raft server.
 type Config struct {
 	// ProtocolVersion allows a Raft server to inter-operate with older
 	// Raft servers running an older version of the code. This is used to

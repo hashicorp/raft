@@ -138,7 +138,8 @@ func snapshotName(term, index uint64) string {
 }
 
 // Create is used to start a new snapshot
-func (f *FileSnapshotStore) Create(index, term uint64, configuration Configuration, configurationIndex uint64) (SnapshotSink, error) {
+func (f *FileSnapshotStore) Create(index, term uint64, configuration Configuration,
+	configurationIndex uint64, trans Transport) (SnapshotSink, error) {
 	// Create a new path
 	name := snapshotName(term, index)
 	path := filepath.Join(f.path, name+tmpSuffix)
@@ -157,9 +158,11 @@ func (f *FileSnapshotStore) Create(index, term uint64, configuration Configurati
 		dir:    path,
 		meta: fileSnapshotMeta{
 			SnapshotMeta: SnapshotMeta{
+				Version:            SnapshotVersionMax,
 				ID:                 name,
 				Index:              index,
 				Term:               term,
+				Peers:              encodePeers(configuration, trans),
 				Configuration:      configuration,
 				ConfigurationIndex: configurationIndex,
 			},
@@ -240,6 +243,12 @@ func (f *FileSnapshotStore) getSnapshots() ([]*fileSnapshotMeta, error) {
 		meta, err := f.readMeta(dirName)
 		if err != nil {
 			f.logger.Printf("[WARN] snapshot: Failed to read metadata for %v: %v", dirName, err)
+			continue
+		}
+
+		// Make sure we can understand this version.
+		if meta.Version < SnapshotVersionMin || meta.Version > SnapshotVersionMax {
+			f.logger.Printf("[WARN] snapshot: Snapshot version for %v not supported: %d", dirName, meta.Version)
 			continue
 		}
 
