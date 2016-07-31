@@ -786,7 +786,7 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 		// Ignore the no-op
 
 	default:
-		r.logger.Printf("[ERR] raft: Got unrecognized log type: %#v", l)
+		panic(fmt.Errorf("unrecognized log type: %#v", l))
 	}
 
 	// Invoke the future if given
