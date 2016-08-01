@@ -56,7 +56,7 @@ type Raft struct {
 	// protocolVersion is used to inter-operate with Raft servers running
 	// different versions of the library. See comments in config.go for more
 	// details.
-	protocolVersion int
+	protocolVersion ProtocolVersion
 
 	// applyCh is used to async send logs to the main thread to
 	// be committed and applied to the FSM.
@@ -303,7 +303,8 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 	if err != nil {
 		return fmt.Errorf("failed to snapshot FSM: %v", err)
 	}
-	sink, err := snaps.Create(lastIndex, lastTerm, configuration, 1, trans)
+	version := getSnapshotVersion(conf.ProtocolVersion)
+	sink, err := snaps.Create(version, lastIndex, lastTerm, configuration, 1, trans)
 	if err != nil {
 		return fmt.Errorf("failed to create snapshot: %v", err)
 	}

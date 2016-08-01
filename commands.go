@@ -7,7 +7,7 @@ package raft
 type RPCHeader struct {
 	// ProtocolVersion is the version of the protocol the sender is
 	// speaking.
-	ProtocolVersion int
+	ProtocolVersion ProtocolVersion
 }
 
 // WithRPCHeader is an interface that exposes the RPC header.
@@ -108,7 +108,7 @@ func (r *RequestVoteResponse) GetRPCHeader() RPCHeader {
 // log (and state machine) from a snapshot on another peer.
 type InstallSnapshotRequest struct {
 	RPCHeader
-	SnapshotVersion int
+	SnapshotVersion SnapshotVersion
 
 	Term   uint64
 	Leader []byte

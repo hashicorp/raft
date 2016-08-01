@@ -59,6 +59,14 @@ func (r *Raft) checkRPCHeader(rpc RPC) error {
 	return nil
 }
 
+// getSnapshotVersion returns the snapshot version that should be used when
+// creating snapshots, given the protocol version in use.
+func getSnapshotVersion(protocolVersion ProtocolVersion) SnapshotVersion {
+	// Right now we only have two versions and they are backwards compatible
+	// so we don't need to look at the protocol version.
+	return 1
+}
+
 // commitTuple is used to send an index that was committed,
 // with an optional associated future that should be invoked.
 type commitTuple struct {
@@ -1141,7 +1149,8 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 		reqConfiguration = decodePeers(req.Peers, r.trans)
 		reqConfigurationIndex = req.LastLogIndex
 	}
-	sink, err := r.snapshots.Create(req.LastLogIndex, req.LastLogTerm,
+	version := getSnapshotVersion(r.protocolVersion)
+	sink, err := r.snapshots.Create(version, req.LastLogIndex, req.LastLogTerm,
 		reqConfiguration, reqConfigurationIndex, r.trans)
 	if err != nil {
 		r.logger.Printf("[ERR] raft: Failed to create snapshot to install: %v", err)

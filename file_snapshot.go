@@ -138,8 +138,13 @@ func snapshotName(term, index uint64) string {
 }
 
 // Create is used to start a new snapshot
-func (f *FileSnapshotStore) Create(index, term uint64, configuration Configuration,
-	configurationIndex uint64, trans Transport) (SnapshotSink, error) {
+func (f *FileSnapshotStore) Create(version SnapshotVersion, index, term uint64,
+	configuration Configuration, configurationIndex uint64, trans Transport) (SnapshotSink, error) {
+	// We only support version 1 snapshots at this time.
+	if version != 1 {
+		return nil, fmt.Errorf("unsupported snapshot version %d", version)
+	}
+
 	// Create a new path
 	name := snapshotName(term, index)
 	path := filepath.Join(f.path, name+tmpSuffix)
@@ -158,7 +163,7 @@ func (f *FileSnapshotStore) Create(index, term uint64, configuration Configurati
 		dir:    path,
 		meta: fileSnapshotMeta{
 			SnapshotMeta: SnapshotMeta{
-				Version:            SnapshotVersionMax,
+				Version:            version,
 				ID:                 name,
 				Index:              index,
 				Term:               term,

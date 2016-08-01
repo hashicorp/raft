@@ -10,7 +10,10 @@ import (
 
 // SnapshotMeta is for metadata of a snapshot.
 type SnapshotMeta struct {
-	Version int
+	// Version is the version number of the snapshot metadata. This does not cover
+	// the application's data in the snapshot, that should be versioned
+	// separately.
+	Version SnapshotVersion
 
 	// ID is opaque to the store, and is used for opening.
 	ID string
@@ -38,8 +41,9 @@ type SnapshotMeta struct {
 // without streaming from the leader.
 type SnapshotStore interface {
 	// Create is used to begin a snapshot at a given index and term, and with
-	// the given committed configuration.
-	Create(index, term uint64, configuration Configuration,
+	// the given committed configuration. The version parameter controls
+	// which snapshot version to create.
+	Create(version SnapshotVersion, index, term uint64, configuration Configuration,
 		configurationIndex uint64, trans Transport) (SnapshotSink, error)
 
 	// List is used to list the available snapshots in the store.
@@ -159,7 +163,8 @@ func (r *Raft) takeSnapshot() error {
 	// Create a new snapshot.
 	r.logger.Printf("[INFO] raft: Starting snapshot up to %d", snapReq.index)
 	start := time.Now()
-	sink, err := r.snapshots.Create(snapReq.index, snapReq.term, committed, committedIndex, r.trans)
+	version := getSnapshotVersion(r.protocolVersion)
+	sink, err := r.snapshots.Create(version, snapReq.index, snapReq.term, committed, committedIndex, r.trans)
 	if err != nil {
 		return fmt.Errorf("failed to create snapshot: %v", err)
 	}

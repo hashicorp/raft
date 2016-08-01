@@ -83,9 +83,11 @@ import (
 //    this protocol version, along with their server ID. The remove/add cycle
 //    is required to populate their server ID. Note that removing must be done
 //    by ID, which will be the old server's address.
+type ProtocolVersion int
+
 const (
-	ProtocolVersionMin = 0
-	ProtocolVersionMax = 3
+	ProtocolVersionMin ProtocolVersion = 0
+	ProtocolVersionMax                 = 3
 )
 
 // These are versions of snapshots that this server can _understand_. Currently,
@@ -105,9 +107,11 @@ const (
 //    Since the original Raft library didn't enforce any versioning, we must
 //    include the legacy peers structure for this version, but we can deprecate
 //    it in the next snapshot version.
+type SnapshotVersion int
+
 const (
-	SnapshotVersionMin = 0
-	SnapshotVersionMax = 1
+	SnapshotVersionMin SnapshotVersion = 0
+	SnapshotVersionMax                 = 1
 )
 
 // Config provides any necessary configuration for the Raft server.
@@ -120,7 +124,7 @@ type Config struct {
 	// configured with compatible versions. See ProtocolVersionMin and
 	// ProtocolVersionMax for the versions of the protocol that this server
 	// can _understand_.
-	ProtocolVersion int
+	ProtocolVersion ProtocolVersion
 
 	// HeartbeatTimeout specifies the time in follower state without
 	// a leader before we attempt an election.
