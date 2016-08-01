@@ -365,9 +365,12 @@ func (p *peerState) drainNonblocking() {
 
 // blockingSelect reads/writes the Peer channels just once, blocking if needed.
 func (p *peerState) blockingSelect() {
-	// We need to send a heartbeat at lastHeartbeatSent + heartbeatInterval.
-	heartbeatTimer := time.After(p.shared.options.heartbeatInterval -
-		time.Since(p.lastHeartbeatSent))
+	var heartbeatTimer <-chan time.Time
+	if p.control.role == Leader {
+		// We need to send a heartbeat at lastHeartbeatSent + heartbeatInterval.
+		heartbeatTimer = time.After(p.shared.options.heartbeatInterval -
+			time.Since(p.lastHeartbeatSent))
+	}
 
 	// These cases should be exactly the same as those in drainNonblocking,
 	// except missing the default branch and with the additional heartbeat timer.
