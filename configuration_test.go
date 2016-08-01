@@ -283,12 +283,9 @@ func TestConfiguration_nextConfiguration_checkConfiguration(t *testing.T) {
 	}
 }
 
-func TestConfiguration_decodePeers(t *testing.T) {
+func TestConfiguration_encodeDecodePeers(t *testing.T) {
+	// Set up configuration.
 	var configuration Configuration
-	_, trans := NewInmemTransport("")
-
-	// Set up configuration and encode into old format
-	var encPeers [][]byte
 	for i := 0; i < 3; i++ {
 		address := NewInmemAddr()
 		configuration.Servers = append(configuration.Servers, Server{
@@ -296,16 +293,14 @@ func TestConfiguration_decodePeers(t *testing.T) {
 			ID:       ServerID(address),
 			Address:  ServerAddress(address),
 		})
-		encPeers = append(encPeers, trans.EncodePeer(address))
-	}
-	buf, err := encodeMsgPack(encPeers)
-	if err != nil {
-		panic(fmt.Errorf("failed to encode peers: %v", err))
 	}
 
-	// Decode from old format, as if reading an old log entry
-	decoded := decodePeers(buf.Bytes(), trans)
+	// Encode into the old format.
+	_, trans := NewInmemTransport("")
+	buf := encodePeers(configuration, trans)
 
+	// Decode from old format, as if reading an old log entry.
+	decoded := decodePeers(buf, trans)
 	if !reflect.DeepEqual(configuration, decoded) {
 		t.Fatalf("mismatch %v %v", configuration, decoded)
 	}

@@ -42,19 +42,28 @@ var (
 
 	// ErrNothingNewToSnapshot is returned when trying to create a snapshot
 	// but there's nothing new commited to the FSM since we started.
-	ErrNothingNewToSnapshot = errors.New("Nothing new to snapshot")
+	ErrNothingNewToSnapshot = errors.New("nothing new to snapshot")
+
+	// ErrUnsupportedProtocol is returned when an operation is attempted
+	// that's not supported by the current protocol version.
+	ErrUnsupportedProtocol = errors.New("operation not supported with current protocol version")
 )
 
 // Raft implements a Raft node.
 type Raft struct {
 	raftState
 
+	// protocolVersion is used to inter-operate with Raft servers running
+	// different versions of the library. See comments in config.go for more
+	// details.
+	protocolVersion ProtocolVersion
+
 	// applyCh is used to async send logs to the main thread to
 	// be committed and applied to the FSM.
 	applyCh chan *logFuture
 
 	// Configuration provided at Raft initialization
-	conf *Config
+	conf Config
 
 	// FSM is the client state machine to apply commands to
 	fsm FSM
@@ -146,53 +155,43 @@ type Raft struct {
 // One sane approach is to boostrap a single server with a configuration
 // listing just itself as a Voter, then invoke AddVoter() on it to add other
 // servers to the cluster.
-func BootstrapCluster(config *Config, logs LogStore, stable StableStore, snaps SnapshotStore, configuration Configuration) error {
-	// Sanity check the configuration
+func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
+	snaps SnapshotStore, trans Transport, configuration Configuration) error {
+	// Validate the Raft server config.
+	if err := ValidateConfig(conf); err != nil {
+		return err
+	}
+
+	// Sanity check the Raft peer configuration.
 	if err := checkConfiguration(configuration); err != nil {
 		return err
 	}
 
-	// Make sure we don't have a current term
-	currentTerm, err := stable.GetUint64(keyCurrentTerm)
-	if err == nil {
-		if currentTerm > 0 {
-			return fmt.Errorf("Bootstrap only works on new clusters, found current term: %v", currentTerm)
-		}
-	} else {
-		if err.Error() != "not found" {
-			return fmt.Errorf("failed to read current term: %v", err)
-		}
-	}
-
-	// Make sure we have an empty log
-	lastIdx, err := logs.LastIndex()
+	// Make sure the cluster is in a clean state.
+	hasState, err := HasExistingState(logs, stable, snaps)
 	if err != nil {
-		return fmt.Errorf("failed to get last log index: %v", err)
+		return fmt.Errorf("failed to check for existing state: %v", err)
 	}
-	if lastIdx > 0 {
-		return fmt.Errorf("Bootstrap only works on new clusters, found non-empty log, last index: %v", lastIdx)
-	}
-
-	// Make sure we have no snapshots
-	snapshots, err := snaps.List()
-	if err != nil {
-		return fmt.Errorf("failed to list snapshots: %v", err)
-	}
-	if len(snapshots) > 0 {
-		return fmt.Errorf("Bootstrap only works on new clusters, found snapshots")
+	if hasState {
+		return fmt.Errorf("bootstrap only works on new clusters, cluster has been bootstrapped previously")
 	}
 
-	// Set current term to 1
+	// Set current term to 1.
 	if err := stable.SetUint64(keyCurrentTerm, 1); err != nil {
 		return fmt.Errorf("failed to save current term: %v", err)
 	}
 
-	// Append configuration entry to log
+	// Append configuration entry to log.
 	entry := &Log{
 		Index: 1,
 		Term:  1,
-		Type:  LogConfiguration,
-		Data:  encodeConfiguration(configuration),
+	}
+	if conf.ProtocolVersion < 3 {
+		entry.Type = LogRemovePeerDeprecated
+		entry.Data = encodePeers(configuration, trans)
+	} else {
+		entry.Type = LogConfiguration
+		entry.Data = encodeConfiguration(configuration)
 	}
 	if err := logs.StoreLog(entry); err != nil {
 		return fmt.Errorf("failed to append configuration entry to log: %v", err)
@@ -201,18 +200,181 @@ func BootstrapCluster(config *Config, logs LogStore, stable StableStore, snaps S
 	return nil
 }
 
+// RecoverCluster is used to manually force a new configuration in order to
+// recover from a loss of quorum where the current configuration cannot be
+// restored, such as when several servers die at the same time. This works by
+// reading all the current state for this server, creating a snapshot with the
+// supplied configuration, and then truncating the Raft log. This is the only
+// safe way to force a given configuration without actually altering the log to
+// insert any new entries, which could cause conflicts with other servers with
+// different state.
+//
+// Note the FSM passed here is used for the snapshot operations and will be
+// left in a state that should not be used by the application. Be sure to
+// discard this FSM and any associated state and provide a fresh one when
+// calling NewRaft later.
+//
+// A typical way to recover the cluster is to shut down all servers and then
+// run RecoverCluster on every server using an identical configuration. When
+// the cluster is then restarted, and election should occur and then Raft will
+// resume normal operation. If it's desired to make a particular server the
+// leader, this can be used to inject a new configuration with that server as
+// the sole voter, and then join up other new clean-state peer servers using
+// the usual APIs in order to bring the cluster back into a known state.
+func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
+	snaps SnapshotStore, trans Transport, configuration Configuration) error {
+	// Validate the Raft server config.
+	if err := ValidateConfig(conf); err != nil {
+		return err
+	}
+
+	// Sanity check the Raft peer configuration.
+	if err := checkConfiguration(configuration); err != nil {
+		return err
+	}
+
+	// Refuse to recover if there's no existing state. This would be safe to
+	// do, but it is likely an indication of an operator error where they
+	// expect data to be there and it's not. By refusing, we force them
+	// to show intent to start a cluster fresh by explicitly doing a
+	// bootstrap, rather than quietly fire up a fresh cluster here.
+	hasState, err := HasExistingState(logs, stable, snaps)
+	if err != nil {
+		return fmt.Errorf("failed to check for existing state: %v", err)
+	}
+	if !hasState {
+		return fmt.Errorf("refused to recover cluster with no initial state, this is probably an operator error")
+	}
+
+	// Attempt to restore any snapshots we find, newest to oldest.
+	var snapshotIndex uint64
+	var snapshotTerm uint64
+	snapshots, err := snaps.List()
+	if err != nil {
+		return fmt.Errorf("failed to list snapshots: %v", err)
+	}
+	for _, snapshot := range snapshots {
+		_, source, err := snaps.Open(snapshot.ID)
+		if err != nil {
+			// Skip this one and try the next. We will detect if we
+			// couldn't open any snapshots.
+			continue
+		}
+		defer source.Close()
+
+		if err := fsm.Restore(source); err != nil {
+			// Same here, skip and try the next one.
+			continue
+		}
+
+		snapshotIndex = snapshot.Index
+		snapshotTerm = snapshot.Term
+		break
+	}
+	if len(snapshots) > 0 && (snapshotIndex == 0 || snapshotTerm == 0) {
+		return fmt.Errorf("failed to restore any of the available snapshots")
+	}
+
+	// The snapshot information is the best known end point for the data
+	// until we play back the Raft log entries.
+	lastIndex := snapshotIndex
+	lastTerm := snapshotTerm
+
+	// Apply any Raft log entries past the snapshot.
+	lastLogIndex, err := logs.LastIndex()
+	if err != nil {
+		return fmt.Errorf("failed to find last log: %v", err)
+	}
+	for index := snapshotIndex + 1; index <= lastLogIndex; index++ {
+		var entry Log
+		if err := logs.GetLog(index, &entry); err != nil {
+			return fmt.Errorf("failed to get log at index %d: %v", index, err)
+		}
+		if entry.Type == LogCommand {
+			_ = fsm.Apply(&entry)
+		}
+		lastIndex = entry.Index
+		lastTerm = entry.Term
+	}
+
+	// Create a new snapshot, placing the configuration in as if it was
+	// committed at index 1.
+	snapshot, err := fsm.Snapshot()
+	if err != nil {
+		return fmt.Errorf("failed to snapshot FSM: %v", err)
+	}
+	version := getSnapshotVersion(conf.ProtocolVersion)
+	sink, err := snaps.Create(version, lastIndex, lastTerm, configuration, 1, trans)
+	if err != nil {
+		return fmt.Errorf("failed to create snapshot: %v", err)
+	}
+	if err := snapshot.Persist(sink); err != nil {
+		return fmt.Errorf("failed to persist snapshot: %v", err)
+	}
+	if err := sink.Close(); err != nil {
+		return fmt.Errorf("failed to finalize snapshot: %v", err)
+	}
+
+	// Compact the log so that we don't get bad interference from any
+	// configuration change log entries that might be there.
+	firstLogIndex, err := logs.FirstIndex()
+	if err != nil {
+		return fmt.Errorf("failed to get first log index: %v", err)
+	}
+	if err := logs.DeleteRange(firstLogIndex, lastLogIndex); err != nil {
+		return fmt.Errorf("log compaction failed: %v", err)
+	}
+
+	return nil
+}
+
+// HasExistingState returns true if the server has any existing state (logs,
+// knowledge of a current term, or any snapshots).
+func HasExistingState(logs LogStore, stable StableStore, snaps SnapshotStore) (bool, error) {
+	// Make sure we don't have a current term.
+	currentTerm, err := stable.GetUint64(keyCurrentTerm)
+	if err == nil {
+		if currentTerm > 0 {
+			return true, nil
+		}
+	} else {
+		if err.Error() != "not found" {
+			return false, fmt.Errorf("failed to read current term: %v", err)
+		}
+	}
+
+	// Make sure we have an empty log.
+	lastIndex, err := logs.LastIndex()
+	if err != nil {
+		return false, fmt.Errorf("failed to get last log index: %v", err)
+	}
+	if lastIndex > 0 {
+		return true, nil
+	}
+
+	// Make sure we have no snapshots
+	snapshots, err := snaps.List()
+	if err != nil {
+		return false, fmt.Errorf("failed to list snapshots: %v", err)
+	}
+	if len(snapshots) > 0 {
+		return true, nil
+	}
+
+	return false, nil
+}
+
 // NewRaft is used to construct a new Raft node. It takes a configuration, as well
-// as implementations of various interfaces that are required. If we have any old state,
-// such as snapshots, logs, peers, etc, all those will be restored when creating the
-// Raft node.
-func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps SnapshotStore,
-	trans Transport) (*Raft, error) {
-	// Validate the configuration
+// as implementations of various interfaces that are required. If we have any
+// old state, such as snapshots, logs, peers, etc, all those will be restored
+// when creating the Raft node.
+func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps SnapshotStore, trans Transport) (*Raft, error) {
+	// Validate the configuration.
 	if err := ValidateConfig(conf); err != nil {
 		return nil, err
 	}
 
-	// Ensure we have a LogOutput
+	// Ensure we have a LogOutput.
 	var logger *log.Logger
 	if conf.Logger != nil {
 		logger = conf.Logger
@@ -223,47 +385,51 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		logger = log.New(conf.LogOutput, "", log.LstdFlags)
 	}
 
-	// Try to restore the current term
+	// Try to restore the current term.
 	currentTerm, err := stable.GetUint64(keyCurrentTerm)
 	if err != nil && err.Error() != "not found" {
 		return nil, fmt.Errorf("failed to load current term: %v", err)
 	}
 
-	// Read the last log value
-	lastIdx, err := logs.LastIndex()
+	// Read the index of the last log entry.
+	lastIndex, err := logs.LastIndex()
 	if err != nil {
 		return nil, fmt.Errorf("failed to find last log: %v", err)
 	}
 
-	// Get the log
+	// Get the last log entry.
 	var lastLog Log
-	if lastIdx > 0 {
-		if err = logs.GetLog(lastIdx, &lastLog); err != nil {
-			return nil, fmt.Errorf("failed to get last log: %v", err)
+	if lastIndex > 0 {
+		if err = logs.GetLog(lastIndex, &lastLog); err != nil {
+			return nil, fmt.Errorf("failed to get last log at index %d: %v", lastIndex, err)
 		}
 	}
 
+	// Make sure we have a valid server address and ID.
+	protocolVersion := conf.ProtocolVersion
 	localAddr := ServerAddress(trans.LocalAddr())
 	localID := conf.LocalID
-	if localID == "" {
-		logger.Printf("[WARN] raft: No server ID given, using network address: %v. This default will be removed in the future. Set server ID explicitly in config.",
-			localAddr)
-		localID = ServerID(localAddr)
+
+	// TODO (slackpad) - When we deprecate protocol version 2, remove this
+	// along with the AddPeer() and RemovePeer() APIs.
+	if protocolVersion < 3 && string(localID) != string(localAddr) {
+		return nil, fmt.Errorf("when running with ProtocolVersion < 3, LocalID must be set to the network address")
 	}
 
-	// Create Raft struct
+	// Create Raft struct.
 	r := &Raft{
-		applyCh:       make(chan *logFuture),
-		conf:          conf,
-		fsm:           fsm,
-		fsmCommitCh:   make(chan commitTuple, 128),
-		fsmRestoreCh:  make(chan *restoreFuture),
-		fsmSnapshotCh: make(chan *reqSnapshotFuture),
-		leaderCh:      make(chan bool),
-		localID:       localID,
-		localAddr:     localAddr,
-		logger:        logger,
-		logs:          logs,
+		protocolVersion: protocolVersion,
+		applyCh:         make(chan *logFuture),
+		conf:            *conf,
+		fsm:             fsm,
+		fsmCommitCh:     make(chan commitTuple, 128),
+		fsmRestoreCh:    make(chan *restoreFuture),
+		fsmSnapshotCh:   make(chan *reqSnapshotFuture),
+		leaderCh:        make(chan bool),
+		localID:         localID,
+		localAddr:       localAddr,
+		logger:          logger,
+		logs:            logs,
 		configurationChangeCh: make(chan *configurationChangeFuture),
 		configurations:        configurations{},
 		rpcCh:                 trans.Consumer(),
@@ -277,7 +443,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		observers:             make(map[uint64]*Observer),
 	}
 
-	// Initialize as a follower
+	// Initialize as a follower.
 	r.setState(Follower)
 
 	// Start as leader if specified. This should only be used
@@ -287,16 +453,16 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		r.setLeader(r.localAddr)
 	}
 
-	// Restore the current term and the last log
+	// Restore the current term and the last log.
 	r.setCurrentTerm(currentTerm)
 	r.setLastLog(lastLog.Index, lastLog.Term)
 
-	// Attempt to restore a snapshot if there are any
+	// Attempt to restore a snapshot if there are any.
 	if err := r.restoreSnapshot(); err != nil {
 		return nil, err
 	}
 
-	// Scan through the log for any configuration change entries
+	// Scan through the log for any configuration change entries.
 	snapshotIndex, _ := r.getLastSnapshot()
 	for index := snapshotIndex + 1; index <= lastLog.Index; index++ {
 		var entry Log
@@ -304,22 +470,16 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 			r.logger.Printf("[ERR] raft: Failed to get log at %d: %v", index, err)
 			panic(err)
 		}
-		// TODO: support LogAddPeer, LogRemovePeer too
-		if entry.Type == LogConfiguration {
-			r.configurations.committed = r.configurations.latest
-			r.configurations.committedIndex = r.configurations.latestIndex
-			r.configurations.latest = decodeConfiguration(entry.Data)
-			r.configurations.latestIndex = entry.Index
-		}
+		r.processConfigurationLogEntry(&entry)
 	}
-	r.logger.Printf("[INFO] NewRaft configurations: %+v", r.configurations)
+	r.logger.Printf("[INFO] raft: Initial configurations: %+v", r.configurations)
 
 	// Setup a heartbeat fast-path to avoid head-of-line
 	// blocking where possible. It MUST be safe for this
 	// to be called concurrently with a blocking RPC.
 	trans.SetHeartbeatHandler(r.processHeartbeat)
 
-	// Start the background work
+	// Start the background work.
 	r.goFunc(r.run)
 	r.goFunc(r.runFSM)
 	r.goFunc(r.runSnapshots)
@@ -360,7 +520,7 @@ func (r *Raft) restoreSnapshot() error {
 		r.setLastSnapshot(snapshot.Index, snapshot.Term)
 
 		// Update the configuration
-		if snapshot.ConfigurationIndex > 0 {
+		if snapshot.Version > 0 {
 			r.configurations.committed = snapshot.Configuration
 			r.configurations.committedIndex = snapshot.ConfigurationIndex
 			r.configurations.latest = snapshot.Configuration
@@ -486,7 +646,16 @@ func (r *Raft) GetConfiguration() (Configuration, uint64, error) {
 // AddPeer (deprecated) is used to add a new peer into the cluster. This must be
 // run on the leader or it will fail. Use AddVoter/AddNonvoter instead.
 func (r *Raft) AddPeer(peer ServerAddress) Future {
-	return r.AddVoter(ServerID(peer), peer, 0, 0)
+	if r.protocolVersion > 2 {
+		return errorFuture{ErrUnsupportedProtocol}
+	}
+
+	return r.requestConfigChange(configurationChangeRequest{
+		command:       AddStaging,
+		serverID:      ServerID(peer),
+		serverAddress: peer,
+		prevIndex:     0,
+	}, 0)
 }
 
 // RemovePeer (deprecated) is used to remove a peer from the cluster. If the
@@ -494,7 +663,15 @@ func (r *Raft) AddPeer(peer ServerAddress) Future {
 // to occur. This must be run on the leader or it will fail.
 // Use RemoveServer instead.
 func (r *Raft) RemovePeer(peer ServerAddress) Future {
-	return r.RemoveServer(ServerID(peer), 0, 0)
+	if r.protocolVersion > 2 {
+		return errorFuture{ErrUnsupportedProtocol}
+	}
+
+	return r.requestConfigChange(configurationChangeRequest{
+		command:   RemoveServer,
+		serverID:  ServerID(peer),
+		prevIndex: 0,
+	}, 0)
 }
 
 // AddVoter will add the given server to the cluster as a staging server. If the
@@ -506,6 +683,10 @@ func (r *Raft) RemovePeer(peer ServerAddress) Future {
 // If nonzero, timeout is how long this server should wait before the
 // configuration change log entry is appended.
 func (r *Raft) AddVoter(id ServerID, address ServerAddress, prevIndex uint64, timeout time.Duration) IndexFuture {
+	if r.protocolVersion < 2 {
+		return errorFuture{ErrUnsupportedProtocol}
+	}
+
 	return r.requestConfigChange(configurationChangeRequest{
 		command:       AddStaging,
 		serverID:      id,
@@ -520,6 +701,10 @@ func (r *Raft) AddVoter(id ServerID, address ServerAddress, prevIndex uint64, ti
 // a staging server or voter, this does nothing. This must be run on the leader
 // or it will fail. For prevIndex and timeout, see AddVoter.
 func (r *Raft) AddNonvoter(id ServerID, address ServerAddress, prevIndex uint64, timeout time.Duration) IndexFuture {
+	if r.protocolVersion < 3 {
+		return errorFuture{ErrUnsupportedProtocol}
+	}
+
 	return r.requestConfigChange(configurationChangeRequest{
 		command:       AddNonvoter,
 		serverID:      id,
@@ -532,6 +717,10 @@ func (r *Raft) AddNonvoter(id ServerID, address ServerAddress, prevIndex uint64,
 // leader is being removed, it will cause a new election to occur. This must be
 // run on the leader or it will fail. For prevIndex and timeout, see AddVoter.
 func (r *Raft) RemoveServer(id ServerID, prevIndex uint64, timeout time.Duration) IndexFuture {
+	if r.protocolVersion < 2 {
+		return errorFuture{ErrUnsupportedProtocol}
+	}
+
 	return r.requestConfigChange(configurationChangeRequest{
 		command:   RemoveServer,
 		serverID:  id,
@@ -545,6 +734,10 @@ func (r *Raft) RemoveServer(id ServerID, prevIndex uint64, timeout time.Duration
 // does nothing. This must be run on the leader or it will fail. For prevIndex
 // and timeout, see AddVoter.
 func (r *Raft) DemoteVoter(id ServerID, prevIndex uint64, timeout time.Duration) IndexFuture {
+	if r.protocolVersion < 3 {
+		return errorFuture{ErrUnsupportedProtocol}
+	}
+
 	return r.requestConfigChange(configurationChangeRequest{
 		command:   DemoteVoter,
 		serverID:  id,
@@ -647,6 +840,7 @@ func (r *Raft) Stats() map[string]string {
 		"fsm_pending":         toString(uint64(len(r.fsmCommitCh))),
 		"last_snapshot_index": toString(lastSnapIndex),
 		"last_snapshot_term":  toString(lastSnapTerm),
+		"protocol_version":    toString(uint64(r.protocolVersion)),
 	}
 
 	configuration, _, err := r.GetConfiguration()

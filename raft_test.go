@@ -7,7 +7,9 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -523,28 +525,22 @@ WAIT:
 	goto CHECK
 }
 
-// raftToPeerSet returns the set of peers as a map.
-func (c *cluster) raftToPeerSet(r *Raft) map[ServerID]struct{} {
-	peers := make(map[ServerID]struct{})
-
+// getConfiguration returns the configuration of the given Raft instance, or
+// fails the test if there's an error
+func (c *cluster) getConfiguration(r *Raft) Configuration {
 	configuration, _, err := r.GetConfiguration()
 	if err != nil {
 		c.FailNowf("[ERR] failed to get configuration: %v", err)
-		return peers
+		return Configuration{}
 	}
 
-	for _, p := range configuration.Servers {
-		if p.Suffrage == Voter {
-			peers[p.ID] = struct{}{}
-		}
-	}
-	return peers
+	return configuration
 }
 
 // EnsureSamePeers makes sure all the rafts have the same set of peers.
 func (c *cluster) EnsureSamePeers(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
-	peerSet := c.raftToPeerSet(c.rafts[0])
+	peerSet := c.getConfiguration(c.rafts[0])
 
 CHECK:
 	for i, raft := range c.rafts {
@@ -552,10 +548,10 @@ CHECK:
 			continue
 		}
 
-		otherSet := c.raftToPeerSet(raft)
+		otherSet := c.getConfiguration(raft)
 		if !reflect.DeepEqual(peerSet, otherSet) {
 			if time.Now().After(limit) {
-				c.FailNowf("[ERR] peer mismatch: %v %v", peerSet, otherSet)
+				c.FailNowf("[ERR] peer mismatch: %+v %+v", peerSet, otherSet)
 			} else {
 				goto WAIT
 			}
@@ -608,10 +604,14 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
 
 		addr, trans := NewInmemTransport("")
 		c.trans = append(c.trans, trans)
+		localID := ServerID(fmt.Sprintf("server-%s", addr))
+		if conf.ProtocolVersion < 3 {
+			localID = ServerID(addr)
+		}
 		configuration.Servers = append(configuration.Servers, Server{
 			Suffrage: Voter,
-			ID:       ServerID(addr),
-			Address:  ServerAddress(addr),
+			ID:       localID,
+			Address:  addr,
 		})
 	}
 
@@ -627,10 +627,11 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
 		trans := c.trans[i]
 
 		peerConf := conf
+		peerConf.LocalID = configuration.Servers[i].ID
 		peerConf.Logger = newTestLoggerWithPrefix(t, string(configuration.Servers[i].ID))
 
 		if bootstrap {
-			err := BootstrapCluster(peerConf, logs, store, snap, configuration)
+			err := BootstrapCluster(peerConf, logs, store, snap, trans, configuration)
 			if err != nil {
 				c.FailNowf("[ERR] BootstrapCluster failed: %v", err)
 			}
@@ -675,10 +676,20 @@ func TestRaft_AfterShutdown(t *testing.T) {
 	if f := raft.Apply(nil, 0); f.Error() != ErrRaftShutdown {
 		c.FailNowf("[ERR] should be shutdown: %v", f.Error())
 	}
-	if f := raft.AddPeer(NewInmemAddr()); f.Error() != ErrRaftShutdown {
+
+	// TODO (slackpad) - Barrier, VerifyLeader, and GetConfiguration can get
+	// stuck if the buffered channel consumes the future but things are shut
+	// down so they never get processed.
+	if f := raft.AddVoter(ServerID("id"), ServerAddress("addr"), 0, 0); f.Error() != ErrRaftShutdown {
 		c.FailNowf("[ERR] should be shutdown: %v", f.Error())
 	}
-	if f := raft.RemovePeer(NewInmemAddr()); f.Error() != ErrRaftShutdown {
+	if f := raft.AddNonvoter(ServerID("id"), ServerAddress("addr"), 0, 0); f.Error() != ErrRaftShutdown {
+		c.FailNowf("[ERR] should be shutdown: %v", f.Error())
+	}
+	if f := raft.RemoveServer(ServerID("id"), 0, 0); f.Error() != ErrRaftShutdown {
+		c.FailNowf("[ERR] should be shutdown: %v", f.Error())
+	}
+	if f := raft.DemoteVoter(ServerID("id"), 0, 0); f.Error() != ErrRaftShutdown {
 		c.FailNowf("[ERR] should be shutdown: %v", f.Error())
 	}
 	if f := raft.Snapshot(); f.Error() != ErrRaftShutdown {
@@ -690,6 +701,154 @@ func TestRaft_AfterShutdown(t *testing.T) {
 		c.FailNowf("[ERR] shutdown should be idempotent")
 	}
 
+}
+
+func TestRaft_RecoverCluster_NoState(t *testing.T) {
+	c := MakeClusterNoBootstrap(1, t, nil)
+	defer c.Close()
+
+	r := c.rafts[0]
+	configuration := Configuration{
+		Servers: []Server{
+			Server{
+				ID:      r.localID,
+				Address: r.localAddr,
+			},
+		},
+	}
+	err := RecoverCluster(&r.conf, &MockFSM{}, r.logs, r.stable,
+		r.snapshots, r.trans, configuration)
+	if err == nil || !strings.Contains(err.Error(), "no initial state") {
+		c.FailNowf("[ERR] should have failed for no initial state: %v", err)
+	}
+}
+
+func TestRaft_RecoverCluster(t *testing.T) {
+	// Run with different number of applies which will cover no snapshot and
+	// snapshot + log scenarios. By sweeping through the trailing logs value
+	// we will also hit the case where we have a snapshot only.
+	runRecover := func(applies int) {
+		conf := inmemConfig(t)
+		conf.TrailingLogs = 10
+		c := MakeCluster(3, t, conf)
+		defer c.Close()
+
+		// Perform some commits.
+		c.logger.Printf("[DEBUG] Running with applies=%d", applies)
+		leader := c.Leader()
+		for i := 0; i < applies; i++ {
+			future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+			if err := future.Error(); err != nil {
+				c.FailNowf("[ERR] apply err: %v", err)
+			}
+		}
+
+		// Snap the configuration and then shut down the cluster.
+		configuration, _, err := leader.GetConfiguration()
+		if err != nil {
+			c.FailNowf("[ERR] get configuration err: %v", err)
+		}
+		for _, sec := range c.rafts {
+			if err := sec.Shutdown().Error(); err != nil {
+				c.FailNowf("[ERR] shutdown err: %v", err)
+			}
+		}
+
+		// Recover the cluster. We need to replace the transport and we
+		// replace the FSM so no state can carry over.
+		for i, r := range c.rafts {
+			before, err := r.snapshots.List()
+			if err != nil {
+				c.FailNowf("[ERR] snapshot list err: %v", err)
+			}
+			if err := RecoverCluster(&r.conf, &MockFSM{}, r.logs, r.stable,
+				r.snapshots, r.trans, configuration); err != nil {
+				c.FailNowf("[ERR] recover err: %v", err)
+			}
+
+			// Make sure the recovery looks right.
+			after, err := r.snapshots.List()
+			if err != nil {
+				c.FailNowf("[ERR] snapshot list err: %v", err)
+			}
+			if len(after) != len(before)+1 {
+				c.FailNowf("[ERR] expected a new snapshot, %d vs. %d", len(before), len(after))
+			}
+			first, err := r.logs.FirstIndex()
+			if err != nil {
+				c.FailNowf("[ERR] first log index err: %v", err)
+			}
+			last, err := r.logs.LastIndex()
+			if err != nil {
+				c.FailNowf("[ERR] last log index err: %v", err)
+			}
+			if first != 0 || last != 0 {
+				c.FailNowf("[ERR] expected empty logs, got %d/%d", first, last)
+			}
+
+			// Fire up the recovered Raft instance. We have to patch
+			// up the cluster state manually since this is an unusual
+			// operation.
+			_, trans := NewInmemTransport(r.localAddr)
+			r2, err := NewRaft(&r.conf, &MockFSM{}, r.logs, r.stable, r.snapshots, trans)
+			if err != nil {
+				c.FailNowf("[ERR] new raft err: %v", err)
+			}
+			c.rafts[i] = r2
+			c.trans[i] = r2.trans.(*InmemTransport)
+			c.fsms[i] = r2.fsm.(*MockFSM)
+		}
+		c.FullyConnect()
+		time.Sleep(c.propagateTimeout)
+
+		// Let things settle and make sure we recovered.
+		c.EnsureLeader(t, c.Leader().localAddr)
+		c.EnsureSame(t)
+		c.EnsureSamePeers(t)
+	}
+	for applies := 0; applies < 20; applies++ {
+		runRecover(applies)
+	}
+}
+
+func TestRaft_HasExistingState(t *testing.T) {
+	// Make a cluster.
+	c := MakeCluster(2, t, nil)
+	defer c.Close()
+
+	// Make a new cluster of 1.
+	c1 := MakeClusterNoBootstrap(1, t, nil)
+
+	// Make sure the initial state is clean.
+	hasState, err := HasExistingState(c1.rafts[0].logs, c1.rafts[0].stable, c1.rafts[0].snapshots)
+	if err != nil || hasState {
+		c.FailNowf("[ERR] should not have any existing state, %v", err)
+	}
+
+	// Merge clusters.
+	c.Merge(c1)
+	c.FullyConnect()
+
+	// Join the new node in.
+	future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 0)
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+
+	// Check the FSMs.
+	c.EnsureSame(t)
+
+	// Check the peers.
+	c.EnsureSamePeers(t)
+
+	// Ensure one leader.
+	c.EnsureLeader(t, c.Leader().localAddr)
+
+	// Make sure it's not clean.
+	hasState, err = HasExistingState(c1.rafts[0].logs, c1.rafts[0].stable, c1.rafts[0].snapshots)
+	if err != nil || !hasState {
+		c.FailNowf("[ERR] should have some existing state, %v", err)
+	}
 }
 
 func TestRaft_SingleNode(t *testing.T) {
@@ -1003,19 +1162,19 @@ func TestRaft_JoinNode(t *testing.T) {
 	c.FullyConnect()
 
 	// Join the new node in
-	future := c.Leader().AddPeer(c1.rafts[0].localAddr)
+	future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 0)
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
+
+	// Ensure one leader
+	c.EnsureLeader(t, c.Leader().localAddr)
 
 	// Check the FSMs
 	c.EnsureSame(t)
 
 	// Check the peers
 	c.EnsureSamePeers(t)
-
-	// Ensure one leader
-	c.EnsureLeader(t, c.Leader().localAddr)
 }
 
 func TestRaft_RemoveFollower(t *testing.T) {
@@ -1039,7 +1198,7 @@ func TestRaft_RemoveFollower(t *testing.T) {
 
 	// Remove a follower
 	follower := followers[0]
-	future := leader.RemovePeer(follower.localAddr)
+	future := leader.RemoveServer(follower.localID, 0, 0)
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -1076,11 +1235,11 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	}
 
 	// Remove the leader
-	f := leader.RemovePeer(leader.localAddr)
+	f := leader.RemoveServer(leader.localID, 0, 0)
 
 	// Wait for the future to complete
 	if f.Error() != nil {
-		c.FailNowf("RemovePeer() returned error %v", f.Error())
+		c.FailNowf("RemoveServer() returned error %v", f.Error())
 	}
 
 	// Wait a bit for log application
@@ -1201,7 +1360,7 @@ func TestRaft_RemoveFollower_SplitCluster(t *testing.T) {
 	c.Partition([]ServerAddress{followers[0].localAddr, followers[1].localAddr})
 
 	// Try to remove the remaining follower that was left with the leader.
-	future := leader.RemovePeer(followers[2].localAddr)
+	future := leader.RemoveServer(followers[2].localID, 0, 0)
 	if err := future.Error(); err == nil {
 		c.FailNowf("[ERR] Should not have been able to make peer change")
 	}
@@ -1223,12 +1382,11 @@ func TestRaft_AddKnownPeer(t *testing.T) {
 	startingConfigIdx := configReq.configurations.committedIndex
 
 	// Add a follower
-	future := leader.AddPeer(followers[0].localAddr)
+	future := leader.AddVoter(followers[0].localID, followers[0].localAddr, 0, 0)
 
-	// shouldn't error, configuration should end up the same as it was.
-	// Should be already added
+	// Shouldn't error, configuration should end up the same as it was.
 	if err := future.Error(); err != nil {
-		c.FailNowf("[ERR] AddPeer() err: %v", err)
+		c.FailNowf("[ERR] AddVoter() err: %v", err)
 	}
 	configReq = leader.getConfigurations()
 	if err := configReq.Error(); err != nil {
@@ -1237,10 +1395,10 @@ func TestRaft_AddKnownPeer(t *testing.T) {
 	newConfig := configReq.configurations.committed
 	newConfigIdx := configReq.configurations.committedIndex
 	if newConfigIdx <= startingConfigIdx {
-		c.FailNowf("[ERR] AddPeer should of written a new config entry, but configurations.commitedIndex still %d", newConfigIdx)
+		c.FailNowf("[ERR] AddVoter should have written a new config entry, but configurations.commitedIndex still %d", newConfigIdx)
 	}
 	if !reflect.DeepEqual(newConfig, startingConfig) {
-		c.FailNowf("[ERR} AddPeer with existing peer shouldn't of changed config, was %#v, but now %#v", startingConfig, newConfig)
+		c.FailNowf("[ERR} AddVoter with existing peer shouldn't have changed config, was %#v, but now %#v", startingConfig, newConfig)
 	}
 }
 
@@ -1259,11 +1417,11 @@ func TestRaft_RemoveUnknownPeer(t *testing.T) {
 	startingConfigIdx := configReq.configurations.committedIndex
 
 	// Remove unknown
-	future := leader.RemovePeer(NewInmemAddr())
+	future := leader.RemoveServer(ServerID(NewInmemAddr()), 0, 0)
 
 	// nothing to do, should be a new config entry that's the same as before
 	if err := future.Error(); err != nil {
-		c.FailNowf("[ERR] RemovePeer() err: %v", err)
+		c.FailNowf("[ERR] RemoveServer() err: %v", err)
 	}
 	configReq = leader.getConfigurations()
 	if err := configReq.Error(); err != nil {
@@ -1272,10 +1430,10 @@ func TestRaft_RemoveUnknownPeer(t *testing.T) {
 	newConfig := configReq.configurations.committed
 	newConfigIdx := configReq.configurations.committedIndex
 	if newConfigIdx <= startingConfigIdx {
-		c.FailNowf("[ERR] RemovePeer should of written a new config entry, but configurations.commitedIndex still %d", newConfigIdx)
+		c.FailNowf("[ERR] RemoveServer should have written a new config entry, but configurations.commitedIndex still %d", newConfigIdx)
 	}
 	if !reflect.DeepEqual(newConfig, startingConfig) {
-		c.FailNowf("[ERR} RemovePeer with unknown peer shouldn't of changed config, was %#v, but now %#v", startingConfig, newConfig)
+		c.FailNowf("[ERR} RemoveServer with unknown peer shouldn't of changed config, was %#v, but now %#v", startingConfig, newConfig)
 	}
 }
 
@@ -1326,7 +1484,7 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 	r := leader
 	// Can't just reuse the old transport as it will be closed
 	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
-	r, err := NewRaft(r.conf, r.fsm, r.logs, r.stable, r.snapshots, trans2)
+	r, err := NewRaft(&r.conf, r.fsm, r.logs, r.stable, r.snapshots, trans2)
 	if err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -1338,20 +1496,21 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 	}
 }
 
-// TODO: Need a test that has a previous format Snapshot and check that it can be read/installed on the new code.
+// TODO: Need a test that has a previous format Snapshot and check that it can
+// be read/installed on the new code.
+
+// TODO: Need a test to process old-style entries in the Raft log when starting
+// up.
 
 func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
-	// TODO - Fix broken test. This needs a story about how we recover and
-	// manually let the operator adjust the quorum before we can proceed.
-	return
-
-	// Make the cluster
+	// Make the cluster.
 	conf := inmemConfig(t)
+	conf.ProtocolVersion = 1
 	conf.TrailingLogs = 10
 	c := MakeCluster(3, t, conf)
 	defer c.Close()
 
-	// Commit a lot of things
+	// Commit a lot of things.
 	leader := c.Leader()
 	var future Future
 	for i := 0; i < 100; i++ {
@@ -1363,40 +1522,65 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 
-	// Take a snapshot
+	// Take a snapshot.
 	snapFuture := leader.Snapshot()
 	if err := snapFuture.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 
-	// Shutdown
+	// Shutdown.
 	shutdown := leader.Shutdown()
 	if err := shutdown.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 
-	// Make a separate cluster
+	// Make a separate cluster.
 	c2 := MakeClusterNoBootstrap(2, t, conf)
 	defer c2.Close()
 
-	// Kill the old cluster
+	// Kill the old cluster.
 	for _, sec := range c.rafts {
 		if sec != leader {
-			sec.Shutdown()
+			if err := sec.Shutdown().Error(); err != nil {
+				c.FailNowf("[ERR] shutdown err: %v", err)
+			}
 		}
 	}
 
-	// Change the peer addresses
-	peers := []ServerAddress{leader.trans.LocalAddr()}
+	// Restart the Raft with new peers.
+	r := leader
+
+	// Gather the new peer address list.
+	var peers []string
+	peers = append(peers, fmt.Sprintf("%q", leader.trans.LocalAddr()))
 	for _, sec := range c2.rafts {
-		peers = append(peers, sec.trans.LocalAddr())
+		peers = append(peers, fmt.Sprintf("%q", sec.trans.LocalAddr()))
+	}
+	content := []byte(fmt.Sprintf("[%s]", strings.Join(peers, ",")))
+
+	// Perform a manual recovery on the cluster.
+	base, err := ioutil.TempDir("", "")
+	if err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+	defer os.RemoveAll(base)
+	peersFile := filepath.Join(base, "peers.json")
+	if err := ioutil.WriteFile(peersFile, content, 0666); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+	configuration, err := ReadPeersJSON(peersFile)
+	if err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+	if err := RecoverCluster(&r.conf, &MockFSM{}, r.logs, r.stable,
+		r.snapshots, r.trans, configuration); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
 	}
 
-	// Restart the Raft with new peers
-	r := leader
-	// Can't just reuse the old transport as it will be closed
-	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
-	r, err := NewRaft(r.conf, r.fsm, r.logs, r.stable, r.snapshots, trans2)
+	// Can't just reuse the old transport as it will be closed. We also start
+	// with a fresh FSM for good measure so no state can carry over.
+	_, trans := NewInmemTransport(r.localAddr)
+	r, err = NewRaft(&r.conf, &MockFSM{}, r.logs, r.stable, r.snapshots, trans)
 	if err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -1406,17 +1590,20 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	c2.fsms = append(c2.fsms, r.fsm.(*MockFSM))
 	c2.FullyConnect()
 
-	// Wait a while
+	// Wait a while.
 	time.Sleep(c.propagateTimeout)
 
-	// Ensure we elect a leader, and that we replicate
-	// to our new followers
+	// Ensure we elect a leader, and that we replicate to our new followers.
 	c2.EnsureSame(t)
 
-	// We should have restored from the snapshot!
-	if last := r.getLastApplied(); last != 102 {
+	// We should have restored from the snapshot! Note that there's one
+	// index bump from the noop the leader tees up when it takes over.
+	if last := r.getLastApplied(); last != 103 {
 		c.FailNowf("[ERR] bad last: %v", last)
 	}
+
+	// Check the peers.
+	c2.EnsureSamePeers(t)
 }
 
 func TestRaft_AutoSnapshot(t *testing.T) {
@@ -1578,8 +1765,6 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	// Enable operation after a remove.
 	conf := inmemConfig(t)
 	conf.ShutdownOnRemove = false
-
-	// Make a cluster
 	c := MakeCluster(3, t, conf)
 	defer c.Close()
 
@@ -1599,7 +1784,7 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 
 	// Remove a follower.
 	follower := followers[0]
-	future := leader.RemovePeer(follower.localAddr)
+	future := leader.RemoveServer(follower.localID, 0, 0)
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -1631,7 +1816,7 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	// Rejoin. The follower will have a higher term than the leader,
 	// this will cause the leader to step down, and a new round of elections
 	// to take place. We should eventually re-stabilize.
-	future = leader.AddPeer(follower.localAddr)
+	future = leader.AddVoter(follower.localID, follower.localAddr, 0, 0)
 	if err := future.Error(); err != nil && err != ErrLeadershipLost {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -1926,6 +2111,7 @@ func TestRaft_Voting(t *testing.T) {
 	ldrT := c.trans[c.IndexOf(ldr)]
 
 	reqVote := RequestVoteRequest{
+		RPCHeader:    ldr.getRPCHeader(),
 		Term:         ldr.getCurrentTerm() + 10,
 		Candidate:    ldrT.EncodePeer(ldr.localAddr),
 		LastLogIndex: ldr.LastIndex(),
@@ -1946,6 +2132,115 @@ func TestRaft_Voting(t *testing.T) {
 	}
 	if resp.Granted {
 		c.FailNowf("[ERR] expected vote not to be granted, but was %+v", resp)
+	}
+}
+
+func TestRaft_ProtocolVersion_RejectRPC(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+	followers := c.Followers()
+	ldr := c.Leader()
+	ldrT := c.trans[c.IndexOf(ldr)]
+
+	reqVote := RequestVoteRequest{
+		RPCHeader: RPCHeader{
+			ProtocolVersion: ProtocolVersionMax + 1,
+		},
+		Term:         ldr.getCurrentTerm() + 10,
+		Candidate:    ldrT.EncodePeer(ldr.localAddr),
+		LastLogIndex: ldr.LastIndex(),
+		LastLogTerm:  ldr.getCurrentTerm(),
+	}
+
+	// Reject a message from a future version we don't understand.
+	var resp RequestVoteResponse
+	err := ldrT.RequestVote(followers[0].localAddr, &reqVote, &resp)
+	if err == nil || !strings.Contains(err.Error(), "protocol version") {
+		c.FailNowf("[ERR] expected RPC to get rejected: %v", err)
+	}
+
+	// Reject a message that's too old.
+	reqVote.RPCHeader.ProtocolVersion = followers[0].protocolVersion - 2
+	err = ldrT.RequestVote(followers[0].localAddr, &reqVote, &resp)
+	if err == nil || !strings.Contains(err.Error(), "protocol version") {
+		c.FailNowf("[ERR] expected RPC to get rejected: %v", err)
+	}
+}
+
+func TestRaft_ProtocolVersion_Upgrade_1_2(t *testing.T) {
+	// Make a cluster back on protocol version 1.
+	conf := inmemConfig(t)
+	conf.ProtocolVersion = 1
+	c := MakeCluster(2, t, conf)
+	defer c.Close()
+
+	// Set up another server speaking protocol version 2.
+	conf = inmemConfig(t)
+	conf.ProtocolVersion = 2
+	c1 := MakeClusterNoBootstrap(1, t, conf)
+
+	// Merge clusters.
+	c.Merge(c1)
+	c.FullyConnect()
+
+	// Make sure the new ID-based operations aren't supported in the old
+	// protocol.
+	future := c.Leader().AddNonvoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 1*time.Second)
+	if err := future.Error(); err != ErrUnsupportedProtocol {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+	future = c.Leader().DemoteVoter(c1.rafts[0].localID, 0, 1*time.Second)
+	if err := future.Error(); err != ErrUnsupportedProtocol {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+
+	// Now do the join using the old address-based API.
+	if future := c.Leader().AddPeer(c1.rafts[0].localAddr); future.Error() != nil {
+		c.FailNowf("[ERR] err: %v", future.Error())
+	}
+
+	// Sanity check the cluster.
+	c.EnsureSame(t)
+	c.EnsureSamePeers(t)
+	c.EnsureLeader(t, c.Leader().localAddr)
+
+	// Now do the remove using the old address-based API.
+	if future := c.Leader().RemovePeer(c1.rafts[0].localAddr); future.Error() != nil {
+		c.FailNowf("[ERR] err: %v", future.Error())
+	}
+}
+
+func TestRaft_ProtocolVersion_Upgrade_2_3(t *testing.T) {
+	// Make a cluster back on protocol version 2.
+	conf := inmemConfig(t)
+	conf.ProtocolVersion = 2
+	c := MakeCluster(2, t, conf)
+	defer c.Close()
+	oldAddr := c.Followers()[0].localAddr
+
+	// Set up another server speaking protocol version 3.
+	conf = inmemConfig(t)
+	conf.ProtocolVersion = 3
+	c1 := MakeClusterNoBootstrap(1, t, conf)
+
+	// Merge clusters.
+	c.Merge(c1)
+	c.FullyConnect()
+
+	// Use the new ID-based API to add the server with its ID.
+	future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 1*time.Second)
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+
+	// Sanity check the cluster.
+	c.EnsureSame(t)
+	c.EnsureSamePeers(t)
+	c.EnsureLeader(t, c.Leader().localAddr)
+
+	// Remove an old server using the old address-based API.
+	if future := c.Leader().RemovePeer(oldAddr); future.Error() != nil {
+		c.FailNowf("[ERR] err: %v", future.Error())
 	}
 }
 
