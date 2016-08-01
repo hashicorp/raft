@@ -209,6 +209,13 @@ func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
 // insert any new entries, which could cause conflicts with other servers with
 // different state.
 //
+// WARNING! This operation implicitly commits all entries in the Raft log, so
+// in general this is an extremely unsafe operation. If you've lost your other
+// servers and are performing a manual recovery, then you've also lost the
+// commit information, so this is likely the best you can do, but you should be
+// aware that calling this can cause Raft log entries that were in the process
+// of being replicated but not yet be committed to be committed.
+//
 // Note the FSM passed here is used for the snapshot operations and will be
 // left in a state that should not be used by the application. Be sure to
 // discard this FSM and any associated state and provide a fresh one when
@@ -228,15 +235,9 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 		return err
 	}
 
-	// Sanity check the Raft peer configuration. Note that it's ok to
-	// recover to an empty configuration if you want to keep the data
-	// but not allow a given server to participate any more (you'd have
-	// to recover again, or add it back into the existing quorum from
-	// another server to use this server).
-	if len(configuration.Servers) > 0 {
-		if err := checkConfiguration(configuration); err != nil {
-			return err
-		}
+	// Sanity check the Raft peer configuration.
+	if err := checkConfiguration(configuration); err != nil {
+		return err
 	}
 
 	// Refuse to recover if there's no existing state. This would be safe to
