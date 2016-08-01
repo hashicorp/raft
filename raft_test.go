@@ -528,13 +528,13 @@ WAIT:
 // getConfiguration returns the configuration of the given Raft instance, or
 // fails the test if there's an error
 func (c *cluster) getConfiguration(r *Raft) Configuration {
-	configuration, _, err := r.GetConfiguration()
-	if err != nil {
+	future := r.GetConfiguration()
+	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] failed to get configuration: %v", err)
 		return Configuration{}
 	}
 
-	return configuration
+	return future.Configuration()
 }
 
 // EnsureSamePeers makes sure all the rafts have the same set of peers.
@@ -703,6 +703,46 @@ func TestRaft_AfterShutdown(t *testing.T) {
 
 }
 
+func TestRaft_LiveBootstrap(t *testing.T) {
+	// Make the cluster.
+	c := MakeClusterNoBootstrap(3, t, nil)
+	defer c.Close()
+
+	// Build the configuration.
+	configuration := Configuration{}
+	for _, r := range c.rafts {
+		server := Server{
+			ID:      r.localID,
+			Address: r.localAddr,
+		}
+		configuration.Servers = append(configuration.Servers, server)
+	}
+
+	// Bootstrap one of the nodes live.
+	boot := c.rafts[0].BootstrapCluster(configuration)
+	if err := boot.Error(); err != nil {
+		c.FailNowf("[ERR] bootstrap err: %v", err)
+	}
+
+	// Should be one leader.
+	c.Followers()
+	leader := c.Leader()
+	c.EnsureLeader(t, leader.localAddr)
+
+	// Should be able to apply.
+	future := leader.Apply([]byte("test"), c.conf.CommitTimeout)
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] apply err: %v", err)
+	}
+	c.WaitForReplication(1)
+
+	// Make sure the live bootstrap fails now that things are started up.
+	boot = c.rafts[0].BootstrapCluster(configuration)
+	if err := boot.Error(); err != ErrCantBootstrap {
+		c.FailNowf("[ERR] bootstrap should have failed: %v", err)
+	}
+}
+
 func TestRaft_RecoverCluster_NoState(t *testing.T) {
 	c := MakeClusterNoBootstrap(1, t, nil)
 	defer c.Close()
@@ -721,6 +761,65 @@ func TestRaft_RecoverCluster_NoState(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "no initial state") {
 		c.FailNowf("[ERR] should have failed for no initial state: %v", err)
 	}
+}
+
+func TestRaft_RecoverCluster_EmptyConfiguration(t *testing.T) {
+	conf := inmemConfig(t)
+	conf.TrailingLogs = 10
+	c := MakeCluster(3, t, conf)
+	defer c.Close()
+
+	// Perform some commits.
+	leader := c.Leader()
+	for i := 0; i < 100; i++ {
+		future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+		if err := future.Error(); err != nil {
+			c.FailNowf("[ERR] apply err: %v", err)
+		}
+	}
+
+	// Remove the first Raft server from the cluster.
+	r := c.rafts[0]
+	future := leader.RemoveServer(r.localID, 0, 0)
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] remove err: %v", err)
+	}
+
+	// Shut down the first Raft server.
+	if err := r.Shutdown().Error(); err != nil {
+		c.FailNowf("[ERR] shutdown err: %v", err)
+	}
+
+	// Run recovery with an empty configuration.
+	if err := RecoverCluster(&r.conf, &MockFSM{}, r.logs, r.stable,
+		r.snapshots, r.trans, Configuration{}); err != nil {
+		c.FailNowf("[ERR] recover err: %v", err)
+	}
+
+	// Fire up the recovered Raft server. We have to patch
+	// up the cluster state manually since this is an unusual
+	// operation.
+	_, trans := NewInmemTransport(r.localAddr)
+	r2, err := NewRaft(&r.conf, &MockFSM{}, r.logs, r.stable, r.snapshots, trans)
+	if err != nil {
+		c.FailNowf("[ERR] new raft err: %v", err)
+	}
+	c.rafts[0] = r2
+	c.trans[0] = r2.trans.(*InmemTransport)
+	c.fsms[0] = r2.fsm.(*MockFSM)
+
+	// Fire it up and join it back in.
+	c.FullyConnect()
+	time.Sleep(c.propagateTimeout)
+	future = c.Leader().AddVoter(r2.localID, r2.localAddr, 0, 0)
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] add server err: %v", err)
+	}
+
+	// Let things settle and make sure we recovered.
+	c.EnsureLeader(t, c.Leader().localAddr)
+	c.EnsureSame(t)
+	c.EnsureSamePeers(t)
 }
 
 func TestRaft_RecoverCluster(t *testing.T) {
@@ -743,11 +842,14 @@ func TestRaft_RecoverCluster(t *testing.T) {
 			}
 		}
 
-		// Snap the configuration and then shut down the cluster.
-		configuration, _, err := leader.GetConfiguration()
-		if err != nil {
+		// Snap the configuration.
+		future := leader.GetConfiguration()
+		if err := future.Error(); err != nil {
 			c.FailNowf("[ERR] get configuration err: %v", err)
 		}
+		configuration := future.Configuration()
+
+		// Shut down the cluster.
 		for _, sec := range c.rafts {
 			if err := sec.Shutdown().Error(); err != nil {
 				c.FailNowf("[ERR] shutdown err: %v", err)
@@ -1207,11 +1309,11 @@ func TestRaft_RemoveFollower(t *testing.T) {
 	time.Sleep(c.propagateTimeout)
 
 	// Other nodes should have fewer peers
-	if configuration, _, err := leader.GetConfiguration(); err != nil || len(configuration.Servers) != 2 {
-		c.FailNowf("[ERR] too many peers (err: %v)", err)
+	if configuration := c.getConfiguration(leader); len(configuration.Servers) != 2 {
+		c.FailNowf("[ERR] too many peers")
 	}
-	if configuration, _, err := followers[1].GetConfiguration(); err != nil || len(configuration.Servers) != 2 {
-		c.FailNowf("[ERR] too many peers (err: %v)", err)
+	if configuration := c.getConfiguration(followers[1]); len(configuration.Servers) != 2 {
+		c.FailNowf("[ERR] too many peers")
 	}
 }
 
@@ -1253,8 +1355,8 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	}
 
 	// Other nodes should have fewer peers
-	if configuration, _, err := newLeader.GetConfiguration(); err != nil || len(configuration.Servers) != 2 {
-		c.FailNowf("[ERR] wrong number of peers %d (err: %v)", len(configuration.Servers), err)
+	if configuration := c.getConfiguration(newLeader); len(configuration.Servers) != 2 {
+		c.FailNowf("[ERR] wrong number of peers %d", len(configuration.Servers))
 	}
 
 	// Old leader should be shutdown
@@ -1300,9 +1402,9 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	time.Sleep(c.propagateTimeout)
 
 	// Other nodes should have pulled the leader.
-	configuration, _, err := newLeader.GetConfiguration()
-	if err != nil || len(configuration.Servers) != 2 {
-		c.FailNowf("[ERR] too many peers (err: %v)", err)
+	configuration := c.getConfiguration(newLeader)
+	if len(configuration.Servers) != 2 {
+		c.FailNowf("[ERR] too many peers")
 	}
 	if hasVote(configuration, leader.localID) {
 		c.FailNowf("[ERR] old leader should no longer have a vote")
@@ -1314,9 +1416,9 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	}
 
 	// Old leader should not include itself in its peers.
-	configuration, _, err = leader.GetConfiguration()
-	if err != nil || len(configuration.Servers) != 2 {
-		c.FailNowf("[ERR] too many peers (err: %v)", err)
+	configuration = c.getConfiguration(leader)
+	if len(configuration.Servers) != 2 {
+		c.FailNowf("[ERR] too many peers")
 	}
 	if hasVote(configuration, leader.localID) {
 		c.FailNowf("[ERR] old leader should no longer have a vote")
@@ -1341,10 +1443,7 @@ func TestRaft_RemoveFollower_SplitCluster(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
 	for time.Now().Before(limit) && numServers != 4 {
 		time.Sleep(c.propagateTimeout)
-		configuration, _, err := leader.GetConfiguration()
-		if err != nil {
-			c.FailNowf("[ERR] failed to get configuration: %v", err)
-		}
+		configuration := c.getConfiguration(leader)
 		numServers = len(configuration.Servers)
 	}
 	if numServers != 4 {
@@ -1374,7 +1473,10 @@ func TestRaft_AddKnownPeer(t *testing.T) {
 	// Get the leader
 	leader := c.Leader()
 	followers := c.GetInState(Follower)
-	configReq := leader.getConfigurations()
+
+	configReq := &configurationsFuture{}
+	configReq.init()
+	leader.configurationsCh <- configReq
 	if err := configReq.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -1383,12 +1485,12 @@ func TestRaft_AddKnownPeer(t *testing.T) {
 
 	// Add a follower
 	future := leader.AddVoter(followers[0].localID, followers[0].localAddr, 0, 0)
-
-	// Shouldn't error, configuration should end up the same as it was.
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] AddVoter() err: %v", err)
 	}
-	configReq = leader.getConfigurations()
+	configReq = &configurationsFuture{}
+	configReq.init()
+	leader.configurationsCh <- configReq
 	if err := configReq.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -1409,7 +1511,9 @@ func TestRaft_RemoveUnknownPeer(t *testing.T) {
 
 	// Get the leader
 	leader := c.Leader()
-	configReq := leader.getConfigurations()
+	configReq := &configurationsFuture{}
+	configReq.init()
+	leader.configurationsCh <- configReq
 	if err := configReq.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -1423,7 +1527,9 @@ func TestRaft_RemoveUnknownPeer(t *testing.T) {
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] RemoveServer() err: %v", err)
 	}
-	configReq = leader.getConfigurations()
+	configReq = &configurationsFuture{}
+	configReq.init()
+	leader.configurationsCh <- configReq
 	if err := configReq.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -1791,11 +1897,11 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 
 	// Other nodes should have fewer peers.
 	time.Sleep(c.propagateTimeout)
-	if configuration, _, err := leader.GetConfiguration(); err != nil || len(configuration.Servers) != 2 {
-		c.FailNowf("[ERR] too many peers: %v (err: %v)", configuration, err)
+	if configuration := c.getConfiguration(leader); len(configuration.Servers) != 2 {
+		c.FailNowf("[ERR] too many peers: %v", configuration)
 	}
-	if configuration, _, err := followers[1].GetConfiguration(); err != nil || len(configuration.Servers) != 2 {
-		c.FailNowf("[ERR] too many peers: %v (err: %v)", configuration, err)
+	if configuration := c.getConfiguration(followers[1]); len(configuration.Servers) != 2 {
+		c.FailNowf("[ERR] too many peers: %v", configuration)
 	}
 
 	// Get the leader. We can't use the normal stability checker here because
@@ -1825,11 +1931,11 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	// stability check here to make sure the cluster gets to a state where
 	// there's a solid leader.
 	leader = c.Leader()
-	if configuration, _, err := leader.GetConfiguration(); err != nil || len(configuration.Servers) != 3 {
-		c.FailNowf("[ERR] missing peers: %v (err: %v)", configuration, err)
+	if configuration := c.getConfiguration(leader); len(configuration.Servers) != 3 {
+		c.FailNowf("[ERR] missing peers: %v", configuration)
 	}
-	if configuration, _, err := followers[1].GetConfiguration(); err != nil || len(configuration.Servers) != 3 {
-		c.FailNowf("[ERR] missing peers: %v (err: %v)", configuration, err)
+	if configuration := c.getConfiguration(followers[1]); len(configuration.Servers) != 3 {
+		c.FailNowf("[ERR] missing peers: %v", configuration)
 	}
 
 	// Should be a follower now.

@@ -140,7 +140,13 @@ func (r *Raft) takeSnapshot() error {
 	// Make a request for the configurations and extract the committed info.
 	// We have to use the future here to safely get this information since
 	// it is owned by the main thread.
-	configReq := r.getConfigurations()
+	configReq := &configurationsFuture{}
+	configReq.init()
+	select {
+	case r.configurationsCh <- configReq:
+	case <-r.shutdownCh:
+		return ErrRaftShutdown
+	}
 	if err := configReq.Error(); err != nil {
 		return err
 	}
