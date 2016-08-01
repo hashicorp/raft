@@ -222,11 +222,6 @@ func (r *Raft) runCandidate() {
 				r.computeCandidateProgress()
 			}
 
-			/*
-				r.logger.Printf("[DEBUG] raft: Vote granted from %s in term %v. Tally: %d",
-					vote.voterID, vote.Term, grantedVotes)
-			*/
-
 		case c := <-r.configurationChangeCh:
 			// Reject any operations since we are not the leader
 			c.respond(ErrNotLeader)
@@ -415,6 +410,7 @@ func (r *Raft) updatePeers() {
 	}
 }
 
+// shutdownPeers instructs all peers to exit immediately.
 func (r *Raft) shutdownPeers() {
 	control := peerControl{
 		term: r.getCurrentTerm(),
@@ -570,11 +566,14 @@ func (r *Raft) updateCommitIndex(oldCommitIndex, commitIndex uint64) {
 	r.updatePeers()
 }
 
-func (r *Raft) verified(verifiedCounter uint64) {
+// Responds to any verify futures that have been satisfied. A majority of the
+// voting servers in the cluster have acknowledged this server's leadership
+// since the given 'count'.
+func (r *Raft) verified(count uint64) {
 	i := 0
 	var batch verifyBatch
 	for _, batch = range r.leaderState.verifyBatches {
-		if batch.start > verifiedCounter {
+		if batch.start > count {
 			break
 		}
 		for _, f := range batch.futures {
@@ -583,7 +582,7 @@ func (r *Raft) verified(verifiedCounter uint64) {
 		i++
 	}
 	if i > 0 {
-		r.logger.Printf("[INFO] raft: Verified leadership through counter %v", verifiedCounter)
+		r.logger.Printf("[INFO] raft: Verified leadership through counter %v", count)
 		r.leaderState.verifyBatches = r.leaderState.verifyBatches[i:]
 	}
 }
@@ -710,20 +709,12 @@ func (r *Raft) checkLeaderLease() {
 	}
 	lastContactUnix := quorumGeq(lastContacts)
 	lastContact := time.Unix(int64(lastContactUnix/1e9), int64(lastContactUnix%1e9))
-	if lastContact.Add(r.conf.LeaderLeaseTimeout).Before(time.Now()) {
+	diff := time.Now().Sub(lastContact)
+	metrics.AddSample([]string{"raft", "leader", "lastContact"}, float32(diff/time.Millisecond))
+	if r.conf.LeaderLeaseTimeout < diff {
 		r.logger.Printf("[WARN] raft: Failed to contact quorum of nodes, stepping down")
 		r.stepDown()
 		metrics.IncrCounter([]string{"raft", "transition", "leader_lease_timeout"}, 1)
-		/*
-					// Log at least once at high value, then debug. Otherwise it gets very verbose.
-					if diff <= 3*r.conf.LeaderLeaseTimeout {
-						r.logger.Printf("[WARN] raft: Failed to contact %v in %v", peer, diff)
-					} else {
-						r.logger.Printf("[DEBUG] raft: Failed to contact %v in %v", peer, diff)
-					}
-				}
-			metrics.AddSample([]string{"raft", "leader", "lastContact"}, float32(diff/time.Millisecond))
-		*/
 	}
 }
 

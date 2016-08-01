@@ -11,6 +11,7 @@ import (
 	"github.com/armon/go-metrics"
 )
 
+// Settings controlling Peer behavior, as passed to startPeer().
 type peerOptions struct {
 	// Where to print debug messages, or nil for stderr.
 	logger *log.Logger
@@ -70,6 +71,7 @@ type peerShared struct {
 	// to process.
 	replyCh chan peerRPC
 
+	// Notified when the AppendEntries pipeline is ready to send further requests.
 	pipelineSendDoneCh chan struct{}
 
 	// stopCh is closed whenever helper goroutines should exit. In particular,
@@ -202,6 +204,8 @@ type peerState struct {
 	// When not pipelining, such RPCs are only sent when this 0.
 	outstandingAppendEntriesRPCs uint64
 
+	// Set to true when we're sending an AppedEntries request on the
+	// AppendEntries pipeline, then cleared when the pipeline is ready for more.
 	outstandingPipelineSend bool
 
 	// Counts the number of consecutive RPCs that have failed with transport-level
