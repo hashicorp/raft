@@ -792,7 +792,7 @@ func TestRaft_RecoverCluster_EmptyConfiguration(t *testing.T) {
 
 	// Run recovery with an empty configuration.
 	if err := RecoverCluster(&r.conf, &MockFSM{}, r.logs, r.stable,
-		r.snapshots, Configuration{}); err != nil {
+		r.snapshots, r.trans, Configuration{}); err != nil {
 		c.FailNowf("[ERR] recover err: %v", err)
 	}
 

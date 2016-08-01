@@ -209,40 +209,21 @@ func (r *Raft) runFollower() {
 // the Raft object's member BootstrapCluster for more details. This must only be
 // called on the main thread, and only makes sense in the follower state.
 func (r *Raft) liveBootstrap(configuration Configuration) error {
-	// Sanity check the Raft peer configuration.
-	if err := checkConfiguration(configuration); err != nil {
+	// Use the pre-init API to make the static updates.
+	err := BootstrapCluster(&r.conf, r.logs, r.stable, r.snapshots,
+		r.trans, configuration)
+	if err != nil {
 		return err
 	}
 
-	// Refuse to bootstrap if there's any existing state present.
-	hasState, err := HasExistingState(r.logs, r.stable, r.snapshots)
-	if err != nil {
-		return fmt.Errorf("failed to check for existing state: %v", err)
-	}
-	if hasState {
-		return ErrCantBootstrap
-	}
-
-	// Apply the configuration entry to the log.
-	entry := &Log{
-		Index: 1,
-		Term:  1,
-	}
-	if r.protocolVersion < 2 {
-		entry.Type = LogRemovePeerDeprecated
-		entry.Data = encodePeers(configuration, r.trans)
-	} else {
-		entry.Type = LogConfiguration
-		entry.Data = encodeConfiguration(configuration)
-	}
-	if err := r.logs.StoreLog(entry); err != nil {
-		return fmt.Errorf("failed to append configuration entry to log: %v", err)
-	}
-
 	// Make the configuration live.
+	var entry Log
+	if err := r.logs.GetLog(1, &entry); err != nil {
+		panic(err)
+	}
 	r.setCurrentTerm(1)
 	r.setLastLog(entry.Index, entry.Term)
-	r.processConfigurationLogEntry(entry)
+	r.processConfigurationLogEntry(&entry)
 	return nil
 }
 

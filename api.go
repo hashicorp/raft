@@ -136,8 +136,8 @@ type Raft struct {
 	// outside of the main thread.
 	configurationsCh chan *configurationsFuture
 
-	// bootstrapCh is used to attempt an initial bootstrap safely from
-	// outside of the main thread.
+	// bootstrapCh is used to attempt an initial bootstrap from outside of
+	// the main thread.
 	bootstrapCh chan *bootstrapFuture
 
 	// List of observers and the mutex that protects them. The observers list
