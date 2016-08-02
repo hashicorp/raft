@@ -14,13 +14,21 @@ import (
 // Settings controlling Peer behavior, as passed to startPeer().
 type peerOptions struct {
 	// No more than this many entries will be sent in one AppendEntries request.
-	maxAppendEntries int
+	maxAppendEntries uint64
+
+	// The number of pipelined AppendEntries RPCs that are permitted in flight at
+	// any given time. This is used as a safety cap to avoid spamming the peer as
+	// fast as possible.
+	maxPipelineWindow uint64
+
 	// As leader, heartbeats will be sent to the peer this often durng periods of
 	// inactivity.
 	heartbeatInterval time.Duration
+
 	// Minimum time to wait after a transport error before sending bulk RPCs.
 	// This is scaled exponentially up to maxFailureWait upon repeated errors.
 	failureWait time.Duration
+
 	// Maximum amount to wait after many transport errors before retrying.
 	maxFailureWait time.Duration
 }
@@ -179,6 +187,7 @@ type peerLeaderState struct {
 	// Counts the number of non-heartbeat AppendEntries and InstallSnapshot RPCs
 	// that have been sent but have not completed (in either error or response)
 	// during control.term. When not pipelining, this is capped at 1.
+	// When pipelining, this is capped at peerOptions.maxPipelineWindow.
 	outstandingAppendEntriesRPCs uint64
 
 	// allowPipeline is true when AppendEntries RPCs should be sent over a
@@ -280,6 +289,9 @@ func makePeerInternal(serverID ServerID,
 	}
 	if options.maxFailureWait == 0 {
 		options.maxFailureWait = 100 * time.Millisecond
+	}
+	if options.maxPipelineWindow == 0 {
+		options.maxPipelineWindow = 32
 	}
 
 	p := &peerState{
@@ -592,7 +604,8 @@ func (p *peerState) issueWork() (didSomething bool) {
 					return true
 				}
 				if p.leader.outstandingAppendEntriesRPCs == 0 ||
-					(p.leader.allowPipeline && !p.leader.outstandingPipelineSend) {
+					(p.leader.allowPipeline && !p.leader.outstandingPipelineSend &&
+						p.leader.outstandingAppendEntriesRPCs < p.shared.options.maxPipelineWindow) {
 					p.shared.logger.Printf("[INFO] raft: Starting AppendEntries RPC for %v",
 						p.shared.peerID)
 					p.start(makeAppendEntriesRPC)
