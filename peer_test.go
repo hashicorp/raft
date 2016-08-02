@@ -180,10 +180,10 @@ func serveReplies(tp *TestingPeer, replies []cannedReply) Future {
 			}
 			errReply, ok := reply.reply.(error)
 			if ok {
-				tp.peer.shared.logger.Printf("Relpying to %T with error", rpc.Command)
+				tp.peer.shared.logger.Printf("Replying to %T with error", rpc.Command)
 				rpc.Respond(nil, errReply)
 			} else {
-				tp.peer.shared.logger.Printf("Relpying to %T", rpc.Command)
+				tp.peer.shared.logger.Printf("Replying to %T", rpc.Command)
 				rpc.Respond(reply.reply, nil)
 			}
 			f.respond(nil)
@@ -208,7 +208,11 @@ func oneRPC(tp *TestingPeer, expReq interface{}, reply interface{},
 		return peerProgress{}, err
 	}
 	if maskProgress(progress) != expProgress {
-		return peerProgress{}, fmt.Errorf("Unexpected progress:\ngot      %+v,\nexpected %+v", progress, expProgress)
+		return peerProgress{}, fmt.Errorf("Unexpected progress:\n"+
+			"got      %+v\n"+
+			"masked   %+v\n"+
+			"expected %+v",
+			progress, maskProgress(progress), expProgress)
 	}
 	if err := checkProgressTimes(progress); err != nil {
 		return peerProgress{}, err

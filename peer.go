@@ -72,7 +72,9 @@ type peerShared struct {
 	replyCh chan peerRPC
 
 	// Notified when the AppendEntries pipeline is ready to send further requests.
-	pipelineSendDoneCh chan struct{}
+	// The term of the AppendEntries RPC is sent over the channel, used to clear
+	// peerState.leader.outstandingPipelineSend if the term is current.
+	pipelineSendDoneCh chan uint64
 
 	// stopCh is closed whenever helper goroutines should exit. In particular,
 	// they should never block on sending to requestCh/replyCh exclusively; they
@@ -146,6 +148,51 @@ type peerProgress struct {
 	verifiedCounter uint64
 }
 
+// Private state to the peer that is used while this server is a Candidate.
+type peerCandidateState struct {
+	// If true, a RequestVote RPC is in progress to this Peer during control.term.
+	outstandingRequestVote bool
+
+	// If true, a RequestVote reply has already been received from this Peer
+	// during control.term, and there's no reason to request a vote again.
+	voteReplied bool
+}
+
+// Private state to the peer that is used while this server is a Leader.
+type peerLeaderState struct {
+	// The last time a heartbeat has been sent to this Peer during control.term.
+	// This will send another heartbeat after
+	// lastHeartbeatSent + heartbeatInterval.
+	lastHeartbeatSent time.Time
+
+	// The index of the next log entry to send to the peer, which may fall one
+	// entry past the end of the log.
+	nextIndex uint64
+
+	// If true, the peer needs a snapshot because this server has already
+	// discarded the log entries it would otherwise send in AppendEntries.
+	needsSnapshot bool
+
+	// Set to true while an InstallSnapshot RPC is in progress during
+	// control.term. This prevents further InstallSnapshot and bulk AppendEntries
+	// RPCs from starting.
+	outstandingInstallSnapshotRPC bool
+
+	// Counts the number of non-heartbeat AppendEntries and InstallSnapshot RPCs
+	// that have been sent but have not completed (in either error or response)
+	// during control.term. When not pipelining, this is capped at 1.
+	outstandingAppendEntriesRPCs uint64
+
+	// allowPipeline is true when AppendEntries RPCs should be sent over a
+	// pipeline (a separate path through the Transport), false otherwise.
+	allowPipeline bool
+
+	// Set to true when we're an AppendEntries request is being sent on the
+	// AppendEntries pipeline during control.term, then cleared when the pipeline
+	// is ready for more.
+	outstandingPipelineSend bool
+}
+
 // The main type of a Peer (peer clashes too much), which is in charge of all
 // communication with a single remote server. Peers can span many terms and are
 // normally kept until the remote server is removed from the cluster or the
@@ -174,46 +221,18 @@ type peerState struct {
 	// 'progress', and these will be sent at the first availble opportunity.
 	sendProgress bool
 
-	// If true, a vote has already been requested from this Peer during
-	// control.term.
-	sentRequestVote bool
+	// State used when control.role is Candidate, nil otherwise.
+	candidate *peerCandidateState
 
-	// The last time a heartbeat has been sent to this Peer during control.term.
-	// As leader, this will send another heartbeat after
-	// lastHeartbeatSent + heartbeatInterval.
-	lastHeartbeatSent time.Time
-
-	// As leader, nextIndex is the index of the next log entry to send to the
-	// peer, which may fall one entry past the end of the log.
-	nextIndex uint64
-
-	// allowPipeline is true when AppendEntries RPCs should be sent over a
-	// pipeline (a separate path through the Transport), false otherwise.
-	allowPipeline bool
-
-	// If true, the peer needs a snapshot because this server has already
-	// discarded the log entries it would otherwise send in AppendEntries.
-	needsSnapshot bool
-
-	// Set to true while an InstallSnapshot RPC is in progress. This prevents
-	// further InstallSnapshot and bulk AppendEntries RPCs from starting.
-	outstandingInstallSnapshotRPC bool
-
-	// Counts the number of non-heartbeat AppendEntries and InstallSnapshot RPCs
-	// that have been sent but have not completed (in either error or response).
-	// When not pipelining, such RPCs are only sent when this 0.
-	outstandingAppendEntriesRPCs uint64
-
-	// Set to true when we're sending an AppedEntries request on the
-	// AppendEntries pipeline, then cleared when the pipeline is ready for more.
-	outstandingPipelineSend bool
+	// State used when control.role is Leader, nil otherwise.
+	leader *peerLeaderState
 
 	// Counts the number of consecutive RPCs that have failed with transport-level
 	// errors since the last success. Used to apply increasing amounts of backoff.
 	failures uint64
 
-	// If failures is nonzero, bulk RPCs (AppendEntries/InstallSnapshot) are not
-	// sent until this timer elapses.
+	// If failures is nonzero, RequestVote, bulk (non-heartbet) AppendEntries, and
+	// InstallSnapshot are not sent until this timer elapses.
 	backoffTimer *time.Timer
 }
 
@@ -274,7 +293,7 @@ func makePeerInternal(serverID ServerID,
 			goRoutines:         goRoutines,
 			requestCh:          make(chan peerRPC),
 			replyCh:            make(chan peerRPC),
-			pipelineSendDoneCh: make(chan struct{}),
+			pipelineSendDoneCh: make(chan uint64),
 			stopCh:             make(chan struct{}),
 		},
 		controlCh:  controlCh,
@@ -308,11 +327,25 @@ func (p *peerState) checkInvariants() error {
 		p.progress.lastContact == p.progress.lastReply && !p.progress.lastContact.IsZero() {
 		return fmt.Errorf("lastContact must be after lastReply (or both 0)")
 	}
-	if p.nextIndex > p.control.lastIndex+1 {
-		return fmt.Errorf("nextIndex must not be more than 1 entry past the lastIndex")
-	}
-	if p.outstandingInstallSnapshotRPC && p.outstandingAppendEntriesRPCs > 0 {
-		return fmt.Errorf("must not send a snapshot and entries simultaneously")
+	switch p.control.role {
+	case Candidate:
+		if p.candidate == nil || p.leader != nil {
+			return fmt.Errorf("should have candidate and not leader state while candidate")
+		}
+	case Leader:
+		if p.candidate != nil || p.leader == nil {
+			return fmt.Errorf("should have leader and not candidate state while leader")
+		}
+		if p.leader.nextIndex > p.control.lastIndex+1 {
+			return fmt.Errorf("nextIndex must not be more than 1 entry past the lastIndex")
+		}
+		if p.leader.outstandingInstallSnapshotRPC && p.leader.outstandingAppendEntriesRPCs > 0 {
+			return fmt.Errorf("must not send a snapshot and entries simultaneously")
+		}
+	default:
+		if p.candidate != nil || p.leader != nil {
+			return fmt.Errorf("should have no leader or candidate state while %v", p.control.role)
+		}
 	}
 	return nil
 }
@@ -357,8 +390,10 @@ func (p *peerState) drainNonblocking() {
 			p.send(request)
 		case rpc := <-p.shared.replyCh:
 			p.processReply(rpc)
-		case <-p.shared.pipelineSendDoneCh:
-			p.outstandingPipelineSend = false
+		case term := <-p.shared.pipelineSendDoneCh:
+			if p.control.term == term && p.leader != nil {
+				p.leader.outstandingPipelineSend = false
+			}
 		case <-p.backoffTimer.C:
 			p.failures = 0
 		default:
@@ -373,7 +408,7 @@ func (p *peerState) blockingSelect() {
 	if p.control.role == Leader {
 		// We need to send a heartbeat at lastHeartbeatSent + heartbeatInterval.
 		heartbeatTimer = time.After(p.shared.options.heartbeatInterval -
-			time.Since(p.lastHeartbeatSent))
+			time.Since(p.leader.lastHeartbeatSent))
 	}
 
 	// These cases should be exactly the same as those in drainNonblocking,
@@ -387,8 +422,10 @@ func (p *peerState) blockingSelect() {
 		p.send(request)
 	case rpc := <-p.shared.replyCh:
 		p.processReply(rpc)
-	case <-p.shared.pipelineSendDoneCh:
-		p.outstandingPipelineSend = false
+	case term := <-p.shared.pipelineSendDoneCh:
+		if p.control.term == term && p.leader != nil {
+			p.leader.outstandingPipelineSend = false
+		}
 	case <-p.backoffTimer.C:
 		p.failures = 0
 	case <-heartbeatTimer:
@@ -398,15 +435,34 @@ func (p *peerState) blockingSelect() {
 
 // updateControl sets p.control and resets some other affected state.
 func (p *peerState) updateControl(latest peerControl) {
+	// Handle term changes.
 	if p.control.term < latest.term {
-		p.sentRequestVote = false
-		p.lastHeartbeatSent = time.Time{}
-		p.disablePipeline()
+		p.candidate = nil
+		p.leader = nil
 	}
-	if latest.role == Leader &&
-		(p.control.role != Leader || p.control.term < latest.term) {
-		p.nextIndex = latest.lastIndex + 1
+
+	// Update candidate fields on term/role changes.
+	if latest.role == Candidate {
+		if p.candidate == nil {
+			p.candidate = &peerCandidateState{}
+		}
+	} else {
+		p.candidate = nil
 	}
+
+	// Update leader fields on term/role changes.
+	if latest.role == Leader {
+		if p.leader == nil {
+			p.leader = &peerLeaderState{
+				lastHeartbeatSent: time.Time{},
+				nextIndex:         latest.lastIndex + 1,
+				allowPipeline:     false,
+			}
+		}
+	} else {
+		p.leader = nil
+	}
+
 	p.control = latest
 }
 
@@ -503,28 +559,35 @@ func (p *peerState) issueWork() (didSomething bool) {
 
 	case Candidate:
 		// Send a RequestVote RPC.
-		if !p.sentRequestVote && p.failures == 0 {
+		if !p.candidate.outstandingRequestVote && !p.candidate.voteReplied && p.failures == 0 {
+			p.shared.logger.Printf("[INFO] raft: Starting RequestVote RPC for %v",
+				p.shared.peerID)
 			p.start(makeRequestVoteRPC)
 			return true
 		}
 
 	case Leader:
 		// Send a heartbeat (empty AppendEntries) RPC.
-		if time.Now().After(p.lastHeartbeatSent.Add(p.shared.options.heartbeatInterval)) {
+		if time.Now().After(p.leader.lastHeartbeatSent.Add(p.shared.options.heartbeatInterval)) {
+			p.shared.logger.Printf("[INFO] raft: Starting heartbeat RPC for %v",
+				p.shared.peerID)
 			p.start(makeHeartbeatRPC)
 			return true
 		}
 
 		// Send an AppendEntries/InstallSnapshot RPC.
-		if p.nextIndex < p.control.lastIndex+1 && p.failures == 0 {
-			if p.needsSnapshot {
-				if !p.outstandingInstallSnapshotRPC {
+		if p.leader.nextIndex < p.control.lastIndex+1 && p.failures == 0 {
+			if !p.leader.outstandingInstallSnapshotRPC {
+				if p.leader.needsSnapshot {
+					p.shared.logger.Printf("[INFO] raft: Starting InstallSnapshot RPC for %v",
+						p.shared.peerID)
 					p.start(makeInstallSnapshotRPC)
 					return true
 				}
-			} else {
-				if p.outstandingAppendEntriesRPCs == 0 ||
-					(p.allowPipeline && !p.outstandingPipelineSend) {
+				if p.leader.outstandingAppendEntriesRPCs == 0 ||
+					(p.leader.allowPipeline && !p.leader.outstandingPipelineSend) {
+					p.shared.logger.Printf("[INFO] raft: Starting AppendEntries RPC for %v",
+						p.shared.peerID)
 					p.start(makeAppendEntriesRPC)
 					return true
 				}
@@ -533,22 +596,6 @@ func (p *peerState) issueWork() (didSomething bool) {
 	}
 
 	return false
-}
-
-func (p *peerState) enablePipeline() {
-	if !p.allowPipeline {
-		p.allowPipeline = true
-		p.shared.logger.Printf("[INFO] raft: Enabling pipelining replication to peer %v",
-			p.shared.peerID)
-	}
-}
-
-func (p *peerState) disablePipeline() {
-	if p.allowPipeline {
-		p.allowPipeline = false
-		p.shared.logger.Printf("[INFO] raft: Disabling pipeline replication to peer %v",
-			p.shared.peerID)
-	}
 }
 
 // updateTerm clears out some progress fields when its term changes.
@@ -654,7 +701,7 @@ type requestVoteRPC struct {
 }
 
 func makeRequestVoteRPC(p *peerState) peerRPC {
-	p.sentRequestVote = true
+	p.candidate.outstandingRequestVote = true
 	return &requestVoteRPC{
 		start: time.Now(),
 		req: RequestVoteRequest{
@@ -696,12 +743,24 @@ func (rpc *requestVoteRPC) sendRecv(shared *peerShared) error {
 }
 
 func (rpc *requestVoteRPC) process(p *peerState, err error) {
+	// Update bookkeeping on outstanding RPCs.
+	if p.control.term == rpc.req.Term && p.control.role == Candidate {
+		p.candidate.outstandingRequestVote = false
+	}
+
+	// Handle errors during confirm/sendRecv.
 	if err != nil {
 		p.shared.logger.Printf("[ERR] raft: RequestVote to %v error: %v",
 			p.shared.peerID, err)
 		return
 	}
+
+	// Update progress and candidate state based on response.
 	updateTerm(&p.progress, rpc.resp.Term)
+	if p.control.term != rpc.req.Term || p.control.role != Candidate {
+		return // term or role changed locally
+	}
+	p.candidate.voteReplied = true
 	if rpc.req.Term == rpc.resp.Term {
 		if rpc.resp.Granted {
 			p.progress.voteGranted = true
@@ -730,14 +789,16 @@ type appendEntriesRPC struct {
 	resp          *AppendEntriesResponse
 	heartbeat     bool
 	pipeline      bool
-	needsSnapshot bool
-	stopPipeline  bool
 	verifyCounter uint64
 }
 
+// Returned from prepare() and checked in process() to set
+// peer.leader.needsSnapshot.
+var errNeedsSnapshot = errors.New("Need to send snapshot")
+
 func makeHeartbeatRPC(p *peerState) peerRPC {
 	start := time.Now()
-	p.lastHeartbeatSent = start
+	p.leader.lastHeartbeatSent = start
 	return &appendEntriesRPC{
 		start: start,
 		req: &AppendEntriesRequest{
@@ -754,22 +815,22 @@ func makeHeartbeatRPC(p *peerState) peerRPC {
 }
 
 func makeAppendEntriesRPC(p *peerState) peerRPC {
-	p.outstandingAppendEntriesRPCs++
-	if p.allowPipeline {
-		p.outstandingPipelineSend = true
+	p.leader.outstandingAppendEntriesRPCs++
+	if p.leader.allowPipeline {
+		p.leader.outstandingPipelineSend = true
 	}
 	return &appendEntriesRPC{
 		start: time.Now(),
 		req: &AppendEntriesRequest{
 			Term:              p.control.term,
 			Leader:            p.shared.trans.EncodePeer(p.shared.localAddr),
-			PrevLogEntry:      p.nextIndex - 1,
+			PrevLogEntry:      p.leader.nextIndex - 1,
 			PrevLogTerm:       0, // to be filled in during Prepare
 			LeaderCommitIndex: p.control.commitIndex,
 		},
 		resp:          &AppendEntriesResponse{},
 		heartbeat:     false,
-		pipeline:      p.allowPipeline,
+		pipeline:      p.leader.allowPipeline,
 		verifyCounter: p.control.verifyCounter,
 	}
 }
@@ -819,19 +880,18 @@ func (rpc *appendEntriesRPC) prepare(shared *peerShared, control peerControl) er
 			case meta.Index < index:
 				return 0, err
 			case meta.Index > index:
-				rpc.needsSnapshot = true
-				return 0, nil
+				return 0, errNeedsSnapshot
 			}
 		}
 		return 0, err
 	}
 	term, err := getTerm(rpc.req.PrevLogEntry)
 	if err != nil {
-		shared.logger.Printf("[ERR] raft: Failed to get log term for %d: %v", rpc.req.PrevLogEntry, err)
+		if err != errNeedsSnapshot {
+			shared.logger.Printf("[ERR] raft: Failed to get log term for %d: %v",
+				rpc.req.PrevLogEntry, err)
+		}
 		return err
-	}
-	if rpc.needsSnapshot {
-		return nil
 	}
 	rpc.req.PrevLogTerm = term
 
@@ -843,8 +903,7 @@ func (rpc *appendEntriesRPC) prepare(shared *peerShared, control peerControl) er
 		var entry Log
 		err := shared.logs.GetLog(i, &entry)
 		if err == ErrLogNotFound {
-			rpc.needsSnapshot = true
-			return nil
+			return errNeedsSnapshot
 		}
 		if err != nil {
 			shared.logger.Printf("[ERR] raft: Failed to get log entry %d: %v", i, err)
@@ -856,11 +915,6 @@ func (rpc *appendEntriesRPC) prepare(shared *peerShared, control peerControl) er
 }
 
 func (rpc *appendEntriesRPC) confirm(p *peerState) error {
-	if rpc.needsSnapshot {
-		p.needsSnapshot = true
-		p.disablePipeline()
-		return fmt.Errorf("need to send snapshot")
-	}
 	if rpc.req.Term != p.control.term {
 		return fmt.Errorf("term changed, discarding AppendEntries request")
 	}
@@ -868,17 +922,13 @@ func (rpc *appendEntriesRPC) confirm(p *peerState) error {
 		return fmt.Errorf("no longer leader, discarding AppendEntries request")
 	}
 	if rpc.pipeline {
-		p.nextIndex = rpc.req.PrevLogEntry + uint64(len(rpc.req.Entries))
+		p.leader.nextIndex = rpc.req.PrevLogEntry + uint64(len(rpc.req.Entries))
 	}
 	return nil
 }
 
 func (rpc *appendEntriesRPC) sendRecv(shared *peerShared) error {
 	numEntries := uint64(len(rpc.req.Entries))
-	defer func() {
-		metrics.MeasureSince([]string{"raft", "replication", "appendEntries", "rpc", string(shared.peerID)}, rpc.start)
-		metrics.IncrCounter([]string{"raft", "replication", "appendEntries", "logs", string(shared.peerID)}, float32(numEntries))
-	}()
 	var desc string
 	switch {
 	case rpc.heartbeat:
@@ -896,7 +946,7 @@ func (rpc *appendEntriesRPC) sendRecv(shared *peerShared) error {
 		shared.logger.Printf("[INFO] raft: Sending pipelined %v to %v", desc, shared.peerID)
 		future, err := shared.pipeline.AppendEntries(rpc.req, rpc.resp)
 		select {
-		case shared.pipelineSendDoneCh <- struct{}{}:
+		case shared.pipelineSendDoneCh <- rpc.req.Term:
 		case <-shared.stopCh:
 		}
 		if err == nil {
@@ -905,7 +955,6 @@ func (rpc *appendEntriesRPC) sendRecv(shared *peerShared) error {
 		if err != nil {
 			shared.logger.Printf("[ERR] raft: Failed to pipeline AppendEntries to %v: %v",
 				shared.peerID, err)
-			rpc.stopPipeline = true
 			return err
 		}
 	} else {
@@ -917,65 +966,87 @@ func (rpc *appendEntriesRPC) sendRecv(shared *peerShared) error {
 			return err
 		}
 	}
+	metrics.MeasureSince([]string{"raft", "replication", "appendEntries", "rpc", string(shared.peerID)}, rpc.start)
+	metrics.IncrCounter([]string{"raft", "replication", "appendEntries", "logs", string(shared.peerID)}, float32(numEntries))
 	return nil
 }
 
 func (rpc *appendEntriesRPC) process(p *peerState, err error) {
-	defer func() {
+	// Update bookkeeping on outstanding RPCs.
+	if p.control.term == rpc.req.Term && p.control.role == Leader {
 		if !rpc.heartbeat {
-			p.outstandingAppendEntriesRPCs--
+			p.leader.outstandingAppendEntriesRPCs--
 		}
-		if rpc.stopPipeline {
-			p.disablePipeline()
+	}
+
+	// Handle errors during confirm and sendRecv.
+	if err == errNeedsSnapshot {
+		if p.control.term == rpc.req.Term && p.control.role == Leader {
+			p.leader.needsSnapshot = true
 		}
-	}()
+		return
+	}
 	if err != nil {
 		p.shared.logger.Printf("[ERR] raft: AppendEntries to %v error: %v",
 			p.shared.peerID, err)
-		p.disablePipeline()
+		if p.control.term == rpc.req.Term && p.control.role == Leader {
+			if p.leader.allowPipeline {
+				p.leader.allowPipeline = false
+				p.shared.logger.Printf("[INFO] raft: Disabling pipeline replication to peer %v",
+					p.shared.peerID)
+			}
+		}
 		return
 	}
+
+	// Update progress and leader state based on response.
 	updateTerm(&p.progress, rpc.resp.Term)
-	if rpc.resp.Term != rpc.req.Term {
-		return
+	if p.control.term != rpc.req.Term || p.control.role != Leader {
+		return // term or role changed locally
 	}
-	if rpc.resp.Success {
+	if rpc.resp.Term == rpc.req.Term && rpc.resp.Success {
 		lastIndex := rpc.req.PrevLogEntry + uint64(len(rpc.req.Entries))
 		if p.progress.matchIndex < lastIndex {
 			p.progress.matchIndex = lastIndex
 		}
-		if p.nextIndex < lastIndex+1 && lastIndex <= p.control.lastIndex {
-			p.nextIndex = lastIndex + 1
+		if p.leader.nextIndex < lastIndex+1 && lastIndex <= p.control.lastIndex {
+			p.leader.nextIndex = lastIndex + 1
 		}
-		p.enablePipeline()
 		p.shared.logger.Printf("[INFO] raft: AppendEntries to %v succeeded. nextIndex is now %v",
-			p.shared.peerID, p.nextIndex)
+			p.shared.peerID, p.leader.nextIndex)
+		if !p.leader.allowPipeline {
+			p.leader.allowPipeline = true
+			p.shared.logger.Printf("[INFO] raft: Enabling pipelining replication to peer %v",
+				p.shared.peerID)
+		}
 	} else {
 		if rpc.req.PrevLogEntry > 0 {
-			if p.nextIndex > rpc.req.PrevLogEntry {
-				p.nextIndex = rpc.req.PrevLogEntry
+			if p.leader.nextIndex > rpc.req.PrevLogEntry {
+				p.leader.nextIndex = rpc.req.PrevLogEntry
 			}
-			if p.nextIndex > rpc.resp.LastLog+1 {
-				p.nextIndex = rpc.resp.LastLog + 1
+			if p.leader.nextIndex > rpc.resp.LastLog+1 {
+				p.leader.nextIndex = rpc.resp.LastLog + 1
 			}
-			if p.nextIndex > p.control.lastIndex+1 {
-				p.nextIndex = p.control.lastIndex + 1
+			if p.leader.nextIndex > p.control.lastIndex+1 {
+				p.leader.nextIndex = p.control.lastIndex + 1
 			}
 			if !rpc.heartbeat {
 				p.shared.logger.Printf("[WARN] raft: AppendEntries to %v rejected, sending older log entries (next: %d)",
-					p.shared.peerID, p.nextIndex)
+					p.shared.peerID, p.leader.nextIndex)
 			}
 		} else {
 			p.shared.logger.Printf("[ERR] raft: AppendEntries to %v rejected but had sent entry 1",
 				p.shared.peerID)
-			p.nextIndex = 1
+			p.leader.nextIndex = 1
 		}
-		if !rpc.heartbeat {
-			p.disablePipeline()
+		if !rpc.heartbeat && p.leader.allowPipeline {
+			p.leader.allowPipeline = false
+			p.shared.logger.Printf("[INFO] raft: Disabling pipeline replication to peer %v",
+				p.shared.peerID)
 		}
 	}
-	if rpc.start.After(p.lastHeartbeatSent) {
-		p.lastHeartbeatSent = rpc.start
+	if rpc.start.After(p.leader.lastHeartbeatSent) {
+		p.leader.lastHeartbeatSent = rpc.start
 	}
 	if p.progress.verifiedCounter < rpc.verifyCounter {
 		p.progress.verifiedCounter = rpc.verifyCounter
@@ -993,7 +1064,8 @@ type installSnapshotRPC struct {
 }
 
 func makeInstallSnapshotRPC(p *peerState) peerRPC {
-	p.outstandingInstallSnapshotRPC = true
+	p.leader.outstandingInstallSnapshotRPC = true
+	p.leader.needsSnapshot = false
 	rpc := &installSnapshotRPC{
 		start: time.Now(),
 	}
@@ -1054,41 +1126,48 @@ func (rpc *installSnapshotRPC) confirm(p *peerState) error {
 }
 
 func (rpc *installSnapshotRPC) sendRecv(shared *peerShared) error {
-	defer rpc.snapshot.Close()
 	shared.logger.Printf("[INFO] raft: Sending InstallSnapshot (term %v, last index %v) to %v",
 		rpc.req.Term, rpc.req.LastLogIndex, shared.peerID)
 	err := shared.trans.InstallSnapshot(shared.peerAddr, &rpc.req, &rpc.resp, rpc.snapshot)
 	if err != nil {
 		shared.logger.Printf("[ERR] raft: Failed to install snapshot %v: %v", rpc.snapID, err)
 	}
+	metrics.MeasureSince([]string{"raft", "replication", "installSnapshot", string(shared.peerID)}, rpc.start)
 	return err
 }
 
 func (rpc *installSnapshotRPC) process(p *peerState, err error) {
+	// Release rpc.snapshot resources.
 	if rpc.snapshot != nil {
-		defer rpc.snapshot.Close()
+		rpc.snapshot.Close()
 	}
-	p.outstandingInstallSnapshotRPC = false
-	p.needsSnapshot = false
+
+	// Update bookkeeping on outstanding RPCs.
+	if p.control.term == rpc.req.Term && p.control.role == Leader {
+		p.leader.outstandingInstallSnapshotRPC = false
+	}
+
+	// Handle errors during confirm/sendRecv.
 	if err != nil {
 		p.shared.logger.Printf("[ERR] raft: InstallSnapshot to %v error: %v",
 			p.shared.peerID, err)
 		return
 	}
-	metrics.MeasureSince([]string{"raft", "replication", "installSnapshot", string(p.shared.peerID)}, rpc.start)
+
+	// Update progress and leader state based on response.
 	updateTerm(&p.progress, rpc.resp.Term)
-	if rpc.resp.Term != rpc.req.Term {
-		return
+	if p.control.term != rpc.req.Term || p.control.role != Leader {
+		return // term or role changed locally
 	}
 	if rpc.resp.Success {
 		p.progress.matchIndex = rpc.req.LastLogIndex
-		p.nextIndex = rpc.req.LastLogIndex + 1
+		p.leader.nextIndex = rpc.req.LastLogIndex + 1
 		p.shared.logger.Printf("[INFO] raft: InstallSnapshot to %v succeeded. nextIndex is now %v",
-			p.shared.peerID, p.nextIndex)
+			p.shared.peerID, p.leader.nextIndex)
 	} else {
 		p.shared.logger.Printf("[WARN] raft: InstallSnapshot to %v rejected", p.shared.peerID)
 	}
-	if rpc.start.After(p.lastHeartbeatSent) {
-		p.lastHeartbeatSent = rpc.start
+	if rpc.start.After(p.leader.lastHeartbeatSent) {
+		p.leader.lastHeartbeatSent = rpc.start
 	}
 }
