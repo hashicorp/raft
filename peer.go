@@ -13,8 +13,6 @@ import (
 
 // Settings controlling Peer behavior, as passed to startPeer().
 type peerOptions struct {
-	// Where to print debug messages, or nil for stderr.
-	logger *log.Logger
 	// No more than this many entries will be sent in one AppendEntries request.
 	maxAppendEntries int
 	// As leader, heartbeats will be sent to the peer this often durng periods of
@@ -32,7 +30,7 @@ type peerShared struct {
 	// Policy settings (constant).
 	options peerOptions
 
-	// Where to print debug messages, or nil for stderr.
+	// Where to print debug messages.
 	logger *log.Logger
 
 	// Used to spawn goroutines so others can wait on their exit.
@@ -236,9 +234,10 @@ type peerState struct {
 	backoffTimer *time.Timer
 }
 
-// startPeer is the normal way for
+// startPeer is the normal way for peers to be created.
 func startPeer(serverID ServerID,
 	serverAddress ServerAddress,
+	logger *log.Logger,
 	logs LogStore,
 	snapshots SnapshotStore,
 	goRoutines *waitGroup,
@@ -247,14 +246,16 @@ func startPeer(serverID ServerID,
 	progressCh chan<- peerProgress,
 	options peerOptions) chan<- peerControl {
 	controlCh := make(chan peerControl)
-	p := makePeerInternal(serverID, serverAddress, logs, snapshots,
+	p := makePeerInternal(serverID, serverAddress, logger, logs, snapshots,
 		goRoutines, trans, localAddr, controlCh, progressCh, options)
 	p.shared.goRoutines.spawn(p.selectLoop)
 	return controlCh
 }
 
+// makePeerInternal is used for unit tests. Everyone else should use startPeer.
 func makePeerInternal(serverID ServerID,
 	serverAddress ServerAddress,
+	logger *log.Logger,
 	logs LogStore,
 	snapshots SnapshotStore,
 	goRoutines *waitGroup,
@@ -264,8 +265,8 @@ func makePeerInternal(serverID ServerID,
 	progressCh chan<- peerProgress,
 	options peerOptions) *peerState {
 
-	if options.logger == nil {
-		options.logger = log.New(os.Stderr, "", log.LstdFlags)
+	if logger == nil {
+		logger = log.New(os.Stderr, "", log.LstdFlags)
 	}
 	if options.maxAppendEntries == 0 {
 		options.maxAppendEntries = 1000
@@ -287,7 +288,7 @@ func makePeerInternal(serverID ServerID,
 			peerAddr:           serverAddress,
 			trans:              trans,
 			localAddr:          localAddr,
-			logger:             options.logger,
+			logger:             logger,
 			logs:               logs,
 			snapshots:          snapshots,
 			goRoutines:         goRoutines,

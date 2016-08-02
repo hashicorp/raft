@@ -362,9 +362,8 @@ func (r *Raft) updatePeers() {
 		inConfig[server.ID] = server
 		if _, ok := r.peers[server.ID]; !ok {
 			r.logger.Printf("[INFO] raft: Added peer %v, starting replication", server.ID)
-			controlCh := startPeer(server.ID, server.Address, r.logs, r.snapshots,
+			controlCh := startPeer(server.ID, server.Address, r.logger, r.logs, r.snapshots,
 				r.goRoutines, r.trans, r.localAddr, r.peerProgressCh, peerOptions{
-					logger:            r.logger,
 					maxAppendEntries:  r.conf.MaxAppendEntries,
 					heartbeatInterval: r.conf.HeartbeatTimeout / 5,
 				})

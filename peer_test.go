@@ -2,6 +2,7 @@ package raft
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ type TestingPeer struct {
 	peerTrans    *InmemTransport
 	localAddr    ServerAddress
 	localTrans   *InmemTransport
+	logger       *log.Logger
 	logs         LogStore
 	snapshots    SnapshotStore
 	goRoutines   *waitGroup
@@ -25,8 +27,8 @@ type TestingPeer struct {
 }
 
 func makePeerTesting(t *testing.T, tp *TestingPeer) *TestingPeer {
-	if tp.options.logger == nil {
-		tp.options.logger = newTestLogger(t)
+	if tp.logger == nil {
+		tp.logger = newTestLogger(t)
 	}
 
 	if tp.peerID == "" {
@@ -80,6 +82,7 @@ func makePeerTesting(t *testing.T, tp *TestingPeer) *TestingPeer {
 	tp.peer = makePeerInternal(
 		tp.peerID,
 		tp.peerAddr,
+		tp.logger,
 		tp.logs,
 		tp.snapshots,
 		tp.goRoutines,
