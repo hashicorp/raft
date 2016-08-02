@@ -183,6 +183,7 @@ type peerLeaderState struct {
 
 	// allowPipeline is true when AppendEntries RPCs should be sent over a
 	// pipeline (a separate path through the Transport), false otherwise.
+	// If allowPipeline is true, shared.pipeline must not be nil.
 	allowPipeline bool
 
 	// Set to true when we're an AppendEntries request is being sent on the
@@ -343,6 +344,9 @@ func (p *peerState) checkInvariants() error {
 		if p.leader.outstandingInstallSnapshotRPC && p.leader.outstandingAppendEntriesRPCs > 0 {
 			return fmt.Errorf("must not send a snapshot and entries simultaneously")
 		}
+		if p.leader.allowPipeline && p.shared.pipeline == nil {
+			return fmt.Errorf("allowPipeline may only be set if transport supports it")
+		}
 	default:
 		if p.candidate != nil || p.leader != nil {
 			return fmt.Errorf("should have no leader or candidate state while %v", p.control.role)
@@ -373,7 +377,9 @@ func (p *peerState) selectLoop() {
 
 	p.shared.logger.Printf("[INFO] raft: Peer routine for %v exiting", p.shared.peerID)
 	close(p.shared.stopCh)
-	p.shared.pipeline.Close()
+	if p.shared.pipeline != nil {
+		p.shared.pipeline.Close()
+	}
 }
 
 // drainNonblocking reads/writes the Peer channels as much as possible without
@@ -1015,7 +1021,7 @@ func (rpc *appendEntriesRPC) process(p *peerState, err error) {
 		}
 		p.shared.logger.Printf("[INFO] raft: AppendEntries to %v succeeded. nextIndex is now %v",
 			p.shared.peerID, p.leader.nextIndex)
-		if !p.leader.allowPipeline {
+		if !p.leader.allowPipeline && p.shared.pipeline != nil {
 			p.leader.allowPipeline = true
 			p.shared.logger.Printf("[INFO] raft: Enabling pipelining replication to peer %v",
 				p.shared.peerID)
