@@ -1097,22 +1097,14 @@ func (rpc *installSnapshotRPC) started() time.Time {
 }
 
 func (rpc *installSnapshotRPC) prepare(shared *peerShared, control peerControl) error {
-	// Get the snapshots
-	snapshots, err := shared.snapshots.List()
+	meta, err := getLastSnapshot(shared.snapshots)
 	if err != nil {
-		shared.logger.Printf("[ERR] raft: Failed to list snapshots: %v", err)
-		return err
-	}
-
-	// Check we have at least a single snapshot
-	if len(snapshots) == 0 {
-		err := errors.New("raft: Sending snapshot but no snapshots found")
-		shared.logger.Print(err)
+		shared.logger.Printf("[ERR] raft: Sending snapshot but couldn't get latest snapshot: %v", err)
 		return err
 	}
 
 	// Open the most recent snapshot
-	snapID := snapshots[0].ID
+	snapID := meta.ID
 	meta, snapshot, err := shared.snapshots.Open(snapID)
 	if err != nil {
 		shared.logger.Printf("[ERR] raft: Failed to open snapshot %v: %v", snapID, err)
