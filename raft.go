@@ -1008,16 +1008,18 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		metrics.MeasureSince([]string{"raft", "rpc", "appendEntries", "storeLogs"}, start)
 	}
 
-	// Update the commit index
-	if a.LeaderCommitIndex > 0 && a.LeaderCommitIndex > r.getCommitIndex() {
+	// Update the commit index (see comment in AppendEntriesRequest).
+	if cap := a.PrevLogEntry + uint64(len(a.Entries)); a.LeaderCommitIndex > cap {
+		a.LeaderCommitIndex = cap
+	}
+	if a.LeaderCommitIndex > r.getCommitIndex() {
 		start := time.Now()
-		idx := min(a.LeaderCommitIndex, r.getLastIndex())
-		r.setCommitIndex(idx)
-		if r.configurations.latestIndex <= idx {
+		r.setCommitIndex(a.LeaderCommitIndex)
+		if r.configurations.latestIndex <= a.LeaderCommitIndex {
 			r.configurations.committed = r.configurations.latest
 			r.configurations.committedIndex = r.configurations.latestIndex
 		}
-		r.processLogs(idx, nil)
+		r.processLogs(a.LeaderCommitIndex, nil)
 		metrics.MeasureSince([]string{"raft", "rpc", "appendEntries", "processLogs"}, start)
 	}
 

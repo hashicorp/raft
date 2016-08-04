@@ -826,7 +826,7 @@ func makeHeartbeatRPC(p *peerState) peerRPC {
 			Leader:            p.shared.trans.EncodePeer(p.shared.localAddr),
 			PrevLogEntry:      p.control.lastIndex,
 			PrevLogTerm:       p.control.lastTerm,
-			LeaderCommitIndex: p.control.commitIndex,
+			LeaderCommitIndex: min(p.control.commitIndex, p.control.lastIndex),
 		},
 		resp:          &AppendEntriesResponse{},
 		heartbeat:     true,
@@ -846,7 +846,7 @@ func makeAppendEntriesRPC(p *peerState) peerRPC {
 			Leader:            p.shared.trans.EncodePeer(p.shared.localAddr),
 			PrevLogEntry:      p.leader.nextIndex - 1,
 			PrevLogTerm:       0, // to be filled in during Prepare
-			LeaderCommitIndex: p.control.commitIndex,
+			LeaderCommitIndex: 0, // to be filled in during Prepare
 		},
 		resp:          &AppendEntriesResponse{},
 		heartbeat:     false,
@@ -931,6 +931,7 @@ func (rpc *appendEntriesRPC) prepare(shared *peerShared, control peerControl) er
 		}
 		rpc.req.Entries = append(rpc.req.Entries, &entry)
 	}
+	rpc.req.LeaderCommitIndex = min(control.commitIndex, lastIndex)
 	return nil
 }
 
