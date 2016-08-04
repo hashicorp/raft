@@ -175,6 +175,11 @@ type peerLeaderState struct {
 	// entry past the end of the log.
 	nextIndex uint64
 
+	// The largest commitIndex the peer has acknowledged during this term. Used to
+	// send the peer new commitIndex values aggressively so that its state machine
+	// can serve fresher potentially-stale reads.
+	commitIndexAcked uint64
+
 	// If true, the peer needs a snapshot because this server has already
 	// discarded the log entries it would otherwise send in AppendEntries.
 	needsSnapshot bool
@@ -586,7 +591,9 @@ func (p *peerState) issueWork() (didSomething bool) {
 		}
 
 	case Leader:
-		// Send a heartbeat (empty AppendEntries) RPC.
+		// Send a heartbeat (empty AppendEntries) RPC. Used as a keep-alive when
+		// other RPCs are not completing quickly or this server is idle. This will
+		// not block on the store.
 		if time.Now().After(p.leader.lastHeartbeatSent.Add(p.shared.options.heartbeatInterval)) {
 			p.shared.logger.Printf("[INFO] raft: Starting heartbeat RPC for %v",
 				p.shared.peerID)
@@ -594,23 +601,27 @@ func (p *peerState) issueWork() (didSomething bool) {
 			return true
 		}
 
-		// Send an AppendEntries/InstallSnapshot RPC.
-		if p.leader.nextIndex < p.control.lastIndex+1 && p.failures == 0 {
-			if !p.leader.outstandingInstallSnapshotRPC {
-				if p.leader.needsSnapshot {
-					p.shared.logger.Printf("[INFO] raft: Starting InstallSnapshot RPC for %v",
-						p.shared.peerID)
-					p.start(makeInstallSnapshotRPC)
-					return true
-				}
-				if p.leader.outstandingAppendEntriesRPCs == 0 ||
-					(p.leader.allowPipeline && !p.leader.outstandingPipelineSend &&
-						p.leader.outstandingAppendEntriesRPCs < p.shared.options.maxPipelineWindow) {
-					p.shared.logger.Printf("[INFO] raft: Starting AppendEntries RPC for %v",
-						p.shared.peerID)
-					p.start(makeAppendEntriesRPC)
-					return true
-				}
+		// Send an AppendEntries/InstallSnapshot RPC. Used to send the peer
+		// snapshots, entries, and inform it of new commit index values. This may
+		// block on the store or take a long time to transmit, so we don't want to
+		// rely on it for heartbeats.
+		if (p.leader.nextIndex < p.control.lastIndex+1 ||
+			p.leader.commitIndexAcked < p.control.commitIndex) &&
+			p.failures == 0 &&
+			!p.leader.outstandingInstallSnapshotRPC {
+			if p.leader.needsSnapshot {
+				p.shared.logger.Printf("[INFO] raft: Starting InstallSnapshot RPC for %v",
+					p.shared.peerID)
+				p.start(makeInstallSnapshotRPC)
+				return true
+			}
+			if p.leader.outstandingAppendEntriesRPCs == 0 ||
+				(p.leader.allowPipeline && !p.leader.outstandingPipelineSend &&
+					p.leader.outstandingAppendEntriesRPCs < p.shared.options.maxPipelineWindow) {
+				p.shared.logger.Printf("[INFO] raft: Starting AppendEntries RPC for %v",
+					p.shared.peerID)
+				p.start(makeAppendEntriesRPC)
+				return true
 			}
 		}
 	}
@@ -819,19 +830,24 @@ var errNeedsSnapshot = errors.New("Need to send snapshot")
 func makeHeartbeatRPC(p *peerState) peerRPC {
 	start := time.Now()
 	p.leader.lastHeartbeatSent = start
-	return &appendEntriesRPC{
+	rpc := &appendEntriesRPC{
 		start: start,
 		req: &AppendEntriesRequest{
-			Term:              p.control.term,
-			Leader:            p.shared.trans.EncodePeer(p.shared.localAddr),
-			PrevLogEntry:      p.control.lastIndex,
-			PrevLogTerm:       p.control.lastTerm,
-			LeaderCommitIndex: min(p.control.commitIndex, p.control.lastIndex),
+			Term:   p.control.term,
+			Leader: p.shared.trans.EncodePeer(p.shared.localAddr),
+			// Newer followers will consider the leader alive if Term is current, but
+			// older follower code used to only consider the leader alive if the
+			// PrevLogEntry matched the follower's log. To retain compatibility, we
+			// set PrevLogEntry, PrevLogTerm, and LeaderCommitIndex to 0.
+			PrevLogEntry:      0,
+			PrevLogTerm:       0,
+			LeaderCommitIndex: 0,
 		},
 		resp:          &AppendEntriesResponse{},
 		heartbeat:     true,
 		verifyCounter: p.control.verifyCounter,
 	}
+	return rpc
 }
 
 func makeAppendEntriesRPC(p *peerState) peerRPC {
@@ -1029,6 +1045,9 @@ func (rpc *appendEntriesRPC) process(p *peerState, err error) {
 		lastIndex := rpc.req.PrevLogEntry + uint64(len(rpc.req.Entries))
 		if p.progress.matchIndex < lastIndex {
 			p.progress.matchIndex = lastIndex
+		}
+		if p.leader.commitIndexAcked < rpc.req.LeaderCommitIndex {
+			p.leader.commitIndexAcked = rpc.req.LeaderCommitIndex
 		}
 		if p.leader.nextIndex < lastIndex+1 && lastIndex <= p.control.lastIndex {
 			p.leader.nextIndex = lastIndex + 1

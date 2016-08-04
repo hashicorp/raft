@@ -919,8 +919,6 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	r.stepDown()
 	r.setLeader(ServerAddress(r.trans.DecodePeer(a.Leader)))
 	defer r.setLastContact()
-	// TODO: moving setLastContact up here is the right thing to do, but it poses a compatibility problem.
-	// It may be better to send heartbeats of (index 0, term 0) to old servers or something.
 
 	// Verify the last log entry
 	if a.PrevLogEntry > 0 {
