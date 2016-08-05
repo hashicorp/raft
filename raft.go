@@ -654,7 +654,6 @@ func (r *Raft) computeLeaderProgress() {
 
 // Internal helper to calculate new commitIndex from matchIndexes,
 // whether votes form a quorum, etc.
-// TODO: add unit tests
 func quorumGeq(values []uint64) uint64 {
 	if len(values) == 0 {
 		return 0

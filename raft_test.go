@@ -1990,3 +1990,33 @@ func TestRaft_Voting(t *testing.T) {
 //
 // Storage errors handled properly.
 // Commit index updated properly.
+
+func TestRaft_quorumGeq(t *testing.T) {
+	quoromGeqTests := []struct {
+		in  []uint64
+		out uint64
+	}{
+		{[]uint64{}, 0},
+		{[]uint64{1}, 1},
+		{[]uint64{1, 2, 3}, 2},
+		{[]uint64{3, 2, 1}, 2},
+		{[]uint64{3, 1, 2}, 2},
+		{[]uint64{0, 0}, 0},
+		{[]uint64{0, 10}, 0},
+		{[]uint64{10, 10}, 10},
+		{[]uint64{5, 5, 5, 5}, 5},
+		{[]uint64{5, 6, 5, 5}, 5},
+		{[]uint64{7, 6, 5, 5}, 5},
+		{[]uint64{7, 6, 5, 8}, 6},
+		{[]uint64{1, 1, 1, 2, 2}, 1},
+		{[]uint64{1, 1, 2, 2, 2}, 2},
+		{[]uint64{1, 2, 3, 4, 5}, 3},
+	}
+	for _, test := range quoromGeqTests {
+		actual := quorumGeq(test.in)
+		if actual != test.out {
+			t.Errorf("Expected quorumGeq(%v) = %d, got %d",
+				test.in, test.out, actual)
+		}
+	}
+}
