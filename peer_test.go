@@ -138,7 +138,7 @@ func makePeerTesting(t *testing.T, tp *TestingPeer) *TestingPeer {
 
 	if tp.initControl != nil {
 		tp.controlCh <- *tp.initControl
-		tp.peer.drainNonblocking()
+		tp.peer.blockingSelect()
 	}
 
 	return tp
@@ -172,12 +172,13 @@ func checkProgressTimes(progress peerProgress) error {
 
 func waitForProgress(tp *TestingPeer) (peerProgress, error) {
 	for i := 0; i < 100; i++ {
-		tp.peer.drainNonblocking()
+		// Abuse backoffTimer to break out of blockingSelect
+		tp.peer.backoffTimer.Reset(time.Millisecond)
+		tp.peer.blockingSelect()
 		select {
 		case progress := <-tp.progressCh:
 			return progress, nil
 		default:
-			time.Sleep(time.Millisecond)
 			continue
 		}
 	}
@@ -186,11 +187,12 @@ func waitForProgress(tp *TestingPeer) (peerProgress, error) {
 
 func waitFor(tp *TestingPeer, cond func() bool) error {
 	for i := 0; i < 100; i++ {
-		tp.peer.drainNonblocking()
+		// Abuse backoffTimer to break out of blockingSelect
+		tp.peer.backoffTimer.Reset(time.Millisecond)
+		tp.peer.blockingSelect()
 		if cond() {
 			return nil
 		}
-		time.Sleep(time.Millisecond)
 	}
 	return fmt.Errorf("timeout waiting for condition")
 }
@@ -288,7 +290,6 @@ func oneRPC(tp *TestingPeer, expReq interface{}, reply interface{},
 	}
 
 	if !more {
-		tp.peer.drainNonblocking()
 		if tp.peer.issueWork() {
 			return fmt.Errorf("Unexpected work was done")
 		}
@@ -296,9 +297,6 @@ func oneRPC(tp *TestingPeer, expReq interface{}, reply interface{},
 
 	if tp.peer.failures > 0 {
 		return fmt.Errorf("Unexpected failures (%d)", tp.peer.failures)
-	}
-	if tp.peer.backoffTimer.Stop() {
-		return fmt.Errorf("Backoff timer was set unexpectedly")
 	}
 
 	return nil
@@ -327,10 +325,6 @@ func oneErrRPC(tp *TestingPeer, expReq interface{}, reply error) error {
 	err = waitForFailure(tp)
 	if err != nil {
 		return fmt.Errorf("Expected 1 failure, got %d: %v", tp.peer.failures, err)
-	}
-	running := tp.peer.backoffTimer.Stop()
-	if !running {
-		return fmt.Errorf("Backoff timer wasn't running")
 	}
 	if tp.peer.issueWork() {
 		return fmt.Errorf("Unexpected work was done")
@@ -458,7 +452,7 @@ func TestPeer_RequestVoteRPC_confirmError(t *testing.T) {
 
 	control.role = Follower
 	tp.controlCh <- control
-	tp.peer.drainNonblocking()
+	tp.peer.blockingSelect()
 	err = rpc.confirm(tp.peer)
 	if err == nil || !strings.Contains(err.Error(), "no longer candidate") {
 		t.Fatalf("Expected cancel due to not candidate, got %v", err)
@@ -467,7 +461,7 @@ func TestPeer_RequestVoteRPC_confirmError(t *testing.T) {
 	control.role = Candidate
 	control.term++
 	tp.controlCh <- control
-	tp.peer.drainNonblocking()
+	tp.peer.blockingSelect()
 	err = rpc.confirm(tp.peer)
 	if err == nil || !strings.Contains(err.Error(), "term changed") {
 		t.Fatalf("Expected cancel due to larger term, got %v", err)
@@ -798,7 +792,7 @@ func TestPeer_AppendEntriesRPC_confirmError(t *testing.T) {
 
 	control.role = Follower
 	tp.controlCh <- control
-	tp.peer.drainNonblocking()
+	tp.peer.blockingSelect()
 	err = rpc.confirm(tp.peer)
 	if err == nil || !strings.Contains(err.Error(), "no longer leader") {
 		t.Fatalf("Expected cancel due to not leader, got %v", err)
@@ -807,7 +801,7 @@ func TestPeer_AppendEntriesRPC_confirmError(t *testing.T) {
 	control.role = Leader
 	control.term++
 	tp.controlCh <- control
-	tp.peer.drainNonblocking()
+	tp.peer.blockingSelect()
 	tp.peer.leader.nextIndex = 14
 	err = rpc.confirm(tp.peer)
 	if err == nil || !strings.Contains(err.Error(), "term changed") {
@@ -989,7 +983,7 @@ func TestPeer_InstallSnapshotRPC_confirmError(t *testing.T) {
 
 	control.role = Follower
 	tp.controlCh <- control
-	tp.peer.drainNonblocking()
+	tp.peer.blockingSelect()
 	err = rpc.confirm(tp.peer)
 	if err == nil || !strings.Contains(err.Error(), "no longer leader") {
 		t.Fatalf("Expected cancel due to not leader, got %v", err)
@@ -998,7 +992,7 @@ func TestPeer_InstallSnapshotRPC_confirmError(t *testing.T) {
 	control.role = Leader
 	control.term++
 	tp.controlCh <- control
-	tp.peer.drainNonblocking()
+	tp.peer.blockingSelect()
 	tp.peer.leader.nextIndex = 1
 	err = rpc.confirm(tp.peer)
 	if err == nil || !strings.Contains(err.Error(), "term changed") {

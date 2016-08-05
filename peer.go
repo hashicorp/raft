@@ -382,56 +382,24 @@ func (p *peerState) checkInvariants() error {
 // selectLoop is a long-running routine that sends RPCs to a single remote
 // server.
 func (p *peerState) selectLoop() {
-	for {
-		// At this point, we may or may not have more work that we could do right away.
-		// Check for new information but don't block.
-		p.drainNonblocking()
-		if p.control.role == Shutdown {
-			break
-		}
+	for p.control.role != Shutdown {
 		if err := p.checkInvariants(); err != nil {
 			p.shared.logger.Panicf("peer invariant violated: %s", err.Error())
 		}
+
 		didSomething := p.issueWork()
-		// If we've got no more work to do, block until something changes.
-		if !didSomething {
-			p.blockingSelect()
+		if didSomething {
+			continue
 		}
+
+		// If we've got no more work to do, block until something changes.
+		p.blockingSelect()
 	}
 
 	p.shared.logger.Printf("[INFO] raft: Peer routine for %v exiting", p.shared.peerID)
 	close(p.shared.stopCh)
 	if p.shared.pipeline != nil {
 		p.shared.pipeline.Close()
-	}
-}
-
-// drainNonblocking reads/writes the Peer channels as much as possible without
-// blocking.
-func (p *peerState) drainNonblocking() {
-	for {
-		// These cases should be exactly the same as those in blockingSelect, except
-		// with an additional default branch and without the heartbeat timer.
-		select {
-		case control := <-p.controlCh:
-			p.updateControl(control)
-		case p.progressChIfDirty() <- p.progress:
-			p.sendProgress = false
-		case request := <-p.shared.requestCh:
-			p.send(request)
-		case rpc := <-p.shared.replyCh:
-			p.processReply(rpc)
-		case term := <-p.shared.pipelineSendDoneCh:
-			if p.control.term == term && p.leader != nil {
-				p.leader.outstandingPipelineSend = false
-			}
-		case <-p.backoffTimer.C:
-			p.shared.logger.Printf("[INFO] raft: Backoff period ended for %v",
-				p.shared.peerID)
-			p.failures = 0
-		default:
-			return
-		}
 	}
 }
 
@@ -444,12 +412,15 @@ func (p *peerState) blockingSelect() {
 			time.Since(p.leader.lastHeartbeatSent))
 	}
 
-	// These cases should be exactly the same as those in drainNonblocking,
-	// except missing the default branch and with the additional heartbeat timer.
+	var progressChIfDirty chan<- peerProgress
+	if p.sendProgress {
+		progressChIfDirty = p.progressCh
+	}
+
 	select {
 	case control := <-p.controlCh:
 		p.updateControl(control)
-	case p.progressChIfDirty() <- p.progress:
+	case progressChIfDirty <- p.progress:
 		p.sendProgress = false
 	case request := <-p.shared.requestCh:
 		p.send(request)
@@ -499,13 +470,6 @@ func (p *peerState) updateControl(latest peerControl) {
 	}
 
 	p.control = latest
-}
-
-func (p *peerState) progressChIfDirty() chan<- peerProgress {
-	if p.sendProgress {
-		return p.progressCh
-	}
-	return nil
 }
 
 // start creates a peerRPC object, then spawns a goroutine to prepare its
@@ -982,7 +946,11 @@ func (rpc *appendEntriesRPC) prepare(shared *peerShared, control peerControl) er
 	// Add entries to request.
 	lastIndex := min(control.lastIndex,
 		rpc.req.PrevLogEntry+uint64(shared.options.maxAppendEntries))
-	rpc.req.Entries = make([]*Log, 0, lastIndex-rpc.req.PrevLogEntry)
+	numEntries := uint64(0)
+	if lastIndex > rpc.req.PrevLogEntry {
+		numEntries = lastIndex - rpc.req.PrevLogEntry
+	}
+	rpc.req.Entries = make([]*Log, 0, numEntries)
 	for i := rpc.req.PrevLogEntry + 1; i <= lastIndex; i++ {
 		var entry Log
 		err := shared.logs.GetLog(i, &entry)
