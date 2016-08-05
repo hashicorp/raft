@@ -1,8 +1,10 @@
 package raft
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +19,7 @@ type TestingPeer struct {
 	logger       *log.Logger
 	logs         LogStore
 	snapshots    SnapshotStore
+	snapshotDir  string
 	goRoutines   *waitGroup
 	controlCh    chan peerControl
 	progressCh   chan peerProgress
@@ -26,6 +29,43 @@ type TestingPeer struct {
 	peer         *peerState
 }
 
+var (
+	configuration3 = Configuration{}
+	entry14        = Log{
+		Index: 14,
+		Term:  70,
+		Type:  LogCommand,
+		Data:  []byte("foo"),
+	}
+	entry15 = Log{
+		Index: 15,
+		Term:  75,
+		Type:  LogCommand,
+		Data:  []byte("bar"),
+	}
+	entry16 = Log{
+		Index: 16,
+		Term:  77,
+		Type:  LogCommand,
+		Data:  []byte("baz"),
+	}
+	entry17 = Log{
+		Index: 17,
+		Term:  80,
+		Type:  LogCommand,
+		Data:  []byte("almost"),
+	}
+	entry18 = Log{
+		Index: 18,
+		Term:  83,
+		Type:  LogCommand,
+		Data:  []byte("there"),
+	}
+)
+
+// This peer has:
+// One snapshot with index 1-15, term 75 and a configuration at index 3, length 5 bytes.
+// Log entries 14-18 as above.
 func makePeerTesting(t *testing.T, tp *TestingPeer) *TestingPeer {
 	if tp.logger == nil {
 		tp.logger = newTestLogger(t)
@@ -36,23 +76,22 @@ func makePeerTesting(t *testing.T, tp *TestingPeer) *TestingPeer {
 	}
 	if tp.logs == nil {
 		tp.logs = NewInmemStore()
-		tp.logs.StoreLogs([]*Log{
-			&Log{
-				Index: 2,
-				Term:  7,
-				Type:  LogCommand,
-				Data:  []byte("foo"),
-			},
-			&Log{
-				Index: 3,
-				Term:  9,
-				Type:  LogCommand,
-				Data:  []byte("bar"),
-			},
-		})
+		tp.logs.StoreLogs([]*Log{&entry14, &entry15, &entry16, &entry17, &entry18})
 	}
 	if tp.snapshots == nil {
-		// TODO: create snapshot store
+		tp.snapshotDir, tp.snapshots = FileSnapTest(t)
+		sink, err := tp.snapshots.Create(15, 75, configuration3, 3)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		_, err = sink.Write([]byte("hello"))
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		err = sink.Close()
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
 	}
 	if tp.goRoutines == nil {
 		tp.goRoutines = new(waitGroup)
@@ -103,6 +142,13 @@ func makePeerTesting(t *testing.T, tp *TestingPeer) *TestingPeer {
 	}
 
 	return tp
+}
+
+func (tp *TestingPeer) close() {
+	if tp.snapshotDir != "" {
+		os.RemoveAll(tp.snapshotDir)
+		tp.snapshotDir = ""
+	}
 }
 
 func maskProgress(progress peerProgress) peerProgress {
@@ -162,8 +208,23 @@ type cannedReply struct {
 	reply  interface{}
 }
 
-func reqsEqual(a, b interface{}) bool {
-	return fmt.Sprintf("%+v", a) == fmt.Sprintf("%+v", b)
+// Returns a string representation of an RPC request or response. Currently uses
+// JSON encoding, as that does better with AppendEntriesRequest.Entries than
+// "%#v" and "%+v". In case of an encoding error, returns a unique error string
+// (so that strings for two distinct erroneous messages won't be equal).
+var msgToStringNonce = 1
+
+func msgToString(msg interface{}) string {
+	bytes, err := json.Marshal(msg)
+	if err != nil {
+		msgToStringNonce++
+		return fmt.Sprintf("%s (%d)", err.Error(), msgToStringNonce)
+	}
+	return string(bytes)
+}
+
+func msgsEqual(a, b interface{}) bool {
+	return msgToString(a) == msgToString(b)
 }
 
 func serveReplies(tp *TestingPeer, replies []cannedReply) Future {
@@ -174,19 +235,21 @@ func serveReplies(tp *TestingPeer, replies []cannedReply) Future {
 			rpc := <-tp.peerTrans.Consumer()
 			reply := replies[0]
 			replies = replies[1:]
-			if reply.expReq != nil && !reqsEqual(rpc.Command, reply.expReq) {
-				err := fmt.Errorf("Unexpected message sent:\ngot      %+v,\nexpected %+v",
-					rpc.Command, reply.expReq)
+			if reply.expReq != nil && !msgsEqual(rpc.Command, reply.expReq) {
+				err := fmt.Errorf("Unexpected message sent:\n"+
+					"got      %+v\n"+
+					"expected %+v",
+					msgToString(rpc.Command), msgToString(reply.expReq))
 				rpc.Respond(nil, err)
 				f.respond(err)
 				return
 			}
 			errReply, ok := reply.reply.(error)
 			if ok {
-				tp.peer.shared.logger.Printf("Replying to %T with error", rpc.Command)
+				tp.peer.shared.logger.Printf("Peer Test: Replying to %T with error", rpc.Command)
 				rpc.Respond(nil, errReply)
 			} else {
-				tp.peer.shared.logger.Printf("Replying to %T", rpc.Command)
+				tp.peer.shared.logger.Printf("Peer Test: Replying to %T", rpc.Command)
 				rpc.Respond(reply.reply, nil)
 			}
 			f.respond(nil)
@@ -196,47 +259,49 @@ func serveReplies(tp *TestingPeer, replies []cannedReply) Future {
 }
 
 func oneRPC(tp *TestingPeer, expReq interface{}, reply interface{},
-	expProgress peerProgress) (peerProgress, error) {
+	expProgress peerProgress, more bool) error {
 	serverFuture := serveReplies(tp, []cannedReply{{expReq, reply}})
 	start := time.Now()
 	if !tp.peer.issueWork() {
-		return peerProgress{}, fmt.Errorf("expected issueWork to send an RPC")
+		return fmt.Errorf("expected issueWork to send an RPC")
 	}
 	progress, err := waitForProgress(tp)
 	if err != nil {
-		return peerProgress{}, err
+		return err
 	}
 	err = serverFuture.Error()
 	if err != nil {
-		return peerProgress{}, err
+		return err
 	}
 	if maskProgress(progress) != expProgress {
-		return peerProgress{}, fmt.Errorf("Unexpected progress:\n"+
+		return fmt.Errorf("Unexpected progress:\n"+
 			"got      %+v\n"+
 			"masked   %+v\n"+
 			"expected %+v",
 			progress, maskProgress(progress), expProgress)
 	}
 	if err := checkProgressTimes(progress); err != nil {
-		return peerProgress{}, err
+		return err
 	}
 	if !progress.lastContact.After(start) {
-		return peerProgress{}, fmt.Errorf("lastContact should be after test start")
+		return fmt.Errorf("lastContact should be after test start")
 	}
 
-	tp.peer.drainNonblocking()
-	if tp.peer.issueWork() {
-		return peerProgress{}, fmt.Errorf("Unexpected work was done")
+	if !more {
+		tp.peer.drainNonblocking()
+		if tp.peer.issueWork() {
+			return fmt.Errorf("Unexpected work was done")
+		}
 	}
 
 	if tp.peer.failures > 0 {
-		return peerProgress{}, fmt.Errorf("Unexpected failures (%d)", tp.peer.failures)
+		return fmt.Errorf("Unexpected failures (%d)", tp.peer.failures)
 	}
 	if tp.peer.backoffTimer.Stop() {
-		return peerProgress{}, fmt.Errorf("Backoff timer was set unexpectedly")
+		return fmt.Errorf("Backoff timer was set unexpectedly")
 	}
 
-	return progress, nil
+	return nil
 }
 
 func oneErrRPC(tp *TestingPeer, expReq interface{}, reply error) error {
@@ -274,21 +339,18 @@ func oneErrRPC(tp *TestingPeer, expReq interface{}, reply error) error {
 	return nil
 }
 
-// TODO: add test for updateControl
-
-// TODO: add test for updateTerm
-
 ///////////////////////// RequestVote /////////////////////////
 
 var requestVoteControl = peerControl{
-	term:      12,
-	role:      Candidate,
-	lastIndex: 3,
-	lastTerm:  9,
+	term:          84,
+	role:          Candidate,
+	lastIndex:     18,
+	lastTerm:      83,
+	verifyCounter: 120,
 }
 
 var requestVoteProgress = peerProgress{
-	term:            12,
+	term:            84,
 	matchIndex:      10,
 	verifiedCounter: 90,
 }
@@ -298,26 +360,30 @@ func TestPeer_RequestVoteRPC_granted(t *testing.T) {
 		initControl:  &requestVoteControl,
 		initProgress: &requestVoteProgress,
 	})
+	defer tp.close()
 	exp := RequestVoteRequest{
-		Term:         12,
+		Term:         84,
 		Candidate:    tp.localTrans.EncodePeer(tp.localAddr),
-		LastLogIndex: 3,
-		LastLogTerm:  9,
+		LastLogIndex: 18,
+		LastLogTerm:  83,
 	}
 	reply := RequestVoteResponse{
-		Term:    12,
+		Term:    84,
 		Granted: true,
 	}
 	expProgress := peerProgress{
 		peerID:          tp.peerID,
-		term:            12,
+		term:            84,
 		voteGranted:     true,
 		matchIndex:      10,
 		verifiedCounter: 90,
 	}
-	_, err := oneRPC(tp, &exp, &reply, expProgress)
+	err := oneRPC(tp, &exp, &reply, expProgress, false)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !tp.peer.candidate.voteReplied {
+		t.Fatalf("Expected voteReplied to be set")
 	}
 }
 
@@ -326,20 +392,24 @@ func TestPeer_RequestVoteRPC_denied(t *testing.T) {
 		initControl:  &requestVoteControl,
 		initProgress: &requestVoteProgress,
 	})
+	defer tp.close()
 	reply := RequestVoteResponse{
-		Term:    12,
+		Term:    84,
 		Granted: false,
 	}
 	expProgress := peerProgress{
 		peerID:          tp.peerID,
-		term:            12,
+		term:            84,
 		voteGranted:     false,
 		matchIndex:      10,
 		verifiedCounter: 90,
 	}
-	_, err := oneRPC(tp, nil, &reply, expProgress)
+	err := oneRPC(tp, nil, &reply, expProgress, false)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !tp.peer.candidate.voteReplied {
+		t.Fatalf("Expected voteReplied to be set")
 	}
 }
 
@@ -348,20 +418,24 @@ func TestPeer_RequestVoteRPC_newTerm(t *testing.T) {
 		initControl:  &requestVoteControl,
 		initProgress: &requestVoteProgress,
 	})
+	defer tp.close()
 	reply := RequestVoteResponse{
-		Term:    13,
+		Term:    85,
 		Granted: true,
 	}
 	expProgress := peerProgress{
 		peerID:          tp.peerID,
-		term:            13,
+		term:            85,
 		voteGranted:     false,
 		matchIndex:      0,
 		verifiedCounter: 90,
 	}
-	_, err := oneRPC(tp, nil, &reply, expProgress)
+	err := oneRPC(tp, nil, &reply, expProgress, false)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !tp.peer.candidate.voteReplied {
+		t.Fatalf("Expected voteReplied to be set")
 	}
 }
 
@@ -371,6 +445,7 @@ func TestPeer_RequestVoteRPC_confirmError(t *testing.T) {
 		initControl:  &control,
 		initProgress: &requestVoteProgress,
 	})
+	defer tp.close()
 	rpc := makeRequestVoteRPC(tp.peer)
 	err := rpc.prepare(tp.peer.shared, tp.peer.control)
 	if err != nil {
@@ -393,6 +468,10 @@ func TestPeer_RequestVoteRPC_confirmError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "term changed") {
 		t.Fatalf("Expected cancel due to larger term, got %v", err)
 	}
+
+	if tp.peer.candidate.voteReplied {
+		t.Fatalf("Expected voteReplied to be unset")
+	}
 }
 
 func TestPeer_RequestVoteRPC_sendRecvError(t *testing.T) {
@@ -400,58 +479,482 @@ func TestPeer_RequestVoteRPC_sendRecvError(t *testing.T) {
 		initControl:  &requestVoteControl,
 		initProgress: &requestVoteProgress,
 	})
+	defer tp.close()
 	err := oneErrRPC(tp, nil, fmt.Errorf("a transport error"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if tp.peer.candidate.voteReplied {
+		t.Fatalf("Expected voteReplied to be unset")
 	}
 }
 
 ///////////////////////// AppendEntries /////////////////////////
 
 var appendEntriesControl = peerControl{
-	term:          12,
+	term:          83,
 	role:          Leader,
-	lastIndex:     3,
-	lastTerm:      9,
+	lastIndex:     18,
+	lastTerm:      83,
+	commitIndex:   16,
 	verifyCounter: 120,
 }
 
 var appendEntriesProgress = peerProgress{
-	term:            12,
+	term:            75,
 	matchIndex:      1,
 	verifiedCounter: 90,
 }
 
-func TestPeer_AppendEntries_heartbeat(t *testing.T) {
+func TestPeer_AppendEntriesRPC_heartbeat(t *testing.T) {
 	tp := makePeerTesting(t, &TestingPeer{
 		initControl:  &appendEntriesControl,
 		initProgress: &appendEntriesProgress,
 	})
+	defer tp.close()
+	tp.peer.failures = 1
+	tp.peer.leader.commitIndexAcked = 1
 	exp := AppendEntriesRequest{
-		Term:         12,
-		Leader:       tp.localTrans.EncodePeer(tp.localAddr),
-		PrevLogEntry: 3,
-		PrevLogTerm:  9,
+		Term:              83,
+		Leader:            tp.localTrans.EncodePeer(tp.localAddr),
+		PrevLogEntry:      0,
+		PrevLogTerm:       0,
+		LeaderCommitIndex: 0,
 	}
 	reply := AppendEntriesResponse{
-		Term:    12,
-		LastLog: 0,
+		Term:    83,
+		LastLog: 2,
 		Success: true,
 	}
 	expProgress := peerProgress{
 		peerID:          tp.peerID,
-		term:            12,
-		matchIndex:      3,
+		term:            83,
+		matchIndex:      0,
 		verifiedCounter: 120,
 	}
-	_, err := oneRPC(tp, &exp, &reply, expProgress)
+
+	// Stop Peer from sending normal AppendEntries. Only send heartbeats.
+	tp.peer.leader.outstandingInstallSnapshotRPC = true
+	defer func() { tp.peer.leader.outstandingInstallSnapshotRPC = false }()
+
+	err := oneRPC(tp, &exp, &reply, expProgress, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tp.peer.failures != 0 {
+		t.Fatalf("failures should have been cleared, got %v",
+			tp.peer.failures)
+	}
+	if tp.peer.leader.commitIndexAcked != 1 {
+		t.Fatalf("commitIndexAcked should be 1, got %v",
+			tp.peer.leader.commitIndexAcked)
+	}
+}
+
+func TestPeer_AppendEntriesRPC_success_noEntries(t *testing.T) {
+	tp := makePeerTesting(t, &TestingPeer{
+		initControl:  &appendEntriesControl,
+		initProgress: &appendEntriesProgress,
+	})
+	defer tp.close()
+	tp.peer.leader.lastHeartbeatSent = time.Now().Add(time.Minute)
+	tp.peer.leader.commitIndexAcked = 1
+	exp := AppendEntriesRequest{
+		Term:              83,
+		Leader:            tp.localTrans.EncodePeer(tp.localAddr),
+		PrevLogEntry:      18,
+		PrevLogTerm:       83,
+		Entries:           []*Log{},
+		LeaderCommitIndex: 16,
+	}
+	reply := AppendEntriesResponse{
+		Term:    83,
+		LastLog: 18,
+		Success: true,
+	}
+	expProgress := peerProgress{
+		peerID:          tp.peerID,
+		term:            83,
+		matchIndex:      18,
+		verifiedCounter: 120,
+	}
+
+	err := oneRPC(tp, &exp, &reply, expProgress, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tp.peer.leader.commitIndexAcked != 16 {
+		t.Fatalf("commitIndexAcked should be 16, got %v",
+			tp.peer.leader.commitIndexAcked)
+	}
+}
+
+func TestPeer_AppendEntriesRPC_success_someEntries(t *testing.T) {
+	control := appendEntriesControl
+	control.commitIndex = 18
+	tp := makePeerTesting(t, &TestingPeer{
+		initControl:  &control,
+		initProgress: &appendEntriesProgress,
+		options:      peerOptions{maxAppendEntries: 2},
+	})
+	defer tp.close()
+	tp.peer.leader.lastHeartbeatSent = time.Now().Add(time.Minute)
+	tp.peer.leader.commitIndexAcked = 1
+	tp.peer.leader.nextIndex = 16
+	exp := AppendEntriesRequest{
+		Term:              83,
+		Leader:            tp.localTrans.EncodePeer(tp.localAddr),
+		PrevLogEntry:      15,
+		PrevLogTerm:       75,
+		Entries:           []*Log{&entry16, &entry17},
+		LeaderCommitIndex: 17,
+	}
+	reply := AppendEntriesResponse{
+		Term:    83,
+		LastLog: 17,
+		Success: true,
+	}
+	expProgress := peerProgress{
+		peerID:          tp.peerID,
+		term:            83,
+		matchIndex:      17,
+		verifiedCounter: 120,
+	}
+
+	err := oneRPC(tp, &exp, &reply, expProgress, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tp.peer.leader.commitIndexAcked != 17 {
+		t.Fatalf("commitIndexAcked should be 17, got %v",
+			tp.peer.leader.commitIndexAcked)
+	}
+
+	// Immediately send remaining entries.
+	exp = AppendEntriesRequest{
+		Term:              83,
+		Leader:            tp.localTrans.EncodePeer(tp.localAddr),
+		PrevLogEntry:      17,
+		PrevLogTerm:       80,
+		Entries:           []*Log{&entry18},
+		LeaderCommitIndex: 18,
+	}
+	reply = AppendEntriesResponse{
+		Term:    83,
+		LastLog: 18,
+		Success: true,
+	}
+	expProgress = peerProgress{
+		peerID:          tp.peerID,
+		term:            83,
+		matchIndex:      18,
+		verifiedCounter: 120,
+	}
+	err = oneRPC(tp, &exp, &reply, expProgress, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tp.peer.leader.commitIndexAcked != 18 {
+		t.Fatalf("commitIndexAcked should be 18, got %v",
+			tp.peer.leader.commitIndexAcked)
+	}
+}
+
+func TestPeer_AppendEntriesRPC_denied(t *testing.T) {
+	tp := makePeerTesting(t, &TestingPeer{
+		initControl:  &appendEntriesControl,
+		initProgress: &appendEntriesProgress,
+	})
+	defer tp.close()
+	tp.peer.leader.nextIndex = 16
+	tp.peer.leader.lastHeartbeatSent = time.Now().Add(time.Minute)
+	reply := AppendEntriesResponse{
+		Term:    83,
+		LastLog: 180,
+		Success: false,
+	}
+	expProgress := peerProgress{
+		peerID:          tp.peerID,
+		term:            83,
+		voteGranted:     false,
+		matchIndex:      0,
+		verifiedCounter: 120,
+	}
+	err := oneRPC(tp, nil, &reply, expProgress, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tp.peer.leader.nextIndex != 15 {
+		t.Fatalf("nextIndex should be 15, got %v",
+			tp.peer.leader.nextIndex)
+	}
+}
+
+func TestPeer_AppendEntriesRPC_newTerm(t *testing.T) {
+	tp := makePeerTesting(t, &TestingPeer{
+		initControl:  &appendEntriesControl,
+		initProgress: &appendEntriesProgress,
+	})
+	defer tp.close()
+	tp.peer.leader.lastHeartbeatSent = time.Now().Add(time.Minute)
+	reply := AppendEntriesResponse{
+		Term:    85,
+		LastLog: 19,
+		Success: false,
+	}
+	expProgress := peerProgress{
+		peerID:          tp.peerID,
+		term:            85,
+		voteGranted:     false,
+		matchIndex:      0,
+		verifiedCounter: 90,
+	}
+	err := oneRPC(tp, nil, &reply, expProgress, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 }
 
-// TODO: more tests for AppendEntries
+func TestPeer_AppendEntriesRPC_confirmError(t *testing.T) {
+	control := appendEntriesControl
+	tp := makePeerTesting(t, &TestingPeer{
+		initControl:  &control,
+		initProgress: &appendEntriesProgress,
+	})
+	defer tp.close()
+	tp.peer.leader.lastHeartbeatSent = time.Now().Add(time.Minute)
+	tp.peer.leader.nextIndex = 16
+	rpc := makeAppendEntriesRPC(tp.peer)
+	err := rpc.prepare(tp.peer.shared, tp.peer.control)
+	if err != nil {
+		t.Fatalf("Unexpected error in prepare: %v", err)
+	}
+
+	control.role = Follower
+	tp.controlCh <- control
+	tp.peer.drainNonblocking()
+	err = rpc.confirm(tp.peer)
+	if err == nil || !strings.Contains(err.Error(), "no longer leader") {
+		t.Fatalf("Expected cancel due to not leader, got %v", err)
+	}
+
+	control.role = Leader
+	control.term++
+	tp.controlCh <- control
+	tp.peer.drainNonblocking()
+	tp.peer.leader.nextIndex = 14
+	err = rpc.confirm(tp.peer)
+	if err == nil || !strings.Contains(err.Error(), "term changed") {
+		t.Fatalf("Expected cancel due to larger term, got %v", err)
+	}
+	if tp.peer.leader.nextIndex != 14 {
+		t.Fatalf("nextIndex should be 14, got %v",
+			tp.peer.leader.nextIndex)
+	}
+}
+
+func TestPeer_AppendEntriesRPC_heartbeat_sendRecvError(t *testing.T) {
+	tp := makePeerTesting(t, &TestingPeer{
+		initControl:  &appendEntriesControl,
+		initProgress: &appendEntriesProgress,
+	})
+	defer tp.close()
+	tp.peer.leader.nextIndex = 16
+	err := oneErrRPC(tp, nil, fmt.Errorf("a transport error"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tp.peer.leader.nextIndex != 16 {
+		t.Fatalf("nextIndex should be 16, got %v",
+			tp.peer.leader.nextIndex)
+	}
+}
+
+func TestPeer_AppendEntriesRPC_sendRecvError(t *testing.T) {
+	tp := makePeerTesting(t, &TestingPeer{
+		initControl:  &appendEntriesControl,
+		initProgress: &appendEntriesProgress,
+	})
+	defer tp.close()
+	tp.peer.leader.nextIndex = 16
+	tp.peer.leader.lastHeartbeatSent = time.Now().Add(time.Minute)
+	err := oneErrRPC(tp, nil, fmt.Errorf("a transport error"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tp.peer.leader.nextIndex != 16 {
+		t.Fatalf("nextIndex should be 16, got %v",
+			tp.peer.leader.nextIndex)
+	}
+}
 
 ///////////////////////// InstallSnapshot /////////////////////////
 
-// TODO: more tests for InstallSnapshot
+var installSnapshotControl = appendEntriesControl
+
+var installSnapshotProgress = appendEntriesProgress
+
+func TestPeer_InstallSnapshotRPC_success(t *testing.T) {
+	tp := makePeerTesting(t, &TestingPeer{
+		initControl:  &installSnapshotControl,
+		initProgress: &installSnapshotProgress,
+	})
+	defer tp.close()
+	tp.peer.leader.lastHeartbeatSent = time.Now().Add(time.Minute)
+	tp.peer.leader.nextIndex = 1
+	if !tp.peer.issueWork() {
+		t.Fatalf("expected issueWork to start an AppendEntries RPC")
+	}
+	err := waitFor(tp, func() bool { return tp.peer.leader.needsSnapshot })
+	if err != nil {
+		t.Fatal("expected AppendEntries RPC to set needsSnapshot: %v", err)
+	}
+
+	exp := InstallSnapshotRequest{
+		Term:               83,
+		Leader:             tp.localTrans.EncodePeer(tp.localAddr),
+		LastLogIndex:       15,
+		LastLogTerm:        75,
+		Configuration:      encodeConfiguration(configuration3),
+		ConfigurationIndex: 3,
+		Size:               5,
+	}
+	reply := InstallSnapshotResponse{
+		Term:    83,
+		Success: true,
+	}
+	expProgress := peerProgress{
+		peerID:          tp.peerID,
+		term:            83,
+		voteGranted:     false,
+		matchIndex:      15,
+		verifiedCounter: 120,
+	}
+	err = oneRPC(tp, &exp, &reply, expProgress, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tp.peer.leader.nextIndex != 16 {
+		t.Fatalf("nextIndex should be 16, got %v",
+			tp.peer.leader.nextIndex)
+	}
+	if tp.peer.leader.needsSnapshot {
+		t.Fatalf("needsSnapshot should be false")
+	}
+}
+
+func TestPeer_InstallSnapshotRPC_denied(t *testing.T) {
+	tp := makePeerTesting(t, &TestingPeer{
+		initControl:  &installSnapshotControl,
+		initProgress: &installSnapshotProgress,
+	})
+	defer tp.close()
+	tp.peer.leader.lastHeartbeatSent = time.Now().Add(time.Minute)
+	tp.peer.leader.nextIndex = 1
+	tp.peer.leader.needsSnapshot = true
+	reply := InstallSnapshotResponse{
+		Term:    83,
+		Success: false,
+	}
+	expProgress := peerProgress{
+		peerID:          tp.peerID,
+		term:            83,
+		voteGranted:     false,
+		matchIndex:      0,
+		verifiedCounter: 120,
+	}
+	err := oneRPC(tp, nil, &reply, expProgress, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tp.peer.leader.needsSnapshot {
+		t.Fatalf("needsSnapshot should be false")
+	}
+	if tp.peer.leader.nextIndex != 16 {
+		t.Fatalf("nextIndex should be 16, got %v",
+			tp.peer.leader.nextIndex)
+	}
+}
+
+func TestPeer_InstallSnapshotRPC_newTerm(t *testing.T) {
+	tp := makePeerTesting(t, &TestingPeer{
+		initControl:  &installSnapshotControl,
+		initProgress: &installSnapshotProgress,
+	})
+	defer tp.close()
+	tp.peer.leader.lastHeartbeatSent = time.Now().Add(time.Minute)
+	tp.peer.leader.nextIndex = 1
+	tp.peer.leader.needsSnapshot = true
+	reply := InstallSnapshotResponse{
+		Term:    84,
+		Success: true,
+	}
+	expProgress := peerProgress{
+		peerID:          tp.peerID,
+		term:            84,
+		voteGranted:     false,
+		matchIndex:      0,
+		verifiedCounter: 90,
+	}
+	err := oneRPC(tp, nil, &reply, expProgress, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPeer_InstallSnapshotRPC_confirmError(t *testing.T) {
+	control := installSnapshotControl
+	tp := makePeerTesting(t, &TestingPeer{
+		initControl:  &control,
+		initProgress: &installSnapshotProgress,
+	})
+	defer tp.close()
+	tp.peer.leader.lastHeartbeatSent = time.Now().Add(time.Minute)
+	tp.peer.leader.nextIndex = 1
+	tp.peer.leader.needsSnapshot = true
+	rpc := makeInstallSnapshotRPC(tp.peer)
+	err := rpc.prepare(tp.peer.shared, tp.peer.control)
+	if err != nil {
+		t.Fatalf("Unexpected error in prepare: %v", err)
+	}
+
+	control.role = Follower
+	tp.controlCh <- control
+	tp.peer.drainNonblocking()
+	err = rpc.confirm(tp.peer)
+	if err == nil || !strings.Contains(err.Error(), "no longer leader") {
+		t.Fatalf("Expected cancel due to not leader, got %v", err)
+	}
+
+	control.role = Leader
+	control.term++
+	tp.controlCh <- control
+	tp.peer.drainNonblocking()
+	tp.peer.leader.nextIndex = 1
+	err = rpc.confirm(tp.peer)
+	if err == nil || !strings.Contains(err.Error(), "term changed") {
+		t.Fatalf("Expected cancel due to larger term, got %v", err)
+	}
+	if tp.peer.leader.nextIndex != 1 {
+		t.Fatalf("nextIndex should be 1, got %v",
+			tp.peer.leader.nextIndex)
+	}
+}
+
+func TestPeer_InstallSnapshotRPC_sendRecvError(t *testing.T) {
+	tp := makePeerTesting(t, &TestingPeer{
+		initControl:  &installSnapshotControl,
+		initProgress: &installSnapshotProgress,
+	})
+	defer tp.close()
+	tp.peer.leader.lastHeartbeatSent = time.Now().Add(time.Minute)
+	tp.peer.leader.nextIndex = 1
+	tp.peer.leader.needsSnapshot = true
+	err := oneErrRPC(tp, nil, fmt.Errorf("a transport error"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tp.peer.leader.needsSnapshot {
+		t.Fatalf("Expected needsSnapshot to be unset")
+	}
+}
