@@ -352,6 +352,7 @@ var requestVoteControl = peerControl{
 var requestVoteProgress = peerProgress{
 	term:            84,
 	matchIndex:      10,
+	matchTerm:       50,
 	verifiedCounter: 90,
 }
 
@@ -376,6 +377,7 @@ func TestPeer_RequestVoteRPC_granted(t *testing.T) {
 		term:            84,
 		voteGranted:     true,
 		matchIndex:      10,
+		matchTerm:       50,
 		verifiedCounter: 90,
 	}
 	err := oneRPC(tp, &exp, &reply, expProgress, false)
@@ -402,6 +404,7 @@ func TestPeer_RequestVoteRPC_denied(t *testing.T) {
 		term:            84,
 		voteGranted:     false,
 		matchIndex:      10,
+		matchTerm:       50,
 		verifiedCounter: 90,
 	}
 	err := oneRPC(tp, nil, &reply, expProgress, false)
@@ -428,6 +431,7 @@ func TestPeer_RequestVoteRPC_newTerm(t *testing.T) {
 		term:            85,
 		voteGranted:     false,
 		matchIndex:      0,
+		matchTerm:       0,
 		verifiedCounter: 90,
 	}
 	err := oneRPC(tp, nil, &reply, expProgress, false)
@@ -503,6 +507,7 @@ var appendEntriesControl = peerControl{
 var appendEntriesProgress = peerProgress{
 	term:            75,
 	matchIndex:      1,
+	matchTerm:       2,
 	verifiedCounter: 90,
 }
 
@@ -517,9 +522,9 @@ func TestPeer_AppendEntriesRPC_heartbeat(t *testing.T) {
 	exp := AppendEntriesRequest{
 		Term:              83,
 		Leader:            tp.localTrans.EncodePeer(tp.localAddr),
-		PrevLogEntry:      0,
-		PrevLogTerm:       0,
-		LeaderCommitIndex: 0,
+		PrevLogEntry:      1,
+		PrevLogTerm:       2,
+		LeaderCommitIndex: 1,
 	}
 	reply := AppendEntriesResponse{
 		Term:    83,
@@ -529,7 +534,8 @@ func TestPeer_AppendEntriesRPC_heartbeat(t *testing.T) {
 	expProgress := peerProgress{
 		peerID:          tp.peerID,
 		term:            83,
-		matchIndex:      0,
+		matchIndex:      1,
+		matchTerm:       2,
 		verifiedCounter: 120,
 	}
 
@@ -547,6 +553,61 @@ func TestPeer_AppendEntriesRPC_heartbeat(t *testing.T) {
 	}
 	if tp.peer.leader.commitIndexAcked != 1 {
 		t.Fatalf("commitIndexAcked should be 1, got %v",
+			tp.peer.leader.commitIndexAcked)
+	}
+}
+
+// This test aims to excercise the following scenario:
+// 1. Leader catches up follower of entire log and commit index.
+// 2. Follower reboots, setting its own commit index to 0.
+// 3. Leader does not generate any additional log entries.
+// We still want the follower to be informed of the latest commit index on the
+// next heartbeat.
+func TestPeer_AppendEntriesRPC_heartbeat_commitIndex(t *testing.T) {
+	control := appendEntriesControl
+	control.commitIndex = 18
+	progress := peerProgress{
+		term:            83,
+		matchIndex:      18,
+		matchTerm:       83,
+		verifiedCounter: 90,
+	}
+	tp := makePeerTesting(t, &TestingPeer{
+		initControl:  &control,
+		initProgress: &progress,
+	})
+	defer tp.close()
+	tp.peer.leader.commitIndexAcked = 18
+
+	// Stop Peer from sending normal AppendEntries. Only send heartbeats.
+	tp.peer.leader.outstandingInstallSnapshotRPC = true
+	defer func() { tp.peer.leader.outstandingInstallSnapshotRPC = false }()
+
+	exp := AppendEntriesRequest{
+		Term:              83,
+		Leader:            tp.localTrans.EncodePeer(tp.localAddr),
+		PrevLogEntry:      18,
+		PrevLogTerm:       83,
+		LeaderCommitIndex: 18,
+	}
+	reply := AppendEntriesResponse{
+		Term:    83,
+		LastLog: 18,
+		Success: true,
+	}
+	expProgress := peerProgress{
+		peerID:          tp.peerID,
+		term:            83,
+		matchIndex:      18,
+		matchTerm:       83,
+		verifiedCounter: 120,
+	}
+	err := oneRPC(tp, &exp, &reply, expProgress, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tp.peer.leader.commitIndexAcked != 18 {
+		t.Fatalf("commitIndexAcked should be 18, got %v",
 			tp.peer.leader.commitIndexAcked)
 	}
 }
@@ -576,6 +637,7 @@ func TestPeer_AppendEntriesRPC_success_noEntries(t *testing.T) {
 		peerID:          tp.peerID,
 		term:            83,
 		matchIndex:      18,
+		matchTerm:       83,
 		verifiedCounter: 120,
 	}
 
@@ -618,6 +680,7 @@ func TestPeer_AppendEntriesRPC_success_someEntries(t *testing.T) {
 		peerID:          tp.peerID,
 		term:            83,
 		matchIndex:      17,
+		matchTerm:       80,
 		verifiedCounter: 120,
 	}
 
@@ -648,6 +711,7 @@ func TestPeer_AppendEntriesRPC_success_someEntries(t *testing.T) {
 		peerID:          tp.peerID,
 		term:            83,
 		matchIndex:      18,
+		matchTerm:       83,
 		verifiedCounter: 120,
 	}
 	err = oneRPC(tp, &exp, &reply, expProgress, true)
@@ -678,6 +742,7 @@ func TestPeer_AppendEntriesRPC_denied(t *testing.T) {
 		term:            83,
 		voteGranted:     false,
 		matchIndex:      0,
+		matchTerm:       0,
 		verifiedCounter: 120,
 	}
 	err := oneRPC(tp, nil, &reply, expProgress, true)
@@ -707,6 +772,7 @@ func TestPeer_AppendEntriesRPC_newTerm(t *testing.T) {
 		term:            85,
 		voteGranted:     false,
 		matchIndex:      0,
+		matchTerm:       0,
 		verifiedCounter: 90,
 	}
 	err := oneRPC(tp, nil, &reply, expProgress, false)
@@ -828,6 +894,7 @@ func TestPeer_InstallSnapshotRPC_success(t *testing.T) {
 		term:            83,
 		voteGranted:     false,
 		matchIndex:      15,
+		matchTerm:       75,
 		verifiedCounter: 120,
 	}
 	err = oneRPC(tp, &exp, &reply, expProgress, true)
@@ -861,6 +928,7 @@ func TestPeer_InstallSnapshotRPC_denied(t *testing.T) {
 		term:            83,
 		voteGranted:     false,
 		matchIndex:      0,
+		matchTerm:       0,
 		verifiedCounter: 120,
 	}
 	err := oneRPC(tp, nil, &reply, expProgress, true)
@@ -894,6 +962,7 @@ func TestPeer_InstallSnapshotRPC_newTerm(t *testing.T) {
 		term:            84,
 		voteGranted:     false,
 		matchIndex:      0,
+		matchTerm:       0,
 		verifiedCounter: 90,
 	}
 	err := oneRPC(tp, nil, &reply, expProgress, false)

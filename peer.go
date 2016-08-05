@@ -139,6 +139,11 @@ type peerProgress struct {
 	// this server's. Reset to 0 when the term changes.
 	matchIndex uint64
 
+	// The term of the matchIndex entry. This is probably uninteresting to the
+	// Raft module. The Peer uses it internally to avoid reading from the
+	// store on the heartbeat path.
+	matchTerm uint64
+
 	// A lower bound of when the peer last heard from us. Upon the receipt of any
 	// reply from the peer (successful or not, term matches or not), this is
 	// updated to the time the request was started.
@@ -660,6 +665,7 @@ func updateTerm(progress *peerProgress, term uint64) {
 		progress.term = term
 		progress.voteGranted = false
 		progress.matchIndex = 0
+		progress.matchTerm = 0
 	}
 }
 
@@ -860,14 +866,41 @@ func makeHeartbeatRPC(p *peerState) peerRPC {
 		req: &AppendEntriesRequest{
 			Term:   p.control.term,
 			Leader: p.shared.trans.EncodePeer(p.shared.localAddr),
-			// Newer followers will consider the leader alive if Term is current, but
-			// older follower code used to only consider the leader alive if the
-			// PrevLogEntry matched the follower's log. To retain compatibility, we
-			// set PrevLogEntry, PrevLogTerm, and LeaderCommitIndex to 0.
-			// TODO: follower rebooting will forget its commitIndex. Send matchIndex, matchTerm instead.
-			PrevLogEntry:      0,
-			PrevLogTerm:       0,
-			LeaderCommitIndex: 0,
+
+			// Heartbeats in the current Peer code serve two purposes:
+			//  1. As a sign of life to the peer so that it does not start an
+			//     election, and
+			//  2. To remind the peer of the commit index, in case it's rebooted.
+			//     Specfically, here's the scenario:
+			//       1. Leader catches up follower of entire log and commit index.
+			//       2. Follower reboots, setting its own commit index to 0.
+			//       3. Leader does not generate any additional log entries. The next
+			//          heartbeat should inform the follower of the new commit index,
+			//          so that the follower can serve not-so-stale reads.
+			//
+			// Older leader code used to send heartbeats with PrevLogEntry,
+			// PrevLogTerm, and LeaderCommitIndex set to 0, serving as a sign of life
+			// only. It would also send non-heartbeat AppendEntries RPCs periodically
+			// to update the peer's commit index. The new code does not send
+			// non-heartbeat AppendEntries RPCs in the absence of activity.
+			//
+			// Since all zeros won't work in the new code, perhaps the next most
+			// obvious thing would be to set PrevLogEntry as the leader's last log
+			// index and LeaderCommitIndex as the leader's commit index. However, this
+			// would be incompatible with old follower code. While newer followers
+			// will consider the leader alive if Term is current, older follower code
+			// used to only consider the leader alive if the PrevLogEntry matched the
+			// follower's log. So until the leader has determined where the follower's
+			// log diverges, it might start an election.
+			//
+			// So, to retain compatibility with older followers and replicate the
+			// commit index, the new code uses the follower's matchIndex for
+			// PrevLogEntry. Even after a reboot, the follower will still consider
+			// agree on PrevLogEntry, so it'll act as a sign of life, even for older
+			// followers. And useful commit index values can still be transferred.
+			PrevLogEntry:      p.progress.matchIndex,
+			PrevLogTerm:       p.progress.matchTerm,
+			LeaderCommitIndex: min(p.control.commitIndex, p.progress.matchIndex),
 		},
 		resp:          &AppendEntriesResponse{},
 		heartbeat:     true,
@@ -1079,7 +1112,12 @@ func (rpc *appendEntriesRPC) process(p *peerState, err error) {
 
 	if rpc.resp.Success {
 		if p.progress.matchIndex < lastIndex {
+			lastTerm := rpc.req.PrevLogTerm
+			if len(rpc.req.Entries) > 0 {
+				lastTerm = rpc.req.Entries[len(rpc.req.Entries)-1].Term
+			}
 			p.progress.matchIndex = lastIndex
+			p.progress.matchTerm = lastTerm
 		}
 		if p.leader.commitIndexAcked < rpc.req.LeaderCommitIndex {
 			p.leader.commitIndexAcked = rpc.req.LeaderCommitIndex
@@ -1234,6 +1272,7 @@ func (rpc *installSnapshotRPC) process(p *peerState, err error) {
 
 	if rpc.resp.Success {
 		p.progress.matchIndex = rpc.req.LastLogIndex
+		p.progress.matchTerm = rpc.req.LastLogTerm
 		p.shared.logger.Printf("[INFO] raft: InstallSnapshot to %v succeeded. nextIndex is now %v",
 			p.shared.peerID, p.leader.nextIndex)
 	} else {
