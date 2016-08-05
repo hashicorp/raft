@@ -16,7 +16,7 @@
    id="svg2"
    version="1.1"
    inkscape:version="0.91 r13725"
-   sodipodi:docname="modules.svg">
+   sodipodi:docname="architecture.svg">
   <defs
      id="defs4">
     <marker
@@ -637,9 +637,9 @@
      borderopacity="1.0"
      inkscape:pageopacity="0.0"
      inkscape:pageshadow="2"
-     inkscape:zoom="2.126973"
+     inkscape:zoom="1.2415146"
      inkscape:cx="747.07108"
-     inkscape:cy="330.01298"
+     inkscape:cy="480.46153"
      inkscape:document-units="px"
      inkscape:current-layer="layer1"
      showgrid="false"
@@ -647,7 +647,7 @@
      inkscape:window-width="2218"
      inkscape:window-height="1345"
      inkscape:window-x="5"
-     inkscape:window-y="24"
+     inkscape:window-y="23"
      inkscape:window-maximized="0"
      showguides="true"
      fit-margin-top="0.5"
@@ -786,7 +786,7 @@
          x="830.90143"
          y="550.14178"
          id="tspan4186"
-         style="font-size:20px;text-align:center;text-anchor:middle">Builder</tspan></text>
+         style="font-size:20px;text-align:center;text-anchor:middle">preparer</tspan></text>
     <use
        x="0"
        y="0"
@@ -817,7 +817,7 @@
          id="tspan4194"
          y="742.14178"
          x="830.90143"
-         sodipodi:role="line">Proxy</tspan></text>
+         sodipodi:role="line">proxy</tspan></text>
     <rect
        ry="0"
        y="794.20117"
@@ -954,7 +954,7 @@
          id="tspan4293"
          x="198.05081"
          y="646.2403"
-         style="font-size:15px">state (fol|cnd|ldr),</tspan><tspan
+         style="font-size:15px">role (fol/cnd/ldr),</tspan><tspan
          sodipodi:role="line"
          x="198.05081"
          y="664.9903"
@@ -1526,7 +1526,7 @@
          sodipodi:role="line"
          id="tspan28487"
          x="597.12146"
-         y="1109.183"></tspan></text>
+         y="1109.183" /></text>
     <rect
        style="fill:#7aa4d2;fill-opacity:1;stroke:#000000;stroke-width:2.00000024;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"
        id="rect28483"
@@ -1597,7 +1597,7 @@
          sodipodi:role="line"
          id="tspan30253"
          x="-9.6955404"
-         y="897.92877"></tspan></text>
+         y="897.92877" /></text>
     <text
        xml:space="preserve"
        style="font-style:normal;font-weight:normal;font-size:40px;line-height:125%;font-family:sans-serif;letter-spacing:0px;word-spacing:0px;fill:#000000;fill-opacity:1;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"

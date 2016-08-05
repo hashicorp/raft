@@ -1,6 +1,6 @@
 ## Architecture
 
-### Note: This section is aspirational. It does not describe how the library is organized today.
+#### Note: Portions of this diagram, especially regarding snapshots, are aspirational.
 
 [![architectural diagram](architecture-autogen.png)](architecture.svg)
 
@@ -14,14 +14,14 @@ As a follower, the Raft module processes RPC requests that come in from the *Tra
 
 ### Peers
 
-As a candidate and leader, the Raft module must take a more active role to issue RPCs to the rest of the cluster. It sends out this work to *Peer* routines, requesting that they seek votes or replicate up to a particular entry through a *control* structure, and checks their *progress* reports after RPCs complete. Once a majority of the voting members of the cluster grant a vote, the candidate becomes a leader. Similarly, once a majority acknowledge an entry from the current term, the leader marks it committed.
+As a candidate and leader, the Raft module must take a more active role to issue RPCs to the rest of the cluster. It sends out this work to *Peer* routines, requesting that they seek votes or replicate entries through a *control* structure, and checks their *progress* reports after RPCs complete. Once a majority of the voting members of the cluster grant a vote, the candidate becomes a leader. Similarly, once a majority acknowledge an entry from the current term, the leader marks it committed.
 
-The main *Peer* goroutine is strictly nonblocking. It does small amounts of communication and then goes back to sending and receiving on its various channels. Generating some RPC requests may block, such as an AppendEntries request that needs log entries from the store on disk; this is done using short-lived *RPC builder* goroutines. Once the RPC builder completes, the Peer checks the term number in its latest control structure, and it discards requests that were created during prior terms (these might be invalid if log entries were replaced from the store concurrently, and they're not needed). Once it has a complete request, the Peer sends this over to the Transport using a short-lived *RPC proxy* goroutine (the Transport provides mostly blocking calls). The Peer keeps state to ensure that it's not sending too many RPCs at the same time.
+The main *Peer* goroutine is strictly nonblocking. It does small amounts of communication and then goes back to sending and receiving on its various channels. Generating RPC requests may block. For example, preparing an AppendEntries request that needs log entries from the store may read from disk. Preparing requests is done using short-lived goroutines. Once the request is prepared, the Peer checks the term number in its latest control structure, and it discards requests that were created during prior terms (these might be invalid if log entries were replaced from the store concurrently, and they're not needed). Once it has a complete request, the Peer sends this over to the Transport using another short-lived goroutine (the Transport provides mostly blocking calls). The Peer keeps state to ensure that it's not sending too many RPCs at the same time.
 
 This design permits the Raft module to send control structures to the Peer over an unbuffered channel in a timely manner, and it ensures the Peer module can send out heartbeats at regular intervals, even if it's concurrently building up a large request.
 
-The Transport provides a different interface for AppendEntries pipelineing. The send path can probably be expressed as a different type of RPC proxy, and the receive path should be doable directly on the main (nonblocking) Peer goroutine.
-
 ### State Machine
+
+#### Note: This section is aspirational. It does not describe how the library is organized today.
 
 The Raft module will feed snapshots and committed entries for the *State Machine* goroutine to apply. When the Raft module decides to take a new snapshot, it collects some meta-information and sends a snapshot request over to the State Machine. The State Machine then spawns a short-lived goroutine to write out a copy of its state into the store.
