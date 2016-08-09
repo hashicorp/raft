@@ -93,15 +93,10 @@ func StoreLogs(b *testing.B, store raft.LogStore) {
 }
 
 func DeleteRange(b *testing.B, store raft.LogStore) {
-	// Create some fake data. In this case, we create 3 new log entries for each
-	// test case, and separate them by index in multiples of 10. This allows
-	// some room so that we can test deleting ranges with "extra" logs to
-	// to ensure we stop going to the database once our max index is hit.
 	var logs []*raft.Log
 	for n := 0; n < b.N; n++ {
-		offset := 10 * n
-		for i := offset; i < offset+3; i++ {
-			logs = append(logs, &raft.Log{Index: uint64(i), Data: []byte("data")})
+		for i := 0; i < 10; i++ {
+			logs = append(logs, &raft.Log{Index: uint64(n*10 + i + 1), Data: []byte("data")})
 		}
 	}
 	if err := store.StoreLogs(logs); err != nil {
