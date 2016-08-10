@@ -2,6 +2,7 @@ package raft
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -182,7 +183,7 @@ func waitForProgress(tp *TestingPeer) (peerProgress, error) {
 			continue
 		}
 	}
-	return peerProgress{}, fmt.Errorf("timeout waiting for progress")
+	return peerProgress{}, errors.New("timeout waiting for progress")
 }
 
 func waitFor(tp *TestingPeer, cond func() bool) error {
@@ -194,7 +195,7 @@ func waitFor(tp *TestingPeer, cond func() bool) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("timeout waiting for condition")
+	return errors.New("timeout waiting for condition")
 }
 
 func waitForFailure(tp *TestingPeer) error {
@@ -265,7 +266,7 @@ func oneRPC(tp *TestingPeer, expReq interface{}, reply interface{},
 	serverFuture := serveReplies(tp, []cannedReply{{expReq, reply}})
 	start := time.Now()
 	if !tp.peer.issueWork() {
-		return fmt.Errorf("expected issueWork to send an RPC")
+		return errors.New("expected issueWork to send an RPC")
 	}
 	progress, err := waitForProgress(tp)
 	if err != nil {
@@ -286,12 +287,12 @@ func oneRPC(tp *TestingPeer, expReq interface{}, reply interface{},
 		return err
 	}
 	if !progress.lastContact.After(start) {
-		return fmt.Errorf("lastContact should be after test start")
+		return errors.New("lastContact should be after test start")
 	}
 
 	if !more {
 		if tp.peer.issueWork() {
-			return fmt.Errorf("Unexpected work was done")
+			return errors.New("Unexpected work was done")
 		}
 	}
 
@@ -307,7 +308,7 @@ func oneErrRPC(tp *TestingPeer, expReq interface{}, reply error) error {
 	tp.peer.sendProgress = false
 	serverFuture := serveReplies(tp, []cannedReply{{expReq, reply}})
 	if !tp.peer.issueWork() {
-		return fmt.Errorf("expected issueWork to prepare an RPC")
+		return errors.New("expected issueWork to prepare an RPC")
 	}
 	tp.peer.blockingSelect() // recv on requestCh, calls p.send()
 	err := serverFuture.Error()
@@ -319,7 +320,7 @@ func oneErrRPC(tp *TestingPeer, expReq interface{}, reply error) error {
 			tp.peer.progress, startProgress)
 	}
 	if !tp.peer.progress.lastContact.IsZero() {
-		return fmt.Errorf("last contact should be zero")
+		return errors.New("last contact should be zero")
 	}
 
 	err = waitForFailure(tp)
@@ -327,7 +328,7 @@ func oneErrRPC(tp *TestingPeer, expReq interface{}, reply error) error {
 		return fmt.Errorf("Expected 1 failure, got %d: %v", tp.peer.failures, err)
 	}
 	if tp.peer.issueWork() {
-		return fmt.Errorf("Unexpected work was done")
+		return errors.New("Unexpected work was done")
 	}
 
 	return nil
@@ -478,7 +479,7 @@ func TestPeer_RequestVoteRPC_sendRecvError(t *testing.T) {
 		initProgress: &requestVoteProgress,
 	})
 	defer tp.close()
-	err := oneErrRPC(tp, nil, fmt.Errorf("a transport error"))
+	err := oneErrRPC(tp, nil, errors.New("a transport error"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -820,7 +821,7 @@ func TestPeer_AppendEntriesRPC_heartbeat_sendRecvError(t *testing.T) {
 	})
 	defer tp.close()
 	tp.peer.leader.nextIndex = 16
-	err := oneErrRPC(tp, nil, fmt.Errorf("a transport error"))
+	err := oneErrRPC(tp, nil, errors.New("a transport error"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -838,7 +839,7 @@ func TestPeer_AppendEntriesRPC_sendRecvError(t *testing.T) {
 	defer tp.close()
 	tp.peer.leader.nextIndex = 16
 	tp.peer.leader.lastHeartbeatSent = time.Now().Add(time.Minute)
-	err := oneErrRPC(tp, nil, fmt.Errorf("a transport error"))
+	err := oneErrRPC(tp, nil, errors.New("a transport error"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1013,7 +1014,7 @@ func TestPeer_InstallSnapshotRPC_sendRecvError(t *testing.T) {
 	tp.peer.leader.lastHeartbeatSent = time.Now().Add(time.Minute)
 	tp.peer.leader.nextIndex = 1
 	tp.peer.leader.needsSnapshot = true
-	err := oneErrRPC(tp, nil, fmt.Errorf("a transport error"))
+	err := oneErrRPC(tp, nil, errors.New("a transport error"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -259,7 +259,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 
 	// Create Raft struct
 	r := &Raft{
-		peerProgressCh: make(chan peerProgress, 0),
+		peerProgressCh: make(chan peerProgress),
 		peers:          make(map[ServerID]*raftPeer),
 		applyCh:        make(chan *logFuture),
 		conf:           conf,

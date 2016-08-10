@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -149,7 +150,7 @@ func (i *InmemTransport) makeRPC(target ServerAddress, args interface{}, r io.Re
 	select {
 	case peer.consumerCh <- rpc:
 	case <-timer:
-		err = fmt.Errorf("command timed out")
+		err = errors.New("command timed out")
 		return
 	}
 
@@ -160,7 +161,7 @@ func (i *InmemTransport) makeRPC(target ServerAddress, args interface{}, r io.Re
 			err = rpcResp.Error
 		}
 	case <-timer:
-		err = fmt.Errorf("command timed out")
+		err = errors.New("command timed out")
 	}
 	return
 }
@@ -268,7 +269,7 @@ func (i *inmemPipeline) decodeResponses() {
 				}
 
 			case <-i.shutdownCh:
-				inp.future.respond(fmt.Errorf("shutdown"))
+				inp.future.respond(errors.New("shutdown"))
 				return
 			}
 		case <-i.shutdownCh:
@@ -311,7 +312,7 @@ func (i *inmemPipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEn
 	case i.inprogressCh <- &inmemPipelineInflight{future, respCh}:
 		return future, nil
 	case <-i.shutdownCh:
-		future.respond(fmt.Errorf("shutdown"))
+		future.respond(errors.New("shutdown"))
 		return nil, ErrPipelineShutdown
 	}
 }

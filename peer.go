@@ -347,29 +347,29 @@ func makePeerInternal(serverID ServerID,
 
 func (p *peerState) checkInvariants() error {
 	if p.shared.peerID != p.progress.peerID {
-		return fmt.Errorf("Progress must have peerID")
+		return errors.New("Progress must have peerID")
 	}
 	if p.progress.lastContact.After(p.progress.lastReply) ||
 		p.progress.lastContact == p.progress.lastReply && !p.progress.lastContact.IsZero() {
-		return fmt.Errorf("lastContact must be after lastReply (or both 0)")
+		return errors.New("lastContact must be after lastReply (or both 0)")
 	}
 	switch p.control.role {
 	case Candidate:
 		if p.candidate == nil || p.leader != nil {
-			return fmt.Errorf("should have candidate and not leader state while candidate")
+			return errors.New("should have candidate and not leader state while candidate")
 		}
 	case Leader:
 		if p.candidate != nil || p.leader == nil {
-			return fmt.Errorf("should have leader and not candidate state while leader")
+			return errors.New("should have leader and not candidate state while leader")
 		}
 		if p.leader.nextIndex < 1 || p.leader.nextIndex > p.control.lastIndex+1 {
-			return fmt.Errorf("nextIndex must be between 1 and lastIndex + 1")
+			return errors.New("nextIndex must be between 1 and lastIndex + 1")
 		}
 		if p.leader.outstandingInstallSnapshotRPC && p.leader.outstandingAppendEntriesRPCs > 0 {
-			return fmt.Errorf("must not send a snapshot and entries simultaneously")
+			return errors.New("must not send a snapshot and entries simultaneously")
 		}
 		if p.leader.allowPipeline && p.shared.pipeline == nil {
-			return fmt.Errorf("allowPipeline may only be set if transport supports it")
+			return errors.New("allowPipeline may only be set if transport supports it")
 		}
 	default:
 		if p.candidate != nil || p.leader != nil {
@@ -749,10 +749,10 @@ func (rpc *requestVoteRPC) prepare(shared *peerShared, control peerControl) erro
 
 func (rpc *requestVoteRPC) confirm(p *peerState) error {
 	if rpc.req.Term != p.control.term {
-		return fmt.Errorf("term changed, discarding RequestVote request")
+		return errors.New("term changed, discarding RequestVote request")
 	}
 	if p.control.role != Candidate {
-		return fmt.Errorf("no longer candidate, discarding RequestVote request")
+		return errors.New("no longer candidate, discarding RequestVote request")
 	}
 	return nil
 }
@@ -969,10 +969,10 @@ func (rpc *appendEntriesRPC) prepare(shared *peerShared, control peerControl) er
 
 func (rpc *appendEntriesRPC) confirm(p *peerState) error {
 	if rpc.req.Term != p.control.term {
-		return fmt.Errorf("term changed, discarding AppendEntries request")
+		return errors.New("term changed, discarding AppendEntries request")
 	}
 	if p.control.role != Leader {
-		return fmt.Errorf("no longer leader, discarding AppendEntries request")
+		return errors.New("no longer leader, discarding AppendEntries request")
 	}
 	lastIndex := rpc.req.PrevLogEntry + uint64(len(rpc.req.Entries))
 	if lastIndex > p.leader.nextIndex {
@@ -1180,10 +1180,10 @@ func (rpc *installSnapshotRPC) prepare(shared *peerShared, control peerControl) 
 
 func (rpc *installSnapshotRPC) confirm(p *peerState) error {
 	if rpc.req.Term != p.control.term {
-		return fmt.Errorf("term changed, discarding InstallSnapshot request")
+		return errors.New("term changed, discarding InstallSnapshot request")
 	}
 	if p.control.role != Leader {
-		return fmt.Errorf("no longer leader, discarding InstallSnapshot request")
+		return errors.New("no longer leader, discarding InstallSnapshot request")
 	}
 	// Update nextIndex optimistically. Even if this thing fails, we want to kick
 	// back to trying AppendEntries requests.
