@@ -20,7 +20,6 @@ type inmemPipeline struct {
 	peer     *InmemTransport
 	peerAddr ServerAddress
 
-	doneCh       chan AppendFuture
 	inprogressCh chan *inmemPipelineInflight
 
 	shutdown     bool
@@ -76,7 +75,7 @@ func (i *InmemTransport) LocalAddr() ServerAddress {
 
 // AppendEntriesPipeline returns an interface that can be used to pipeline
 // AppendEntries requests.
-func (i *InmemTransport) AppendEntriesPipeline(target ServerAddress) (AppendPipeline, error) {
+func (i *InmemTransport) AppendEntriesPipeline(target ServerAddress) (AppendPipeline2, error) {
 	i.RLock()
 	peer, ok := i.peers[target]
 	i.RUnlock()
@@ -140,7 +139,7 @@ func (i *InmemTransport) makeRPC(target ServerAddress, args interface{}, r io.Re
 	}
 
 	// Send the RPC over
-	respCh := make(chan RPCResponse, 1)
+	respCh := make(chan RPCResponse)
 	rpc := RPC{
 		Command:  args,
 		Reader:   r,
@@ -228,7 +227,6 @@ func newInmemPipeline(trans *InmemTransport, peer *InmemTransport, addr ServerAd
 		trans:        trans,
 		peer:         peer,
 		peerAddr:     addr,
-		doneCh:       make(chan AppendFuture, 16),
 		inprogressCh: make(chan *inmemPipelineInflight),
 		shutdownCh:   make(chan struct{}),
 	}
@@ -252,21 +250,8 @@ func (i *inmemPipeline) decodeResponses() {
 				*inp.future.resp = *rpcResp.Response.(*AppendEntriesResponse)
 				inp.future.respond(rpcResp.Error)
 
-				select {
-				case i.doneCh <- inp.future:
-				case <-i.shutdownCh:
-					return
-				default: // can't write to doneCh, probably because it filled up. meh.
-				}
-
 			case <-timeoutCh:
 				inp.future.respond(fmt.Errorf("command timed out"))
-				select {
-				case i.doneCh <- inp.future:
-				case <-i.shutdownCh:
-					return
-				default: // can't write to doneCh, probably because it filled up. meh.
-				}
 
 			case <-i.shutdownCh:
 				inp.future.respond(errors.New("shutdown"))
@@ -312,13 +297,8 @@ func (i *inmemPipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEn
 	case i.inprogressCh <- &inmemPipelineInflight{future, respCh}:
 		return future, nil
 	case <-i.shutdownCh:
-		future.respond(errors.New("shutdown"))
 		return nil, ErrPipelineShutdown
 	}
-}
-
-func (i *inmemPipeline) Consumer() <-chan AppendFuture {
-	return i.doneCh
 }
 
 func (i *inmemPipeline) Close() error {

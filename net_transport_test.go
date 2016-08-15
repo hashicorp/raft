@@ -196,14 +196,19 @@ func TestNetworkTransport_AppendEntriesPipeline(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	defer pipeline.Close()
+	respCh := make(chan AppendFuture)
 	for i := 0; i < 10; i++ {
 		out := new(AppendEntriesResponse)
-		if _, err := pipeline.AppendEntries(&args, out); err != nil {
+		future, err := pipeline.AppendEntries(&args, out)
+		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
+		go func() {
+			_ = future.Error()
+			respCh <- future
+		}()
 	}
 
-	respCh := pipeline.Consumer()
 	for i := 0; i < 10; i++ {
 		select {
 		case ready := <-respCh:

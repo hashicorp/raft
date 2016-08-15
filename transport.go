@@ -44,7 +44,7 @@ type Transport interface {
 	// AppendEntriesPipeline returns an interface that can be used to pipeline
 	// AppendEntries requests. It may alternatively return
 	// ErrPipelineReplicationNotSupported or other errors.
-	AppendEntriesPipeline(target ServerAddress) (AppendPipeline, error)
+	AppendEntriesPipeline(target ServerAddress) (AppendPipeline2, error)
 
 	// AppendEntries sends the appropriate RPC to the target node.
 	AppendEntries(target ServerAddress, args *AppendEntriesRequest, resp *AppendEntriesResponse) error
@@ -98,19 +98,26 @@ type WithPeers interface {
 	DisconnectAll()                          // Disconnect all peers, possibly to reconnect them later
 }
 
-// AppendPipeline is used for pipelining AppendEntries requests. It is used
+// AppendPipeline2 is used for pipelining AppendEntries requests. It is used
 // to increase the replication throughput by masking latency and better
 // utilizing bandwidth.
-type AppendPipeline interface {
+//
+// AppendPipeline2 replaces AppendPipeline, which had the following method:
+//     // Consumer returns a channel that can be used to consume
+//     // response futures when they are ready.
+//     Consumer() <-chan AppendFuture
+// Consumer() is no longer utilized and should be removed from transports.
+// Because some transports were written assuming that Consumer() would be called
+// and the channel returned would be drained, we decided to make this a
+// compile-breaking change. Some transports were also buggy in not erroring out
+// all the existing futures upon Close(); doing so is now required.
+type AppendPipeline2 interface {
 	// AppendEntries is used to add another request to the pipeline.
 	// The send may block which is an effective form of back-pressure.
 	AppendEntries(args *AppendEntriesRequest, resp *AppendEntriesResponse) (AppendFuture, error)
 
-	// Consumer returns a channel that can be used to consume
-	// response futures when they are ready.
-	Consumer() <-chan AppendFuture
-
-	// Close closes the pipeline and cancels all inflight RPCs
+	// Close closes the pipeline, cancels all inflight RPCs, and errors all their
+	// futures.
 	Close() error
 }
 

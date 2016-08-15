@@ -56,7 +56,7 @@ type peerShared struct {
 	// Used to send many AppendEntries to the peer in rapid succession
 	// (without waiting for the prevous response). Set to nil if the transport
 	// does not support pipelining.
-	pipeline AppendPipeline
+	pipeline AppendPipeline2
 
 	// The address of this local server, which is sent to the remote server in
 	// most RPCs (constant).

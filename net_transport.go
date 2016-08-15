@@ -104,7 +104,6 @@ type netPipeline struct {
 	conn  *netConn
 	trans *NetworkTransport
 
-	doneCh       chan AppendFuture
 	inprogressCh chan *appendFuture
 
 	shutdown     bool
@@ -260,7 +259,7 @@ func (n *NetworkTransport) returnConn(conn *netConn) {
 
 // AppendEntriesPipeline returns an interface that can be used to pipeline
 // AppendEntries requests.
-func (n *NetworkTransport) AppendEntriesPipeline(target ServerAddress) (AppendPipeline, error) {
+func (n *NetworkTransport) AppendEntriesPipeline(target ServerAddress) (AppendPipeline2, error) {
 	// Get a connection
 	conn, err := n.getConn(target)
 	if err != nil {
@@ -538,7 +537,6 @@ func newNetPipeline(trans *NetworkTransport, conn *netConn) *netPipeline {
 	n := &netPipeline{
 		conn:         conn,
 		trans:        trans,
-		doneCh:       make(chan AppendFuture, rpcMaxPipeline),
 		inprogressCh: make(chan *appendFuture, rpcMaxPipeline),
 		shutdownCh:   make(chan struct{}),
 	}
@@ -559,11 +557,6 @@ func (n *netPipeline) decodeResponses() {
 
 			_, err := decodeResponse(n.conn, future.resp)
 			future.respond(err)
-			select {
-			case n.doneCh <- future:
-			case <-n.shutdownCh:
-				return
-			}
 		case <-n.shutdownCh:
 			return
 		}
@@ -598,11 +591,6 @@ func (n *netPipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEntr
 	case <-n.shutdownCh:
 		return nil, ErrPipelineShutdown
 	}
-}
-
-// Consumer returns a channel that can be used to consume complete futures.
-func (n *netPipeline) Consumer() <-chan AppendFuture {
-	return n.doneCh
 }
 
 // Closed is used to shutdown the pipeline connection.
