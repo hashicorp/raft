@@ -247,8 +247,12 @@ func (i *inmemPipeline) decodeResponses() {
 			select {
 			case rpcResp := <-inp.respCh:
 				// Copy the result back
-				*inp.future.resp = *rpcResp.Response.(*AppendEntriesResponse)
-				inp.future.respond(rpcResp.Error)
+				if rpcResp.Error == nil {
+					*inp.future.resp = *rpcResp.Response.(*AppendEntriesResponse)
+					inp.future.respond(nil)
+				} else {
+					inp.future.respond(rpcResp.Error)
+				}
 
 			case <-timeoutCh:
 				inp.future.respond(fmt.Errorf("command timed out"))
