@@ -54,8 +54,7 @@ type peerShared struct {
 	trans Transport
 
 	// Used to send many AppendEntries to the peer in rapid succession
-	// (without waiting for the prevous response). Set to nil if the transport
-	// does not support pipelining.
+	// (without waiting for the prevous response).
 	pipeline AppendPipeline2
 
 	// The address of this local server, which is sent to the remote server in
@@ -207,7 +206,7 @@ type peerLeaderState struct {
 
 	// allowPipeline is true when AppendEntries RPCs should be sent over a
 	// pipeline (a separate path through the Transport), false otherwise.
-	// If allowPipeline is true, shared.pipeline must not be nil.
+	// If allowPipeline is true, pipelineUnsupported must be false.
 	allowPipeline bool
 
 	// Set to true when we're an AppendEntries request is being sent on the
@@ -253,6 +252,10 @@ type peerState struct {
 	// Counts the total number of PeerRPC objects that exist, excluding errorRPC
 	// objects. Used only in unit tests to tell when things have quiesced.
 	activeRPCs uint64
+
+	// If true, the peer should not try to pipeline AppendEntries requests to
+	// the peer, as it will not work.
+	pipelineUnsupported bool
 
 	// Counts the number of consecutive RPCs that have failed with transport-level
 	// errors since the last success. Used to apply increasing amounts of backoff.
@@ -324,31 +327,20 @@ func makePeerInternal(serverID ServerID,
 			logs:               logs,
 			snapshots:          snapshots,
 			goRoutines:         goRoutines,
+			pipeline:           makeReliablePipeline(trans, serverAddress),
 			requestCh:          make(chan peerRPC),
 			replyCh:            make(chan peerRPC),
 			pipelineSendDoneCh: make(chan uint64),
 			stopCh:             make(chan struct{}),
 		},
-		controlCh:  controlCh,
-		progressCh: progressCh,
-
+		controlCh:    controlCh,
+		progressCh:   progressCh,
 		backoffTimer: time.NewTimer(time.Hour),
 		progress: peerProgress{
 			peerID: serverID,
 		},
 	}
 	p.backoffTimer.Stop()
-
-	pipeline, err := p.shared.trans.AppendEntriesPipeline(p.shared.peerAddr)
-	if err != nil {
-		if err != ErrPipelineReplicationNotSupported {
-			p.shared.logger.Printf("[ERR] raft: Failed to start pipeline replication to %s: %s",
-				p.shared.peerAddr, err)
-		}
-	} else {
-		p.shared.pipeline = pipeline
-	}
-
 	return p
 }
 
@@ -378,7 +370,7 @@ func (p *peerState) checkInvariants() error {
 		if p.leader.outstandingInstallSnapshotRPC && p.leader.outstandingAppendEntriesRPCs > 0 {
 			return errors.New("must not send a snapshot and entries simultaneously")
 		}
-		if p.leader.allowPipeline && p.shared.pipeline == nil {
+		if p.leader.allowPipeline && p.pipelineUnsupported {
 			return errors.New("allowPipeline may only be set if transport supports it")
 		}
 	default:
@@ -408,9 +400,7 @@ func (p *peerState) selectLoop() {
 
 	p.shared.logger.Printf("[INFO] raft: Peer routine for %v exiting", p.shared.peerID)
 	close(p.shared.stopCh)
-	if p.shared.pipeline != nil {
-		p.shared.pipeline.Close()
-	}
+	p.shared.pipeline.Close()
 }
 
 // blockingSelect reads/writes the Peer channels just once, blocking if needed.
@@ -1070,9 +1060,13 @@ func (rpc *appendEntriesRPC) process(p *peerState, err error) {
 		}
 		return
 	}
+
 	if err != nil {
 		p.shared.logger.Printf("[ERR] raft: AppendEntries to %v error: %v",
 			p.shared.peerID, err)
+		if err == ErrPipelineReplicationNotSupported {
+			p.pipelineUnsupported = true
+		}
 		if p.control.term == rpc.req.Term && p.control.role == Leader {
 			if p.leader.allowPipeline {
 				p.leader.allowPipeline = false
@@ -1126,7 +1120,7 @@ func (rpc *appendEntriesRPC) process(p *peerState, err error) {
 		}
 		p.shared.logger.Printf("[INFO] raft: AppendEntries to %v succeeded. nextIndex is now %v",
 			p.shared.peerID, p.leader.nextIndex)
-		if !p.leader.allowPipeline && p.shared.pipeline != nil && !rpc.heartbeat {
+		if !p.leader.allowPipeline && !p.pipelineUnsupported && !rpc.heartbeat {
 			p.leader.allowPipeline = true
 			p.shared.logger.Printf("[INFO] raft: Enabling pipelined replication to peer %v",
 				p.shared.peerID)

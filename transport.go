@@ -3,6 +3,7 @@ package raft
 import (
 	"errors"
 	"io"
+	"sync"
 	"time"
 )
 
@@ -137,4 +138,99 @@ type AppendFuture interface {
 	// This method must only be called after the Error
 	// method returns, and will only be valid on success.
 	Response() *AppendEntriesResponse
+}
+
+// Adapter to reopen new pipelines upon failures.
+type reliablePipeline struct {
+	transport Transport
+	target    ServerAddress
+	// Protects 'current'.
+	mutex sync.Mutex
+	// An open pipeline without errors, or nil.
+	current AppendPipeline2
+}
+
+// Future used in reliablePipeline to close old pipeline upon failures.
+type reliableAppendFuture struct {
+	base     AppendFuture
+	adapter  *reliablePipeline
+	pipeline AppendPipeline2
+}
+
+// Masks errors in using an AppendEntries pipeline by creating new pipelines
+// internally.
+func makeReliablePipeline(transport Transport, target ServerAddress) AppendPipeline2 {
+	return &reliablePipeline{
+		transport: transport,
+		target:    target,
+		current:   nil,
+	}
+}
+
+func (rp *reliablePipeline) failed(pipeline AppendPipeline2) {
+	rp.mutex.Lock()
+	defer rp.mutex.Unlock()
+	if rp.current == pipeline {
+		_ = rp.current.Close()
+		rp.current = nil
+	}
+}
+
+func (rp *reliablePipeline) getPipeline() (AppendPipeline2, error) {
+	rp.mutex.Lock()
+	defer rp.mutex.Unlock()
+	if rp.current == nil {
+		pipeline, err := rp.transport.AppendEntriesPipeline(rp.target)
+		if err != nil {
+			return nil, err
+		}
+		rp.current = pipeline
+	}
+	return rp.current, nil
+}
+
+func (rp *reliablePipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEntriesResponse) (AppendFuture, error) {
+	pipeline, err := rp.getPipeline()
+	if err != nil {
+		return nil, err
+	}
+	future, err := pipeline.AppendEntries(args, resp)
+	if err != nil {
+		rp.failed(pipeline)
+		return nil, err
+	}
+	return &reliableAppendFuture{
+		base:     future,
+		adapter:  rp,
+		pipeline: pipeline,
+	}, nil
+}
+
+func (rp *reliablePipeline) Close() error {
+	rp.mutex.Lock()
+	defer rp.mutex.Unlock()
+	if rp.current != nil {
+		err := rp.current.Close()
+		rp.current = nil
+		return err
+	}
+	return nil
+}
+
+func (rf *reliableAppendFuture) Error() error {
+	err := rf.base.Error()
+	if err != nil {
+		rf.adapter.failed(rf.pipeline)
+	}
+	return err
+}
+
+func (rf *reliableAppendFuture) Start() time.Time {
+	return rf.base.Start()
+}
+func (rf *reliableAppendFuture) Request() *AppendEntriesRequest {
+	return rf.base.Request()
+}
+func (rf *reliableAppendFuture) Response() *AppendEntriesResponse {
+	return rf.base.Response()
 }
