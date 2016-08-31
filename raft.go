@@ -948,12 +948,13 @@ func (r *Raft) leaderLoop() {
 		case newLog := <-r.applyCh:
 			// Group commit, gather all the ready commits
 			ready := []*logFuture{newLog}
-			for i := 0; i < r.conf.MaxAppendEntries; i++ {
+			ok := true
+			for i := 0; ok && i < r.conf.MaxAppendEntries; i++ {
 				select {
 				case newLog := <-r.applyCh:
 					ready = append(ready, newLog)
 				default:
-					break
+					ok = false
 				}
 			}
 
