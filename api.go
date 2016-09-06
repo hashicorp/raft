@@ -382,7 +382,6 @@ func (r *Raft) restoreSnapshot() error {
 			r.configurations.latest = configuration
 			r.configurations.latestIndex = snapshot.Index
 		}
-		r.updatePeers()
 
 		// Success!
 		return nil
