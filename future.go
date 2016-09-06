@@ -150,6 +150,8 @@ type restoreFuture struct {
 	ID string
 }
 
+// verifyFuture is returned by VerifyLeader(), used to check that a majority of
+// the cluster still believes the local server to be the current leader.
 type verifyFuture struct {
 	deferError
 }
