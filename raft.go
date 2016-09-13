@@ -733,10 +733,6 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 		Data: encodeConfiguration(configuration),
 	}
 	r.dispatchLogs([]*logFuture{&future.logFuture})
-	index := future.Index()
-	r.configurations.latest = configuration
-	r.configurations.latestIndex = index
-	r.updatePeers()
 }
 
 // dispatchLog is called on the leader to push a log to disk, mark it
@@ -756,6 +752,14 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 		applyLog.log.Term = term
 		logs[idx] = &applyLog.log
 		r.leaderState.inflight.PushBack(applyLog)
+
+		if applyLog.log.Type == LogConfiguration {
+			r.configurations.committed = r.configurations.latest
+			r.configurations.committedIndex = r.configurations.latestIndex
+			r.configurations.latest = decodeConfiguration(applyLog.log.Data)
+			r.configurations.latestIndex = applyLog.log.Index
+			r.updatePeers()
+		}
 	}
 
 	// Write the log entry locally
