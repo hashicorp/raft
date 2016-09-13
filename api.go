@@ -642,7 +642,7 @@ func (r *Raft) Stats() map[string]string {
 	}
 
 	configuration, _, err := r.GetConfiguration()
-	if err != nil {
+	if err == nil {
 		s["latest_configuration"] = fmt.Sprintf("%+v", configuration)
 	} else {
 		r.logger.Printf("[WARN] raft: could not get configuration for Stats: %v", err)
