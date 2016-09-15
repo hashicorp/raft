@@ -75,13 +75,29 @@ func makePeerTesting(t *testing.T, tp *TestingPeer) *TestingPeer {
 	if tp.peerID == "" {
 		tp.peerID = ServerID("id2")
 	}
+
+	if tp.localAddr == "" {
+		tp.localAddr = ServerAddress("addr1")
+	}
+	if tp.localTrans == nil {
+		_, tp.localTrans = NewInmemTransport(tp.localAddr)
+	}
+	if tp.peerAddr == "" {
+		tp.peerAddr = ServerAddress("addr2")
+	}
+	if tp.peerTrans == nil {
+		_, tp.peerTrans = NewInmemTransport(tp.peerAddr)
+	}
+	tp.localTrans.Connect(tp.peerAddr, tp.peerTrans)
+	tp.peerTrans.Connect(tp.localAddr, tp.localTrans)
+
 	if tp.logs == nil {
 		tp.logs = NewInmemStore()
 		tp.logs.StoreLogs([]*Log{&entry14, &entry15, &entry16, &entry17, &entry18})
 	}
 	if tp.snapshots == nil {
 		tp.snapshotDir, tp.snapshots = FileSnapTest(t)
-		sink, err := tp.snapshots.Create(15, 75, configuration3, 3)
+		sink, err := tp.snapshots.Create(SnapshotVersionMax, 15, 75, configuration3, 3, tp.localTrans)
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
@@ -103,21 +119,6 @@ func makePeerTesting(t *testing.T, tp *TestingPeer) *TestingPeer {
 	if tp.progressCh == nil {
 		tp.progressCh = make(chan peerProgress, 1) // Buffered for testing!
 	}
-
-	if tp.localAddr == "" {
-		tp.localAddr = ServerAddress("addr1")
-	}
-	if tp.localTrans == nil {
-		_, tp.localTrans = NewInmemTransport(tp.localAddr)
-	}
-	if tp.peerAddr == "" {
-		tp.peerAddr = ServerAddress("addr2")
-	}
-	if tp.peerTrans == nil {
-		_, tp.peerTrans = NewInmemTransport(tp.peerAddr)
-	}
-	tp.localTrans.Connect(tp.peerAddr, tp.peerTrans)
-	tp.peerTrans.Connect(tp.localAddr, tp.localTrans)
 
 	tp.peer = makePeerInternal(
 		tp.peerID,
@@ -380,6 +381,7 @@ func TestPeer_RequestVoteRPC_granted(t *testing.T) {
 	})
 	defer tp.close()
 	exp := RequestVoteRequest{
+		RPCHeader:    RPCHeader{ProtocolVersionMax},
 		Term:         84,
 		Candidate:    tp.localTrans.EncodePeer(tp.localAddr),
 		LastLogIndex: 18,
@@ -537,6 +539,7 @@ func TestPeer_AppendEntriesRPC_heartbeat(t *testing.T) {
 	tp.peer.failures = 1
 	tp.peer.leader.nextCommitIndex = 2
 	exp := AppendEntriesRequest{
+		RPCHeader:         RPCHeader{ProtocolVersionMax},
 		Term:              83,
 		Leader:            tp.localTrans.EncodePeer(tp.localAddr),
 		PrevLogEntry:      1,
@@ -601,6 +604,7 @@ func TestPeer_AppendEntriesRPC_heartbeat_commitIndex(t *testing.T) {
 	defer func() { tp.peer.leader.outstandingInstallSnapshotRPC = false }()
 
 	exp := AppendEntriesRequest{
+		RPCHeader:         RPCHeader{ProtocolVersionMax},
 		Term:              83,
 		Leader:            tp.localTrans.EncodePeer(tp.localAddr),
 		PrevLogEntry:      18,
@@ -645,6 +649,7 @@ func testPeer_AppendEntriesRPC_success_noEntries(t *testing.T, pipeline bool) {
 	tp.peer.leader.lastHeartbeatSent = time.Now().Add(time.Minute)
 	tp.peer.leader.nextCommitIndex = 2
 	exp := AppendEntriesRequest{
+		RPCHeader:         RPCHeader{ProtocolVersionMax},
 		Term:              83,
 		Leader:            tp.localTrans.EncodePeer(tp.localAddr),
 		PrevLogEntry:      18,
@@ -694,6 +699,7 @@ func testPeer_AppendEntriesRPC_success_oneEntry(t *testing.T, pipeline bool) {
 	tp.peer.leader.nextCommitIndex = 2
 	tp.peer.leader.nextIndex = 18
 	exp := AppendEntriesRequest{
+		RPCHeader:         RPCHeader{ProtocolVersionMax},
 		Term:              83,
 		Leader:            tp.localTrans.EncodePeer(tp.localAddr),
 		PrevLogEntry:      17,
@@ -749,6 +755,7 @@ func testPeer_AppendEntriesRPC_success_someEntries(t *testing.T, pipeline bool) 
 	tp.peer.leader.nextIndex = 16
 
 	exp1 := AppendEntriesRequest{
+		RPCHeader:         RPCHeader{ProtocolVersionMax},
 		Term:              83,
 		Leader:            tp.localTrans.EncodePeer(tp.localAddr),
 		PrevLogEntry:      15,
@@ -764,6 +771,7 @@ func testPeer_AppendEntriesRPC_success_someEntries(t *testing.T, pipeline bool) 
 
 	// Immediately send remaining entries.
 	exp2 := AppendEntriesRequest{
+		RPCHeader:         RPCHeader{ProtocolVersionMax},
 		Term:              83,
 		Leader:            tp.localTrans.EncodePeer(tp.localAddr),
 		PrevLogEntry:      17,
@@ -966,10 +974,13 @@ func TestPeer_InstallSnapshotRPC_success(t *testing.T) {
 	}
 
 	exp := InstallSnapshotRequest{
+		RPCHeader:          RPCHeader{ProtocolVersionMax},
+		SnapshotVersion:    getSnapshotVersion(ProtocolVersionMax),
 		Term:               83,
 		Leader:             tp.localTrans.EncodePeer(tp.localAddr),
 		LastLogIndex:       15,
 		LastLogTerm:        75,
+		Peers:              encodePeers(configuration3, tp.localTrans),
 		Configuration:      encodeConfiguration(configuration3),
 		ConfigurationIndex: 3,
 		Size:               5,

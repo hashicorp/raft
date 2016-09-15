@@ -21,6 +21,53 @@ var (
 	keyLastVoteCand = []byte("LastVoteCand")
 )
 
+// getRPCHeader returns an initialized RPCHeader struct for the given
+// Raft instance. This structure is sent along with RPC requests and
+// responses.
+func (r *Raft) getRPCHeader() RPCHeader {
+	return RPCHeader{
+		ProtocolVersion: r.conf.ProtocolVersion,
+	}
+}
+
+// checkRPCHeader houses logic about whether this instance of Raft can process
+// the given RPC message.
+func (r *Raft) checkRPCHeader(rpc RPC) error {
+	// Get the header off the RPC message.
+	wh, ok := rpc.Command.(WithRPCHeader)
+	if !ok {
+		return fmt.Errorf("RPC does not have a header")
+	}
+	header := wh.GetRPCHeader()
+
+	// First check is to just make sure the code can understand the
+	// protocol at all.
+	if header.ProtocolVersion < ProtocolVersionMin ||
+		header.ProtocolVersion > ProtocolVersionMax {
+		return ErrUnsupportedProtocol
+	}
+
+	// Second check is whether we should support this message, given the
+	// current protocol we are configured to run. This will drop support
+	// for protocol version 0 starting at protocol version 2, which is
+	// currently what we want, and in general support one version back. We
+	// may need to revisit this policy depending on how future protocol
+	// changes evolve.
+	if header.ProtocolVersion < r.conf.ProtocolVersion-1 {
+		return ErrUnsupportedProtocol
+	}
+
+	return nil
+}
+
+// getSnapshotVersion returns the snapshot version that should be used when
+// creating snapshots, given the protocol version in use.
+func getSnapshotVersion(protocolVersion ProtocolVersion) SnapshotVersion {
+	// Right now we only have two versions and they are backwards compatible
+	// so we don't need to look at the protocol version.
+	return 1
+}
+
 type raftPeer struct {
 	controlCh chan<- peerControl
 	progress  peerProgress
@@ -54,20 +101,6 @@ func (r *Raft) setLeader(leader ServerAddress) {
 	r.leaderLock.Lock()
 	r.leader = leader
 	r.leaderLock.Unlock()
-}
-
-// getConfigurations returns the full configuration information. This must not
-// be called on the main thread (which can access the information directly).
-func (r *Raft) getConfigurations() *configurationsFuture {
-	configurationsFuture := &configurationsFuture{}
-	configurationsFuture.init()
-	select {
-	case <-r.shutdownCh:
-		configurationsFuture.respond(ErrRaftShutdown)
-		return configurationsFuture
-	case r.configurationsCh <- configurationsFuture:
-		return configurationsFuture
-	}
 }
 
 // requestConfigChange is a helper for the above functions that make
@@ -144,6 +177,9 @@ func (r *Raft) runFollower() {
 			c.configurations = r.configurations.Clone()
 			c.respond(nil)
 
+		case b := <-r.bootstrapCh:
+			b.respond(r.liveBootstrap(b.configuration))
+
 		case <-heartbeatTimer:
 			// Restart the heartbeat timer
 			heartbeatTimer = randomTimeout(r.conf.HeartbeatTimeout)
@@ -182,6 +218,28 @@ func (r *Raft) runFollower() {
 			return
 		}
 	}
+}
+
+// liveBootstrap attempts to seed an initial configuration for the cluster. See
+// the Raft object's member BootstrapCluster for more details. This must only be
+// called on the main thread, and only makes sense in the follower state.
+func (r *Raft) liveBootstrap(configuration Configuration) error {
+	// Use the pre-init API to make the static updates.
+	err := BootstrapCluster(&r.conf, r.logs, r.stable, r.snapshots,
+		r.trans, configuration)
+	if err != nil {
+		return err
+	}
+
+	// Make the configuration live.
+	var entry Log
+	if err := r.logs.GetLog(1, &entry); err != nil {
+		panic(err)
+	}
+	r.setCurrentTerm(1)
+	r.setLastLog(entry.Index, entry.Term)
+	r.processConfigurationLogEntry(&entry)
+	return nil
 }
 
 // runCandidate runs the FSM for a candidate.
@@ -237,6 +295,9 @@ func (r *Raft) runCandidate() {
 		case c := <-r.configurationsCh:
 			c.configurations = r.configurations.Clone()
 			c.respond(nil)
+
+		case b := <-r.bootstrapCh:
+			b.respond(ErrCantBootstrap)
 
 		case <-electionTimer:
 			// Election failed! Restart the election. We simply return,
@@ -364,6 +425,7 @@ func (r *Raft) updatePeers() {
 			r.logger.Printf("[INFO] raft: Added peer %v, starting replication", server.ID)
 			controlCh := startPeer(server.ID, server.Address, r.logger, r.logs, r.snapshots,
 				r.goRoutines, r.trans, r.localAddr, r.peerProgressCh, peerOptions{
+					protocolVersion:   r.conf.ProtocolVersion,
 					maxAppendEntries:  uint64(r.conf.MaxAppendEntries),
 					heartbeatInterval: r.conf.HeartbeatTimeout / 5,
 				})
@@ -480,6 +542,9 @@ func (r *Raft) leaderLoop() {
 
 		case future := <-r.configurationChangeChIfStable():
 			r.appendConfigurationEntry(future)
+
+		case b := <-r.bootstrapCh:
+			b.respond(ErrCantBootstrap)
 
 		case newLog := <-r.applyCh:
 			// Group commit, gather all the ready commits
@@ -726,12 +791,28 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 		return
 	}
 
-	r.logger.Printf("[INFO] raft: Updating configuration with %s (%v, %v) to %v",
-		future.req.command, future.req.serverAddress, future.req.serverID, configuration)
-	future.log = Log{
-		Type: LogConfiguration,
-		Data: encodeConfiguration(configuration),
+	r.logger.Printf("[INFO] raft: Updating configuration with %s (%v, %v) to %+v",
+		future.req.command, future.req.serverID, future.req.serverAddress, configuration.Servers)
+
+	// In pre-ID compatibility mode we translate all configuration changes
+	// in to an old remove peer message, which can handle all supported
+	// cases for peer changes in the pre-ID world (adding and removing
+	// voters). Both add peer and remove peer log entries are handled
+	// similarly on old Raft servers, but remove peer does extra checks to
+	// see if a leader needs to step down. Since they both assert the full
+	// configuration, then we can safely call remove peer for everything.
+	if r.protocolVersion < 2 {
+		future.log = Log{
+			Type: LogRemovePeerDeprecated,
+			Data: encodePeers(configuration, r.trans),
+		}
+	} else {
+		future.log = Log{
+			Type: LogConfiguration,
+			Data: encodeConfiguration(configuration),
+		}
 	}
+
 	r.dispatchLogs([]*logFuture{&future.logFuture})
 }
 
@@ -752,14 +833,7 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 		applyLog.log.Term = term
 		logs[idx] = &applyLog.log
 		r.leaderState.inflight.PushBack(applyLog)
-
-		if applyLog.log.Type == LogConfiguration {
-			r.configurations.committed = r.configurations.latest
-			r.configurations.committedIndex = r.configurations.latestIndex
-			r.configurations.latest = decodeConfiguration(applyLog.log.Data)
-			r.configurations.latestIndex = applyLog.log.Index
-			r.updatePeers()
-		}
+		r.processConfigurationLogEntry(&applyLog.log)
 	}
 
 	// Write the log entry locally
@@ -843,8 +917,9 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 	case LogRemovePeerDeprecated:
 	case LogNoop:
 		// Ignore the no-op
+
 	default:
-		r.logger.Printf("[ERR] raft: Got unrecognized log type: %#v", l)
+		panic(fmt.Errorf("unrecognized log type: %#v", l))
 	}
 
 	// Invoke the future if given
@@ -856,6 +931,11 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 // processRPC is called to handle an incoming RPC request. This must only be
 // called from the main thread.
 func (r *Raft) processRPC(rpc RPC) {
+	if err := r.checkRPCHeader(rpc); err != nil {
+		rpc.Respond(nil, err)
+		return
+	}
+
 	switch cmd := rpc.Command.(type) {
 	case *AppendEntriesRequest:
 		r.appendEntries(rpc, cmd)
@@ -898,9 +978,10 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "appendEntries"}, time.Now())
 	// Setup a response
 	resp := &AppendEntriesResponse{
-		Term:    r.getCurrentTerm(),
-		LastLog: r.getLastIndex(),
-		Success: false,
+		RPCHeader: r.getRPCHeader(),
+		Term:      r.getCurrentTerm(),
+		LastLog:   r.getLastIndex(),
+		Success:   false,
 	}
 	var rpcErr error
 	defer func() {
@@ -991,14 +1072,9 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 				return
 			}
 
+			// Handle any new configuration changes
 			for _, newEntry := range newEntries {
-				if newEntry.Type == LogConfiguration {
-					r.configurations.committed = r.configurations.latest
-					r.configurations.committedIndex = r.configurations.latestIndex
-					r.configurations.latest = decodeConfiguration(newEntry.Data)
-					r.configurations.latestIndex = newEntry.Index
-					r.updatePeers()
-				}
+				r.processConfigurationLogEntry(newEntry)
 			}
 
 			// Update the lastLog
@@ -1029,6 +1105,24 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	return
 }
 
+// processConfigurationLogEntry takes a log entry and updates the latest
+// configuration if the entry results in a new configuration. This must only be
+// called from the main thread, or from NewRaft() before any threads have begun.
+func (r *Raft) processConfigurationLogEntry(entry *Log) {
+	if entry.Type == LogConfiguration {
+		r.configurations.committed = r.configurations.latest
+		r.configurations.committedIndex = r.configurations.latestIndex
+		r.configurations.latest = decodeConfiguration(entry.Data)
+		r.configurations.latestIndex = entry.Index
+	} else if entry.Type == LogAddPeerDeprecated || entry.Type == LogRemovePeerDeprecated {
+		r.configurations.committed = r.configurations.latest
+		r.configurations.committedIndex = r.configurations.latestIndex
+		r.configurations.latest = decodePeers(entry.Data, r.trans)
+		r.configurations.latestIndex = entry.Index
+	}
+	r.updatePeers()
+}
+
 // requestVote is invoked when we get an request vote RPC call.
 func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "requestVote"}, time.Now())
@@ -1036,13 +1130,20 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 
 	// Setup a response
 	resp := &RequestVoteResponse{
-		Term:    r.getCurrentTerm(),
-		Granted: false,
+		RPCHeader: r.getRPCHeader(),
+		Term:      r.getCurrentTerm(),
+		Granted:   false,
 	}
 	var rpcErr error
 	defer func() {
 		rpc.Respond(resp, rpcErr)
 	}()
+
+	// Version 0 servers will panic unless the peers is present. It's only
+	// used on them to produce a warning message.
+	if r.protocolVersion < 2 {
+		resp.Peers = encodePeers(r.configurations.latest, r.trans)
+	}
 
 	// Check if we have an existing leader [who's not the candidate]
 	candidate := r.trans.DecodePeer(req.Candidate)
@@ -1128,6 +1229,13 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 		rpc.Respond(resp, rpcErr)
 	}()
 
+	// Sanity check the version
+	if req.SnapshotVersion < SnapshotVersionMin ||
+		req.SnapshotVersion > SnapshotVersionMax {
+		rpcErr = fmt.Errorf("unsupported snapshot version %d", req.SnapshotVersion)
+		return
+	}
+
 	// Ignore an older term
 	if req.Term < r.getCurrentTerm() {
 		return
@@ -1146,15 +1254,16 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	// Create a new snapshot
 	var reqConfiguration Configuration
 	var reqConfigurationIndex uint64
-	if req.ConfigurationIndex > 0 {
+	if req.SnapshotVersion > 0 {
 		reqConfiguration = decodeConfiguration(req.Configuration)
 		reqConfigurationIndex = req.ConfigurationIndex
 	} else {
 		reqConfiguration = decodePeers(req.Peers, r.trans)
 		reqConfigurationIndex = req.LastLogIndex
 	}
-	sink, err := r.snapshots.Create(req.LastLogIndex, req.LastLogTerm,
-		reqConfiguration, reqConfigurationIndex)
+	version := getSnapshotVersion(r.protocolVersion)
+	sink, err := r.snapshots.Create(version, req.LastLogIndex, req.LastLogTerm,
+		reqConfiguration, reqConfigurationIndex, r.trans)
 	if err != nil {
 		r.logger.Printf("[ERR] raft: Failed to create snapshot to install: %v", err)
 		rpcErr = fmt.Errorf("failed to create snapshot: %v", err)

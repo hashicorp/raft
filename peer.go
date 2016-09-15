@@ -13,6 +13,9 @@ import (
 
 // Settings controlling Peer behavior, as passed to startPeer().
 type peerOptions struct {
+	// Version number sent in request headers.
+	protocolVersion ProtocolVersion
+
 	// No more than this many entries will be sent in one AppendEntries request.
 	maxAppendEntries uint64
 
@@ -299,6 +302,9 @@ func makePeerInternal(serverID ServerID,
 
 	if logger == nil {
 		logger = log.New(os.Stderr, "", log.LstdFlags)
+	}
+	if options.protocolVersion == 0 {
+		options.protocolVersion = ProtocolVersionMax
 	}
 	if options.maxAppendEntries == 0 {
 		options.maxAppendEntries = 1000
@@ -736,6 +742,7 @@ func makeRequestVoteRPC(p *peerState) peerRPC {
 	return &requestVoteRPC{
 		start: time.Now(),
 		req: RequestVoteRequest{
+			RPCHeader:    RPCHeader{p.shared.options.protocolVersion},
 			Term:         p.control.term,
 			Candidate:    p.shared.trans.EncodePeer(p.shared.localAddr),
 			LastLogIndex: p.control.lastIndex,
@@ -833,8 +840,9 @@ func makeHeartbeatRPC(p *peerState) peerRPC {
 	rpc := &appendEntriesRPC{
 		start: start,
 		req: &AppendEntriesRequest{
-			Term:   p.control.term,
-			Leader: p.shared.trans.EncodePeer(p.shared.localAddr),
+			RPCHeader: RPCHeader{p.shared.options.protocolVersion},
+			Term:      p.control.term,
+			Leader:    p.shared.trans.EncodePeer(p.shared.localAddr),
 
 			// Heartbeats in the current Peer code serve two purposes:
 			//  1. As a sign of life to the peer so that it does not start an
@@ -886,6 +894,7 @@ func makeAppendEntriesRPC(p *peerState) peerRPC {
 	return &appendEntriesRPC{
 		start: time.Now(),
 		req: &AppendEntriesRequest{
+			RPCHeader:         RPCHeader{p.shared.options.protocolVersion},
 			Term:              p.control.term,
 			Leader:            p.shared.trans.EncodePeer(p.shared.localAddr),
 			PrevLogEntry:      p.leader.nextIndex - 1,
@@ -1192,6 +1201,8 @@ func (rpc *installSnapshotRPC) prepare(shared *peerShared, control peerControl) 
 
 	// Fill in the request.
 	rpc.req = InstallSnapshotRequest{
+		RPCHeader:          RPCHeader{shared.options.protocolVersion},
+		SnapshotVersion:    meta.Version,
 		Term:               control.term,
 		Leader:             shared.trans.EncodePeer(shared.localAddr),
 		LastLogIndex:       meta.Index,
