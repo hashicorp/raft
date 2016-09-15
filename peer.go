@@ -209,7 +209,7 @@ type peerLeaderState struct {
 	// If allowPipeline is true, pipelineUnsupported must be false.
 	allowPipeline bool
 
-	// Set to true when we're an AppendEntries request is being sent on the
+	// Set to true when an AppendEntries request is being sent on the
 	// AppendEntries pipeline during control.term, then cleared when the pipeline
 	// is ready for more.
 	outstandingPipelineSend bool
@@ -349,8 +349,8 @@ func (p *peerState) checkInvariants() error {
 		return errors.New("Progress must have peerID")
 	}
 	if p.progress.lastContact.After(p.progress.lastReply) ||
-		p.progress.lastContact == p.progress.lastReply && !p.progress.lastContact.IsZero() {
-		return errors.New("lastContact must be after lastReply (or both 0)")
+		(p.progress.lastContact == p.progress.lastReply && !p.progress.lastContact.IsZero()) {
+		return errors.New("lastContact must be before lastReply (or both 0)")
 	}
 	switch p.control.role {
 	case Candidate:

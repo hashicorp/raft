@@ -189,7 +189,7 @@ func (r *Raft) runCandidate() {
 	r.logger.Printf("[INFO] raft: %v entering Candidate state in term %v",
 		r, r.getCurrentTerm()+1)
 	metrics.IncrCounter([]string{"raft", "state", "candidate"}, 1)
-	// defer metrics.MeasureSince([]string{"raft", "candidate", "electSelf"}, time.Now())
+	defer metrics.MeasureSince([]string{"raft", "candidate", "electSelf"}, time.Now())
 
 	// Increment the term
 	r.setCurrentTerm(r.getCurrentTerm() + 1)
