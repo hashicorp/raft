@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -10,7 +11,7 @@ import (
 // NewInmemAddr returns a new in-memory addr with
 // a randomly generate UUID as the ID.
 func NewInmemAddr() ServerAddress {
-	return ServerAddress(generateUUID())
+	return ServerAddress(generateUUID()[:4])
 }
 
 // inmemPipeline is used to pipeline requests for the in-mem transport.
@@ -19,7 +20,6 @@ type inmemPipeline struct {
 	peer     *InmemTransport
 	peerAddr ServerAddress
 
-	doneCh       chan AppendFuture
 	inprogressCh chan *inmemPipelineInflight
 
 	shutdown     bool
@@ -75,7 +75,7 @@ func (i *InmemTransport) LocalAddr() ServerAddress {
 
 // AppendEntriesPipeline returns an interface that can be used to pipeline
 // AppendEntries requests.
-func (i *InmemTransport) AppendEntriesPipeline(target ServerAddress) (AppendPipeline, error) {
+func (i *InmemTransport) AppendEntriesPipeline(target ServerAddress) (AppendPipeline2, error) {
 	i.RLock()
 	peer, ok := i.peers[target]
 	i.RUnlock()
@@ -140,10 +140,17 @@ func (i *InmemTransport) makeRPC(target ServerAddress, args interface{}, r io.Re
 
 	// Send the RPC over
 	respCh := make(chan RPCResponse)
-	peer.consumerCh <- RPC{
+	rpc := RPC{
 		Command:  args,
 		Reader:   r,
 		RespChan: respCh,
+	}
+	timer := time.After(timeout)
+	select {
+	case peer.consumerCh <- rpc:
+	case <-timer:
+		err = errors.New("command timed out")
+		return
 	}
 
 	// Wait for a response
@@ -152,8 +159,8 @@ func (i *InmemTransport) makeRPC(target ServerAddress, args interface{}, r io.Re
 		if rpcResp.Error != nil {
 			err = rpcResp.Error
 		}
-	case <-time.After(timeout):
-		err = fmt.Errorf("command timed out")
+	case <-timer:
+		err = errors.New("command timed out")
 	}
 	return
 }
@@ -220,8 +227,7 @@ func newInmemPipeline(trans *InmemTransport, peer *InmemTransport, addr ServerAd
 		trans:        trans,
 		peer:         peer,
 		peerAddr:     addr,
-		doneCh:       make(chan AppendFuture, 16),
-		inprogressCh: make(chan *inmemPipelineInflight, 16),
+		inprogressCh: make(chan *inmemPipelineInflight),
 		shutdownCh:   make(chan struct{}),
 	}
 	go i.decodeResponses()
@@ -241,24 +247,18 @@ func (i *inmemPipeline) decodeResponses() {
 			select {
 			case rpcResp := <-inp.respCh:
 				// Copy the result back
-				*inp.future.resp = *rpcResp.Response.(*AppendEntriesResponse)
-				inp.future.respond(rpcResp.Error)
-
-				select {
-				case i.doneCh <- inp.future:
-				case <-i.shutdownCh:
-					return
+				if rpcResp.Error == nil {
+					*inp.future.resp = *rpcResp.Response.(*AppendEntriesResponse)
+					inp.future.respond(nil)
+				} else {
+					inp.future.respond(rpcResp.Error)
 				}
 
 			case <-timeoutCh:
 				inp.future.respond(fmt.Errorf("command timed out"))
-				select {
-				case i.doneCh <- inp.future:
-				case <-i.shutdownCh:
-					return
-				}
 
 			case <-i.shutdownCh:
+				inp.future.respond(errors.New("shutdown"))
 				return
 			}
 		case <-i.shutdownCh:
@@ -303,10 +303,6 @@ func (i *inmemPipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEn
 	case <-i.shutdownCh:
 		return nil, ErrPipelineShutdown
 	}
-}
-
-func (i *inmemPipeline) Consumer() <-chan AppendFuture {
-	return i.doneCh
 }
 
 func (i *inmemPipeline) Close() error {

@@ -79,24 +79,32 @@ func TestGenerateUUID(t *testing.T) {
 	}
 }
 
+type backoffTest struct {
+	round    uint64
+	base     time.Duration
+	limit    time.Duration
+	expected time.Duration
+}
+
+const ms = time.Millisecond
+
+var backoffTests = []backoffTest{
+	{0, 10 * ms, 80 * ms, 0 * ms},
+	{1, 10 * ms, 80 * ms, 10 * ms},
+	{2, 10 * ms, 80 * ms, 20 * ms},
+	{3, 10 * ms, 80 * ms, 40 * ms},
+	{4, 10 * ms, 80 * ms, 80 * ms},
+	{5, 10 * ms, 80 * ms, 80 * ms},
+	{3, 2 * ms, 9 * ms, 8 * ms},
+	{4, 2 * ms, 9 * ms, 9 * ms},
+}
+
 func TestBackoff(t *testing.T) {
-	b := backoff(10*time.Millisecond, 1, 8)
-	if b != 10*time.Millisecond {
-		t.Fatalf("bad: %v", b)
-	}
-
-	b = backoff(20*time.Millisecond, 2, 8)
-	if b != 20*time.Millisecond {
-		t.Fatalf("bad: %v", b)
-	}
-
-	b = backoff(10*time.Millisecond, 8, 8)
-	if b != 640*time.Millisecond {
-		t.Fatalf("bad: %v", b)
-	}
-
-	b = backoff(10*time.Millisecond, 9, 8)
-	if b != 640*time.Millisecond {
-		t.Fatalf("bad: %v", b)
+	for i, test := range backoffTests {
+		actual := backoff(test.round, test.base, test.limit)
+		if actual != test.expected {
+			t.Errorf("backoff(%v, %v, %v) = %v, expected %v (test %v)",
+				test.round, test.base, test.limit, actual, test.expected, i)
+		}
 	}
 }

@@ -1,9 +1,6 @@
 package raft
 
-import (
-	"sync"
-	"time"
-)
+import "time"
 
 // Future is used to represent an action that may occur in the future.
 type Future interface {
@@ -143,7 +140,7 @@ func (s *shutdownFuture) Error() error {
 	if s.raft == nil {
 		return nil
 	}
-	s.raft.waitShutdown()
+	s.raft.goRoutines.waitShutdown()
 	if closeable, ok := s.raft.trans.(WithClose); ok {
 		closeable.Close()
 	}
@@ -173,14 +170,10 @@ type restoreFuture struct {
 	ID string
 }
 
-// verifyFuture is used to verify the current node is still
-// the leader. This is to prevent a stale read.
+// verifyFuture is returned by VerifyLeader(), used to check that a majority of
+// the cluster still believes the local server to be the current leader.
 type verifyFuture struct {
 	deferError
-	notifyCh   chan *verifyFuture
-	quorumSize int
-	votes      int
-	voteLock   sync.Mutex
 }
 
 // configurationsFuture is used to retrieve the current configurations. This is
@@ -198,29 +191,6 @@ func (c *configurationsFuture) Configuration() Configuration {
 // Index returns the index of the latest configuration in use by Raft.
 func (c *configurationsFuture) Index() uint64 {
 	return c.configurations.latestIndex
-}
-
-// vote is used to respond to a verifyFuture.
-// This may block when responding on the notifyCh.
-func (v *verifyFuture) vote(leader bool) {
-	v.voteLock.Lock()
-	defer v.voteLock.Unlock()
-
-	// Guard against having notified already
-	if v.notifyCh == nil {
-		return
-	}
-
-	if leader {
-		v.votes++
-		if v.votes >= v.quorumSize {
-			v.notifyCh <- v
-			v.notifyCh = nil
-		}
-	} else {
-		v.notifyCh <- v
-		v.notifyCh = nil
-	}
 }
 
 // appendFuture is used for waiting on a pipelined append

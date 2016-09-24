@@ -17,21 +17,85 @@ type WithRPCHeader interface {
 
 // AppendEntriesRequest is the command used to append entries to the
 // replicated log.
+//
+// These are also used as heartbeats. Older versions of the code always sent
+// heartbeats with PrevLogEntry, PrevLogTerm, and LeaderCommitIndex set to 0.
 type AppendEntriesRequest struct {
 	RPCHeader
 
-	// Provide the current term and leader
-	Term   uint64
+	// The current term of the leader.
+	Term uint64
+
+	// The leader's network address.
 	Leader []byte
 
-	// Provide the previous entries for integrity checking
+	// The index and term of the log entry preceding 'Entries', which is used as a
+	// consistency check to guarantee Raft's Log Matching Property. On older
+	// versions of the code, these had to match on the follower for it to consider
+	// the leader alive (setLastContact). This is no longer required.
 	PrevLogEntry uint64
 	PrevLogTerm  uint64
 
-	// New entries to commit
+	// New entries to append to the log (empty for heartbeats).
 	Entries []*Log
 
-	// Commit index on the leader
+	// Leaders running the current code set LeaderCommitIndex to the smaller of
+	// the last entry marked committed in the leader's log and PrevLogEntry +
+	// len(Entries). This cap ties in the commit index with the consistency check,
+	// so that a follower can only update its commit index when it and the leader
+	// agree on the entries in question.
+	//
+	// Older leaders would set the LeaderCommitIndex to either 0 or the index of
+	// the last log entry marked committed on the leader. It could have been past
+	// the last entry sent in the request and/or past the follower's last log
+	// index.
+	//
+	// Older versions of the follower code behaved like this:
+	//     if (PrevLogEntry and PrevLogTerm match) {
+	//        (truncate conflicting entries and append new entries, if any)
+	//        if LeaderCommitIndex > f.commitIndex {
+	//            f.commitIndex = min(LeaderCommitIndex, f.lastIndex)
+	//        }
+	//     }
+	// This is dangerous. For example, the request
+	//    {PrevLogEntry=0, PrevLogTerm=0, Entries=[], LeaderCommitIndex=100}
+	// would mark the first 100 entries on that follower committed, even though
+	// they may differ from the leader's first 100 entries.
+	//
+	// These conditions would be required to cause a diverging state machine:
+	//  1. PrevLogEntry and PrevLogTerm would have to match the follower's.
+	//  2. Until #113, entries would have to be empty. After #113, entries could
+	//     also be nonempty but not conflict with the follower's log (causing no
+	//     log suffix truncation).
+	//  3. LeaderCommitIndex would have to be nonzero.
+	//  4. The follower would need some entries at indexes <= LeaderCommitIndex
+	//     that differ from the leader's (the truly committed entries).
+	//
+	// We don't think the old code would trigger this. Heartbeats always had
+	// LeaderCommitIndex set to 0 (avoiding condition 3). Most other AppendEntries
+	// in the old code contained new or conflicting entries (avoiding condition
+	// 2). Others, like those triggered by the old timer called CommitTimeout,
+	// sent no entries but had PrevLogEntry set to the end of the leader's log
+	// (avoiding condition 4). Duplication of requests at the transport layer or a
+	// nextIndex that was somehow set too low could cause trouble, but those are
+	// not expected to occur.
+	//
+	// Newer versions of the leader code always cap LeaderCommitIndex to at most
+	// PrevLogEntry + len(Entries). This avoids condition 4 above for followers
+	// running older code.
+	//
+	// Newer versions of the follower code also apply this cap to provide
+	// additional safety when interoperating with leaders running older code.
+	// Thus, newer versions of the follower code behave like this:
+	//     if LeaderCommitIndex > PrevLogEntry + len(Entries) {
+	//         LeaderCommitIndex = PrevLogEntry + len(Entries)
+	//     }
+	//     if (PrevLogEntry and PrevLogTerm match) {
+	//        (truncate conflicting entries and append new entries, if any)
+	//        if LeaderCommitIndex > f.commitIndex {
+	//            f.commitIndex = LeaderCommitIndex
+	//        }
+	//     }
 	LeaderCommitIndex uint64
 }
 
@@ -53,10 +117,6 @@ type AppendEntriesResponse struct {
 
 	// We may not succeed if we have a conflicting entry
 	Success bool
-
-	// There are scenarios where this request didn't succeed
-	// but there's no need to wait/back-off the next attempt.
-	NoRetryBackoff bool
 }
 
 // See WithRPCHeader.

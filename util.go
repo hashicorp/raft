@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/big"
 	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/go-msgpack/codec"
@@ -113,16 +114,20 @@ func encodeMsgPack(in interface{}) (*bytes.Buffer, error) {
 	return buf, err
 }
 
-// backoff is used to compute an exponential backoff
-// duration. Base time is scaled by the current round,
-// up to some maximum scale factor.
-func backoff(base time.Duration, round, limit uint64) time.Duration {
-	power := min(round, limit)
-	for power > 2 {
-		base *= 2
-		power--
+// backoff scales base exponentially up until limit. round should be an
+// increasing counter starting at 1.
+func backoff(round uint64, base time.Duration, limit time.Duration) time.Duration {
+	if round == 0 {
+		return 0
 	}
-	return base
+	wait := base
+	for i := uint64(1); i < round && wait < limit; i++ {
+		wait *= 2
+	}
+	if wait < limit {
+		return wait
+	}
+	return limit
 }
 
 // Needed for sorting []uint64, used to determine commitment
@@ -131,3 +136,22 @@ type uint64Slice []uint64
 func (p uint64Slice) Len() int           { return len(p) }
 func (p uint64Slice) Less(i, j int) bool { return p[i] < p[j] }
 func (p uint64Slice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
+
+// Tracks running goroutines
+type waitGroup struct {
+	group sync.WaitGroup
+}
+
+// Start a goroutine and properly handle the race between a routine
+// starting and incrementing, and exiting and decrementing.
+func (wg *waitGroup) spawn(f func()) {
+	wg.group.Add(1)
+	go func() {
+		defer wg.group.Done()
+		f()
+	}()
+}
+
+func (wg *waitGroup) waitShutdown() {
+	wg.group.Wait()
+}

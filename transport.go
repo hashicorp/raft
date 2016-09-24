@@ -1,7 +1,9 @@
 package raft
 
 import (
+	"errors"
 	"io"
+	"sync"
 	"time"
 )
 
@@ -23,6 +25,13 @@ func (r *RPC) Respond(resp interface{}, err error) {
 	r.RespChan <- RPCResponse{resp, err}
 }
 
+var (
+	// ErrPipelineReplicationNotSupported can be returned by the transport to
+	// signal that pipeline replication is not supported in general, and that
+	// no error message should be produced.
+	ErrPipelineReplicationNotSupported = errors.New("pipeline replication not supported")
+)
+
 // Transport provides an interface for network transports
 // to allow Raft to communicate with other nodes.
 type Transport interface {
@@ -34,8 +43,9 @@ type Transport interface {
 	LocalAddr() ServerAddress
 
 	// AppendEntriesPipeline returns an interface that can be used to pipeline
-	// AppendEntries requests.
-	AppendEntriesPipeline(target ServerAddress) (AppendPipeline, error)
+	// AppendEntries requests. It may alternatively return
+	// ErrPipelineReplicationNotSupported or other errors.
+	AppendEntriesPipeline(target ServerAddress) (AppendPipeline2, error)
 
 	// AppendEntries sends the appropriate RPC to the target node.
 	AppendEntries(target ServerAddress, args *AppendEntriesRequest, resp *AppendEntriesResponse) error
@@ -89,19 +99,26 @@ type WithPeers interface {
 	DisconnectAll()                          // Disconnect all peers, possibly to reconnect them later
 }
 
-// AppendPipeline is used for pipelining AppendEntries requests. It is used
+// AppendPipeline2 is used for pipelining AppendEntries requests. It is used
 // to increase the replication throughput by masking latency and better
 // utilizing bandwidth.
-type AppendPipeline interface {
+//
+// AppendPipeline2 replaces AppendPipeline, which had the following method:
+//     // Consumer returns a channel that can be used to consume
+//     // response futures when they are ready.
+//     Consumer() <-chan AppendFuture
+// Consumer() is no longer utilized and should be removed from transports.
+// Because some transports were written assuming that Consumer() would be called
+// and the channel returned would be drained, we decided to make this a
+// compile-breaking change. Some transports were also buggy in not erroring out
+// all the existing futures upon Close(); doing so is now required.
+type AppendPipeline2 interface {
 	// AppendEntries is used to add another request to the pipeline.
 	// The send may block which is an effective form of back-pressure.
 	AppendEntries(args *AppendEntriesRequest, resp *AppendEntriesResponse) (AppendFuture, error)
 
-	// Consumer returns a channel that can be used to consume
-	// response futures when they are ready.
-	Consumer() <-chan AppendFuture
-
-	// Close closes the pipeline and cancels all inflight RPCs
+	// Close closes the pipeline, cancels all inflight RPCs, and errors all their
+	// futures.
 	Close() error
 }
 
@@ -121,4 +138,99 @@ type AppendFuture interface {
 	// This method must only be called after the Error
 	// method returns, and will only be valid on success.
 	Response() *AppendEntriesResponse
+}
+
+// Adapter to reopen new pipelines upon failures.
+type reliablePipeline struct {
+	transport Transport
+	target    ServerAddress
+	// Protects 'current'.
+	mutex sync.Mutex
+	// An open pipeline without errors, or nil.
+	current AppendPipeline2
+}
+
+// Future used in reliablePipeline to close old pipeline upon failures.
+type reliableAppendFuture struct {
+	base     AppendFuture
+	adapter  *reliablePipeline
+	pipeline AppendPipeline2
+}
+
+// Masks errors in using an AppendEntries pipeline by creating new pipelines
+// internally.
+func makeReliablePipeline(transport Transport, target ServerAddress) AppendPipeline2 {
+	return &reliablePipeline{
+		transport: transport,
+		target:    target,
+		current:   nil,
+	}
+}
+
+func (rp *reliablePipeline) failed(pipeline AppendPipeline2) {
+	rp.mutex.Lock()
+	defer rp.mutex.Unlock()
+	if rp.current == pipeline {
+		_ = rp.current.Close()
+		rp.current = nil
+	}
+}
+
+func (rp *reliablePipeline) getPipeline() (AppendPipeline2, error) {
+	rp.mutex.Lock()
+	defer rp.mutex.Unlock()
+	if rp.current == nil {
+		pipeline, err := rp.transport.AppendEntriesPipeline(rp.target)
+		if err != nil {
+			return nil, err
+		}
+		rp.current = pipeline
+	}
+	return rp.current, nil
+}
+
+func (rp *reliablePipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEntriesResponse) (AppendFuture, error) {
+	pipeline, err := rp.getPipeline()
+	if err != nil {
+		return nil, err
+	}
+	future, err := pipeline.AppendEntries(args, resp)
+	if err != nil {
+		rp.failed(pipeline)
+		return nil, err
+	}
+	return &reliableAppendFuture{
+		base:     future,
+		adapter:  rp,
+		pipeline: pipeline,
+	}, nil
+}
+
+func (rp *reliablePipeline) Close() error {
+	rp.mutex.Lock()
+	defer rp.mutex.Unlock()
+	if rp.current != nil {
+		err := rp.current.Close()
+		rp.current = nil
+		return err
+	}
+	return nil
+}
+
+func (rf *reliableAppendFuture) Error() error {
+	err := rf.base.Error()
+	if err != nil {
+		rf.adapter.failed(rf.pipeline)
+	}
+	return err
+}
+
+func (rf *reliableAppendFuture) Start() time.Time {
+	return rf.base.Start()
+}
+func (rf *reliableAppendFuture) Request() *AppendEntriesRequest {
+	return rf.base.Request()
+}
+func (rf *reliableAppendFuture) Response() *AppendEntriesResponse {
+	return rf.base.Response()
 }

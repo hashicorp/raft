@@ -68,13 +68,14 @@ func (m *MockSnapshot) Persist(sink SnapshotSink) error {
 func (m *MockSnapshot) Release() {
 }
 
+const commitTimeout = 5 * time.Millisecond
+
 // Return configurations optimized for in-memory
 func inmemConfig(t *testing.T) *Config {
 	conf := DefaultConfig()
 	conf.HeartbeatTimeout = 50 * time.Millisecond
 	conf.ElectionTimeout = 50 * time.Millisecond
 	conf.LeaderLeaseTimeout = 50 * time.Millisecond
-	conf.CommitTimeout = 5 * time.Millisecond
 	conf.Logger = newTestLogger(t)
 	return conf
 }
@@ -100,6 +101,9 @@ func (a *testLoggerAdapter) Write(d []byte) (int, error) {
 		return len(l), nil
 	}
 
+	if testing.Verbose() {
+		fmt.Printf("testLoggerAdapter verbose: %s\n", d)
+	}
 	a.t.Log(string(d))
 	return len(d), nil
 }
@@ -249,7 +253,7 @@ func (c *cluster) WaitForReplication(fsmLength int) {
 
 CHECK:
 	for {
-		ch := c.WaitEventChan(nil, c.conf.CommitTimeout)
+		ch := c.WaitEventChan(nil, commitTimeout)
 		select {
 		case <-c.failedCh:
 			c.t.FailNow()
@@ -307,7 +311,7 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 	if timeout < c.conf.ElectionTimeout {
 		timeout = c.conf.ElectionTimeout
 	}
-	timeout = 2*timeout + c.conf.CommitTimeout
+	timeout = 2*timeout + commitTimeout
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
@@ -521,7 +525,7 @@ CHECK:
 
 WAIT:
 	first.Unlock()
-	c.WaitEvent(nil, c.conf.CommitTimeout)
+	c.WaitEvent(nil, commitTimeout)
 	goto CHECK
 }
 
@@ -560,7 +564,7 @@ CHECK:
 	return
 
 WAIT:
-	c.WaitEvent(nil, c.conf.CommitTimeout)
+	c.WaitEvent(nil, commitTimeout)
 	goto CHECK
 }
 
@@ -578,7 +582,7 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
 		conf:          conf,
 		// Propagation takes a maximum of 2 heartbeat timeouts (time to
 		// get a new heartbeat that would cause a commit) plus a bit.
-		propagateTimeout: conf.HeartbeatTimeout*2 + conf.CommitTimeout,
+		propagateTimeout: conf.HeartbeatTimeout*2 + commitTimeout,
 		longstopTimeout:  5 * time.Second,
 		logger:           newTestLoggerWithPrefix(t, "cluster"),
 		failedCh:         make(chan struct{}),
@@ -730,7 +734,7 @@ func TestRaft_LiveBootstrap(t *testing.T) {
 	c.EnsureLeader(t, leader.localAddr)
 
 	// Should be able to apply.
-	future := leader.Apply([]byte("test"), c.conf.CommitTimeout)
+	future := leader.Apply([]byte("test"), commitTimeout)
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] apply err: %v", err)
 	}
@@ -948,7 +952,7 @@ func TestRaft_TripleNode(t *testing.T) {
 	c.EnsureLeader(t, leader.localAddr)
 
 	// Should be able to apply
-	future := leader.Apply([]byte("test"), c.conf.CommitTimeout)
+	future := leader.Apply([]byte("test"), commitTimeout)
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -965,7 +969,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 	leader := c.Leader()
 
 	// Should be able to apply
-	future := leader.Apply([]byte("test"), c.conf.CommitTimeout)
+	future := leader.Apply([]byte("test"), commitTimeout)
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -980,7 +984,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
 	var newLead *Raft
 	for time.Now().Before(limit) && newLead == nil {
-		c.WaitEvent(nil, c.conf.CommitTimeout)
+		c.WaitEvent(nil, commitTimeout)
 		leaders := c.GetInState(Leader)
 		if len(leaders) == 1 && leaders[0] != leader {
 			newLead = leaders[0]
@@ -996,10 +1000,10 @@ func TestRaft_LeaderFail(t *testing.T) {
 	}
 
 	// Apply should work not work on old leader
-	future1 := leader.Apply([]byte("fail"), c.conf.CommitTimeout)
+	future1 := leader.Apply([]byte("fail"), commitTimeout)
 
 	// Apply should work on newer leader
-	future2 := newLead.Apply([]byte("apply"), c.conf.CommitTimeout)
+	future2 := newLead.Apply([]byte("apply"), commitTimeout)
 
 	// Future2 should work
 	if err := future2.Error(); err != nil {
@@ -1090,7 +1094,7 @@ func TestRaft_ApplyNonLeader(t *testing.T) {
 	follower := followers[0]
 
 	// Try to apply
-	future := follower.Apply([]byte("test"), c.conf.CommitTimeout)
+	future := follower.Apply([]byte("test"), commitTimeout)
 	if future.Error() != ErrNotLeader {
 		c.FailNowf("[ERR] should not apply on follower")
 	}
@@ -1155,7 +1159,6 @@ func TestRaft_ApplyConcurrent(t *testing.T) {
 func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 	// Make the cluster
 	conf := inmemConfig(t)
-	conf.CommitTimeout = 1 * time.Millisecond
 	conf.HeartbeatTimeout = 2 * conf.HeartbeatTimeout
 	conf.ElectionTimeout = 2 * conf.ElectionTimeout
 	c := MakeCluster(1, t, conf)
@@ -1232,7 +1235,7 @@ func TestRaft_RemoveFollower(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
-		c.WaitEvent(nil, c.conf.CommitTimeout)
+		c.WaitEvent(nil, commitTimeout)
 		followers = c.GetInState(Follower)
 	}
 	if len(followers) != 2 {
@@ -1270,7 +1273,7 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
-		c.WaitEvent(nil, c.conf.CommitTimeout)
+		c.WaitEvent(nil, commitTimeout)
 		followers = c.GetInState(Follower)
 	}
 	if len(followers) != 2 {
@@ -1462,25 +1465,29 @@ func TestRaft_RemoveUnknownPeer(t *testing.T) {
 	startingConfigIdx := configReq.configurations.committedIndex
 
 	// Remove unknown
+	c.logger.Printf("[INFO] RemoveServer")
 	future := leader.RemoveServer(ServerID(NewInmemAddr()), 0, 0)
-
 	// nothing to do, should be a new config entry that's the same as before
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] RemoveServer() err: %v", err)
 	}
+
+	c.logger.Printf("[INFO] getting configurations")
 	configReq = &configurationsFuture{}
 	configReq.init()
 	leader.configurationsCh <- configReq
 	if err := configReq.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
+	c.logger.Printf("[INFO] got configurations")
+
 	newConfig := configReq.configurations.committed
 	newConfigIdx := configReq.configurations.committedIndex
 	if newConfigIdx <= startingConfigIdx {
 		c.FailNowf("[ERR] RemoveServer should have written a new config entry, but configurations.commitedIndex still %d", newConfigIdx)
 	}
 	if !reflect.DeepEqual(newConfig, startingConfig) {
-		c.FailNowf("[ERR} RemoveServer with unknown peer shouldn't of changed config, was %#v, but now %#v", startingConfig, newConfig)
+		c.FailNowf("[ERR} RemoveServer with unknown peer shouldn't have changed config, was %#v, but now %#v", startingConfig, newConfig)
 	}
 }
 
@@ -1656,7 +1663,7 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 func TestRaft_AutoSnapshot(t *testing.T) {
 	// Make the cluster
 	conf := inmemConfig(t)
-	conf.SnapshotInterval = conf.CommitTimeout * 2
+	conf.SnapshotInterval = commitTimeout * 2
 	conf.SnapshotThreshold = 50
 	conf.TrailingLogs = 10
 	c := MakeCluster(1, t, conf)
@@ -1762,12 +1769,14 @@ func TestRaft_SendSnapshotAndLogsFollower(t *testing.T) {
 	defer c.Close()
 
 	// Disconnect one follower
+	c.logger.Printf("[INFO] Disconnecting behind node")
 	followers := c.Followers()
 	leader := c.Leader()
 	behind := followers[0]
 	c.Disconnect(behind.localAddr)
 
 	// Commit a lot of things
+	c.logger.Printf("[INFO] Committing 100 entries")
 	var future Future
 	for i := 0; i < 100; i++ {
 		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
@@ -1781,6 +1790,7 @@ func TestRaft_SendSnapshotAndLogsFollower(t *testing.T) {
 	}
 
 	// Snapshot, this will truncate logs!
+	c.logger.Printf("[INFO] Snapshotting on each server")
 	for _, r := range c.rafts {
 		future = r.Snapshot()
 		// the disconnected node will have nothing to snapshot, so that's expected
@@ -1790,6 +1800,7 @@ func TestRaft_SendSnapshotAndLogsFollower(t *testing.T) {
 	}
 
 	// Commit more logs past the snapshot.
+	c.logger.Printf("[INFO] Committing 100 more entries")
 	for i := 100; i < 200; i++ {
 		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
 	}
@@ -1801,6 +1812,7 @@ func TestRaft_SendSnapshotAndLogsFollower(t *testing.T) {
 		t.Logf("[INFO] Finished apply without behind follower")
 	}
 
+	c.logger.Printf("[INFO] Re-connecting behind node")
 	// Reconnect the behind node
 	c.FullyConnect()
 
@@ -1822,7 +1834,7 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
-		c.WaitEvent(nil, c.conf.CommitTimeout)
+		c.WaitEvent(nil, commitTimeout)
 		followers = c.GetInState(Follower)
 	}
 	if len(followers) != 2 {
@@ -1852,7 +1864,7 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	limit = time.Now().Add(c.longstopTimeout)
 	var leaders []*Raft
 	for time.Now().Before(limit) && len(leaders) != 1 {
-		c.WaitEvent(nil, c.conf.CommitTimeout)
+		c.WaitEvent(nil, commitTimeout)
 		leaders, _ = c.pollState(Leader)
 	}
 	if len(leaders) != 1 {
@@ -1898,7 +1910,7 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 1 {
-		c.WaitEvent(nil, c.conf.CommitTimeout)
+		c.WaitEvent(nil, commitTimeout)
 		followers = c.GetInState(Follower)
 	}
 	if len(followers) != 1 {
@@ -1985,9 +1997,11 @@ func TestRaft_VerifyLeader(t *testing.T) {
 	leader := c.Leader()
 
 	// Verify we are leader
+	c.logger.Printf("[INFO] Verifying leader")
 	verify := leader.VerifyLeader()
 
 	// Wait for the verify to apply
+	c.logger.Printf("[INFO] Waiting on verify future")
 	if err := verify.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -2053,7 +2067,7 @@ func TestRaft_VerifyLeader_ParitalConnect(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
-		c.WaitEvent(nil, c.conf.CommitTimeout)
+		c.WaitEvent(nil, commitTimeout)
 		followers = c.GetInState(Follower)
 	}
 	if len(followers) != 2 {
@@ -2098,7 +2112,7 @@ func TestRaft_StartAsLeader(t *testing.T) {
 	}
 
 	// Should be able to apply
-	future := raft.Apply([]byte("test"), c.conf.CommitTimeout)
+	future := raft.Apply([]byte("test"), commitTimeout)
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -2319,3 +2333,33 @@ func TestRaft_ProtocolVersion_Upgrade_2_3(t *testing.T) {
 //
 // Storage errors handled properly.
 // Commit index updated properly.
+
+func TestRaft_quorumGeq(t *testing.T) {
+	quoromGeqTests := []struct {
+		in  []uint64
+		out uint64
+	}{
+		{[]uint64{}, 0},
+		{[]uint64{1}, 1},
+		{[]uint64{1, 2, 3}, 2},
+		{[]uint64{3, 2, 1}, 2},
+		{[]uint64{3, 1, 2}, 2},
+		{[]uint64{0, 0}, 0},
+		{[]uint64{0, 10}, 0},
+		{[]uint64{10, 10}, 10},
+		{[]uint64{5, 5, 5, 5}, 5},
+		{[]uint64{5, 6, 5, 5}, 5},
+		{[]uint64{7, 6, 5, 5}, 5},
+		{[]uint64{7, 6, 5, 8}, 6},
+		{[]uint64{1, 1, 1, 2, 2}, 1},
+		{[]uint64{1, 1, 2, 2, 2}, 2},
+		{[]uint64{1, 2, 3, 4, 5}, 3},
+	}
+	for _, test := range quoromGeqTests {
+		actual := quorumGeq(test.in)
+		if actual != test.out {
+			t.Errorf("Expected quorumGeq(%v) = %d, got %d",
+				test.in, test.out, actual)
+		}
+	}
+}

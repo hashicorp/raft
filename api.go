@@ -54,6 +54,9 @@ type Raft struct {
 	// details.
 	protocolVersion ProtocolVersion
 
+	peerProgressCh chan peerProgress
+	peers          map[ServerID]*raftPeer
+
 	// applyCh is used to async send logs to the main thread to
 	// be committed and applied to the FSM.
 	applyCh chan *logFuture
@@ -144,6 +147,9 @@ type Raft struct {
 	// is indexed by an artificial ID which is used for deregistration.
 	observersLock sync.RWMutex
 	observers     map[uint64]*Observer
+
+	// A monotonically increasing counter used for verifying the leader is current.
+	verifyCounter uint64
 }
 
 // BootstrapCluster initializes a server's storage with the given cluster
@@ -426,6 +432,8 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	// Create Raft struct.
 	r := &Raft{
 		protocolVersion: protocolVersion,
+		peerProgressCh:  make(chan peerProgress),
+		peers:           make(map[ServerID]*raftPeer),
 		applyCh:         make(chan *logFuture),
 		conf:            *conf,
 		fsm:             fsm,
@@ -450,6 +458,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		bootstrapCh:           make(chan *bootstrapFuture),
 		observers:             make(map[uint64]*Observer),
 	}
+	r.goRoutines = &waitGroup{}
 
 	// Initialize as a follower.
 	r.setState(Follower)
@@ -489,9 +498,10 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	trans.SetHeartbeatHandler(r.processHeartbeat)
 
 	// Start the background work.
-	r.goFunc(r.run)
-	r.goFunc(r.runFSM)
-	r.goFunc(r.runSnapshots)
+	r.updatePeers()
+	r.goRoutines.spawn(r.run)
+	r.goRoutines.spawn(r.runFSM)
+	r.goRoutines.spawn(r.runSnapshots)
 	return r, nil
 }
 

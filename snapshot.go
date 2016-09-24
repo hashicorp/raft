@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -61,6 +62,18 @@ type SnapshotSink interface {
 	io.WriteCloser
 	ID() string
 	Cancel() error
+}
+
+// Return the metadata for the latest snapshot, or error if none exist.
+func getLastSnapshot(snapshots SnapshotStore) (*SnapshotMeta, error) {
+	meta, err := snapshots.List()
+	if err != nil {
+		return nil, err
+	}
+	if len(meta) == 0 {
+		return nil, errors.New("No snapshots found")
+	}
+	return meta[0], nil
 }
 
 // runSnapshots is a long running goroutine used to manage taking

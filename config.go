@@ -134,11 +134,6 @@ type Config struct {
 	// a leader before we attempt an election.
 	ElectionTimeout time.Duration
 
-	// CommitTimeout controls the time without an Apply() operation
-	// before we heartbeat to ensure a timely commit. Due to random
-	// staggering, may be delayed as much as 2x this value.
-	CommitTimeout time.Duration
-
 	// MaxAppendEntries controls the maximum number of append entries
 	// to send at once. We want to strike a balance between efficiency
 	// and avoiding waste if the follower is going to reject because of
@@ -201,7 +196,6 @@ func DefaultConfig() *Config {
 		ProtocolVersion:    ProtocolVersionMax,
 		HeartbeatTimeout:   1000 * time.Millisecond,
 		ElectionTimeout:    1000 * time.Millisecond,
-		CommitTimeout:      50 * time.Millisecond,
 		MaxAppendEntries:   64,
 		ShutdownOnRemove:   true,
 		TrailingLogs:       10240,
@@ -232,9 +226,6 @@ func ValidateConfig(config *Config) error {
 	}
 	if config.ElectionTimeout < 5*time.Millisecond {
 		return fmt.Errorf("Election timeout is too low")
-	}
-	if config.CommitTimeout < time.Millisecond {
-		return fmt.Errorf("Commit timeout is too low")
 	}
 	if config.MaxAppendEntries <= 0 {
 		return fmt.Errorf("MaxAppendEntries must be positive")
