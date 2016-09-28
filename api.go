@@ -3,6 +3,7 @@ package raft
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strconv"
@@ -118,8 +119,12 @@ type Raft struct {
 	// snapshots is used to store and retrieve snapshots
 	snapshots SnapshotStore
 
-	// snapshotCh is used for user triggered snapshots
-	snapshotCh chan *snapshotFuture
+	// userSnapshotCh is used for user-triggered snapshots
+	userSnapshotCh chan *userSnapshotFuture
+
+	// userRestoreCh is used for user-triggered restores of external
+	// snapshots
+	userRestoreCh chan *userRestoreFuture
 
 	// stable is a StableStore implementation for durable state
 	// It provides stable storage for many fields in raftState
@@ -441,7 +446,8 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		configurations:        configurations{},
 		rpcCh:                 trans.Consumer(),
 		snapshots:             snaps,
-		snapshotCh:            make(chan *snapshotFuture),
+		userSnapshotCh:        make(chan *userSnapshotFuture),
+		userRestoreCh:         make(chan *userRestoreFuture),
 		shutdownCh:            make(chan struct{}),
 		stable:                stable,
 		trans:                 trans,
@@ -792,18 +798,72 @@ func (r *Raft) Shutdown() Future {
 	return &shutdownFuture{nil}
 }
 
-// Snapshot is used to manually force Raft to take a snapshot.
-// Returns a future that can be used to block until complete.
-func (r *Raft) Snapshot() Future {
-	snapFuture := &snapshotFuture{}
-	snapFuture.init()
+// Snapshot is used to manually force Raft to take a snapshot. Returns a future
+// that can be used to block until complete, and that contains a function that
+// can be used to open the snapshot.
+func (r *Raft) Snapshot() SnapshotFuture {
+	future := &userSnapshotFuture{}
+	future.init()
 	select {
-	case r.snapshotCh <- snapFuture:
-		return snapFuture
+	case r.userSnapshotCh <- future:
+		return future
 	case <-r.shutdownCh:
-		return errorFuture{ErrRaftShutdown}
+		future.respond(ErrRaftShutdown)
+		return future
+	}
+}
+
+// Restore is used to manually force Raft to consume an external snapshot, such
+// as if restoring from a backup. We will use the current Raft configuration,
+// not the one from the snapshot, so that we can restore into a new cluster. We
+// will also use the higher of the index of the snapshot, or the current index,
+// and then add 1 to that, so we force a new state with a hole in the Raft log,
+// so that the snapshot will be sent to followers and used for any new joiners.
+// This can only be run on the leader, and returns a future that can be used to
+// block until complete.
+func (r *Raft) Restore(meta *SnapshotMeta, reader io.ReadCloser, timeout time.Duration) Future {
+	metrics.IncrCounter([]string{"raft", "restore"}, 1)
+	var timer <-chan time.Time
+	if timeout > 0 {
+		timer = time.After(timeout)
 	}
 
+	// Perform the restore.
+	restore := &userRestoreFuture{
+		meta:   meta,
+		reader: reader,
+	}
+	restore.init()
+	select {
+	case <-timer:
+		return errorFuture{ErrEnqueueTimeout}
+	case <-r.shutdownCh:
+		return errorFuture{ErrRaftShutdown}
+	case r.userRestoreCh <- restore:
+		// If the restore is ingested then wait for it to complete.
+		if err := restore.Error(); err != nil {
+			return restore
+		}
+	}
+
+	// Apply a no-op log entry. Waiting for this allows us to wait until the
+	// followers have gotten the restore and replicated at least this new
+	// entry, which shows that we've also faulted and installed the
+	// snapshot with the contents of the restore.
+	noop := &logFuture{
+		log: Log{
+			Type: LogNoop,
+		},
+	}
+	noop.init()
+	select {
+	case <-timer:
+		return errorFuture{ErrEnqueueTimeout}
+	case <-r.shutdownCh:
+		return errorFuture{ErrRaftShutdown}
+	case r.applyCh <- noop:
+		return noop
+	}
 }
 
 // State is used to return the current raft state.

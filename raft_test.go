@@ -1683,21 +1683,21 @@ func TestRaft_AutoSnapshot(t *testing.T) {
 	}
 }
 
-func TestRaft_ManualSnapshot(t *testing.T) {
-	// Make the cluster
+func TestRaft_UserSnapshot(t *testing.T) {
+	// Make the cluster.
 	conf := inmemConfig(t)
 	conf.SnapshotThreshold = 50
 	conf.TrailingLogs = 10
 	c := MakeCluster(1, t, conf)
 	defer c.Close()
 
+	// With nothing committed, asking for a snapshot should return an error.
 	leader := c.Leader()
-	// with nothing commited, asking for a snapshot should return an error
-	ssErr := leader.Snapshot().Error()
-	if ssErr != ErrNothingNewToSnapshot {
-		t.Errorf("Attempt to manualy create snapshot should of errored because there's nothing to do: %v", ssErr)
+	if err := leader.Snapshot().Error(); err != ErrNothingNewToSnapshot {
+		c.FailNowf("[ERR] Request for Snapshot failed: %v", err)
 	}
-	// commit some things
+
+	// Commit some things.
 	var future Future
 	for i := 0; i < 10; i++ {
 		future = leader.Apply([]byte(fmt.Sprintf("test %d", i)), 0)
@@ -1705,11 +1705,116 @@ func TestRaft_ManualSnapshot(t *testing.T) {
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] Error Apply new log entries: %v", err)
 	}
-	// now we should be able to ask for a snapshot without getting an error
-	ssErr = leader.Snapshot().Error()
-	if ssErr != nil {
-		t.Errorf("Request for Snapshot failed: %v", ssErr)
+
+	// Now we should be able to ask for a snapshot without getting an error.
+	if err := leader.Snapshot().Error(); err != nil {
+		c.FailNowf("[ERR] Request for Snapshot failed: %v", err)
 	}
+
+	// Check for snapshot
+	if snaps, _ := leader.snapshots.List(); len(snaps) == 0 {
+		c.FailNowf("[ERR] should have a snapshot")
+	}
+}
+
+// snapshotAndRestore does a snapshot and restore sequence and applies the given
+// offset to the snapshot index, so we can try out different situations.
+func snapshotAndRestore(t *testing.T, offset uint64) {
+	// Make the cluster.
+	conf := inmemConfig(t)
+	c := MakeCluster(3, t, conf)
+	defer c.Close()
+
+	// Wait for things to get stable and commit some things.
+	leader := c.Leader()
+	var future Future
+	for i := 0; i < 10; i++ {
+		future = leader.Apply([]byte(fmt.Sprintf("test %d", i)), 0)
+	}
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] Error Apply new log entries: %v", err)
+	}
+
+	// Take a snapshot.
+	snap := leader.Snapshot()
+	if err := snap.Error(); err != nil {
+		c.FailNowf("[ERR] Request for Snapshot failed: %v", err)
+	}
+
+	// Commit some more things.
+	for i := 10; i < 20; i++ {
+		future = leader.Apply([]byte(fmt.Sprintf("test %d", i)), 0)
+	}
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] Error Apply new log entries: %v", err)
+	}
+
+	// Get the last index before the restore.
+	preIndex := leader.getLastIndex()
+
+	// Restore the snapshot, twiddling the index with the offset.
+	meta, reader, err := snap.Open()
+	meta.Index += offset
+	if err != nil {
+		c.FailNowf("[ERR] Snapshot open failed: %v", err)
+	}
+	defer reader.Close()
+	restore := leader.Restore(meta, reader, 5*time.Second)
+	if err := restore.Error(); err != nil {
+		c.FailNowf("[ERR] Restore failed: %v", err)
+	}
+
+	// Make sure the index was updated correctly. We add 2 because we burn
+	// an index to create a hole, and then we apply a no-op after the
+	// restore.
+	var expected uint64
+	if meta.Index < preIndex {
+		expected = preIndex + 2
+	} else {
+		expected = meta.Index + 2
+	}
+	lastIndex := leader.getLastIndex()
+	if lastIndex != expected {
+		c.FailNowf("[ERR] Index was not updated correctly: %d vs. %d", lastIndex, expected)
+	}
+
+	// Ensure all the logs are the same and that we have everything that was
+	// part of the original snapshot, and that the contents after were
+	// reverted.
+	c.EnsureSame(t)
+	fsm := c.fsms[0]
+	fsm.Lock()
+	if len(fsm.logs) != 10 {
+		c.FailNowf("[ERR] Log length bad: %d", len(fsm.logs))
+	}
+	for i, entry := range fsm.logs {
+		expected := []byte(fmt.Sprintf("test %d", i))
+		if bytes.Compare(entry, expected) != 0 {
+			c.FailNowf("[ERR] Log entry bad: %v", entry)
+		}
+	}
+	fsm.Unlock()
+
+	// Commit some more things.
+	for i := 20; i < 30; i++ {
+		future = leader.Apply([]byte(fmt.Sprintf("test %d", i)), 0)
+	}
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] Error Apply new log entries: %v", err)
+	}
+	c.EnsureSame(t)
+}
+
+func TestRaft_UserRestore(t *testing.T) {
+	// Snapshots from the past.
+	snapshotAndRestore(t, 0)
+	snapshotAndRestore(t, 1)
+	snapshotAndRestore(t, 2)
+
+	// Snapshots from the future.
+	snapshotAndRestore(t, 100)
+	snapshotAndRestore(t, 1000)
+	snapshotAndRestore(t, 10000)
 }
 
 func TestRaft_SendSnapshotFollower(t *testing.T) {
