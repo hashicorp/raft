@@ -821,6 +821,12 @@ func (r *Raft) Snapshot() SnapshotFuture {
 // so that the snapshot will be sent to followers and used for any new joiners.
 // This can only be run on the leader, and returns a future that can be used to
 // block until complete.
+//
+// WARNING! This operation has the leader take on the state of the snapshot and
+// then sets itself up so that it replicates that to its followers though the
+// install snapshot process. This involves a potentially dangerous period where
+// the leader commits ahead of its followers, so should only be used for disaster
+// recovery into a fresh cluster, and should not be used in normal operations.
 func (r *Raft) Restore(meta *SnapshotMeta, reader io.ReadCloser, timeout time.Duration) Future {
 	metrics.IncrCounter([]string{"raft", "restore"}, 1)
 	var timer <-chan time.Time
