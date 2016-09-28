@@ -752,7 +752,7 @@ func (r *Raft) restoreUserSnapshot(future *userRestoreFuture) {
 		r.logger.Printf("[INFO] raft: Copied %d bytes to local snapshot", n)
 
 		// Restore the snapshot into the FSM. If this fails we are in a
-		// bad state so we will step down.
+		// bad state so we panic to take ourselves out.
 		fsm := &restoreFuture{ID: sink.ID()}
 		fsm.init()
 		select {
@@ -761,8 +761,7 @@ func (r *Raft) restoreUserSnapshot(future *userRestoreFuture) {
 			return ErrRaftShutdown
 		}
 		if err := fsm.Error(); err != nil {
-			r.setState(Follower)
-			return fmt.Errorf("failed to restore snapshot: %v", err)
+			panic(fmt.Errorf("failed to restore snapshot: %v", err))
 		}
 
 		// We set the last log so it looks like we've stored the empty
