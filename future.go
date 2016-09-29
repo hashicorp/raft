@@ -53,7 +53,8 @@ type SnapshotFuture interface {
 	Future
 
 	// Open is a function you can call to access the underlying snapshot and
-	// its metadata.
+	// its metadata. This must not be called until after the Error method
+	// has returned.
 	Open() (*SnapshotMeta, io.ReadCloser, error)
 }
 
@@ -177,6 +178,11 @@ func (u *userSnapshotFuture) Open() (*SnapshotMeta, io.ReadCloser, error) {
 	if u.opener == nil {
 		return nil, nil, fmt.Errorf("no snapshot available")
 	} else {
+		// Invalidate the opener so it can't get called multiple times,
+		// which isn't generally safe.
+		defer func() {
+			u.opener = nil
+		}()
 		return u.opener()
 	}
 }
