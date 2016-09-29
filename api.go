@@ -65,11 +65,14 @@ type Raft struct {
 	// FSM is the client state machine to apply commands to
 	fsm FSM
 
-	// fsmCommitCh is used to trigger async application of logs to the fsm
-	fsmCommitCh chan commitTuple
-
-	// fsmRestoreCh is used to trigger a restore from snapshot
-	fsmRestoreCh chan *restoreFuture
+	// fsmMutateCh is used to send state-changing updates to the FSM. This
+	// receives pointers to commitTuple structures when applying logs or
+	// pointers to restoreFuture structures when restoring a snapshot. We
+	// need control over the order of these operations when doing user
+	// restores so that we finish applying any old log applies before we
+	// take a user snapshot on the leader, otherwise we might restore the
+	// snapshot and apply old logs to it that were in the pipe.
+	fsmMutateCh chan interface{}
 
 	// fsmSnapshotCh is used to trigger a new snapshot being taken
 	fsmSnapshotCh chan *reqSnapshotFuture
@@ -434,8 +437,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		applyCh:         make(chan *logFuture),
 		conf:            *conf,
 		fsm:             fsm,
-		fsmCommitCh:     make(chan commitTuple, 128),
-		fsmRestoreCh:    make(chan *restoreFuture),
+		fsmMutateCh:     make(chan interface{}, 128),
 		fsmSnapshotCh:   make(chan *reqSnapshotFuture),
 		leaderCh:        make(chan bool),
 		localID:         localID,
@@ -936,7 +938,7 @@ func (r *Raft) Stats() map[string]string {
 		"last_log_term":        toString(lastLogTerm),
 		"commit_index":         toString(r.getCommitIndex()),
 		"applied_index":        toString(r.getLastApplied()),
-		"fsm_pending":          toString(uint64(len(r.fsmCommitCh))),
+		"fsm_pending":          toString(uint64(len(r.fsmMutateCh))),
 		"last_snapshot_index":  toString(lastSnapIndex),
 		"last_snapshot_term":   toString(lastSnapTerm),
 		"protocol_version":     toString(uint64(r.protocolVersion)),

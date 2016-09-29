@@ -757,7 +757,7 @@ func (r *Raft) restoreUserSnapshot(meta *SnapshotMeta, reader io.ReadCloser) err
 	fsm := &restoreFuture{ID: sink.ID()}
 	fsm.init()
 	select {
-	case r.fsmRestoreCh <- fsm:
+	case r.fsmMutateCh <- fsm:
 	case <-r.shutdownCh:
 		return ErrRaftShutdown
 	}
@@ -902,7 +902,7 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 	case LogCommand:
 		// Forward to the fsm handler
 		select {
-		case r.fsmCommitCh <- commitTuple{l, future}:
+		case r.fsmMutateCh <- &commitTuple{l, future}:
 		case <-r.shutdownCh:
 			if future != nil {
 				future.respond(ErrRaftShutdown)
@@ -1302,7 +1302,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	future := &restoreFuture{ID: sink.ID()}
 	future.init()
 	select {
-	case r.fsmRestoreCh <- future:
+	case r.fsmMutateCh <- future:
 	case <-r.shutdownCh:
 		future.respond(ErrRaftShutdown)
 		return
