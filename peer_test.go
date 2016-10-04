@@ -931,6 +931,39 @@ func TestPeer_AppendEntriesRPC_heartbeat_sendRecvError(t *testing.T) {
 		t.Errorf("nextIndex should be 19, got %v",
 			tp.peer.leader.nextIndex)
 	}
+	if tp.peer.leader.nextCommitIndex > 17 {
+		t.Errorf("nextCommitIndex should be <= 17, got %v",
+			tp.peer.leader.nextCommitIndex)
+	}
+}
+
+// This targets restoring the nextCommitIndex properly.
+// The logic used to be:
+//     if p.leader.nextCommitIndex == rpc.req.LeaderCommitIndex+1 {
+//         p.leader.nextCommitIndex = rpc.req.PrevLogEntry + 1
+//     }
+// which would allow nextCommitIndex to be erroneously increased.
+func TestPeer_AppendEntriesRPC_heartbeat_sendRecvError2(t *testing.T) {
+	tp := makePeerTesting(t, &TestingPeer{
+		initControl:  &appendEntriesControl,
+		initProgress: &appendEntriesProgress,
+	})
+	defer tp.close()
+	tp.peer.progress.matchIndex = 18
+	tp.peer.leader.nextIndex = 19
+	tp.peer.leader.nextCommitIndex = 17
+	err := oneErrRPC(tp, nil, errors.New("a transport error"))
+	if err != nil {
+		t.Error(err)
+	}
+	if tp.peer.leader.nextIndex != 19 {
+		t.Errorf("nextIndex should be 19, got %v",
+			tp.peer.leader.nextIndex)
+	}
+	if tp.peer.leader.nextCommitIndex > 17 {
+		t.Errorf("nextCommitIndex should be <= 17, got %v",
+			tp.peer.leader.nextCommitIndex)
+	}
 }
 
 func TestPeer_AppendEntriesRPC_sendRecvError(t *testing.T) {

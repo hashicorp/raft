@@ -1094,7 +1094,9 @@ func (rpc *appendEntriesRPC) process(p *peerState, err error) {
 				p.leader.nextIndex = rpc.req.PrevLogEntry + 1
 			}
 			if p.leader.nextCommitIndex == rpc.req.LeaderCommitIndex+1 {
-				p.leader.nextCommitIndex = rpc.req.PrevLogEntry + 1
+				// By this point, we've forgotten what to restore nextCommitIndex to.
+				// Setting it back to 1 will schedule another AppendEntries request.
+				p.leader.nextCommitIndex = 1
 			}
 		}
 		return
