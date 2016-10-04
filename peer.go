@@ -352,36 +352,41 @@ func makePeerInternal(serverID ServerID,
 
 func (p *peerState) checkInvariants() error {
 	if p.shared.peerID != p.progress.peerID {
-		return errors.New("Progress must have peerID")
+		return fmt.Errorf("Progress must have peerID (shared has %v but progress has %v)",
+			p.shared.peerID, p.progress.peerID)
 	}
 	if p.progress.lastContact.After(p.progress.lastReply) ||
 		(p.progress.lastContact == p.progress.lastReply && !p.progress.lastContact.IsZero()) {
-		return errors.New("lastContact must be before lastReply (or both 0)")
+		return fmt.Errorf("lastContact (%v) must be before lastReply (%v) or both 0",
+			p.progress.lastContact, p.progress.lastReply)
 	}
 	switch p.control.role {
 	case Candidate:
 		if p.candidate == nil || p.leader != nil {
-			return errors.New("should have candidate and not leader state while candidate")
+			return errors.New("Should have candidate and not leader state while candidate")
 		}
 	case Leader:
 		if p.candidate != nil || p.leader == nil {
-			return errors.New("should have leader and not candidate state while leader")
+			return errors.New("Should have leader and not candidate state while leader")
 		}
 		if p.leader.nextIndex < 1 || p.leader.nextIndex > p.control.lastIndex+1 {
-			return errors.New("nextIndex must be between 1 and lastIndex + 1")
+			return fmt.Errorf("nextIndex (%v) must be between 1 and lastIndex + 1 (between 1 and %v)",
+				p.leader.nextIndex, p.control.lastIndex+1)
 		}
 		if p.leader.nextCommitIndex < 1 || p.leader.nextCommitIndex > p.leader.nextIndex {
-			return errors.New("nextCommitIndex must be between 1 and nextIndex")
+			return fmt.Errorf("nextCommitIndex (%v) must be between 1 and nextIndex (%v)",
+				p.leader.nextCommitIndex, p.leader.nextIndex)
 		}
 		if p.leader.outstandingInstallSnapshotRPC && p.leader.outstandingAppendEntriesRPCs > 0 {
-			return errors.New("must not send a snapshot and entries simultaneously")
+			return errors.New("Must not send a snapshot and entries simultaneously")
 		}
 		if p.leader.allowPipeline && p.pipelineUnsupported {
 			return errors.New("allowPipeline may only be set if transport supports it")
 		}
 	default:
 		if p.candidate != nil || p.leader != nil {
-			return fmt.Errorf("should have no leader or candidate state while %v", p.control.role)
+			return fmt.Errorf("Should have no leader or candidate state while %v",
+				p.control.role)
 		}
 	}
 	return nil
@@ -392,7 +397,8 @@ func (p *peerState) checkInvariants() error {
 func (p *peerState) selectLoop() {
 	for p.control.role != Shutdown {
 		if err := p.checkInvariants(); err != nil {
-			p.shared.logger.Panicf("peer invariant violated: %s", err.Error())
+			p.shared.logger.Panicf("[ERR] raft: Peer %v invariant violated: %s",
+				p.shared.peerID, err.Error())
 		}
 
 		didSomething := p.issueWork()
