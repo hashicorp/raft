@@ -10,7 +10,7 @@ func TestLogCache(t *testing.T) {
 
 	// Insert into the in-mem store
 	for i := 0; i < 32; i++ {
-		log := &Log{Index: uint64(i) + 1}
+		log := &Log{Index: Index(i + 1)}
 		store.StoreLog(log)
 	}
 

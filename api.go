@@ -260,8 +260,8 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 	}
 
 	// Attempt to restore any snapshots we find, newest to oldest.
-	var snapshotIndex uint64
-	var snapshotTerm uint64
+	var snapshotIndex Index
+	var snapshotTerm Term
 	snapshots, err := snaps.List()
 	if err != nil {
 		return fmt.Errorf("failed to list snapshots: %v", err)
@@ -399,7 +399,8 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	}
 
 	// Try to restore the current term.
-	currentTerm, err := stable.GetUint64(keyCurrentTerm)
+	v, err := stable.GetUint64(keyCurrentTerm)
+	currentTerm := Term(v)
 	if err != nil && err.Error() != "not found" {
 		return nil, fmt.Errorf("failed to load current term: %v", err)
 	}
@@ -721,7 +722,7 @@ func (r *Raft) RemovePeer(peer ServerAddress) Future {
 // configuration entry has been added in the meantime, this request will fail.
 // If nonzero, timeout is how long this server should wait before the
 // configuration change log entry is appended.
-func (r *Raft) AddVoter(id ServerID, address ServerAddress, prevIndex uint64, timeout time.Duration) IndexFuture {
+func (r *Raft) AddVoter(id ServerID, address ServerAddress, prevIndex Index, timeout time.Duration) IndexFuture {
 	if r.protocolVersion < 2 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
@@ -739,7 +740,7 @@ func (r *Raft) AddVoter(id ServerID, address ServerAddress, prevIndex uint64, ti
 // elections or log entry commitment. If the server is already in the cluster as
 // a staging server or voter, this does nothing. This must be run on the leader
 // or it will fail. For prevIndex and timeout, see AddVoter.
-func (r *Raft) AddNonvoter(id ServerID, address ServerAddress, prevIndex uint64, timeout time.Duration) IndexFuture {
+func (r *Raft) AddNonvoter(id ServerID, address ServerAddress, prevIndex Index, timeout time.Duration) IndexFuture {
 	if r.protocolVersion < 3 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
@@ -755,7 +756,7 @@ func (r *Raft) AddNonvoter(id ServerID, address ServerAddress, prevIndex uint64,
 // RemoveServer will remove the given server from the cluster. If the current
 // leader is being removed, it will cause a new election to occur. This must be
 // run on the leader or it will fail. For prevIndex and timeout, see AddVoter.
-func (r *Raft) RemoveServer(id ServerID, prevIndex uint64, timeout time.Duration) IndexFuture {
+func (r *Raft) RemoveServer(id ServerID, prevIndex Index, timeout time.Duration) IndexFuture {
 	if r.protocolVersion < 2 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
@@ -772,7 +773,7 @@ func (r *Raft) RemoveServer(id ServerID, prevIndex uint64, timeout time.Duration
 // elections or log entry commitment. If the server is not in the cluster, this
 // does nothing. This must be run on the leader or it will fail. For prevIndex
 // and timeout, see AddVoter.
-func (r *Raft) DemoteVoter(id ServerID, prevIndex uint64, timeout time.Duration) IndexFuture {
+func (r *Raft) DemoteVoter(id ServerID, prevIndex Index, timeout time.Duration) IndexFuture {
 	if r.protocolVersion < 3 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
@@ -875,14 +876,14 @@ func (r *Raft) Stats() map[string]string {
 	lastSnapIndex, lastSnapTerm := r.getLastSnapshot()
 	s := map[string]string{
 		"state":                r.getState().String(),
-		"term":                 toString(r.getCurrentTerm()),
-		"last_log_index":       toString(lastLogIndex),
-		"last_log_term":        toString(lastLogTerm),
-		"commit_index":         toString(r.getCommitIndex()),
-		"applied_index":        toString(r.getLastApplied()),
+		"term":                 toString(uint64(r.getCurrentTerm())),
+		"last_log_index":       toString(uint64(lastLogIndex)),
+		"last_log_term":        toString(uint64(lastLogTerm)),
+		"commit_index":         toString(uint64(r.getCommitIndex())),
+		"applied_index":        toString(uint64(r.getLastApplied())),
 		"fsm_pending":          toString(uint64(len(r.fsmCommitCh))),
-		"last_snapshot_index":  toString(lastSnapIndex),
-		"last_snapshot_term":   toString(lastSnapTerm),
+		"last_snapshot_index":  toString(uint64(lastSnapIndex)),
+		"last_snapshot_term":   toString(uint64(lastSnapTerm)),
 		"protocol_version":     toString(uint64(r.protocolVersion)),
 		"protocol_version_min": toString(uint64(ProtocolVersionMin)),
 		"protocol_version_max": toString(uint64(ProtocolVersionMax)),
@@ -895,7 +896,7 @@ func (r *Raft) Stats() map[string]string {
 		r.logger.Printf("[WARN] raft: could not get configuration for Stats: %v", err)
 	} else {
 		configuration := future.Configuration()
-		s["latest_configuration_index"] = toString(future.Index())
+		s["latest_configuration_index"] = toString(uint64(future.Index()))
 		s["latest_configuration"] = fmt.Sprintf("%+v", configuration.Servers)
 
 		// This is a legacy metric that we've seen people use in the wild.
@@ -929,7 +930,7 @@ func (r *Raft) Stats() map[string]string {
 
 // LastIndex returns the last index in stable storage,
 // either from the last log or from the last snapshot.
-func (r *Raft) LastIndex() uint64 {
+func (r *Raft) LastIndex() Index {
 	return r.getLastIndex()
 }
 
@@ -940,6 +941,6 @@ func (r *Raft) LastIndex() uint64 {
 // but DOES NOT mean that the application's FSM has yet consumed it and applied
 // it to its internal state. Thus, the application's state may lag behind this
 // index.
-func (r *Raft) AppliedIndex() uint64 {
+func (r *Raft) AppliedIndex() Index {
 	return r.getLastApplied()
 }

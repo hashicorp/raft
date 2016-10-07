@@ -90,7 +90,7 @@ type leaderState struct {
 	// the first index of this leader's term: this needs to be replicated to a
 	// majority of the cluster before this leader may mark anything committed
 	// (per Raft's commitment rule)
-	startIndex uint64
+	startIndex Index
 
 	inflight      *list.List // list of logFuture in log index order
 	verifyBatches []verifyBatch
@@ -588,7 +588,7 @@ func (r *Raft) leaderLoop() {
 	}
 }
 
-func (r *Raft) updateCommitIndex(oldCommitIndex, commitIndex uint64) {
+func (r *Raft) updateCommitIndex(oldCommitIndex, commitIndex Index) {
 	stepDown := false
 	r.setCommitIndex(commitIndex)
 	// Process the newly committed entries
@@ -689,7 +689,7 @@ func (r *Raft) computeLeaderProgress() {
 	matchIndexes := make([]uint64, 0, servers)
 	if hasVote(r.configurations.latest, r.localID) {
 		verifiedCounters = append(verifiedCounters, r.verifyCounter)
-		matchIndexes = append(matchIndexes, r.getLastIndex())
+		matchIndexes = append(matchIndexes, uint64(r.getLastIndex()))
 	}
 	for peerID, peer := range r.peers {
 		switch {
@@ -700,7 +700,7 @@ func (r *Raft) computeLeaderProgress() {
 		case peer.progress.term == r.getCurrentTerm():
 			if hasVote(r.configurations.latest, peerID) {
 				verifiedCounters = append(verifiedCounters, peer.progress.verifiedCounter)
-				matchIndexes = append(matchIndexes, peer.progress.matchIndex)
+				matchIndexes = append(matchIndexes, uint64(peer.progress.matchIndex))
 			}
 		case peer.progress.term < r.getCurrentTerm():
 			verifiedCounters = append(verifiedCounters, 0)
@@ -708,7 +708,7 @@ func (r *Raft) computeLeaderProgress() {
 		}
 	}
 	verifiedCounter := quorumGeq(verifiedCounters)
-	matchIndex := quorumGeq(matchIndexes)
+	matchIndex := Index(quorumGeq(matchIndexes))
 
 	oldCommitIndex := r.getCommitIndex()
 	if matchIndex > oldCommitIndex && matchIndex >= r.leaderState.startIndex {
@@ -863,7 +863,7 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 // pass future=nil.
 // Leaders call this once per inflight when entries are committed. They pass
 // the future from inflights.
-func (r *Raft) processLogs(index uint64, future *logFuture) {
+func (r *Raft) processLogs(index Index, future *logFuture) {
 	// Reject logs we've applied already
 	lastApplied := r.getLastApplied()
 	if index <= lastApplied {
@@ -1008,7 +1008,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	if a.PrevLogEntry > 0 {
 		lastIdx, lastTerm := r.getLastEntry()
 
-		var prevLogTerm uint64
+		var prevLogTerm Term
 		if a.PrevLogEntry == lastIdx {
 			prevLogTerm = lastTerm
 
@@ -1086,7 +1086,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	}
 
 	// Update the commit index (see comment in AppendEntriesRequest).
-	if cap := a.PrevLogEntry + uint64(len(a.Entries)); a.LeaderCommitIndex > cap {
+	if cap := a.PrevLogEntry + Index(len(a.Entries)); a.LeaderCommitIndex > cap {
 		a.LeaderCommitIndex = cap
 	}
 	if a.LeaderCommitIndex > r.getCommitIndex() {
@@ -1165,7 +1165,8 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	}
 
 	// Check if we have voted yet
-	lastVoteTerm, err := r.stable.GetUint64(keyLastVoteTerm)
+	v, err := r.stable.GetUint64(keyLastVoteTerm)
+	lastVoteTerm := Term(v)
 	if err != nil && err.Error() != "not found" {
 		r.logger.Printf("[ERR] raft: Failed to get last vote term: %v", err)
 		return
@@ -1253,7 +1254,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 
 	// Create a new snapshot
 	var reqConfiguration Configuration
-	var reqConfigurationIndex uint64
+	var reqConfigurationIndex Index
 	if req.SnapshotVersion > 0 {
 		reqConfiguration = decodeConfiguration(req.Configuration)
 		reqConfigurationIndex = req.ConfigurationIndex
@@ -1348,8 +1349,8 @@ type voteResult struct {
 }
 
 // persistVote is used to persist our vote for safety.
-func (r *Raft) persistVote(term uint64, candidate []byte) error {
-	if err := r.stable.SetUint64(keyLastVoteTerm, term); err != nil {
+func (r *Raft) persistVote(term Term, candidate []byte) error {
+	if err := r.stable.SetUint64(keyLastVoteTerm, uint64(term)); err != nil {
 		return err
 	}
 	if err := r.stable.Set(keyLastVoteCand, candidate); err != nil {
@@ -1365,7 +1366,7 @@ func (r *Raft) stepDown() {
 	}
 }
 
-func (r *Raft) updateTerm(term uint64) {
+func (r *Raft) updateTerm(term Term) {
 	r.setState(Follower)
 	oldTerm := r.getCurrentTerm()
 	if term > oldTerm {
@@ -1378,9 +1379,9 @@ func (r *Raft) updateTerm(term uint64) {
 
 // setCurrentTerm is used to set the current term in a durable manner.
 // The caller must call updatePeers() after changing the term.
-func (r *Raft) setCurrentTerm(t uint64) {
+func (r *Raft) setCurrentTerm(t Term) {
 	// Persist to disk first
-	if err := r.stable.SetUint64(keyCurrentTerm, t); err != nil {
+	if err := r.stable.SetUint64(keyCurrentTerm, uint64(t)); err != nil {
 		panic(fmt.Errorf("failed to save current term: %v", err))
 	}
 	r.raftState.setCurrentTerm(t)

@@ -30,10 +30,10 @@ func NewLogCache(capacity int, store LogStore) (*LogCache, error) {
 	return c, nil
 }
 
-func (c *LogCache) GetLog(idx uint64, log *Log) error {
+func (c *LogCache) GetLog(idx Index, log *Log) error {
 	// Check the buffer for an entry
 	c.l.RLock()
-	cached := c.cache[idx%uint64(len(c.cache))]
+	cached := c.cache[uint64(idx)%uint64(len(c.cache))]
 	c.l.RUnlock()
 
 	// Check if entry is valid
@@ -54,22 +54,22 @@ func (c *LogCache) StoreLogs(logs []*Log) error {
 	// Insert the logs into the ring buffer
 	c.l.Lock()
 	for _, l := range logs {
-		c.cache[l.Index%uint64(len(c.cache))] = l
+		c.cache[uint64(l.Index)%uint64(len(c.cache))] = l
 	}
 	c.l.Unlock()
 
 	return c.store.StoreLogs(logs)
 }
 
-func (c *LogCache) FirstIndex() (uint64, error) {
+func (c *LogCache) FirstIndex() (Index, error) {
 	return c.store.FirstIndex()
 }
 
-func (c *LogCache) LastIndex() (uint64, error) {
+func (c *LogCache) LastIndex() (Index, error) {
 	return c.store.LastIndex()
 }
 
-func (c *LogCache) DeleteRange(min, max uint64) error {
+func (c *LogCache) DeleteRange(min, max Index) error {
 	// Invalidate the cache on deletes
 	c.l.Lock()
 	c.cache = make([]*Log, len(c.cache))

@@ -9,9 +9,9 @@ import (
 // unit tests. Use the MDBStore implementation instead.
 type InmemStore struct {
 	l         sync.RWMutex
-	lowIndex  uint64
-	highIndex uint64
-	logs      map[uint64]*Log
+	lowIndex  Index
+	highIndex Index
+	logs      map[Index]*Log
 	kv        map[string][]byte
 	kvInt     map[string]uint64
 }
@@ -20,7 +20,7 @@ type InmemStore struct {
 // use for production. Only for testing.
 func NewInmemStore() *InmemStore {
 	i := &InmemStore{
-		logs:  make(map[uint64]*Log),
+		logs:  make(map[Index]*Log),
 		kv:    make(map[string][]byte),
 		kvInt: make(map[string]uint64),
 	}
@@ -28,21 +28,21 @@ func NewInmemStore() *InmemStore {
 }
 
 // FirstIndex implements the LogStore interface.
-func (i *InmemStore) FirstIndex() (uint64, error) {
+func (i *InmemStore) FirstIndex() (Index, error) {
 	i.l.RLock()
 	defer i.l.RUnlock()
 	return i.lowIndex, nil
 }
 
 // LastIndex implements the LogStore interface.
-func (i *InmemStore) LastIndex() (uint64, error) {
+func (i *InmemStore) LastIndex() (Index, error) {
 	i.l.RLock()
 	defer i.l.RUnlock()
 	return i.highIndex, nil
 }
 
 // GetLog implements the LogStore interface.
-func (i *InmemStore) GetLog(index uint64, log *Log) error {
+func (i *InmemStore) GetLog(index Index, log *Log) error {
 	i.l.RLock()
 	defer i.l.RUnlock()
 	l, ok := i.logs[index]
@@ -75,7 +75,7 @@ func (i *InmemStore) StoreLogs(logs []*Log) error {
 }
 
 // DeleteRange implements the LogStore interface.
-func (i *InmemStore) DeleteRange(min, max uint64) error {
+func (i *InmemStore) DeleteRange(min, max Index) error {
 	i.l.Lock()
 	defer i.l.Unlock()
 	for j := min; j <= max; j++ {

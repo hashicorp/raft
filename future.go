@@ -20,7 +20,7 @@ type IndexFuture interface {
 
 	// Index holds the index of the newly applied log entry.
 	// This must not be called until after the Error method has returned.
-	Index() uint64
+	Index() Index
 }
 
 // ApplyFuture is used for Apply and can return the FSM response.
@@ -56,7 +56,7 @@ func (e errorFuture) Response() interface{} {
 	return nil
 }
 
-func (e errorFuture) Index() uint64 {
+func (e errorFuture) Index() Index {
 	return 0
 }
 
@@ -128,7 +128,7 @@ func (l *logFuture) Response() interface{} {
 	return l.response
 }
 
-func (l *logFuture) Index() uint64 {
+func (l *logFuture) Index() Index {
 	return l.log.Index
 }
 
@@ -158,8 +158,8 @@ type reqSnapshotFuture struct {
 	deferError
 
 	// snapshot details provided by the FSM runner before responding
-	index    uint64
-	term     uint64
+	index    Index
+	term     Term
 	snapshot FSMSnapshot
 }
 
@@ -189,7 +189,7 @@ func (c *configurationsFuture) Configuration() Configuration {
 }
 
 // Index returns the index of the latest configuration in use by Raft.
-func (c *configurationsFuture) Index() uint64 {
+func (c *configurationsFuture) Index() Index {
 	return c.configurations.latestIndex
 }
 

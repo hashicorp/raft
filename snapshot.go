@@ -20,8 +20,8 @@ type SnapshotMeta struct {
 	ID string
 
 	// Index and Term store when the snapshot was taken.
-	Index uint64
-	Term  uint64
+	Index Index
+	Term  Term
 
 	// Peers is deprecated and used to support version 0 snapshots, but will
 	// be populated in version 1 snapshots as well to help with upgrades.
@@ -30,7 +30,7 @@ type SnapshotMeta struct {
 	// Configuration and ConfigurationIndex are present in version 1
 	// snapshots and later.
 	Configuration      Configuration
-	ConfigurationIndex uint64
+	ConfigurationIndex Index
 
 	// Size is the size of the snapshot in bytes.
 	Size int64
@@ -44,8 +44,8 @@ type SnapshotStore interface {
 	// Create is used to begin a snapshot at a given index and term, and with
 	// the given committed configuration. The version parameter controls
 	// which snapshot version to create.
-	Create(version SnapshotVersion, index, term uint64, configuration Configuration,
-		configurationIndex uint64, trans Transport) (SnapshotSink, error)
+	Create(version SnapshotVersion, index Index, term Term, configuration Configuration,
+		configurationIndex Index, trans Transport) (SnapshotSink, error)
 
 	// List is used to list the available snapshots in the store.
 	// It should return then in descending order, with the highest index first.
@@ -121,7 +121,7 @@ func (r *Raft) shouldSnapshot() bool {
 	}
 
 	// Compare the delta to the threshold
-	delta := lastIdx - lastSnap
+	delta := uint64(lastIdx - lastSnap)
 	return delta >= r.conf.SnapshotThreshold
 }
 
@@ -216,7 +216,7 @@ func (r *Raft) takeSnapshot() error {
 
 // compactLogs takes the last inclusive index of a snapshot
 // and trims the logs that are no longer needed.
-func (r *Raft) compactLogs(snapIdx uint64) error {
+func (r *Raft) compactLogs(snapIdx Index) error {
 	defer metrics.MeasureSince([]string{"raft", "compactLogs"}, time.Now())
 	// Determine log ranges to compact
 	minLog, err := r.logs.FirstIndex()
@@ -226,7 +226,7 @@ func (r *Raft) compactLogs(snapIdx uint64) error {
 
 	// Check if we have enough logs to truncate
 	lastLogIdx, _ := r.getLastLog()
-	if lastLogIdx <= r.conf.TrailingLogs {
+	if lastLogIdx <= Index(r.conf.TrailingLogs) {
 		return nil
 	}
 
@@ -234,7 +234,10 @@ func (r *Raft) compactLogs(snapIdx uint64) error {
 	// back from the head, which ever is further back. This ensures
 	// at least `TrailingLogs` entries, but does not allow logs
 	// after the snapshot to be removed.
-	maxLog := min(snapIdx, lastLogIdx-r.conf.TrailingLogs)
+	maxLog := lastLogIdx - Index(r.conf.TrailingLogs)
+	if maxLog > snapIdx {
+		maxLog = snapIdx
+	}
 
 	// Log this
 	r.logger.Printf("[INFO] raft: Compacting logs from %d to %d", minLog, maxLog)

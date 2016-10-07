@@ -278,8 +278,8 @@ CHECK:
 // pollState takes a snapshot of the state of the cluster. This might not be
 // stable, so use GetInState() to apply some additional checks when waiting
 // for the cluster to achieve a particular state.
-func (c *cluster) pollState(s RaftState) ([]*Raft, uint64) {
-	var highestTerm uint64
+func (c *cluster) pollState(s RaftState) ([]*Raft, Term) {
+	var highestTerm Term
 	in := make([]*Raft, 0, 1)
 	for _, r := range c.rafts {
 		if r.State() == s {
@@ -1524,8 +1524,8 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 	snap := snaps[0]
 
 	// Logs should be trimmed
-	if idx, _ := leader.logs.FirstIndex(); idx != snap.Index-conf.TrailingLogs+1 {
-		c.FailNowf("[ERR] should trim logs to %d: but is %d", snap.Index-conf.TrailingLogs+1, idx)
+	if idx, _ := leader.logs.FirstIndex(); idx != snap.Index-Index(conf.TrailingLogs)+1 {
+		c.FailNowf("[ERR] should trim logs to %d: but is %d", snap.Index-Index(conf.TrailingLogs)+1, idx)
 	}
 
 	// Shutdown
