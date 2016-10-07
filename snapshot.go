@@ -113,7 +113,7 @@ func (r *Raft) runSnapshots() {
 // a new snapshot.
 func (r *Raft) shouldSnapshot() bool {
 	// Check the last snapshot index
-	lastSnap, _ := r.getLastSnapshot()
+	lastSnap, _ := r.shared.getLastSnapshot()
 
 	// Check the last log index
 	lastIdx, err := r.logs.LastIndex()
@@ -205,7 +205,7 @@ func (r *Raft) takeSnapshot() error {
 	}
 
 	// Update the last stable snapshot info.
-	r.setLastSnapshot(snapReq.index, snapReq.term)
+	r.shared.setLastSnapshot(snapReq.index, snapReq.term)
 
 	// Compact the logs.
 	if err := r.compactLogs(snapReq.index); err != nil {
@@ -227,7 +227,7 @@ func (r *Raft) compactLogs(snapIdx Index) error {
 	}
 
 	// Check if we have enough logs to truncate
-	lastLogIdx, _ := r.getLastLog()
+	lastLogIdx, _ := r.shared.getLastLog()
 	if lastLogIdx <= Index(r.conf.TrailingLogs) {
 		return nil
 	}

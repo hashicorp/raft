@@ -139,7 +139,7 @@ func (r *Raft) run() {
 		}
 
 		// Enter into a sub-FSM
-		switch r.getState() {
+		switch r.shared.getState() {
 		case Follower:
 			r.runFollower()
 		case Candidate:
@@ -207,7 +207,7 @@ func (r *Raft) runFollower() {
 				}
 			} else {
 				r.logger.Warn("Heartbeat timeout from %q reached in term %d (last contact %v), starting election",
-					lastLeader, r.getCurrentTerm(), lastContact)
+					lastLeader, r.shared.getCurrentTerm(), lastContact)
 				metrics.IncrCounter([]string{"raft", "transition", "heartbeat_timeout"}, 1)
 				r.setState(Candidate)
 				r.updatePeers()
@@ -237,7 +237,7 @@ func (r *Raft) liveBootstrap(membership Membership) error {
 		panic(err)
 	}
 	r.setCurrentTerm(1)
-	r.setLastLog(entry.Index, entry.Term)
+	r.shared.setLastLog(entry.Index, entry.Term)
 	r.processMembershipLogEntry(&entry)
 	return nil
 }
@@ -245,19 +245,19 @@ func (r *Raft) liveBootstrap(membership Membership) error {
 // runCandidate runs the FSM for a candidate.
 func (r *Raft) runCandidate() {
 	r.logger.Info("%v entering Candidate state in term %v",
-		r, r.getCurrentTerm()+1)
+		r, r.shared.getCurrentTerm()+1)
 	metrics.IncrCounter([]string{"raft", "state", "candidate"}, 1)
 	defer metrics.MeasureSince([]string{"raft", "candidate", "electSelf"}, time.Now())
 
 	// Increment the term
-	r.setCurrentTerm(r.getCurrentTerm() + 1)
+	r.setCurrentTerm(r.shared.getCurrentTerm() + 1)
 
 	// Set a timeout
 	electionTimer := randomTimeout(r.conf.ElectionTimeout)
 
 	if hasVote(r.memberships.latest, r.localID) {
 		// Persist a vote for ourselves
-		err := r.persistVote(r.getCurrentTerm(), r.trans.EncodePeer(r.localAddr))
+		err := r.persistVote(r.shared.getCurrentTerm(), r.trans.EncodePeer(r.localAddr))
 		if err != nil {
 			r.logger.Error("Failed to persist vote : %v", err)
 			return // TODO: panic?
@@ -268,7 +268,7 @@ func (r *Raft) runCandidate() {
 	// Ask peers to vote
 	r.updatePeers()
 
-	for r.getState() == Candidate {
+	for r.shared.getState() == Candidate {
 		select {
 		case rpc := <-r.rpcCh:
 			r.processRPC(rpc)
@@ -330,7 +330,7 @@ func (r *Raft) runLeader() {
 
 	// Setup leader state
 	// first index that may be committed in this term
-	r.leaderState.startIndex = r.getLastIndex() + 1
+	r.leaderState.startIndex = r.shared.getLastIndex() + 1
 	r.leaderState.inflight = list.New()
 	r.leaderState.verifyBatches = nil
 
@@ -437,9 +437,9 @@ func (r *Raft) updatePeers() {
 	}
 
 	// Send new control information and stop Peer goroutines that need stopping
-	lastIndex, lastTerm := r.getLastEntry()
+	lastIndex, lastTerm := r.shared.getLastEntry()
 	for serverID, peer := range r.peers {
-		role := r.getState()
+		role := r.shared.getState()
 		if role == Shutdown {
 			// Shutdown must be the last control signal sent to the Peer, so we mask
 			// it here and send it later in shutdownPeers().
@@ -460,12 +460,12 @@ func (r *Raft) updatePeers() {
 			}
 		}
 		control := peerControl{
-			term:          r.getCurrentTerm(),
+			term:          r.shared.getCurrentTerm(),
 			role:          role,
 			verifyCounter: verifyCounter,
 			lastIndex:     lastIndex,
 			lastTerm:      lastTerm,
-			commitIndex:   r.getCommitIndex(),
+			commitIndex:   r.shared.getCommitIndex(),
 		}
 		peer.controlCh <- control
 	}
@@ -474,7 +474,7 @@ func (r *Raft) updatePeers() {
 // shutdownPeers instructs all peers to exit immediately.
 func (r *Raft) shutdownPeers() {
 	control := peerControl{
-		term: r.getCurrentTerm(),
+		term: r.shared.getCurrentTerm(),
 		role: Shutdown,
 	}
 	for serverID, peer := range r.peers {
@@ -497,7 +497,7 @@ func (r *Raft) membershipChangeChIfStable() chan *membershipChangeFuture {
 	// 2. This leader has committed some entry (the noop) in this term
 	//    https://groups.google.com/forum/#!msg/raft-dev/t4xj6dJTP6E/d2D9LrWRza8J
 	if r.memberships.latestIndex == r.memberships.committedIndex &&
-		r.getCommitIndex() >= r.leaderState.startIndex {
+		r.shared.getCommitIndex() >= r.leaderState.startIndex {
 		return r.membershipChangeCh
 	}
 	return nil
@@ -515,7 +515,7 @@ func (r *Raft) leaderLoop() {
 	stepDown := false
 
 	lease := time.After(r.conf.LeaderLeaseTimeout)
-	for r.getState() == Leader {
+	for r.shared.getState() == Leader {
 		select {
 		case rpc := <-r.rpcCh:
 			r.processRPC(rpc)
@@ -590,7 +590,7 @@ func (r *Raft) leaderLoop() {
 
 func (r *Raft) updateCommitIndex(oldCommitIndex, commitIndex Index) {
 	stepDown := false
-	r.setCommitIndex(commitIndex)
+	r.shared.setCommitIndex(commitIndex)
 	// Process the newly committed entries
 	if r.memberships.latestIndex > oldCommitIndex &&
 		r.memberships.latestIndex <= commitIndex {
@@ -659,11 +659,11 @@ func (r *Raft) computeCandidateProgress() {
 	}
 	for peerID, peer := range r.peers {
 		switch {
-		case peer.progress.term > r.getCurrentTerm():
+		case peer.progress.term > r.shared.getCurrentTerm():
 			r.logger.Debug("Newer term discovered, fallback to follower")
 			r.updateTerm(peer.progress.term)
 			return
-		case peer.progress.term == r.getCurrentTerm():
+		case peer.progress.term == r.shared.getCurrentTerm():
 			if hasVote(r.memberships.latest, peerID) {
 				if peer.progress.voteGranted {
 					votes = append(votes, 1)
@@ -671,7 +671,7 @@ func (r *Raft) computeCandidateProgress() {
 					votes = append(votes, 0)
 				}
 			}
-		case peer.progress.term < r.getCurrentTerm():
+		case peer.progress.term < r.shared.getCurrentTerm():
 			votes = append(votes, 0)
 		}
 	}
@@ -689,20 +689,20 @@ func (r *Raft) computeLeaderProgress() {
 	matchIndexes := make([]uint64, 0, servers)
 	if hasVote(r.memberships.latest, r.localID) {
 		verifiedCounters = append(verifiedCounters, r.verifyCounter)
-		matchIndexes = append(matchIndexes, uint64(r.getLastIndex()))
+		matchIndexes = append(matchIndexes, uint64(r.shared.getLastIndex()))
 	}
 	for peerID, peer := range r.peers {
 		switch {
-		case peer.progress.term > r.getCurrentTerm():
+		case peer.progress.term > r.shared.getCurrentTerm():
 			r.logger.Debug("Newer term discovered, fallback to follower")
 			r.updateTerm(peer.progress.term)
 			return
-		case peer.progress.term == r.getCurrentTerm():
+		case peer.progress.term == r.shared.getCurrentTerm():
 			if hasVote(r.memberships.latest, peerID) {
 				verifiedCounters = append(verifiedCounters, peer.progress.verifiedCounter)
 				matchIndexes = append(matchIndexes, uint64(peer.progress.matchIndex))
 			}
-		case peer.progress.term < r.getCurrentTerm():
+		case peer.progress.term < r.shared.getCurrentTerm():
 			verifiedCounters = append(verifiedCounters, 0)
 			matchIndexes = append(matchIndexes, 0)
 		}
@@ -710,7 +710,7 @@ func (r *Raft) computeLeaderProgress() {
 	verifiedCounter := quorumGeq(verifiedCounters)
 	matchIndex := Index(quorumGeq(matchIndexes))
 
-	oldCommitIndex := r.getCommitIndex()
+	oldCommitIndex := r.shared.getCommitIndex()
 	if matchIndex > oldCommitIndex && matchIndex >= r.leaderState.startIndex {
 		r.updateCommitIndex(oldCommitIndex, matchIndex)
 	}
@@ -822,8 +822,8 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 	now := time.Now()
 	defer metrics.MeasureSince([]string{"raft", "leader", "dispatchLog"}, now)
 
-	term := r.getCurrentTerm()
-	lastIndex := r.getLastIndex()
+	term := r.shared.getCurrentTerm()
+	lastIndex := r.shared.getLastIndex()
 	logs := make([]*Log, len(applyLogs))
 
 	for idx, applyLog := range applyLogs {
@@ -847,7 +847,7 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 	}
 
 	// Update the last log since it's on disk now
-	r.setLastLog(lastIndex, term)
+	r.shared.setLastLog(lastIndex, term)
 
 	// In case we're a 1-server cluster, this might be committed already.
 	r.computeLeaderProgress()
@@ -865,14 +865,14 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 // the future from inflights.
 func (r *Raft) processLogs(index Index, future *logFuture) {
 	// Reject logs we've applied already
-	lastApplied := r.getLastApplied()
+	lastApplied := r.shared.getLastApplied()
 	if index <= lastApplied {
 		r.logger.Warn("Skipping application of old log: %d", index)
 		return
 	}
 
 	// Apply all the preceding logs
-	for idx := r.getLastApplied() + 1; idx <= index; idx++ {
+	for idx := r.shared.getLastApplied() + 1; idx <= index; idx++ {
 		// Get the log, either from the future or from our log store
 		if future != nil && future.log.Index == idx {
 			r.processLog(&future.log, future)
@@ -887,7 +887,7 @@ func (r *Raft) processLogs(index Index, future *logFuture) {
 		}
 
 		// Update the lastApplied index and term
-		r.setLastApplied(idx)
+		r.shared.setLastApplied(idx)
 	}
 }
 
@@ -979,8 +979,8 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	// Setup a response
 	resp := &AppendEntriesResponse{
 		RPCHeader: r.getRPCHeader(),
-		Term:      r.getCurrentTerm(),
-		LastLog:   r.getLastIndex(),
+		Term:      r.shared.getCurrentTerm(),
+		LastLog:   r.shared.getLastIndex(),
 		Success:   false,
 	}
 	var rpcErr error
@@ -989,13 +989,13 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	}()
 
 	// Ignore an older term
-	if a.Term < r.getCurrentTerm() {
+	if a.Term < r.shared.getCurrentTerm() {
 		return
 	}
 
 	// Increase the term if we see a newer one, also transition to follower
 	// if we ever get an appendEntries call
-	if a.Term > r.getCurrentTerm() {
+	if a.Term > r.shared.getCurrentTerm() {
 		r.updateTerm(a.Term)
 		resp.Term = a.Term
 	}
@@ -1006,7 +1006,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 
 	// Verify the last log entry
 	if a.PrevLogEntry > 0 {
-		lastIdx, lastTerm := r.getLastEntry()
+		lastIdx, lastTerm := r.shared.getLastEntry()
 
 		var prevLogTerm Term
 		if a.PrevLogEntry == lastIdx {
@@ -1034,7 +1034,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		start := time.Now()
 
 		// Delete any conflicting entries, skip any duplicates
-		lastLogIdx, _ := r.getLastLog()
+		lastLogIdx, _ := r.shared.getLastLog()
 		var newEntries []*Log
 		for i, entry := range a.Entries {
 			if entry.Index > lastLogIdx {
@@ -1079,7 +1079,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 
 			// Update the lastLog
 			last := newEntries[n-1]
-			r.setLastLog(last.Index, last.Term)
+			r.shared.setLastLog(last.Index, last.Term)
 		}
 
 		metrics.MeasureSince([]string{"raft", "rpc", "appendEntries", "storeLogs"}, start)
@@ -1089,9 +1089,9 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	if cap := a.PrevLogEntry + Index(len(a.Entries)); a.LeaderCommitIndex > cap {
 		a.LeaderCommitIndex = cap
 	}
-	if a.LeaderCommitIndex > r.getCommitIndex() {
+	if a.LeaderCommitIndex > r.shared.getCommitIndex() {
 		start := time.Now()
-		r.setCommitIndex(a.LeaderCommitIndex)
+		r.shared.setCommitIndex(a.LeaderCommitIndex)
 		if r.memberships.latestIndex <= a.LeaderCommitIndex {
 			r.memberships.committed = r.memberships.latest
 			r.memberships.committedIndex = r.memberships.latestIndex
@@ -1131,7 +1131,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// Setup a response
 	resp := &RequestVoteResponse{
 		RPCHeader: r.getRPCHeader(),
-		Term:      r.getCurrentTerm(),
+		Term:      r.shared.getCurrentTerm(),
 		Granted:   false,
 	}
 	var rpcErr error
@@ -1154,12 +1154,12 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	}
 
 	// Ignore an older term
-	if req.Term < r.getCurrentTerm() {
+	if req.Term < r.shared.getCurrentTerm() {
 		return
 	}
 
 	// Increase the term if we see a newer one
-	if req.Term > r.getCurrentTerm() {
+	if req.Term > r.shared.getCurrentTerm() {
 		r.updateTerm(req.Term)
 		resp.Term = req.Term
 	}
@@ -1190,7 +1190,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	}
 
 	// Reject if their term is older
-	lastIdx, lastTerm := r.getLastEntry()
+	lastIdx, lastTerm := r.shared.getLastEntry()
 	if lastTerm > req.LastLogTerm {
 		r.logger.Warn("Rejecting vote request from %v since our last term is greater (%d, %d)",
 			candidate, lastTerm, req.LastLogTerm)
@@ -1222,7 +1222,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "installSnapshot"}, time.Now())
 	// Setup a response
 	resp := &InstallSnapshotResponse{
-		Term:    r.getCurrentTerm(),
+		Term:    r.shared.getCurrentTerm(),
 		Success: false,
 	}
 	var rpcErr error
@@ -1238,12 +1238,12 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	}
 
 	// Ignore an older term
-	if req.Term < r.getCurrentTerm() {
+	if req.Term < r.shared.getCurrentTerm() {
 		return
 	}
 
 	// Increase the term if we see a newer one
-	if req.Term > r.getCurrentTerm() {
+	if req.Term > r.shared.getCurrentTerm() {
 		r.updateTerm(req.Term)
 		resp.Term = req.Term
 	}
@@ -1314,10 +1314,10 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	}
 
 	// Update the lastApplied so we don't replay old logs
-	r.setLastApplied(req.LastLogIndex)
+	r.shared.setLastApplied(req.LastLogIndex)
 
 	// Update the last stable snapshot info
-	r.setLastSnapshot(req.LastLogIndex, req.LastLogTerm)
+	r.shared.setLastSnapshot(req.LastLogIndex, req.LastLogTerm)
 
 	// Restore the peer set
 	r.memberships.latest = reqConfiguration
@@ -1360,7 +1360,7 @@ func (r *Raft) persistVote(term Term, candidate []byte) error {
 }
 
 func (r *Raft) stepDown() {
-	if r.getState() != Follower {
+	if r.shared.getState() != Follower {
 		r.setState(Follower)
 		r.updatePeers()
 	}
@@ -1368,7 +1368,7 @@ func (r *Raft) stepDown() {
 
 func (r *Raft) updateTerm(term Term) {
 	r.setState(Follower)
-	oldTerm := r.getCurrentTerm()
+	oldTerm := r.shared.getCurrentTerm()
 	if term > oldTerm {
 		r.setCurrentTerm(term)
 	} else if term < oldTerm {
@@ -1384,7 +1384,7 @@ func (r *Raft) setCurrentTerm(t Term) {
 	if err := r.stable.SetUint64(keyCurrentTerm, uint64(t)); err != nil {
 		panic(fmt.Errorf("failed to save current term: %v", err))
 	}
-	r.raftState.setCurrentTerm(t)
+	r.shared.setCurrentTerm(t)
 }
 
 // setState is used to update the current state. Any state
@@ -1393,8 +1393,8 @@ func (r *Raft) setCurrentTerm(t Term) {
 // The caller must call updatePeers() after changing the term.
 func (r *Raft) setState(state RaftState) {
 	r.setLeader("")
-	oldState := r.raftState.getState()
-	r.raftState.setState(state)
+	oldState := r.shared.getState()
+	r.shared.setState(state)
 	if oldState != state {
 		r.observe(state)
 	}

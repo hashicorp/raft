@@ -267,7 +267,7 @@ func (c *cluster) pollState(s RaftState) ([]*Raft, Term) {
 		if r.State() == s {
 			in = append(in, r)
 		}
-		term := r.getCurrentTerm()
+		term := r.shared.getCurrentTerm()
 		if term > highestTerm {
 			highestTerm = term
 		}
@@ -958,7 +958,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 
 	// Disconnect the leader now
 	t.Logf("[INFO] Disconnecting %v", leader)
-	leaderTerm := leader.getCurrentTerm()
+	leaderTerm := leader.shared.getCurrentTerm()
 	c.Disconnect(leader.localAddr)
 
 	// Wait for new leader
@@ -976,8 +976,8 @@ func TestRaft_LeaderFail(t *testing.T) {
 	}
 
 	// Ensure the term is greater
-	if newLead.getCurrentTerm() <= leaderTerm {
-		c.FailNowf("[ERR] expected newer term! %d %d (%v, %v)", newLead.getCurrentTerm(), leaderTerm, newLead, leader)
+	if newLead.shared.getCurrentTerm() <= leaderTerm {
+		c.FailNowf("[ERR] expected newer term! %d %d (%v, %v)", newLead.shared.getCurrentTerm(), leaderTerm, newLead, leader)
 	}
 
 	// Apply should work not work on old leader
@@ -1508,7 +1508,7 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 	c.rafts[0] = r
 
 	// We should have restored from the snapshot!
-	if last := r.getLastApplied(); last != snap.Index {
+	if last := r.shared.getLastApplied(); last != snap.Index {
 		c.FailNowf("[ERR] bad last index: %d, expecting %d", last, snap.Index)
 	}
 }
@@ -1615,7 +1615,7 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 
 	// We should have restored from the snapshot! Note that there's one
 	// index bump from the noop the leader tees up when it takes over.
-	if last := r.getLastApplied(); last != 103 {
+	if last := r.shared.getLastApplied(); last != 103 {
 		c.FailNowf("[ERR] bad last: %v", last)
 	}
 
@@ -2001,7 +2001,7 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 
 	// Force follower to different term
 	follower := followers[0]
-	follower.setCurrentTerm(follower.getCurrentTerm() + 1)
+	follower.setCurrentTerm(follower.shared.getCurrentTerm() + 1)
 
 	// Verify we are leader
 	verify := leader.VerifyLeader()
@@ -2136,10 +2136,10 @@ func TestRaft_Voting(t *testing.T) {
 
 	reqVote := RequestVoteRequest{
 		RPCHeader:    ldr.getRPCHeader(),
-		Term:         ldr.getCurrentTerm() + 10,
+		Term:         ldr.shared.getCurrentTerm() + 10,
 		Candidate:    ldrT.EncodePeer(ldr.localAddr),
 		LastLogIndex: ldr.LastIndex(),
-		LastLogTerm:  ldr.getCurrentTerm(),
+		LastLogTerm:  ldr.shared.getCurrentTerm(),
 	}
 	// a follower that thinks there's a leader should vote for that leader.
 	var resp RequestVoteResponse
@@ -2170,10 +2170,10 @@ func TestRaft_ProtocolVersion_RejectRPC(t *testing.T) {
 		RPCHeader: RPCHeader{
 			ProtocolVersion: ProtocolVersionMax + 1,
 		},
-		Term:         ldr.getCurrentTerm() + 10,
+		Term:         ldr.shared.getCurrentTerm() + 10,
 		Candidate:    ldrT.EncodePeer(ldr.localAddr),
 		LastLogIndex: ldr.LastIndex(),
-		LastLogTerm:  ldr.getCurrentTerm(),
+		LastLogTerm:  ldr.shared.getCurrentTerm(),
 	}
 
 	// Reject a message from a future version we don't understand.
