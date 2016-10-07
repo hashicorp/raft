@@ -47,7 +47,10 @@ var (
 
 // Raft implements a Raft node.
 type Raft struct {
-	raftState
+	shared raftShared
+
+	// Tracks running goroutines
+	goRoutines *waitGroup
 
 	// protocolVersion is used to inter-operate with Raft servers running
 	// different versions of the library. See comments in config.go for more
@@ -125,7 +128,7 @@ type Raft struct {
 	snapshotCh chan *snapshotFuture
 
 	// stable is a StableStore implementation for durable state
-	// It provides stable storage for many fields in raftState
+	// It provides stable storage for many fields in raftShared
 	stable StableStore
 
 	// The transport layer we use
@@ -473,7 +476,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 
 	// Restore the current term and the last log.
 	r.setCurrentTerm(currentTerm)
-	r.setLastLog(lastLog.Index, lastLog.Term)
+	r.shared.setLastLog(lastLog.Index, lastLog.Term)
 
 	// Attempt to restore a snapshot if there are any.
 	if err := r.restoreSnapshot(); err != nil {
@@ -481,7 +484,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	}
 
 	// Scan through the log for any configuration change entries.
-	snapshotIndex, _ := r.getLastSnapshot()
+	snapshotIndex, _ := r.shared.getLastSnapshot()
 	for index := snapshotIndex + 1; index <= lastLog.Index; index++ {
 		var entry Log
 		if err := r.logs.GetLog(index, &entry); err != nil {
@@ -534,10 +537,10 @@ func (r *Raft) restoreSnapshot() error {
 		r.logger.Printf("[INFO] raft: Restored from snapshot %v", snapshot.ID)
 
 		// Update the lastApplied so we don't replay old logs
-		r.setLastApplied(snapshot.Index)
+		r.shared.setLastApplied(snapshot.Index)
 
 		// Update the last stable snapshot info
-		r.setLastSnapshot(snapshot.Index, snapshot.Term)
+		r.shared.setLastSnapshot(snapshot.Index, snapshot.Term)
 
 		// Update the configuration
 		if snapshot.Version > 0 {
@@ -819,7 +822,7 @@ func (r *Raft) Snapshot() Future {
 
 // State is used to return the current raft state.
 func (r *Raft) State() RaftState {
-	return r.getState()
+	return r.shared.getState()
 }
 
 // LeaderCh is used to get a channel which delivers signals on
@@ -832,7 +835,7 @@ func (r *Raft) LeaderCh() <-chan bool {
 
 // String returns a string representation of this Raft node.
 func (r *Raft) String() string {
-	return fmt.Sprintf("Node at %s [%v]", r.localAddr, r.getState())
+	return fmt.Sprintf("Node at %s [%v]", r.localAddr, r.shared.getState())
 }
 
 // LastContact returns the time of last contact by a leader.
@@ -872,15 +875,15 @@ func (r *Raft) Stats() map[string]string {
 	toString := func(v uint64) string {
 		return strconv.FormatUint(v, 10)
 	}
-	lastLogIndex, lastLogTerm := r.getLastLog()
-	lastSnapIndex, lastSnapTerm := r.getLastSnapshot()
+	lastLogIndex, lastLogTerm := r.shared.getLastLog()
+	lastSnapIndex, lastSnapTerm := r.shared.getLastSnapshot()
 	s := map[string]string{
-		"state":                r.getState().String(),
-		"term":                 toString(uint64(r.getCurrentTerm())),
+		"state":                r.shared.getState().String(),
+		"term":                 toString(uint64(r.shared.getCurrentTerm())),
 		"last_log_index":       toString(uint64(lastLogIndex)),
 		"last_log_term":        toString(uint64(lastLogTerm)),
-		"commit_index":         toString(uint64(r.getCommitIndex())),
-		"applied_index":        toString(uint64(r.getLastApplied())),
+		"commit_index":         toString(uint64(r.shared.getCommitIndex())),
+		"applied_index":        toString(uint64(r.shared.getLastApplied())),
 		"fsm_pending":          toString(uint64(len(r.fsmCommitCh))),
 		"last_snapshot_index":  toString(uint64(lastSnapIndex)),
 		"last_snapshot_term":   toString(uint64(lastSnapTerm)),
@@ -920,7 +923,7 @@ func (r *Raft) Stats() map[string]string {
 	last := r.LastContact()
 	if last.IsZero() {
 		s["last_contact"] = "never"
-	} else if r.getState() == Leader {
+	} else if r.shared.getState() == Leader {
 		s["last_contact"] = "0"
 	} else {
 		s["last_contact"] = fmt.Sprintf("%v", time.Now().Sub(last))
@@ -931,7 +934,7 @@ func (r *Raft) Stats() map[string]string {
 // LastIndex returns the last index in stable storage,
 // either from the last log or from the last snapshot.
 func (r *Raft) LastIndex() Index {
-	return r.getLastIndex()
+	return r.shared.getLastIndex()
 }
 
 // AppliedIndex returns the last index applied to the FSM. This is generally
@@ -942,5 +945,5 @@ func (r *Raft) LastIndex() Index {
 // it to its internal state. Thus, the application's state may lag behind this
 // index.
 func (r *Raft) AppliedIndex() Index {
-	return r.getLastApplied()
+	return r.shared.getLastApplied()
 }
