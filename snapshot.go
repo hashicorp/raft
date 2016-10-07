@@ -29,7 +29,7 @@ type SnapshotMeta struct {
 
 	// Configuration and ConfigurationIndex are present in version 1
 	// snapshots and later.
-	Configuration      Configuration
+	Configuration      Membership
 	ConfigurationIndex Index
 
 	// Size is the size of the snapshot in bytes.
@@ -42,10 +42,10 @@ type SnapshotMeta struct {
 // without streaming from the leader.
 type SnapshotStore interface {
 	// Create is used to begin a snapshot at a given index and term, and with
-	// the given committed configuration. The version parameter controls
+	// the given committed membership configuration. The version parameter controls
 	// which snapshot version to create.
-	Create(version SnapshotVersion, index Index, term Term, configuration Configuration,
-		configurationIndex Index, trans Transport) (SnapshotSink, error)
+	Create(version SnapshotVersion, index Index, term Term, membership Membership,
+		membershipIndex Index, trans Transport) (SnapshotSink, error)
 
 	// List is used to list the available snapshots in the store.
 	// It should return then in descending order, with the highest index first.
@@ -150,21 +150,21 @@ func (r *Raft) takeSnapshot() error {
 	}
 	defer snapReq.snapshot.Release()
 
-	// Make a request for the configurations and extract the committed info.
+	// Make a request for the memberships and extract the committed info.
 	// We have to use the future here to safely get this information since
 	// it is owned by the main thread.
-	configReq := &configurationsFuture{}
+	configReq := &membershipsFuture{}
 	configReq.init()
 	select {
-	case r.configurationsCh <- configReq:
+	case r.membershipsCh <- configReq:
 	case <-r.shutdownCh:
 		return ErrRaftShutdown
 	}
 	if err := configReq.Error(); err != nil {
 		return err
 	}
-	committed := configReq.configurations.committed
-	committedIndex := configReq.configurations.committedIndex
+	committed := configReq.memberships.committed
+	committedIndex := configReq.memberships.committedIndex
 
 	// We don't support snapshots while there's a config change outstanding
 	// since the snapshot doesn't have a means to represent this state. This

@@ -139,7 +139,7 @@ func snapshotName(term Term, index Index) string {
 
 // Create is used to start a new snapshot
 func (f *FileSnapshotStore) Create(version SnapshotVersion, index Index, term Term,
-	configuration Configuration, configurationIndex Index, trans Transport) (SnapshotSink, error) {
+	membership Membership, membershipIndex Index, trans Transport) (SnapshotSink, error) {
 	// We only support version 1 snapshots at this time.
 	if version != 1 {
 		return nil, fmt.Errorf("unsupported snapshot version %d", version)
@@ -167,9 +167,9 @@ func (f *FileSnapshotStore) Create(version SnapshotVersion, index Index, term Te
 				ID:                 name,
 				Index:              index,
 				Term:               term,
-				Peers:              encodePeers(configuration, trans),
-				Configuration:      configuration,
-				ConfigurationIndex: configurationIndex,
+				Peers:              encodePeers(membership, trans),
+				Configuration:      membership,
+				ConfigurationIndex: membershipIndex,
 			},
 			CRC: nil,
 		},

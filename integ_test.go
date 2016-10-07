@@ -77,13 +77,14 @@ func MakeRaft(t *testing.T, conf *Config, bootstrap bool) *RaftEnv {
 	env.trans = trans
 
 	if bootstrap {
-		var configuration Configuration
-		configuration.Servers = append(configuration.Servers, Server{
-			Suffrage: Voter,
-			ID:       conf.LocalID,
-			Address:  trans.LocalAddr(),
-		})
-		err = BootstrapCluster(conf, stable, stable, snap, trans, configuration)
+		membership := Membership{
+			Servers: []Server{{
+				Suffrage: Voter,
+				ID:       conf.LocalID,
+				Address:  trans.LocalAddr(),
+			}},
+		}
+		err = BootstrapCluster(conf, stable, stable, snap, trans, membership)
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}

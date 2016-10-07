@@ -1230,7 +1230,7 @@ func (rpc *installSnapshotRPC) prepare(shared *peerShared, control peerControl) 
 		LastLogTerm:        meta.Term,
 		Peers:              meta.Peers,
 		Size:               meta.Size,
-		Configuration:      encodeConfiguration(meta.Configuration),
+		Configuration:      encodeMembership(meta.Configuration),
 		ConfigurationIndex: meta.ConfigurationIndex,
 	}
 	rpc.snapID = snapID
