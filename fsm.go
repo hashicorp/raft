@@ -47,7 +47,8 @@ type FSMSnapshot interface {
 // to the FSM. This is done async of other logs since we don't want
 // the FSM to block our internal operations.
 func (r *Raft) runFSM() {
-	var lastIndex, lastTerm uint64
+	var lastIndex Index
+	var lastTerm Term
 	for {
 		select {
 		case req := <-r.fsmRestoreCh:

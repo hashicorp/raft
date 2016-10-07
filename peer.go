@@ -82,7 +82,7 @@ type peerShared struct {
 	// Notified when the AppendEntries pipeline is ready to send further requests.
 	// The term of the AppendEntries RPC is sent over the channel, used to clear
 	// peerState.leader.outstandingPipelineSend if the term is current.
-	pipelineSendDoneCh chan uint64
+	pipelineSendDoneCh chan Term
 
 	// stopCh is closed whenever helper goroutines should exit. In particular,
 	// they should never block on sending to requestCh/replyCh exclusively; they
@@ -97,7 +97,7 @@ type peerControl struct {
 	// RPCs from the previous term, though requests that have already been
 	// prepared will still be sent (the Raft protocol allows this, as it's
 	// equivalent to a long network delay).
-	term uint64
+	term Term
 
 	// If role is Follower, do nothing. If role is Candidate, request votes. If
 	// role is Leader, send log entries and snapshots. If role is Shutdown, exit
@@ -113,13 +113,13 @@ type peerControl struct {
 
 	// As leader, the last entry in the log which should be replicated to the
 	// peer. As candidate, included in RequestVote entries for log comparisons.
-	lastIndex uint64
+	lastIndex Index
 
 	// The term of the lastIndex entry.
-	lastTerm uint64
+	lastTerm Term
 
 	// The last entry committed in the log (this may be past lastIndex).
-	commitIndex uint64
+	commitIndex Index
 }
 
 // This Peer sends this struct to the raft.go module to inform it of newly
@@ -132,19 +132,19 @@ type peerProgress struct {
 
 	// The peer's current term. If this is larger than the local server's
 	// term, the local server will update and become a follower.
-	term uint64
+	term Term
 
 	// Set to true if the peer granted this server a vote in 'term'.
 	voteGranted bool
 
 	// The index in the log that the remote server has acknowledged as matching
 	// this server's. Reset to 0 when the term changes.
-	matchIndex uint64
+	matchIndex Index
 
 	// The term of the matchIndex entry. This is probably uninteresting to the
 	// Raft module. The Peer uses it internally to avoid reading from the
 	// store on the heartbeat path.
-	matchTerm uint64
+	matchTerm Term
 
 	// A lower bound of when the peer last heard from us. Upon the receipt of any
 	// reply from the peer (successful or not, term matches or not), this is
@@ -182,7 +182,7 @@ type peerLeaderState struct {
 	// entry past the end of the log. To support pipelining, this is always
 	// updated optimistically as soon as the AppendEntries request is confirmed,
 	// then rolled back in case of any error or negative acknowledgment.
-	nextIndex uint64
+	nextIndex Index
 
 	// The index of the next log entry whose commitment to notify the peer of,
 	// which may fall one entry past the end of the log. To support pipelining,
@@ -190,7 +190,7 @@ type peerLeaderState struct {
 	// is confirmed, then rolled back in case of any error or negative
 	// acknowledgment. Used to send the peer new commitIndex values aggressively
 	// so that its state machine can serve fresher potentially-stale reads.
-	nextCommitIndex uint64
+	nextCommitIndex Index
 
 	// If true, the peer needs a snapshot because this server has already
 	// discarded the log entries it would otherwise send in AppendEntries.
@@ -336,7 +336,7 @@ func makePeerInternal(serverID ServerID,
 			pipeline:           makeReliablePipeline(trans, serverAddress),
 			requestCh:          make(chan peerRPC),
 			replyCh:            make(chan peerRPC),
-			pipelineSendDoneCh: make(chan uint64),
+			pipelineSendDoneCh: make(chan Term),
 			stopCh:             make(chan struct{}),
 		},
 		controlCh:    controlCh,
@@ -641,7 +641,7 @@ func (p *peerState) confirmedLeadership(start time.Time, verifyCounter uint64) {
 }
 
 // updateTerm clears out some progress fields when its term changes.
-func updateTerm(progress *peerProgress, term uint64) {
+func updateTerm(progress *peerProgress, term Term) {
 	if term > progress.term {
 		progress.term = term
 		progress.voteGranted = false
@@ -881,13 +881,17 @@ func makeHeartbeatRPC(p *peerState) peerRPC {
 			// PrevLogEntry. Even after a reboot, the follower will still consider
 			// agree on PrevLogEntry, so it'll act as a sign of life, even for older
 			// followers. And useful commit index values can still be transferred.
-			PrevLogEntry:      p.progress.matchIndex,
-			PrevLogTerm:       p.progress.matchTerm,
-			LeaderCommitIndex: min(p.control.commitIndex, p.progress.matchIndex),
+			PrevLogEntry: p.progress.matchIndex,
+			PrevLogTerm:  p.progress.matchTerm,
 		},
 		resp:          &AppendEntriesResponse{},
 		heartbeat:     true,
 		verifyCounter: p.control.verifyCounter,
+	}
+	if p.control.commitIndex < p.progress.matchIndex {
+		rpc.req.LeaderCommitIndex = p.control.commitIndex
+	} else {
+		rpc.req.LeaderCommitIndex = p.progress.matchIndex
 	}
 	return rpc
 }
@@ -924,7 +928,7 @@ func (rpc *appendEntriesRPC) prepare(shared *peerShared, control peerControl) er
 	}
 
 	// Find prevLogTerm.
-	getTerm := func(index uint64) (uint64, error) {
+	getTerm := func(index Index) (Term, error) {
 		if index == 0 {
 			return 0, nil
 		}
@@ -964,11 +968,13 @@ func (rpc *appendEntriesRPC) prepare(shared *peerShared, control peerControl) er
 	rpc.req.PrevLogTerm = term
 
 	// Add entries to request.
-	lastIndex := min(control.lastIndex,
-		rpc.req.PrevLogEntry+uint64(shared.options.maxAppendEntries))
+	lastIndex := rpc.req.PrevLogEntry + Index(shared.options.maxAppendEntries)
+	if lastIndex > control.lastIndex {
+		lastIndex = control.lastIndex
+	}
 	numEntries := uint64(0)
 	if lastIndex > rpc.req.PrevLogEntry {
-		numEntries = lastIndex - rpc.req.PrevLogEntry
+		numEntries = uint64(lastIndex - rpc.req.PrevLogEntry)
 	}
 	rpc.req.Entries = make([]*Log, 0, numEntries)
 	for i := rpc.req.PrevLogEntry + 1; i <= lastIndex; i++ {
@@ -983,7 +989,10 @@ func (rpc *appendEntriesRPC) prepare(shared *peerShared, control peerControl) er
 		}
 		rpc.req.Entries = append(rpc.req.Entries, &entry)
 	}
-	rpc.req.LeaderCommitIndex = min(control.commitIndex, lastIndex)
+	rpc.req.LeaderCommitIndex = control.commitIndex
+	if rpc.req.LeaderCommitIndex > lastIndex {
+		rpc.req.LeaderCommitIndex = lastIndex
+	}
 	return nil
 }
 
@@ -994,7 +1003,7 @@ func (rpc *appendEntriesRPC) confirm(p *peerState) error {
 	if p.control.role != Leader {
 		return errors.New("no longer leader, discarding AppendEntries request")
 	}
-	lastIndex := rpc.req.PrevLogEntry + uint64(len(rpc.req.Entries))
+	lastIndex := rpc.req.PrevLogEntry + Index(len(rpc.req.Entries))
 	if lastIndex+1 > p.leader.nextIndex {
 		p.leader.nextIndex = lastIndex + 1
 		p.shared.logger.Printf("[INFO] raft: Optimistically setting nextIndex for %v to %v",
@@ -1023,7 +1032,7 @@ func (rpc *appendEntriesRPC) sendRecv(shared *peerShared) error {
 			entriesDesc = fmt.Sprintf("entry %v", rpc.req.PrevLogEntry+1)
 		default:
 			entriesDesc = fmt.Sprintf("entries %v through %v",
-				rpc.req.PrevLogEntry+1, rpc.req.PrevLogEntry+numEntries)
+				rpc.req.PrevLogEntry+1, rpc.req.PrevLogEntry+Index(numEntries))
 		}
 		desc = fmt.Sprintf("AppendEntries (term %v, %s, prev %v term %v, commit %v)",
 			rpc.req.Term, entriesDesc, rpc.req.PrevLogEntry, rpc.req.PrevLogTerm, rpc.req.LeaderCommitIndex)
@@ -1058,7 +1067,7 @@ func (rpc *appendEntriesRPC) sendRecv(shared *peerShared) error {
 }
 
 func (rpc *appendEntriesRPC) process(p *peerState, err error) {
-	lastIndex := rpc.req.PrevLogEntry + uint64(len(rpc.req.Entries))
+	lastIndex := rpc.req.PrevLogEntry + Index(len(rpc.req.Entries))
 
 	// Update bookkeeping on outstanding RPCs.
 	if p.control.term == rpc.req.Term && p.control.role == Leader &&
@@ -1144,7 +1153,11 @@ func (rpc *appendEntriesRPC) process(p *peerState, err error) {
 		}
 	} else {
 		if p.leader.nextIndex > rpc.req.PrevLogEntry {
-			p.leader.nextIndex = max(rpc.req.PrevLogEntry, 1)
+			if rpc.req.PrevLogEntry > 0 {
+				p.leader.nextIndex = rpc.req.PrevLogEntry
+			} else {
+				p.leader.nextIndex = 1
+			}
 		}
 		if p.leader.nextIndex > rpc.resp.LastLog+1 {
 			p.leader.nextIndex = rpc.resp.LastLog + 1

@@ -223,7 +223,7 @@ func TestFileSS_Retention(t *testing.T) {
 	// Create a few snapshots
 	_, trans := NewInmemTransport(NewInmemAddr())
 	for i := 10; i < 15; i++ {
-		sink, err := snap.Create(SnapshotVersionMax, uint64(i), 3, Configuration{}, 0, trans)
+		sink, err := snap.Create(SnapshotVersionMax, Index(i), 3, Configuration{}, 0, trans)
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}

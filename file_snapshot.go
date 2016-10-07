@@ -131,15 +131,15 @@ func (f *FileSnapshotStore) testPermissions() error {
 }
 
 // snapshotName generates a name for the snapshot.
-func snapshotName(term, index uint64) string {
+func snapshotName(term Term, index Index) string {
 	now := time.Now()
 	msec := now.UnixNano() / int64(time.Millisecond)
 	return fmt.Sprintf("%d-%d-%d", term, index, msec)
 }
 
 // Create is used to start a new snapshot
-func (f *FileSnapshotStore) Create(version SnapshotVersion, index, term uint64,
-	configuration Configuration, configurationIndex uint64, trans Transport) (SnapshotSink, error) {
+func (f *FileSnapshotStore) Create(version SnapshotVersion, index Index, term Term,
+	configuration Configuration, configurationIndex Index, trans Transport) (SnapshotSink, error) {
 	// We only support version 1 snapshots at this time.
 	if version != 1 {
 		return nil, fmt.Errorf("unsupported snapshot version %d", version)

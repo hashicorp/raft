@@ -106,7 +106,7 @@ type configurationChangeRequest struct {
 	// prevIndex, if nonzero, is the index of the only configuration upon which
 	// this change may be applied; if another configuration entry has been
 	// added in the meantime, this request will fail.
-	prevIndex uint64
+	prevIndex Index
 }
 
 // configurations is state tracked on every server about its Configurations.
@@ -125,12 +125,12 @@ type configurations struct {
 	// committed (the one with the largest index).
 	committed Configuration
 	// committedIndex is the log index where 'committed' was written.
-	committedIndex uint64
+	committedIndex Index
 	// latest is the latest configuration in the log/snapshot (may be committed
 	// or uncommitted)
 	latest Configuration
 	// latestIndex is the log index where 'latest' was written.
-	latestIndex uint64
+	latestIndex Index
 }
 
 // Clone makes a deep copy of a configurations object.
@@ -187,7 +187,7 @@ func checkConfiguration(configuration Configuration) error {
 // nextConfiguration generates a new Configuration from the current one and a
 // configuration change request. It's split from appendConfigurationEntry so
 // that it can be unit tested easily.
-func nextConfiguration(current Configuration, currentIndex uint64, change configurationChangeRequest) (Configuration, error) {
+func nextConfiguration(current Configuration, currentIndex Index, change configurationChangeRequest) (Configuration, error) {
 	if change.prevIndex > 0 && change.prevIndex != currentIndex {
 		return Configuration{}, fmt.Errorf("Configuration changed since %v (latest is %v)", change.prevIndex, currentIndex)
 	}

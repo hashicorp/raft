@@ -24,7 +24,7 @@ type AppendEntriesRequest struct {
 	RPCHeader
 
 	// The current term of the leader.
-	Term uint64
+	Term Term
 
 	// The leader's network address.
 	Leader []byte
@@ -33,8 +33,8 @@ type AppendEntriesRequest struct {
 	// consistency check to guarantee Raft's Log Matching Property. On older
 	// versions of the code, these had to match on the follower for it to consider
 	// the leader alive (setLastContact). This is no longer required.
-	PrevLogEntry uint64
-	PrevLogTerm  uint64
+	PrevLogEntry Index
+	PrevLogTerm  Term
 
 	// New entries to append to the log (empty for heartbeats).
 	Entries []*Log
@@ -96,7 +96,7 @@ type AppendEntriesRequest struct {
 	//            f.commitIndex = LeaderCommitIndex
 	//        }
 	//     }
-	LeaderCommitIndex uint64
+	LeaderCommitIndex Index
 }
 
 // See WithRPCHeader.
@@ -110,10 +110,10 @@ type AppendEntriesResponse struct {
 	RPCHeader
 
 	// Newer term if leader is out of date
-	Term uint64
+	Term Term
 
 	// Last Log is a hint to help accelerate rebuilding slow nodes
-	LastLog uint64
+	LastLog Index
 
 	// We may not succeed if we have a conflicting entry
 	Success bool
@@ -130,12 +130,12 @@ type RequestVoteRequest struct {
 	RPCHeader
 
 	// Provide the term and our id
-	Term      uint64
+	Term      Term
 	Candidate []byte
 
 	// Used to ensure safety
-	LastLogIndex uint64
-	LastLogTerm  uint64
+	LastLogIndex Index
+	LastLogTerm  Term
 }
 
 // See WithRPCHeader.
@@ -148,7 +148,7 @@ type RequestVoteResponse struct {
 	RPCHeader
 
 	// Newer term if leader is out of date.
-	Term uint64
+	Term Term
 
 	// Peers is deprecated, but required by servers that only understand
 	// protocol version 0. This is not populated in protocol version 2
@@ -170,12 +170,12 @@ type InstallSnapshotRequest struct {
 	RPCHeader
 	SnapshotVersion SnapshotVersion
 
-	Term   uint64
+	Term   Term
 	Leader []byte
 
 	// These are the last index/term included in the snapshot
-	LastLogIndex uint64
-	LastLogTerm  uint64
+	LastLogIndex Index
+	LastLogTerm  Term
 
 	// Peer Set in the snapshot. This is deprecated in favor of Configuration
 	// but remains here in case we receive an InstallSnapshot from a leader
@@ -185,7 +185,7 @@ type InstallSnapshotRequest struct {
 	// Cluster membership.
 	Configuration []byte
 	// Log index where 'Configuration' entry was originally written.
-	ConfigurationIndex uint64
+	ConfigurationIndex Index
 
 	// Size of the snapshot
 	Size int64
@@ -201,7 +201,7 @@ func (r *InstallSnapshotRequest) GetRPCHeader() RPCHeader {
 type InstallSnapshotResponse struct {
 	RPCHeader
 
-	Term    uint64
+	Term    Term
 	Success bool
 }
 

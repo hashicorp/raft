@@ -19,8 +19,8 @@ func NewDiscardSnapshotStore() *DiscardSnapshotStore {
 	return &DiscardSnapshotStore{}
 }
 
-func (d *DiscardSnapshotStore) Create(version SnapshotVersion, index, term uint64,
-	configuration Configuration, configurationIndex uint64, trans Transport) (SnapshotSink, error) {
+func (d *DiscardSnapshotStore) Create(version SnapshotVersion, index Index, term Term,
+	configuration Configuration, configurationIndex Index, trans Transport) (SnapshotSink, error) {
 	return &DiscardSnapshotSink{}, nil
 }
 
