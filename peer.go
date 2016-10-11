@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"time"
 
@@ -42,7 +41,7 @@ type peerShared struct {
 	options peerOptions
 
 	// Where to print debug messages.
-	logger *log.Logger
+	logger Logger
 
 	// Used to spawn goroutines so others can wait on their exit.
 	goRoutines *waitGroup
@@ -272,7 +271,7 @@ type peerState struct {
 // startPeer is the normal way for peers to be created.
 func startPeer(serverID ServerID,
 	serverAddress ServerAddress,
-	logger *log.Logger,
+	logger Logger,
 	logs LogStore,
 	snapshots SnapshotStore,
 	goRoutines *waitGroup,
@@ -290,7 +289,7 @@ func startPeer(serverID ServerID,
 // makePeerInternal is used for unit tests. Everyone else should use startPeer.
 func makePeerInternal(serverID ServerID,
 	serverAddress ServerAddress,
-	logger *log.Logger,
+	logger Logger,
 	logs LogStore,
 	snapshots SnapshotStore,
 	goRoutines *waitGroup,
@@ -301,7 +300,7 @@ func makePeerInternal(serverID ServerID,
 	options peerOptions) *peerState {
 
 	if logger == nil {
-		logger = log.New(os.Stderr, "", log.LstdFlags)
+		logger = DefaultStdLogger(os.Stderr)
 	}
 	if options.protocolVersion == 0 {
 		options.protocolVersion = ProtocolVersionMax
@@ -397,8 +396,7 @@ func (p *peerState) checkInvariants() error {
 func (p *peerState) selectLoop() {
 	for p.control.role != Shutdown {
 		if err := p.checkInvariants(); err != nil {
-			p.shared.logger.Panicf("[ERR] raft: Peer %v invariant violated: %s",
-				p.shared.peerID, err.Error())
+			panicf(p.shared.logger, "raft: Peer %v invariant violated: %v", p.shared.peerID, err)
 		}
 
 		didSomething := p.issueWork()
@@ -410,7 +408,7 @@ func (p *peerState) selectLoop() {
 		p.blockingSelect()
 	}
 
-	p.shared.logger.Printf("[INFO] raft: Peer routine for %v exiting", p.shared.peerID)
+	p.shared.logger.Logf(LogInfo, "raft: Peer routine for %v exiting", p.shared.peerID)
 	close(p.shared.stopCh)
 	p.shared.pipeline.Close()
 }
@@ -443,8 +441,7 @@ func (p *peerState) blockingSelect() {
 			p.leader.outstandingPipelineSend = false
 		}
 	case <-p.backoffTimer.C:
-		p.shared.logger.Printf("[INFO] raft: Backoff period ended for %v",
-			p.shared.peerID)
+		p.shared.logger.Logf(LogInfo, "raft: Backoff period ended for %v", p.shared.peerID)
 		p.failures = 0
 	case <-heartbeatTimer:
 		// nothing more to do, just needed to be woken
@@ -542,7 +539,7 @@ func (p *peerState) processReply(rpc peerRPC) {
 	case *errorRPC:
 		if rpc.backoff {
 			if p.failures == 0 {
-				p.shared.logger.Printf("[WARN] raft: RPC transport error. Backing off new RPCs for %v (except heartbeats)",
+				p.shared.logger.Logf(LogWarn, "raft: RPC transport error. Backing off new RPCs for %v (except heartbeats)",
 					p.shared.peerID)
 			}
 			p.failures++
@@ -556,7 +553,7 @@ func (p *peerState) processReply(rpc peerRPC) {
 	default:
 		p.sendProgress = true
 		if p.failures > 0 {
-			p.shared.logger.Printf("[INFO] raft: Received RPC reply from %v. Clearing backoff.",
+			p.shared.logger.Logf(LogInfo, "raft: Received RPC reply from %v. Clearing backoff.",
 				p.shared.peerID)
 			p.failures = 0
 			p.backoffTimer.Stop()
@@ -584,7 +581,7 @@ func (p *peerState) issueWork() (didSomething bool) {
 	case Candidate:
 		// Send a RequestVote RPC.
 		if !p.candidate.outstandingRequestVote && !p.candidate.voteReplied && p.failures == 0 {
-			p.shared.logger.Printf("[INFO] raft: Starting RequestVote RPC for %v",
+			p.shared.logger.Logf(LogInfo, "raft: Starting RequestVote RPC for %v",
 				p.shared.peerID)
 			p.start(makeRequestVoteRPC)
 			return true
@@ -595,7 +592,7 @@ func (p *peerState) issueWork() (didSomething bool) {
 		// other RPCs are not completing quickly or this server is idle. This will
 		// not block on the store.
 		if time.Now().After(p.leader.lastHeartbeatSent.Add(p.shared.options.heartbeatInterval)) {
-			p.shared.logger.Printf("[INFO] raft: Starting heartbeat RPC for %v",
+			p.shared.logger.Logf(LogInfo, "raft: Starting heartbeat RPC for %v",
 				p.shared.peerID)
 			p.start(makeHeartbeatRPC)
 			return true
@@ -610,7 +607,7 @@ func (p *peerState) issueWork() (didSomething bool) {
 			p.failures == 0 &&
 			!p.leader.outstandingInstallSnapshotRPC {
 			if p.leader.needsSnapshot {
-				p.shared.logger.Printf("[INFO] raft: Starting InstallSnapshot RPC for %v",
+				p.shared.logger.Logf(LogInfo, "raft: Starting InstallSnapshot RPC for %v",
 					p.shared.peerID)
 				p.start(makeInstallSnapshotRPC)
 				return true
@@ -618,7 +615,7 @@ func (p *peerState) issueWork() (didSomething bool) {
 			if p.leader.outstandingAppendEntriesRPCs == 0 ||
 				(p.leader.allowPipeline && !p.leader.outstandingPipelineSend &&
 					p.leader.outstandingAppendEntriesRPCs < p.shared.options.maxPipelineWindow) {
-				p.shared.logger.Printf("[INFO] raft: Starting AppendEntries RPC for %v",
+				p.shared.logger.Logf(LogInfo, "raft: Starting AppendEntries RPC for %v",
 					p.shared.peerID)
 				p.start(makeAppendEntriesRPC)
 				return true
@@ -776,11 +773,11 @@ func (rpc *requestVoteRPC) confirm(p *peerState) error {
 }
 
 func (rpc *requestVoteRPC) sendRecv(shared *peerShared) error {
-	shared.logger.Printf("[INFO] raft: Sending RequestVote (term %v) to %v",
+	shared.logger.Logf(LogInfo, "raft: Sending RequestVote (term %v) to %v",
 		rpc.req.Term, shared.peerID)
 	err := shared.trans.RequestVote(shared.peerAddr, &rpc.req, &rpc.resp)
 	if err != nil {
-		shared.logger.Printf("[ERR] raft: Failed to make RequestVote RPC to %v: %v",
+		shared.logger.Logf(LogError, "raft: Failed to make RequestVote RPC to %v: %v",
 			shared.peerID, err)
 	}
 	return err
@@ -794,7 +791,7 @@ func (rpc *requestVoteRPC) process(p *peerState, err error) {
 
 	// Handle errors during confirm/sendRecv.
 	if err != nil {
-		p.shared.logger.Printf("[ERR] raft: RequestVote to %v error: %v",
+		p.shared.logger.Logf(LogError, "raft: RequestVote to %v error: %v",
 			p.shared.peerID, err)
 		return
 	}
@@ -808,18 +805,18 @@ func (rpc *requestVoteRPC) process(p *peerState, err error) {
 	if rpc.req.Term == rpc.resp.Term {
 		if rpc.resp.Granted {
 			p.progress.voteGranted = true
-			p.shared.logger.Printf("[INFO] raft: Received vote from %v in term %v",
+			p.shared.logger.Logf(LogInfo, "raft: Received vote from %v in term %v",
 				p.shared.peerID, rpc.req.Term)
 		} else {
 			p.progress.voteGranted = false
-			p.shared.logger.Printf("[INFO] raft: Denied vote from %v in term %v",
+			p.shared.logger.Logf(LogInfo, "raft: Denied vote from %v in term %v",
 				p.shared.peerID, rpc.req.Term)
 		}
 	} else {
-		p.shared.logger.Printf("[INFO] raft: %v has newer term %v",
+		p.shared.logger.Logf(LogInfo, "raft: %v has newer term %v",
 			p.shared.peerID, rpc.resp.Term)
 		if rpc.resp.Granted {
-			p.shared.logger.Printf("[ERR] raft: %v shouldn't grant vote in different term. ignoring",
+			p.shared.logger.Logf(LogError, "raft: %v shouldn't grant vote in different term. ignoring",
 				p.shared.peerID)
 		}
 	}
@@ -960,7 +957,7 @@ func (rpc *appendEntriesRPC) prepare(shared *peerShared, control peerControl) er
 	term, err := getTerm(rpc.req.PrevLogEntry)
 	if err != nil {
 		if err != errNeedsSnapshot {
-			shared.logger.Printf("[ERR] raft: Failed to get log term for %d: %v",
+			shared.logger.Logf(LogError, "raft: Failed to get log term for %d: %v",
 				rpc.req.PrevLogEntry, err)
 		}
 		return err
@@ -984,7 +981,7 @@ func (rpc *appendEntriesRPC) prepare(shared *peerShared, control peerControl) er
 			return errNeedsSnapshot
 		}
 		if err != nil {
-			shared.logger.Printf("[ERR] raft: Failed to get log entry %d: %v", i, err)
+			shared.logger.Logf(LogError, "raft: Failed to get log entry %d: %v", i, err)
 			return err
 		}
 		rpc.req.Entries = append(rpc.req.Entries, &entry)
@@ -1006,10 +1003,10 @@ func (rpc *appendEntriesRPC) confirm(p *peerState) error {
 	lastIndex := rpc.req.PrevLogEntry + Index(len(rpc.req.Entries))
 	if lastIndex+1 > p.leader.nextIndex {
 		p.leader.nextIndex = lastIndex + 1
-		p.shared.logger.Printf("[INFO] raft: Optimistically setting nextIndex for %v to %v",
+		p.shared.logger.Logf(LogInfo, "raft: Optimistically setting nextIndex for %v to %v",
 			p.shared.peerID, p.leader.nextIndex)
 	} else {
-		p.shared.logger.Printf("[INFO] raft: Not updating nextIndex for %v, already set to %v",
+		p.shared.logger.Logf(LogInfo, "raft: Not updating nextIndex for %v, already set to %v",
 			p.shared.peerID, p.leader.nextIndex)
 	}
 	if rpc.req.LeaderCommitIndex+1 > p.leader.nextCommitIndex {
@@ -1038,7 +1035,7 @@ func (rpc *appendEntriesRPC) sendRecv(shared *peerShared) error {
 			rpc.req.Term, entriesDesc, rpc.req.PrevLogEntry, rpc.req.PrevLogTerm, rpc.req.LeaderCommitIndex)
 	}
 	if rpc.pipeline {
-		shared.logger.Printf("[INFO] raft: Sending pipelined %v to %v", desc, shared.peerID)
+		shared.logger.Logf(LogInfo, "raft: Sending pipelined %v to %v", desc, shared.peerID)
 		future, err := shared.pipeline.AppendEntries(rpc.req, rpc.resp)
 		select {
 		case shared.pipelineSendDoneCh <- rpc.req.Term:
@@ -1048,15 +1045,15 @@ func (rpc *appendEntriesRPC) sendRecv(shared *peerShared) error {
 			err = future.Error()
 		}
 		if err != nil {
-			shared.logger.Printf("[ERR] raft: Failed to pipeline AppendEntries to %v: %v",
+			shared.logger.Logf(LogError, "raft: Failed to pipeline AppendEntries to %v: %v",
 				shared.peerID, err)
 			return err
 		}
 	} else {
-		shared.logger.Printf("[INFO] raft: Sending %v to %v", desc, shared.peerID)
+		shared.logger.Logf(LogInfo, "raft: Sending %v to %v", desc, shared.peerID)
 		err := shared.trans.AppendEntries(shared.peerAddr, rpc.req, rpc.resp)
 		if err != nil {
-			shared.logger.Printf("[ERR] raft: Failed to send AppendEntries to %v: %v",
+			shared.logger.Logf(LogError, "raft: Failed to send AppendEntries to %v: %v",
 				shared.peerID, err)
 			return err
 		}
@@ -1086,7 +1083,7 @@ func (rpc *appendEntriesRPC) process(p *peerState, err error) {
 	}
 
 	if err != nil {
-		p.shared.logger.Printf("[ERR] raft: AppendEntries to %v error: %v",
+		p.shared.logger.Logf(LogError, "raft: AppendEntries to %v error: %v",
 			p.shared.peerID, err)
 		if err == ErrPipelineReplicationNotSupported {
 			p.pipelineUnsupported = true
@@ -1094,7 +1091,7 @@ func (rpc *appendEntriesRPC) process(p *peerState, err error) {
 		if p.control.term == rpc.req.Term && p.control.role == Leader {
 			if p.leader.allowPipeline {
 				p.leader.allowPipeline = false
-				p.shared.logger.Printf("[INFO] raft: Disabling pipeline replication to peer %v",
+				p.shared.logger.Logf(LogInfo, "raft: Disabling pipeline replication to peer %v",
 					p.shared.peerID)
 			}
 			// Restore nextIndex, which may have been updated optimistically in
@@ -1123,7 +1120,7 @@ func (rpc *appendEntriesRPC) process(p *peerState, err error) {
 		p.confirmedLeadership(rpc.start, rpc.verifyCounter)
 	} else {
 		if rpc.resp.Success {
-			p.shared.logger.Printf("[ERR] raft: AppendEntries successful but not current term (peer should reply with Success set to false)",
+			p.shared.logger.Logf(LogError, "raft: AppendEntries successful but not current term (peer %v should reply with Success set to false)",
 				p.shared.peerID)
 			rpc.resp.Success = false
 		}
@@ -1144,11 +1141,11 @@ func (rpc *appendEntriesRPC) process(p *peerState, err error) {
 		if p.leader.nextCommitIndex < rpc.req.LeaderCommitIndex+1 && rpc.req.LeaderCommitIndex <= p.control.lastIndex {
 			p.leader.nextCommitIndex = rpc.req.LeaderCommitIndex + 1
 		}
-		p.shared.logger.Printf("[INFO] raft: AppendEntries to %v succeeded. nextIndex is now %v",
+		p.shared.logger.Logf(LogInfo, "raft: AppendEntries to %v succeeded. nextIndex is now %v",
 			p.shared.peerID, p.leader.nextIndex)
 		if !p.leader.allowPipeline && !p.pipelineUnsupported && !rpc.heartbeat {
 			p.leader.allowPipeline = true
-			p.shared.logger.Printf("[INFO] raft: Enabling pipelined replication to peer %v",
+			p.shared.logger.Logf(LogInfo, "raft: Enabling pipelined replication to peer %v",
 				p.shared.peerID)
 		}
 	} else {
@@ -1169,12 +1166,12 @@ func (rpc *appendEntriesRPC) process(p *peerState, err error) {
 			p.leader.nextCommitIndex = p.leader.nextIndex
 		}
 		if !rpc.heartbeat {
-			p.shared.logger.Printf("[WARN] raft: AppendEntries to %v rejected, sending older log entries (next: %d)",
+			p.shared.logger.Logf(LogWarn, "raft: AppendEntries to %v rejected, sending older log entries (next: %d)",
 				p.shared.peerID, p.leader.nextIndex)
 		}
 		if !rpc.heartbeat && p.leader.allowPipeline {
 			p.leader.allowPipeline = false
-			p.shared.logger.Printf("[INFO] raft: Disabling pipeline replication to peer %v",
+			p.shared.logger.Logf(LogInfo, " raft: Disabling pipeline replication to peer %v",
 				p.shared.peerID)
 		}
 	}
@@ -1208,7 +1205,7 @@ func (rpc *installSnapshotRPC) started() time.Time {
 func (rpc *installSnapshotRPC) prepare(shared *peerShared, control peerControl) error {
 	meta, err := getLastSnapshot(shared.snapshots)
 	if err != nil {
-		shared.logger.Printf("[ERR] raft: Sending snapshot but couldn't get latest snapshot: %v", err)
+		shared.logger.Logf(LogError, "raft: Sending snapshot but couldn't get latest snapshot: %v", err)
 		return err
 	}
 
@@ -1216,7 +1213,7 @@ func (rpc *installSnapshotRPC) prepare(shared *peerShared, control peerControl) 
 	snapID := meta.ID
 	meta, snapshot, err := shared.snapshots.Open(snapID)
 	if err != nil {
-		shared.logger.Printf("[ERR] raft: Failed to open snapshot %v: %v", snapID, err)
+		shared.logger.Logf(LogError, "raft: Failed to open snapshot %v: %v", snapID, err)
 		return err
 	}
 
@@ -1252,11 +1249,11 @@ func (rpc *installSnapshotRPC) confirm(p *peerState) error {
 }
 
 func (rpc *installSnapshotRPC) sendRecv(shared *peerShared) error {
-	shared.logger.Printf("[INFO] raft: Sending InstallSnapshot (term %v, last index %v) to %v",
+	shared.logger.Logf(LogInfo, "raft: Sending InstallSnapshot (term %v, last index %v) to %v",
 		rpc.req.Term, rpc.req.LastLogIndex, shared.peerID)
 	err := shared.trans.InstallSnapshot(shared.peerAddr, &rpc.req, &rpc.resp, rpc.snapshot)
 	if err != nil {
-		shared.logger.Printf("[ERR] raft: Failed to install snapshot %v: %v", rpc.snapID, err)
+		shared.logger.Logf(LogError, "raft: Failed to install snapshot %v: %v", rpc.snapID, err)
 	}
 	metrics.MeasureSince([]string{"raft", "replication", "installSnapshot", string(shared.peerID)}, rpc.start)
 	return err
@@ -1275,7 +1272,7 @@ func (rpc *installSnapshotRPC) process(p *peerState, err error) {
 
 	// Handle errors during confirm/sendRecv.
 	if err != nil {
-		p.shared.logger.Printf("[ERR] raft: InstallSnapshot to %v error: %v",
+		p.shared.logger.Logf(LogError, "raft: InstallSnapshot to %v error: %v",
 			p.shared.peerID, err)
 		return
 	}
@@ -1292,7 +1289,7 @@ func (rpc *installSnapshotRPC) process(p *peerState, err error) {
 		p.confirmedLeadership(rpc.start, rpc.verifyCounter)
 	} else {
 		if rpc.resp.Success {
-			p.shared.logger.Printf("[ERR] raft: InstallSnapshot successful but not current term (peer should reply with Success set to false)",
+			p.shared.logger.Logf(LogError, "raft: InstallSnapshot successful but not current term (peer %v should reply with Success set to false)",
 				p.shared.peerID)
 			rpc.resp.Success = false
 		}
@@ -1301,9 +1298,9 @@ func (rpc *installSnapshotRPC) process(p *peerState, err error) {
 	if rpc.resp.Success {
 		p.progress.matchIndex = rpc.req.LastLogIndex
 		p.progress.matchTerm = rpc.req.LastLogTerm
-		p.shared.logger.Printf("[INFO] raft: InstallSnapshot to %v succeeded. nextIndex is now %v",
+		p.shared.logger.Logf(LogInfo, "raft: InstallSnapshot to %v succeeded. nextIndex is now %v",
 			p.shared.peerID, p.leader.nextIndex)
 	} else {
-		p.shared.logger.Printf("[ERR] raft: InstallSnapshot to %v rejected", p.shared.peerID)
+		p.shared.logger.Logf(LogError, "raft: InstallSnapshot to %v rejected", p.shared.peerID)
 	}
 }
