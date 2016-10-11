@@ -14,7 +14,7 @@ func FirstIndex(b *testing.B, store raft.LogStore) {
 	// Create some fake data
 	var logs []*raft.Log
 	for i := 1; i < 10; i++ {
-		logs = append(logs, &raft.Log{Index: uint64(i), Data: []byte("data")})
+		logs = append(logs, &raft.Log{Index: raft.Index(i), Data: []byte("data")})
 	}
 	if err := store.StoreLogs(logs); err != nil {
 		b.Fatalf("err: %s", err)
@@ -31,7 +31,7 @@ func LastIndex(b *testing.B, store raft.LogStore) {
 	// Create some fake data
 	var logs []*raft.Log
 	for i := 1; i < 10; i++ {
-		logs = append(logs, &raft.Log{Index: uint64(i), Data: []byte("data")})
+			logs = append(logs, &raft.Log{Index: raft.Index(i), Data: []byte("data")})
 	}
 	if err := store.StoreLogs(logs); err != nil {
 		b.Fatalf("err: %s", err)
@@ -48,7 +48,7 @@ func GetLog(b *testing.B, store raft.LogStore) {
 	// Create some fake data
 	var logs []*raft.Log
 	for i := 1; i < 10; i++ {
-		logs = append(logs, &raft.Log{Index: uint64(i), Data: []byte("data")})
+		logs = append(logs, &raft.Log{Index: raft.Index(i), Data: []byte("data")})
 	}
 	if err := store.StoreLogs(logs); err != nil {
 		b.Fatalf("err: %s", err)
@@ -66,7 +66,7 @@ func GetLog(b *testing.B, store raft.LogStore) {
 func StoreLog(b *testing.B, store raft.LogStore) {
 	// Run StoreLog a number of times
 	for n := 0; n < b.N; n++ {
-		log := &raft.Log{Index: uint64(n), Data: []byte("data")}
+		log := &raft.Log{Index: raft.Index(n), Data: []byte("data")}
 		if err := store.StoreLog(log); err != nil {
 			b.Fatalf("err: %s", err)
 		}
@@ -80,9 +80,9 @@ func StoreLogs(b *testing.B, store raft.LogStore) {
 		b.StopTimer()
 		offset := 3 * (n + 1)
 		logs := []*raft.Log{
-			&raft.Log{Index: uint64(offset - 2), Data: []byte("data")},
-			&raft.Log{Index: uint64(offset - 1), Data: []byte("data")},
-			&raft.Log{Index: uint64(offset), Data: []byte("data")},
+			&raft.Log{Index: raft.Index(offset - 2), Data: []byte("data")},
+			&raft.Log{Index: raft.Index(offset - 1), Data: []byte("data")},
+			&raft.Log{Index: raft.Index(offset), Data: []byte("data")},
 		}
 		b.StartTimer()
 
@@ -101,7 +101,7 @@ func DeleteRange(b *testing.B, store raft.LogStore) {
 	for n := 0; n < b.N; n++ {
 		offset := 10 * n
 		for i := offset; i < offset+3; i++ {
-			logs = append(logs, &raft.Log{Index: uint64(i), Data: []byte("data")})
+			logs = append(logs, &raft.Log{Index: raft.Index(i), Data: []byte("data")})
 		}
 	}
 	if err := store.StoreLogs(logs); err != nil {
@@ -112,7 +112,7 @@ func DeleteRange(b *testing.B, store raft.LogStore) {
 	// Delete a range of the data
 	for n := 0; n < b.N; n++ {
 		offset := 10 * n
-		if err := store.DeleteRange(uint64(offset), uint64(offset+9)); err != nil {
+		if err := store.DeleteRange(raft.Index(offset), raft.Index(offset+9)); err != nil {
 			b.Fatalf("err: %s", err)
 		}
 	}
