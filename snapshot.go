@@ -29,8 +29,10 @@ type SnapshotMeta struct {
 
 	// Configuration and ConfigurationIndex are present in version 1
 	// snapshots and later.
-	Configuration      Membership
-	ConfigurationIndex Index
+	// These fields have a different json field name for compatibility
+	// with the library-v2-stage-one branch.
+	Membership      Membership `json:"Configuration"`
+	MembershipIndex Index      `json:"ConfigurationIndex"`
 
 	// Size is the size of the snapshot in bytes.
 	Size int64

@@ -541,10 +541,10 @@ func (r *Raft) restoreSnapshot() error {
 
 		// Update the configuration
 		if snapshot.Version > 0 {
-			r.memberships.committed = snapshot.Configuration
-			r.memberships.committedIndex = snapshot.ConfigurationIndex
-			r.memberships.latest = snapshot.Configuration
-			r.memberships.latestIndex = snapshot.ConfigurationIndex
+			r.memberships.committed = snapshot.Membership
+			r.memberships.committedIndex = snapshot.MembershipIndex
+			r.memberships.latest = snapshot.Membership
+			r.memberships.latestIndex = snapshot.MembershipIndex
 		} else {
 			configuration := decodePeers(snapshot.Peers, r.trans)
 			r.memberships.committed = configuration

@@ -140,10 +140,10 @@ func TestFileSS_CreateSnapshot(t *testing.T) {
 	if latest.Term != 3 {
 		t.Fatalf("bad snapshot: %v", *latest)
 	}
-	if !reflect.DeepEqual(latest.Configuration, membership) {
+	if !reflect.DeepEqual(latest.Membership, membership) {
 		t.Fatalf("bad snapshot: %v", *latest)
 	}
-	if latest.ConfigurationIndex != 2 {
+	if latest.MembershipIndex != 2 {
 		t.Fatalf("bad snapshot: %v", *latest)
 	}
 	if latest.Size != 13 {
