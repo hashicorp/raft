@@ -16,21 +16,19 @@ const (
 	LogError
 )
 
-// Logger provides a way to capture log messages from the library
-type Logger interface {
-	Logf(lvl LogLevel, msg string, values ...interface{})
-}
-
-type stdLogger struct {
-	dest  *log.Logger
-	level LogLevel
-}
+// Logger provides a way to capture log messages from the library. calldepth
+// should be 0 for direct callers, 1 for callers of direct callers, etc.
+type Logger func(calldepth int, level LogLevel, s string)
 
 // NewStdLogger provides an adapter from a golang std log.Logger to
 // a raft.Logger, log messages at or above levelToLog will be logged
 // to the supplied logger.
 func NewStdLogger(l *log.Logger, levelToLog LogLevel) Logger {
-	return &stdLogger{dest: l, level: levelToLog}
+	return func(calldepth int, level LogLevel, s string) {
+		if level >= levelToLog {
+			l.Output(calldepth+3, fmt.Sprintf("[%v] %s", level, s))
+		}
+	}
 }
 
 // DefaultStdLogger returns a Logger that logs to the supplied writer
@@ -40,16 +38,27 @@ func DefaultStdLogger(dest io.Writer) Logger {
 	return NewStdLogger(log.New(dest, "", log.LstdFlags), LogInfo)
 }
 
-func (s *stdLogger) Logf(lvl LogLevel, msg string, values ...interface{}) {
-	if lvl >= s.level {
-		s.dest.Printf("[%v] %s", lvl, fmt.Sprintf(msg, values...))
-	}
+func (output *Logger) Debug(msg string, values ...interface{}) {
+	(*output)(0, LogDebug, fmt.Sprintf(msg, values...))
 }
 
-// panicf is a helper func that logs the panic message to the logger, then panics
-func panicf(logger Logger, msg string, values ...interface{}) {
-	logger.Logf(LogError, msg, values...)
-	panic(fmt.Sprintf(msg, values...))
+func (output *Logger) Info(msg string, values ...interface{}) {
+	(*output)(0, LogInfo, fmt.Sprintf(msg, values...))
+}
+
+func (output *Logger) Warn(msg string, values ...interface{}) {
+	(*output)(0, LogWarn, fmt.Sprintf(msg, values...))
+}
+
+func (output *Logger) Error(msg string, values ...interface{}) {
+	(*output)(0, LogError, fmt.Sprintf(msg, values...))
+}
+
+// Panic logs the panic message to the logger, then panics.
+func (output *Logger) Panic(msg string, values ...interface{}) {
+	str := fmt.Sprintf(msg, values...)
+	(*output)(0, LogError, str)
+	panic(str)
 }
 
 func (lvl LogLevel) String() string {

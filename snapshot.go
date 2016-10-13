@@ -90,14 +90,14 @@ func (r *Raft) runSnapshots() {
 
 			// Trigger a snapshot
 			if err := r.takeSnapshot(); err != nil {
-				r.logger.Logf(LogError, "Failed to take snapshot: %v", err)
+				r.logger.Error("Failed to take snapshot: %v", err)
 			}
 
 		case future := <-r.snapshotCh:
 			// User-triggered, run immediately
 			err := r.takeSnapshot()
 			if err != nil {
-				r.logger.Logf(LogError, "Failed to take snapshot: %v", err)
+				r.logger.Error("Failed to take snapshot: %v", err)
 			}
 			future.respond(err)
 
@@ -116,7 +116,7 @@ func (r *Raft) shouldSnapshot() bool {
 	// Check the last log index
 	lastIdx, err := r.logs.LastIndex()
 	if err != nil {
-		r.logger.Logf(LogError, "Failed to get last log index: %v", err)
+		r.logger.Error("Failed to get last log index: %v", err)
 		return false
 	}
 
@@ -180,7 +180,7 @@ func (r *Raft) takeSnapshot() error {
 	}
 
 	// Create a new snapshot.
-	r.logger.Logf(LogInfo, "Starting snapshot up to %d", snapReq.index)
+	r.logger.Info("Starting snapshot up to %d", snapReq.index)
 	start := time.Now()
 	version := getSnapshotVersion(r.protocolVersion)
 	sink, err := r.snapshots.Create(version, snapReq.index, snapReq.term, committed, committedIndex, r.trans)
@@ -210,7 +210,7 @@ func (r *Raft) takeSnapshot() error {
 		return err
 	}
 
-	r.logger.Logf(LogInfo, "Snapshot to %d complete", snapReq.index)
+	r.logger.Info("Snapshot to %d complete", snapReq.index)
 	return nil
 }
 
@@ -240,7 +240,7 @@ func (r *Raft) compactLogs(snapIdx Index) error {
 	}
 
 	// Log this
-	r.logger.Logf(LogInfo, "Compacting logs from %d to %d", minLog, maxLog)
+	r.logger.Info("Compacting logs from %d to %d", minLog, maxLog)
 
 	// Compact the logs
 	if err := r.logs.DeleteRange(minLog, maxLog); err != nil {

@@ -2,9 +2,20 @@ package raft
 
 import (
 	"bytes"
+	"log"
 	"strings"
 	"testing"
 )
+
+// Keep this test up here, as it hard-codes the line number of the Debug() call.
+func TestStdLogger_filename(t *testing.T) {
+	dest := bytes.Buffer{}
+	logger := NewStdLogger(log.New(&dest, "", log.Lshortfile), LogDebug)
+	logger.Debug("a debug msg")
+	if dest.String() != "logger_test.go:14: [DEBUG] a debug msg\n" {
+		t.Errorf("Log Message in wrong format. Got: '%s'", dest.String())
+	}
+}
 
 func TestLogLevel_String(t *testing.T) {
 	lvls := map[LogLevel]string{
@@ -23,19 +34,19 @@ func TestLogLevel_String(t *testing.T) {
 func TestStdLogger_LogLevel(t *testing.T) {
 	dest := bytes.Buffer{}
 	logger := DefaultStdLogger(&dest)
-	logger.Logf(LogDebug, "a debug msg")
+	logger.Debug("a debug msg")
 	if dest.Len() > 0 {
 		t.Errorf("Log Message at Debug level not expected to appear in log when logging set to Info: got %s", dest.String())
 	}
-	logger.Logf(LogInfo, "info")
+	logger.Info("info")
 	if strings.Index(dest.String(), "[INFO] info") == -1 {
 		t.Errorf("Log Message at Info level expected to be in log, but couldn't find it, log contains %s", dest.String())
 	}
-	logger.Logf(LogWarn, "warn %d", 5)
+	logger.Warn("warn %d", 5)
 	if strings.Index(dest.String(), "[WARN] warn 5") == -1 {
 		t.Errorf("Log Message at Warn level expected to be in log, but couldn't find it, log contains %s", dest.String())
 	}
-	logger.Logf(LogError, "error")
+	logger.Error("error")
 	if strings.Index(dest.String(), "[ERROR] error") == -1 {
 		t.Errorf("Log Message at Warn level expected to be in log, but couldn't find it, log contains %s", dest.String())
 	}
