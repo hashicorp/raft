@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -846,51 +847,99 @@ func (r *Raft) LastContact() time.Time {
 	return last
 }
 
-// Stats is used to return a map of various internal stats. This
-// should only be used for informative purposes or debugging.
-//
-// Keys are: "state", "term", "last_log_index", "last_log_term",
-// "commit_index", "applied_index", "fsm_pending",
-// "last_snapshot_index", "last_snapshot_term",
-// "latest_configuration", "last_contact", and "num_peers".
-//
-// The value of "state" is a numerical value representing a
-// RaftState const.
-//
-// The value of "latest_configuration" is a string which contains
-// the id of each server, its suffrage status, and its address.
+type Stats struct {
+	State                 RaftState
+	Term                  Term
+	LastLogIndex          Index
+	LastLogTerm           Term
+	CommitIndex           Index
+	AppliedIndex          Index
+	FSMPending            int
+	LastSnapshotIndex     Index
+	LastSnapshotTerm      Term
+	LatestMembership      Membership
+	LatestMembershipIndex Index
+	LastContact           time.Time
+	// numPeers is the number of other voting servers in the cluster, not
+	// including this node. If this node isn't part of the configuration then this
+	// will be 0.
+	NumPeers           int
+	ProtocolVersion    ProtocolVersion
+	ProtocolVersionMin ProtocolVersion
+	ProtocolVersionMax ProtocolVersion
+	SnapshotVersionMin SnapshotVersion
+	SnapshotVersionMax SnapshotVersion
+}
+
+// Stringify a Stats struct into key-value strings.
 //
 // The value of "last_contact" is either "never" if there
 // has been no contact with a leader, "0" if the node is in the
 // leader state, or the time since last contact with a leader
 // formatted as a string.
-//
-// The value of "num_peers" is the number of other voting servers in the
-// cluster, not including this node. If this node isn't part of the
-// configuration then this will be "0".
-//
-// All other values are uint64s, formatted as strings.
-func (r *Raft) Stats() map[string]string {
+func (s *Stats) Strings() []struct{ K, V string } {
 	toString := func(v uint64) string {
 		return strconv.FormatUint(v, 10)
 	}
+	var lastContact string
+	if s.LastContact.IsZero() {
+		lastContact = "never"
+	} else if s.State == Leader {
+		lastContact = "0"
+	} else {
+		lastContact = fmt.Sprintf("%v", time.Now().Sub(s.LastContact))
+	}
+	return []struct{ K, V string }{
+		{"state", s.State.String()},
+		{"term", toString(uint64(s.Term))},
+		{"last_log_index", toString(uint64(s.LastLogIndex))},
+		{"last_log_term", toString(uint64(s.LastLogTerm))},
+		{"commit_index", toString(uint64(s.CommitIndex))},
+		{"applied_index", toString(uint64(s.AppliedIndex))},
+		{"fsm_pending", toString(uint64(s.FSMPending))},
+		{"last_snapshot_index", toString(uint64(s.LastSnapshotIndex))},
+		{"last_snapshot_term", toString(uint64(s.LastSnapshotTerm))},
+		{"latest_membership", fmt.Sprintf("%+v", s.LatestMembership.Servers)},
+		{"latest_membership_index", toString(uint64(s.LatestMembershipIndex))},
+		{"last_contact", lastContact},
+		{"num_peers", toString(uint64(s.NumPeers))},
+		{"protocol_version", toString(uint64(s.ProtocolVersion))},
+		{"protocol_version_min", toString(uint64(s.ProtocolVersionMin))},
+		{"protocol_version_max", toString(uint64(s.ProtocolVersionMax))},
+		{"snapshot_version_min", toString(uint64(s.SnapshotVersionMin))},
+		{"snapshot_version_max", toString(uint64(s.SnapshotVersionMax))},
+	}
+}
+
+func (s *Stats) String() string {
+	kvs := s.Strings()
+	lines := make([]string, 0, len(kvs))
+	for _, kv := range kvs {
+		lines = append(lines, fmt.Sprintf("%v: %v", kv.K, kv.V))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// Stats returns various internal stats.
+func (r *Raft) Stats() *Stats {
 	lastLogIndex, lastLogTerm := r.shared.getLastLog()
 	lastSnapIndex, lastSnapTerm := r.shared.getLastSnapshot()
-	s := map[string]string{
-		"state":                r.shared.getState().String(),
-		"term":                 toString(uint64(r.shared.getCurrentTerm())),
-		"last_log_index":       toString(uint64(lastLogIndex)),
-		"last_log_term":        toString(uint64(lastLogTerm)),
-		"commit_index":         toString(uint64(r.shared.getCommitIndex())),
-		"applied_index":        toString(uint64(r.shared.getLastApplied())),
-		"fsm_pending":          toString(uint64(len(r.fsmCommitCh))),
-		"last_snapshot_index":  toString(uint64(lastSnapIndex)),
-		"last_snapshot_term":   toString(uint64(lastSnapTerm)),
-		"protocol_version":     toString(uint64(r.protocolVersion)),
-		"protocol_version_min": toString(uint64(ProtocolVersionMin)),
-		"protocol_version_max": toString(uint64(ProtocolVersionMax)),
-		"snapshot_version_min": toString(uint64(SnapshotVersionMin)),
-		"snapshot_version_max": toString(uint64(SnapshotVersionMax)),
+	s := &Stats{
+		State:              r.shared.getState(),
+		Term:               r.shared.getCurrentTerm(),
+		LastLogIndex:       lastLogIndex,
+		LastLogTerm:        lastLogTerm,
+		CommitIndex:        r.shared.getCommitIndex(),
+		AppliedIndex:       r.shared.getLastApplied(),
+		FSMPending:         len(r.fsmCommitCh),
+		LastSnapshotIndex:  lastSnapIndex,
+		LastSnapshotTerm:   lastSnapTerm,
+		LastContact:        r.LastContact(),
+		ProtocolVersion:    r.protocolVersion,
+		ProtocolVersionMin: ProtocolVersionMin,
+		ProtocolVersionMax: ProtocolVersionMax,
+		SnapshotVersionMin: SnapshotVersionMin,
+		SnapshotVersionMax: SnapshotVersionMax,
 	}
 
 	future := r.GetMembership()
@@ -898,8 +947,8 @@ func (r *Raft) Stats() map[string]string {
 		r.logger.Warn("could not get configuration for Stats: %v", err)
 	} else {
 		membership := future.Membership()
-		s["latest_configuration_index"] = toString(uint64(future.Index()))
-		s["latest_configuration"] = fmt.Sprintf("%+v", membership.Servers)
+		s.LatestMembershipIndex = future.Index()
+		s.LatestMembership = membership
 
 		// This is a legacy metric that we've seen people use in the wild.
 		hasUs := false
@@ -916,16 +965,7 @@ func (r *Raft) Stats() map[string]string {
 		if !hasUs {
 			numPeers = 0
 		}
-		s["num_peers"] = toString(uint64(numPeers))
-	}
-
-	last := r.LastContact()
-	if last.IsZero() {
-		s["last_contact"] = "never"
-	} else if r.shared.getState() == Leader {
-		s["last_contact"] = "0"
-	} else {
-		s["last_contact"] = fmt.Sprintf("%v", time.Now().Sub(last))
+		s.NumPeers = numPeers
 	}
 	return s
 }
