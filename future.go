@@ -213,3 +213,19 @@ func (a *appendFuture) Request() *AppendEntriesRequest {
 func (a *appendFuture) Response() *AppendEntriesResponse {
 	return a.resp
 }
+
+type StatsFuture interface {
+	Future
+	// Stats returns variuos bits of internal information. This must
+	// not be called until after the Error method has returned.
+	Stats() *Stats
+}
+
+type statsFuture struct {
+	deferError
+	stats *Stats
+}
+
+func (s *statsFuture) Stats() *Stats {
+	return s.stats
+}

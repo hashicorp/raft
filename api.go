@@ -142,6 +142,9 @@ type Raft struct {
 	// data safely from outside of the main thread.
 	membershipsCh chan *membershipsFuture
 
+	// statsCh is used to get stats safely from outside of the main thread.
+	statsCh chan *statsFuture
+
 	// bootstrapCh is used to attempt an initial bootstrap from outside of
 	// the main thread.
 	bootstrapCh chan *bootstrapFuture
@@ -459,6 +462,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		trans:              trans,
 		verifyCh:           make(chan *verifyFuture, 64),
 		membershipsCh:      make(chan *membershipsFuture, 8),
+		statsCh:            make(chan *statsFuture, 8),
 		bootstrapCh:        make(chan *bootstrapFuture),
 		observers:          make(map[uint64]*Observer),
 	}
@@ -921,53 +925,15 @@ func (s *Stats) String() string {
 }
 
 // Stats returns various internal stats.
-func (r *Raft) Stats() *Stats {
-	lastLogIndex, lastLogTerm := r.shared.getLastLog()
-	lastSnapIndex, lastSnapTerm := r.shared.getLastSnapshot()
-	s := &Stats{
-		State:              r.shared.getState(),
-		Term:               r.shared.getCurrentTerm(),
-		LastLogIndex:       lastLogIndex,
-		LastLogTerm:        lastLogTerm,
-		CommitIndex:        r.shared.getCommitIndex(),
-		AppliedIndex:       r.shared.getLastApplied(),
-		FSMPending:         len(r.fsmCommitCh),
-		LastSnapshotIndex:  lastSnapIndex,
-		LastSnapshotTerm:   lastSnapTerm,
-		LastContact:        r.LastContact(),
-		ProtocolVersion:    r.protocolVersion,
-		ProtocolVersionMin: ProtocolVersionMin,
-		ProtocolVersionMax: ProtocolVersionMax,
-		SnapshotVersionMin: SnapshotVersionMin,
-		SnapshotVersionMax: SnapshotVersionMax,
+func (r *Raft) Stats() StatsFuture {
+	statsReq := &statsFuture{}
+	statsReq.init()
+	select {
+	case <-r.shutdownCh:
+		statsReq.respond(ErrRaftShutdown)
+	case r.statsCh <- statsReq:
 	}
-
-	future := r.GetMembership()
-	if err := future.Error(); err != nil {
-		r.logger.Warn("could not get configuration for Stats: %v", err)
-	} else {
-		membership := future.Membership()
-		s.LatestMembershipIndex = future.Index()
-		s.LatestMembership = membership
-
-		// This is a legacy metric that we've seen people use in the wild.
-		hasUs := false
-		numPeers := 0
-		for _, server := range membership.Servers {
-			if server.Suffrage == Voter {
-				if server.ID == r.localID {
-					hasUs = true
-				} else {
-					numPeers++
-				}
-			}
-		}
-		if !hasUs {
-			numPeers = 0
-		}
-		s.NumPeers = numPeers
-	}
-	return s
+	return statsReq
 }
 
 // LastIndex returns the last index in stable storage,

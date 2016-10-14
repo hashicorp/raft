@@ -177,6 +177,10 @@ func (r *Raft) runFollower() {
 			c.memberships = r.memberships.Clone()
 			c.respond(nil)
 
+		case f := <-r.statsCh:
+			f.stats = r.stats()
+			f.respond(nil)
+
 		case b := <-r.bootstrapCh:
 			b.respond(r.liveBootstrap(b.membership))
 
@@ -295,6 +299,10 @@ func (r *Raft) runCandidate() {
 		case c := <-r.membershipsCh:
 			c.memberships = r.memberships.Clone()
 			c.respond(nil)
+
+		case f := <-r.statsCh:
+			f.stats = r.stats()
+			f.respond(nil)
 
 		case b := <-r.bootstrapCh:
 			b.respond(ErrCantBootstrap)
@@ -542,6 +550,10 @@ func (r *Raft) leaderLoop() {
 
 		case future := <-r.membershipChangeChIfStable():
 			r.appendMembershipEntry(future)
+
+		case f := <-r.statsCh:
+			f.stats = r.stats()
+			f.respond(nil)
 
 		case b := <-r.bootstrapCh:
 			b.respond(ErrCantBootstrap)
@@ -1398,4 +1410,51 @@ func (r *Raft) setState(state RaftState) {
 	if oldState != state {
 		r.observe(state)
 	}
+}
+
+// Fills in stats when requested by application.
+// Must only be called from the main Raft goroutine.
+func (r *Raft) stats() *Stats {
+	lastLogIndex, lastLogTerm := r.shared.getLastLog()
+	lastSnapIndex, lastSnapTerm := r.shared.getLastSnapshot()
+	s := &Stats{
+		State:              r.shared.getState(),
+		Term:               r.shared.getCurrentTerm(),
+		LastLogIndex:       lastLogIndex,
+		LastLogTerm:        lastLogTerm,
+		CommitIndex:        r.shared.getCommitIndex(),
+		AppliedIndex:       r.shared.getLastApplied(),
+		FSMPending:         len(r.fsmCommitCh),
+		LastSnapshotIndex:  lastSnapIndex,
+		LastSnapshotTerm:   lastSnapTerm,
+		LastContact:        r.LastContact(),
+		ProtocolVersion:    r.protocolVersion,
+		ProtocolVersionMin: ProtocolVersionMin,
+		ProtocolVersionMax: ProtocolVersionMax,
+		SnapshotVersionMin: SnapshotVersionMin,
+		SnapshotVersionMax: SnapshotVersionMax,
+	}
+
+	membership := r.memberships.latest
+	s.LatestMembershipIndex = r.memberships.latestIndex
+	s.LatestMembership = membership
+
+	// This is a legacy metric that we've seen people use in the wild.
+	hasUs := false
+	numPeers := 0
+	for _, server := range membership.Servers {
+		if server.Suffrage == Voter {
+			if server.ID == r.localID {
+				hasUs = true
+			} else {
+				numPeers++
+			}
+		}
+	}
+	if !hasUs {
+		numPeers = 0
+	}
+	s.NumPeers = numPeers
+
+	return s
 }
