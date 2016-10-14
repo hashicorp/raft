@@ -81,7 +81,7 @@ func getLastSnapshot(snapshots SnapshotStore) (*SnapshotMeta, error) {
 // runSnapshots is a long running goroutine used to manage taking
 // new snapshots of the FSM. It runs in parallel to the FSM and
 // main goroutines, so that snapshots do not block normal operation.
-func (r *Raft) runSnapshots() {
+func (r *raftServer) runSnapshots() {
 	for {
 		select {
 		case <-randomTimeout(r.conf.SnapshotInterval):
@@ -111,7 +111,7 @@ func (r *Raft) runSnapshots() {
 
 // shouldSnapshot checks if we meet the conditions to take
 // a new snapshot.
-func (r *Raft) shouldSnapshot() bool {
+func (r *raftServer) shouldSnapshot() bool {
 	// Check the last snapshot index
 	lastSnap, _ := r.shared.getLastSnapshot()
 
@@ -129,7 +129,7 @@ func (r *Raft) shouldSnapshot() bool {
 
 // takeSnapshot is used to take a new snapshot. This must only be called from
 // the snapshot thread, never the main thread.
-func (r *Raft) takeSnapshot() error {
+func (r *raftServer) takeSnapshot() error {
 	defer metrics.MeasureSince([]string{"raft", "snapshot", "takeSnapshot"}, time.Now())
 
 	// Create a request for the FSM to perform a snapshot.
@@ -218,7 +218,7 @@ func (r *Raft) takeSnapshot() error {
 
 // compactLogs takes the last inclusive index of a snapshot
 // and trims the logs that are no longer needed.
-func (r *Raft) compactLogs(snapIdx Index) error {
+func (r *raftServer) compactLogs(snapIdx Index) error {
 	defer metrics.MeasureSince([]string{"raft", "compactLogs"}, time.Now())
 	// Determine log ranges to compact
 	minLog, err := r.logs.FirstIndex()

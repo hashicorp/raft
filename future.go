@@ -140,8 +140,8 @@ func (s *shutdownFuture) Error() error {
 	if s.raft == nil {
 		return nil
 	}
-	s.raft.goRoutines.waitShutdown()
-	if closeable, ok := s.raft.trans.(WithClose); ok {
+	s.raft.server.goRoutines.waitShutdown()
+	if closeable, ok := s.raft.server.trans.(WithClose); ok {
 		closeable.Close()
 	}
 	return nil

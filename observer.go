@@ -6,8 +6,7 @@ import (
 
 // Observation is sent along the given channel to observers when an event occurs.
 type Observation struct {
-	// Raft holds the Raft instance generating the observation.
-	Raft *Raft
+	// TODO: removed Raft holds the Raft instance generating the observation.
 	// Data holds observation-specific data. Possible types are
 	// *RequestVoteRequest and RaftState.
 	Data interface{}
@@ -71,20 +70,20 @@ func (or *Observer) GetNumDropped() uint64 {
 
 // RegisterObserver registers a new observer.
 func (r *Raft) RegisterObserver(or *Observer) {
-	r.observersLock.Lock()
-	defer r.observersLock.Unlock()
-	r.observers[or.id] = or
+	r.server.observersLock.Lock()
+	defer r.server.observersLock.Unlock()
+	r.server.observers[or.id] = or
 }
 
 // DeregisterObserver deregisters an observer.
 func (r *Raft) DeregisterObserver(or *Observer) {
-	r.observersLock.Lock()
-	defer r.observersLock.Unlock()
-	delete(r.observers, or.id)
+	r.server.observersLock.Lock()
+	defer r.server.observersLock.Unlock()
+	delete(r.server.observers, or.id)
 }
 
 // observe sends an observation to every observer.
-func (r *Raft) observe(o interface{}) {
+func (r *raftServer) observe(o interface{}) {
 	// In general observers should not block. But in any case this isn't
 	// disastrous as we only hold a read lock, which merely prevents
 	// registration / deregistration of observers.
@@ -93,7 +92,7 @@ func (r *Raft) observe(o interface{}) {
 	for _, or := range r.observers {
 		// It's wasteful to do this in the loop, but for the common case
 		// where there are no observers we won't create any objects.
-		ob := Observation{Raft: r, Data: o}
+		ob := Observation{Data: o}
 		if or.filter != nil && !or.filter(&ob) {
 			continue
 		}

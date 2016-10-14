@@ -24,7 +24,7 @@ var (
 // getRPCHeader returns an initialized RPCHeader struct for the given
 // Raft instance. This structure is sent along with RPC requests and
 // responses.
-func (r *Raft) getRPCHeader() RPCHeader {
+func (r *raftServer) getRPCHeader() RPCHeader {
 	return RPCHeader{
 		ProtocolVersion: r.conf.ProtocolVersion,
 	}
@@ -32,7 +32,7 @@ func (r *Raft) getRPCHeader() RPCHeader {
 
 // checkRPCHeader houses logic about whether this instance of Raft can process
 // the given RPC message.
-func (r *Raft) checkRPCHeader(rpc RPC) error {
+func (r *raftServer) checkRPCHeader(rpc RPC) error {
 	// Get the header off the RPC message.
 	wh, ok := rpc.Command.(WithRPCHeader)
 	if !ok {
@@ -97,7 +97,7 @@ type leaderState struct {
 }
 
 // setLeader is used to modify the current leader of the cluster
-func (r *Raft) setLeader(leader ServerAddress) {
+func (r *raftServer) setLeader(leader ServerAddress) {
 	r.leaderLock.Lock()
 	r.leader = leader
 	r.leaderLock.Unlock()
@@ -118,15 +118,15 @@ func (r *Raft) requestMembershipChange(req membershipChangeRequest, timeout time
 	select {
 	case <-timer:
 		return errorFuture{ErrEnqueueTimeout}
-	case r.api.membershipChangeCh <- future:
+	case r.channels.membershipChangeCh <- future:
 		return future
-	case <-r.api.shutdownCh:
+	case <-r.channels.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
 	}
 }
 
 // run is a long running goroutine that runs the Raft FSM.
-func (r *Raft) run() {
+func (r *raftServer) run() {
 	for {
 		// Check if we are doing a shutdown
 		select {
@@ -151,9 +151,9 @@ func (r *Raft) run() {
 }
 
 // runFollower runs the FSM for a follower.
-func (r *Raft) runFollower() {
+func (r *raftServer) runFollower() {
 	didWarn := false
-	r.logger.Info("%v entering Follower state (Leader: %q)", r, r.Leader())
+	r.logger.Info("%v entering Follower state (Leader: %q)", r, r.getLeader())
 	metrics.IncrCounter([]string{"raft", "state", "follower"}, 1)
 	heartbeatTimer := randomTimeout(r.conf.HeartbeatTimeout)
 	for {
@@ -189,13 +189,13 @@ func (r *Raft) runFollower() {
 			heartbeatTimer = randomTimeout(r.conf.HeartbeatTimeout)
 
 			// Check if we have had a successful contact
-			lastContact := r.LastContact()
+			lastContact := r.getLastContact()
 			if time.Now().Sub(lastContact) < r.conf.HeartbeatTimeout {
 				continue
 			}
 
 			// Heartbeat failed! Transition to the candidate state
-			lastLeader := r.Leader()
+			lastLeader := r.getLeader()
 			r.setLeader("")
 
 			if r.memberships.latestIndex == 0 {
@@ -227,7 +227,7 @@ func (r *Raft) runFollower() {
 // liveBootstrap attempts to seed an initial configuration for the cluster. See
 // the Raft object's member BootstrapCluster for more details. This must only be
 // called on the main thread, and only makes sense in the follower state.
-func (r *Raft) liveBootstrap(membership Membership) error {
+func (r *raftServer) liveBootstrap(membership Membership) error {
 	// Use the pre-init API to make the static updates.
 	err := BootstrapCluster(&r.conf, r.logs, r.stable, r.snapshots,
 		r.trans, membership)
@@ -247,7 +247,7 @@ func (r *Raft) liveBootstrap(membership Membership) error {
 }
 
 // runCandidate runs the FSM for a candidate.
-func (r *Raft) runCandidate() {
+func (r *raftServer) runCandidate() {
 	r.logger.Info("%v entering Candidate state in term %v",
 		r, r.shared.getCurrentTerm()+1)
 	metrics.IncrCounter([]string{"raft", "state", "candidate"}, 1)
@@ -321,7 +321,7 @@ func (r *Raft) runCandidate() {
 
 // runLeader runs the FSM for a leader. Do the setup here and drop into
 // the leaderLoop for the hot loop.
-func (r *Raft) runLeader() {
+func (r *raftServer) runLeader() {
 	r.logger.Info("%v entering Leader state", r)
 	metrics.IncrCounter([]string{"raft", "state", "leader"}, 1)
 
@@ -420,7 +420,7 @@ func (r *Raft) runLeader() {
 // updatePeeers will start communication with new peers, send new and
 // existing peers updated control information, and stop communication with
 // removed peers. This must only be called from the main thread.
-func (r *Raft) updatePeers() {
+func (r *raftServer) updatePeers() {
 	inConfig := make(map[ServerID]Server, len(r.memberships.latest.Servers))
 
 	// Start replication goroutines that need starting
@@ -480,7 +480,7 @@ func (r *Raft) updatePeers() {
 }
 
 // shutdownPeers instructs all peers to exit immediately.
-func (r *Raft) shutdownPeers() {
+func (r *raftServer) shutdownPeers() {
 	control := peerControl{
 		term: r.shared.getCurrentTerm(),
 		role: Shutdown,
@@ -499,7 +499,7 @@ func (r *Raft) shutdownPeers() {
 //
 // Note that if the conditions here were to change outside of leaderLoop to take
 // this from nil to non-nil, we would need leaderLoop to be kicked.
-func (r *Raft) membershipChangeChIfStable() chan *membershipChangeFuture {
+func (r *raftServer) membershipChangeChIfStable() chan *membershipChangeFuture {
 	// Have to wait until:
 	// 1. The latest configuration is committed, and
 	// 2. This leader has committed some entry (the noop) in this term
@@ -513,7 +513,7 @@ func (r *Raft) membershipChangeChIfStable() chan *membershipChangeFuture {
 
 // leaderLoop is the hot loop for a leader. It is invoked
 // after all the various leader setup is done.
-func (r *Raft) leaderLoop() {
+func (r *raftServer) leaderLoop() {
 	// stepDown is used to track if there is an inflight log that
 	// would cause us to lose leadership (specifically a RemovePeer of
 	// ourselves). If this is the case, we must not allow any logs to
@@ -600,7 +600,7 @@ func (r *Raft) leaderLoop() {
 	}
 }
 
-func (r *Raft) updateCommitIndex(oldCommitIndex, commitIndex Index) {
+func (r *raftServer) updateCommitIndex(oldCommitIndex, commitIndex Index) {
 	stepDown := false
 	r.shared.setCommitIndex(commitIndex)
 	// Process the newly committed entries
@@ -645,7 +645,7 @@ func (r *Raft) updateCommitIndex(oldCommitIndex, commitIndex Index) {
 // Responds to any verify futures that have been satisfied. A majority of the
 // voting servers in the cluster have acknowledged this server's leadership
 // since the given 'count'.
-func (r *Raft) verified(count uint64) {
+func (r *raftServer) verified(count uint64) {
 	i := 0
 	var batch verifyBatch
 	for _, batch = range r.leaderState.verifyBatches {
@@ -663,7 +663,7 @@ func (r *Raft) verified(count uint64) {
 	}
 }
 
-func (r *Raft) computeCandidateProgress() {
+func (r *raftServer) computeCandidateProgress() {
 	servers := len(r.memberships.latest.Servers)
 	votes := make([]uint64, 0, servers)
 	if hasVote(r.memberships.latest, r.localID) {
@@ -695,7 +695,7 @@ func (r *Raft) computeCandidateProgress() {
 	}
 }
 
-func (r *Raft) computeLeaderProgress() {
+func (r *raftServer) computeLeaderProgress() {
 	servers := len(r.memberships.latest.Servers)
 	verifiedCounters := make([]uint64, 0, servers)
 	matchIndexes := make([]uint64, 0, servers)
@@ -749,7 +749,7 @@ func sum(values []uint64) uint64 {
 
 // verifyLeader must be called from the main thread for safety.
 // Causes the followers to attempt an immediate heartbeat.
-func (r *Raft) verifyLeader(futures []*verifyFuture) {
+func (r *raftServer) verifyLeader(futures []*verifyFuture) {
 	r.verifyCounter++
 	counter := r.verifyCounter
 	r.leaderState.verifyBatches = append(r.leaderState.verifyBatches, verifyBatch{
@@ -771,7 +771,7 @@ func (r *Raft) verifyLeader(futures []*verifyFuture) {
 // within the last leader lease interval. If not, we need to step down,
 // as we may have lost connectivity. Returns the maximum duration without
 // contact. This must only be called from the main thread.
-func (r *Raft) checkLeaderLease() {
+func (r *raftServer) checkLeaderLease() {
 	servers := len(r.memberships.latest.Servers)
 	lastContacts := make([]uint64, 0, servers)
 	if hasVote(r.memberships.latest, r.localID) {
@@ -796,7 +796,7 @@ func (r *Raft) checkLeaderLease() {
 // appendMembershipEntry changes the configuration and adds a new membership
 // configuration entry to the log. This must only be called from the
 // main thread.
-func (r *Raft) appendMembershipEntry(future *membershipChangeFuture) {
+func (r *raftServer) appendMembershipEntry(future *membershipChangeFuture) {
 	membership, err := nextMembership(r.memberships.latest, r.memberships.latestIndex, future.req)
 	if err != nil {
 		future.respond(err)
@@ -830,7 +830,7 @@ func (r *Raft) appendMembershipEntry(future *membershipChangeFuture) {
 
 // dispatchLog is called on the leader to push a log to disk, mark it
 // as inflight and begin replication of it.
-func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
+func (r *raftServer) dispatchLogs(applyLogs []*logFuture) {
 	now := time.Now()
 	defer metrics.MeasureSince([]string{"raft", "leader", "dispatchLog"}, now)
 
@@ -875,7 +875,7 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 // pass future=nil.
 // Leaders call this once per inflight when entries are committed. They pass
 // the future from inflights.
-func (r *Raft) processLogs(index Index, future *logFuture) {
+func (r *raftServer) processLogs(index Index, future *logFuture) {
 	// Reject logs we've applied already
 	lastApplied := r.shared.getLastApplied()
 	if index <= lastApplied {
@@ -904,7 +904,7 @@ func (r *Raft) processLogs(index Index, future *logFuture) {
 }
 
 // processLog is invoked to process the application of a single committed log entry.
-func (r *Raft) processLog(l *Log, future *logFuture) {
+func (r *raftServer) processLog(l *Log, future *logFuture) {
 	switch l.Type {
 	case LogBarrier:
 		// Barrier is handled by the FSM
@@ -942,7 +942,7 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 
 // processRPC is called to handle an incoming RPC request. This must only be
 // called from the main thread.
-func (r *Raft) processRPC(rpc RPC) {
+func (r *raftServer) processRPC(rpc RPC) {
 	if err := r.checkRPCHeader(rpc); err != nil {
 		rpc.Respond(nil, err)
 		return
@@ -964,7 +964,7 @@ func (r *Raft) processRPC(rpc RPC) {
 // processHeartbeat is a special handler used just for heartbeat requests
 // so that they can be fast-pathed if a transport supports it. This must only
 // be called from the main thread.
-func (r *Raft) processHeartbeat(rpc RPC) {
+func (r *raftServer) processHeartbeat(rpc RPC) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "processHeartbeat"}, time.Now())
 
 	// Check if we are shutdown, just ignore the RPC
@@ -986,7 +986,7 @@ func (r *Raft) processHeartbeat(rpc RPC) {
 
 // appendEntries is invoked when we get an append entries RPC call. This must
 // only be called from the main thread.
-func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
+func (r *raftServer) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "appendEntries"}, time.Now())
 	// Setup a response
 	resp := &AppendEntriesResponse{
@@ -1120,7 +1120,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 // processMembershipLogEntry takes a log entry and updates the latest
 // membership if the entry results in a new membership. This must only be
 // called from the main thread, or from NewRaft() before any threads have begun.
-func (r *Raft) processMembershipLogEntry(entry *Log) {
+func (r *raftServer) processMembershipLogEntry(entry *Log) {
 	if entry.Type == LogConfiguration {
 		r.memberships.committed = r.memberships.latest
 		r.memberships.committedIndex = r.memberships.latestIndex
@@ -1136,7 +1136,7 @@ func (r *Raft) processMembershipLogEntry(entry *Log) {
 }
 
 // requestVote is invoked when we get an request vote RPC call.
-func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
+func (r *raftServer) requestVote(rpc RPC, req *RequestVoteRequest) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "requestVote"}, time.Now())
 	r.observe(*req)
 
@@ -1159,7 +1159,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 
 	// Check if we have an existing leader [who's not the candidate]
 	candidate := r.trans.DecodePeer(req.Candidate)
-	if leader := r.Leader(); leader != "" && leader != candidate {
+	if leader := r.getLeader(); leader != "" && leader != candidate {
 		r.logger.Warn("Rejecting vote request from %v since we have a leader: %v",
 			candidate, leader)
 		return
@@ -1230,7 +1230,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 // We must be in the follower state for this, since it means we are
 // too far behind a leader for log replay. This must only be called
 // from the main thread.
-func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
+func (r *raftServer) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "installSnapshot"}, time.Now())
 	// Setup a response
 	resp := &InstallSnapshotResponse{
@@ -1349,7 +1349,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 }
 
 // setLastContact is used to set the last contact time to now
-func (r *Raft) setLastContact() {
+func (r *raftServer) setLastContact() {
 	r.lastContactLock.Lock()
 	r.lastContact = time.Now()
 	r.lastContactLock.Unlock()
@@ -1361,7 +1361,7 @@ type voteResult struct {
 }
 
 // persistVote is used to persist our vote for safety.
-func (r *Raft) persistVote(term Term, candidate []byte) error {
+func (r *raftServer) persistVote(term Term, candidate []byte) error {
 	if err := r.stable.SetUint64(keyLastVoteTerm, uint64(term)); err != nil {
 		return err
 	}
@@ -1371,14 +1371,14 @@ func (r *Raft) persistVote(term Term, candidate []byte) error {
 	return nil
 }
 
-func (r *Raft) stepDown() {
+func (r *raftServer) stepDown() {
 	if r.shared.getState() != Follower {
 		r.setState(Follower)
 		r.updatePeers()
 	}
 }
 
-func (r *Raft) updateTerm(term Term) {
+func (r *raftServer) updateTerm(term Term) {
 	r.setState(Follower)
 	oldTerm := r.shared.getCurrentTerm()
 	if term > oldTerm {
@@ -1391,7 +1391,7 @@ func (r *Raft) updateTerm(term Term) {
 
 // setCurrentTerm is used to set the current term in a durable manner.
 // The caller must call updatePeers() after changing the term.
-func (r *Raft) setCurrentTerm(t Term) {
+func (r *raftServer) setCurrentTerm(t Term) {
 	// Persist to disk first
 	if err := r.stable.SetUint64(keyCurrentTerm, uint64(t)); err != nil {
 		panic(fmt.Errorf("failed to save current term: %v", err))
@@ -1403,7 +1403,7 @@ func (r *Raft) setCurrentTerm(t Term) {
 // transition causes the known leader to be cleared. This means
 // that leader should be set only after updating the state.
 // The caller must call updatePeers() after changing the term.
-func (r *Raft) setState(state RaftState) {
+func (r *raftServer) setState(state RaftState) {
 	r.setLeader("")
 	oldState := r.shared.getState()
 	r.shared.setState(state)
@@ -1414,7 +1414,7 @@ func (r *Raft) setState(state RaftState) {
 
 // Fills in stats when requested by application.
 // Must only be called from the main Raft goroutine.
-func (r *Raft) stats() *Stats {
+func (r *raftServer) stats() *Stats {
 	lastLogIndex, lastLogTerm := r.shared.getLastLog()
 	lastSnapIndex, lastSnapTerm := r.shared.getLastSnapshot()
 	s := &Stats{
@@ -1427,7 +1427,7 @@ func (r *Raft) stats() *Stats {
 		FSMPending:         len(r.fsmCommitCh),
 		LastSnapshotIndex:  lastSnapIndex,
 		LastSnapshotTerm:   lastSnapTerm,
-		LastContact:        r.LastContact(),
+		LastContact:        r.getLastContact(),
 		ProtocolVersion:    r.protocolVersion,
 		ProtocolVersionMin: ProtocolVersionMin,
 		ProtocolVersionMax: ProtocolVersionMax,
