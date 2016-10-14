@@ -95,7 +95,7 @@ func (r *Raft) runSnapshots() {
 				r.logger.Error("Failed to take snapshot: %v", err)
 			}
 
-		case future := <-r.snapshotCh:
+		case future := <-r.api.snapshotCh:
 			// User-triggered, run immediately
 			err := r.takeSnapshot()
 			if err != nil {
@@ -103,7 +103,7 @@ func (r *Raft) runSnapshots() {
 			}
 			future.respond(err)
 
-		case <-r.shutdownCh:
+		case <-r.api.shutdownCh:
 			return
 		}
 	}
@@ -139,7 +139,7 @@ func (r *Raft) takeSnapshot() error {
 	// Wait for dispatch or shutdown.
 	select {
 	case r.fsmSnapshotCh <- snapReq:
-	case <-r.shutdownCh:
+	case <-r.api.shutdownCh:
 		return ErrRaftShutdown
 	}
 
@@ -158,8 +158,8 @@ func (r *Raft) takeSnapshot() error {
 	configReq := &membershipsFuture{}
 	configReq.init()
 	select {
-	case r.membershipsCh <- configReq:
-	case <-r.shutdownCh:
+	case r.api.membershipsCh <- configReq:
+	case <-r.api.shutdownCh:
 		return ErrRaftShutdown
 	}
 	if err := configReq.Error(); err != nil {

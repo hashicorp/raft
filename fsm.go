@@ -110,7 +110,7 @@ func (r *Raft) runFSM() {
 				commitEntry.future.response = resp
 				commitEntry.future.respond(nil)
 			}
-		case <-r.shutdownCh:
+		case <-r.api.shutdownCh:
 			return
 		}
 	}

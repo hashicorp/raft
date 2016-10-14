@@ -118,9 +118,9 @@ func (r *Raft) requestMembershipChange(req membershipChangeRequest, timeout time
 	select {
 	case <-timer:
 		return errorFuture{ErrEnqueueTimeout}
-	case r.membershipChangeCh <- future:
+	case r.api.membershipChangeCh <- future:
 		return future
-	case <-r.shutdownCh:
+	case <-r.api.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
 	}
 }
@@ -130,7 +130,7 @@ func (r *Raft) run() {
 	for {
 		// Check if we are doing a shutdown
 		select {
-		case <-r.shutdownCh:
+		case <-r.api.shutdownCh:
 			// Clear the leader to prevent forwarding
 			r.setLeader("")
 			r.shutdownPeers()
@@ -161,27 +161,27 @@ func (r *Raft) runFollower() {
 		case rpc := <-r.rpcCh:
 			r.processRPC(rpc)
 
-		case c := <-r.membershipChangeCh:
+		case c := <-r.api.membershipChangeCh:
 			// Reject any operations since we are not the leader
 			c.respond(ErrNotLeader)
 
-		case a := <-r.applyCh:
+		case a := <-r.api.applyCh:
 			// Reject any operations since we are not the leader
 			a.respond(ErrNotLeader)
 
-		case v := <-r.verifyCh:
+		case v := <-r.api.verifyCh:
 			// Reject any operations since we are not the leader
 			v.respond(ErrNotLeader)
 
-		case c := <-r.membershipsCh:
+		case c := <-r.api.membershipsCh:
 			c.memberships = r.memberships.Clone()
 			c.respond(nil)
 
-		case f := <-r.statsCh:
+		case f := <-r.api.statsCh:
 			f.stats = r.stats()
 			f.respond(nil)
 
-		case b := <-r.bootstrapCh:
+		case b := <-r.api.bootstrapCh:
 			b.respond(r.liveBootstrap(b.membership))
 
 		case <-heartbeatTimer:
@@ -218,7 +218,7 @@ func (r *Raft) runFollower() {
 				return
 			}
 
-		case <-r.shutdownCh:
+		case <-r.api.shutdownCh:
 			return
 		}
 	}
@@ -284,27 +284,27 @@ func (r *Raft) runCandidate() {
 				r.computeCandidateProgress()
 			}
 
-		case c := <-r.membershipChangeCh:
+		case c := <-r.api.membershipChangeCh:
 			// Reject any operations since we are not the leader
 			c.respond(ErrNotLeader)
 
-		case a := <-r.applyCh:
+		case a := <-r.api.applyCh:
 			// Reject any operations since we are not the leader
 			a.respond(ErrNotLeader)
 
-		case v := <-r.verifyCh:
+		case v := <-r.api.verifyCh:
 			// Reject any operations since we are not the leader
 			v.respond(ErrNotLeader)
 
-		case c := <-r.membershipsCh:
+		case c := <-r.api.membershipsCh:
 			c.memberships = r.memberships.Clone()
 			c.respond(nil)
 
-		case f := <-r.statsCh:
+		case f := <-r.api.statsCh:
 			f.stats = r.stats()
 			f.respond(nil)
 
-		case b := <-r.bootstrapCh:
+		case b := <-r.api.bootstrapCh:
 			b.respond(ErrCantBootstrap)
 
 		case <-electionTimer:
@@ -313,7 +313,7 @@ func (r *Raft) runCandidate() {
 			r.logger.Warn("Election timeout reached, restarting election")
 			return
 
-		case <-r.shutdownCh:
+		case <-r.api.shutdownCh:
 			return
 		}
 	}
@@ -332,7 +332,7 @@ func (r *Raft) runLeader() {
 	if notify := r.conf.NotifyCh; notify != nil {
 		select {
 		case notify <- true:
-		case <-r.shutdownCh:
+		case <-r.api.shutdownCh:
 		}
 	}
 
@@ -390,7 +390,7 @@ func (r *Raft) runLeader() {
 		if notify := r.conf.NotifyCh; notify != nil {
 			select {
 			case notify <- false:
-			case <-r.shutdownCh:
+			case <-r.api.shutdownCh:
 				// On shutdown, make a best effort but do not block
 				select {
 				case notify <- false:
@@ -506,7 +506,7 @@ func (r *Raft) membershipChangeChIfStable() chan *membershipChangeFuture {
 	//    https://groups.google.com/forum/#!msg/raft-dev/t4xj6dJTP6E/d2D9LrWRza8J
 	if r.memberships.latestIndex == r.memberships.committedIndex &&
 		r.shared.getCommitIndex() >= r.leaderState.startIndex {
-		return r.membershipChangeCh
+		return r.api.membershipChangeCh
 	}
 	return nil
 }
@@ -528,15 +528,15 @@ func (r *Raft) leaderLoop() {
 		case rpc := <-r.rpcCh:
 			r.processRPC(rpc)
 
-		case future := <-r.verifyCh:
+		case future := <-r.api.verifyCh:
 			// Try to batch all queued verifies together.
 			futures := []*verifyFuture{future}
 			drained := false
 			for !drained {
 				select {
-				case another := <-r.verifyCh:
+				case another := <-r.api.verifyCh:
 					futures = append(futures, another)
-				case <-r.shutdownCh:
+				case <-r.api.shutdownCh:
 					return
 				default:
 					drained = true
@@ -544,26 +544,26 @@ func (r *Raft) leaderLoop() {
 			}
 			r.verifyLeader(futures)
 
-		case c := <-r.membershipsCh:
+		case c := <-r.api.membershipsCh:
 			c.memberships = r.memberships.Clone()
 			c.respond(nil)
 
 		case future := <-r.membershipChangeChIfStable():
 			r.appendMembershipEntry(future)
 
-		case f := <-r.statsCh:
+		case f := <-r.api.statsCh:
 			f.stats = r.stats()
 			f.respond(nil)
 
-		case b := <-r.bootstrapCh:
+		case b := <-r.api.bootstrapCh:
 			b.respond(ErrCantBootstrap)
 
-		case newLog := <-r.applyCh:
+		case newLog := <-r.api.applyCh:
 			// Group commit, gather all the ready commits
 			ready := []*logFuture{newLog}
 			for i := 0; i < r.conf.MaxAppendEntries; i++ {
 				select {
-				case newLog := <-r.applyCh:
+				case newLog := <-r.api.applyCh:
 					ready = append(ready, newLog)
 				default:
 					break
@@ -593,7 +593,7 @@ func (r *Raft) leaderLoop() {
 				r.computeLeaderProgress()
 			}
 
-		case <-r.shutdownCh:
+		case <-r.api.shutdownCh:
 			return
 		}
 
@@ -914,7 +914,7 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 		// Forward to the fsm handler
 		select {
 		case r.fsmCommitCh <- commitTuple{l, future}:
-		case <-r.shutdownCh:
+		case <-r.api.shutdownCh:
 			if future != nil {
 				future.respond(ErrRaftShutdown)
 			}
@@ -969,7 +969,7 @@ func (r *Raft) processHeartbeat(rpc RPC) {
 
 	// Check if we are shutdown, just ignore the RPC
 	select {
-	case <-r.shutdownCh:
+	case <-r.api.shutdownCh:
 		return
 	default:
 	}
@@ -1313,7 +1313,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	future.init()
 	select {
 	case r.fsmRestoreCh <- future:
-	case <-r.shutdownCh:
+	case <-r.api.shutdownCh:
 		future.respond(ErrRaftShutdown)
 		return
 	}

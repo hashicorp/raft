@@ -45,6 +45,36 @@ var (
 	ErrCantBootstrap = errors.New("bootstrap only works on new clusters")
 )
 
+type apiChannels struct {
+	// applyCh is used to async send logs to the main thread to
+	// be committed and applied to the FSM.
+	applyCh chan *logFuture
+
+	// Used to request the leader to make membership configuration changes.
+	membershipChangeCh chan *membershipChangeFuture
+
+	// snapshotCh is used for user triggered snapshots
+	snapshotCh chan *snapshotFuture
+
+	// verifyCh is used to async send verify futures to the main thread
+	// to verify we are still the leader
+	verifyCh chan *verifyFuture
+
+	// membershipsCh is used to get the membership configuration
+	// data safely from outside of the main thread.
+	membershipsCh chan *membershipsFuture
+
+	// statsCh is used to get stats safely from outside of the main thread.
+	statsCh chan *statsFuture
+
+	// bootstrapCh is used to attempt an initial bootstrap from outside of
+	// the main thread.
+	bootstrapCh chan *bootstrapFuture
+
+	// Shutdown channel to exit, protected to prevent concurrent exits
+	shutdownCh chan struct{}
+}
+
 // Raft implements a Raft node.
 type Raft struct {
 	shared raftShared
@@ -60,9 +90,7 @@ type Raft struct {
 	peerProgressCh chan peerProgress
 	peers          map[ServerID]*raftPeer
 
-	// applyCh is used to async send logs to the main thread to
-	// be committed and applied to the FSM.
-	applyCh chan *logFuture
+	api *apiChannels
 
 	// Configuration provided at Raft initialization
 	conf Config
@@ -106,9 +134,6 @@ type Raft struct {
 	// LogStore provides durable storage for logs
 	logs LogStore
 
-	// Used to request the leader to make membership configuration changes.
-	membershipChangeCh chan *membershipChangeFuture
-
 	// Tracks the latest membership configuration and
 	// latest committed membership from the log/snapshot.
 	memberships memberships
@@ -118,14 +143,10 @@ type Raft struct {
 
 	// Shutdown channel to exit, protected to prevent concurrent exits
 	shutdown     bool
-	shutdownCh   chan struct{}
 	shutdownLock sync.Mutex
 
 	// snapshots is used to store and retrieve snapshots
 	snapshots SnapshotStore
-
-	// snapshotCh is used for user triggered snapshots
-	snapshotCh chan *snapshotFuture
 
 	// stable is a StableStore implementation for durable state
 	// It provides stable storage for many fields in raftShared
@@ -133,21 +154,6 @@ type Raft struct {
 
 	// The transport layer we use
 	trans Transport
-
-	// verifyCh is used to async send verify futures to the main thread
-	// to verify we are still the leader
-	verifyCh chan *verifyFuture
-
-	// membershipsCh is used to get the membership configuration
-	// data safely from outside of the main thread.
-	membershipsCh chan *membershipsFuture
-
-	// statsCh is used to get stats safely from outside of the main thread.
-	statsCh chan *statsFuture
-
-	// bootstrapCh is used to attempt an initial bootstrap from outside of
-	// the main thread.
-	bootstrapCh chan *bootstrapFuture
 
 	// List of observers and the mutex that protects them. The observers list
 	// is indexed by an artificial ID which is used for deregistration.
@@ -438,33 +444,35 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 
 	// Create Raft struct.
 	r := &Raft{
-		protocolVersion:    protocolVersion,
-		peerProgressCh:     make(chan peerProgress),
-		peers:              make(map[ServerID]*raftPeer),
-		applyCh:            make(chan *logFuture),
-		conf:               *conf,
-		fsm:                fsm,
-		fsmCommitCh:        make(chan commitTuple, 128),
-		fsmRestoreCh:       make(chan *restoreFuture),
-		fsmSnapshotCh:      make(chan *reqSnapshotFuture),
-		leaderCh:           make(chan bool),
-		localID:            localID,
-		localAddr:          localAddr,
-		logger:             logger,
-		logs:               logs,
-		membershipChangeCh: make(chan *membershipChangeFuture),
-		memberships:        memberships{},
-		rpcCh:              trans.Consumer(),
-		snapshots:          snaps,
-		snapshotCh:         make(chan *snapshotFuture),
-		shutdownCh:         make(chan struct{}),
-		stable:             stable,
-		trans:              trans,
-		verifyCh:           make(chan *verifyFuture, 64),
-		membershipsCh:      make(chan *membershipsFuture, 8),
-		statsCh:            make(chan *statsFuture, 8),
-		bootstrapCh:        make(chan *bootstrapFuture),
-		observers:          make(map[uint64]*Observer),
+		protocolVersion: protocolVersion,
+		peerProgressCh:  make(chan peerProgress),
+		peers:           make(map[ServerID]*raftPeer),
+		api: &apiChannels{
+			applyCh:            make(chan *logFuture),
+			membershipChangeCh: make(chan *membershipChangeFuture),
+			snapshotCh:         make(chan *snapshotFuture),
+			verifyCh:           make(chan *verifyFuture, 64),
+			membershipsCh:      make(chan *membershipsFuture, 8),
+			statsCh:            make(chan *statsFuture, 8),
+			bootstrapCh:        make(chan *bootstrapFuture),
+			shutdownCh:         make(chan struct{}),
+		},
+		conf:          *conf,
+		fsm:           fsm,
+		fsmCommitCh:   make(chan commitTuple, 128),
+		fsmRestoreCh:  make(chan *restoreFuture),
+		fsmSnapshotCh: make(chan *reqSnapshotFuture),
+		leaderCh:      make(chan bool),
+		localID:       localID,
+		localAddr:     localAddr,
+		logger:        logger,
+		logs:          logs,
+		memberships:   memberships{},
+		rpcCh:         trans.Consumer(),
+		snapshots:     snaps,
+		stable:        stable,
+		trans:         trans,
+		observers:     make(map[uint64]*Observer),
 	}
 	r.goRoutines = &waitGroup{}
 
@@ -582,9 +590,9 @@ func (r *Raft) BootstrapCluster(membership Membership) Future {
 	bootstrapReq.init()
 	bootstrapReq.membership = membership
 	select {
-	case <-r.shutdownCh:
+	case <-r.api.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
-	case r.bootstrapCh <- bootstrapReq:
+	case r.api.bootstrapCh <- bootstrapReq:
 		return bootstrapReq
 	}
 }
@@ -623,9 +631,9 @@ func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
 	select {
 	case <-timer:
 		return errorFuture{ErrEnqueueTimeout}
-	case <-r.shutdownCh:
+	case <-r.api.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
-	case r.applyCh <- logFuture:
+	case r.api.applyCh <- logFuture:
 		return logFuture
 	}
 }
@@ -653,9 +661,9 @@ func (r *Raft) Barrier(timeout time.Duration) Future {
 	select {
 	case <-timer:
 		return errorFuture{ErrEnqueueTimeout}
-	case <-r.shutdownCh:
+	case <-r.api.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
-	case r.applyCh <- logFuture:
+	case r.api.applyCh <- logFuture:
 		return logFuture
 	}
 }
@@ -668,9 +676,9 @@ func (r *Raft) VerifyLeader() Future {
 	verifyFuture := &verifyFuture{}
 	verifyFuture.init()
 	select {
-	case <-r.shutdownCh:
+	case <-r.api.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
-	case r.verifyCh <- verifyFuture:
+	case r.api.verifyCh <- verifyFuture:
 		return verifyFuture
 	}
 }
@@ -682,10 +690,10 @@ func (r *Raft) GetMembership() MembershipFuture {
 	configReq := &membershipsFuture{}
 	configReq.init()
 	select {
-	case <-r.shutdownCh:
+	case <-r.api.shutdownCh:
 		configReq.respond(ErrRaftShutdown)
 		return configReq
-	case r.membershipsCh <- configReq:
+	case r.api.membershipsCh <- configReq:
 		return configReq
 	}
 }
@@ -800,7 +808,7 @@ func (r *Raft) Shutdown() Future {
 	defer r.shutdownLock.Unlock()
 
 	if !r.shutdown {
-		close(r.shutdownCh)
+		close(r.api.shutdownCh)
 		r.shutdown = true
 		r.setState(Shutdown)
 		return &shutdownFuture{r}
@@ -816,9 +824,9 @@ func (r *Raft) Snapshot() Future {
 	snapFuture := &snapshotFuture{}
 	snapFuture.init()
 	select {
-	case r.snapshotCh <- snapFuture:
+	case r.api.snapshotCh <- snapFuture:
 		return snapFuture
-	case <-r.shutdownCh:
+	case <-r.api.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
 	}
 
@@ -929,9 +937,9 @@ func (r *Raft) Stats() StatsFuture {
 	statsReq := &statsFuture{}
 	statsReq.init()
 	select {
-	case <-r.shutdownCh:
+	case <-r.api.shutdownCh:
 		statsReq.respond(ErrRaftShutdown)
-	case r.statsCh <- statsReq:
+	case r.api.statsCh <- statsReq:
 	}
 	return statsReq
 }

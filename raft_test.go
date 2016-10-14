@@ -1393,7 +1393,7 @@ func TestRaft_RemoveFollower_SplitCluster(t *testing.T) {
 func getCommittedMembership(c *cluster, n *Raft) (Membership, Index) {
 	req := &membershipsFuture{}
 	req.init()
-	n.membershipsCh <- req
+	n.api.membershipsCh <- req
 	if err := req.Error(); err != nil {
 		c.FailNowf("[ERR] Getting membership error: %v", err)
 	}
