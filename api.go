@@ -105,6 +105,9 @@ type raftServer struct {
 	peerProgressCh chan peerProgress
 	peers          map[ServerID]*raftPeer
 
+	// Highest committed log entry
+	commitIndex Index
+
 	api *apiChannels
 
 	// Configuration provided at Raft initialization

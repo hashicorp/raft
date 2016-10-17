@@ -473,7 +473,7 @@ func (r *raftServer) updatePeers() {
 			verifyCounter: verifyCounter,
 			lastIndex:     lastIndex,
 			lastTerm:      lastTerm,
-			commitIndex:   r.shared.getCommitIndex(),
+			commitIndex:   r.commitIndex,
 		}
 		peer.controlCh <- control
 	}
@@ -505,7 +505,7 @@ func (r *raftServer) membershipChangeChIfStable() chan *membershipChangeFuture {
 	// 2. This leader has committed some entry (the noop) in this term
 	//    https://groups.google.com/forum/#!msg/raft-dev/t4xj6dJTP6E/d2D9LrWRza8J
 	if r.memberships.latestIndex == r.memberships.committedIndex &&
-		r.shared.getCommitIndex() >= r.leaderState.startIndex {
+		r.commitIndex >= r.leaderState.startIndex {
 		return r.api.membershipChangeCh
 	}
 	return nil
@@ -602,7 +602,7 @@ func (r *raftServer) leaderLoop() {
 
 func (r *raftServer) updateCommitIndex(oldCommitIndex, commitIndex Index) {
 	stepDown := false
-	r.shared.setCommitIndex(commitIndex)
+	r.commitIndex = commitIndex
 	// Process the newly committed entries
 	if r.memberships.latestIndex > oldCommitIndex &&
 		r.memberships.latestIndex <= commitIndex {
@@ -722,7 +722,7 @@ func (r *raftServer) computeLeaderProgress() {
 	verifiedCounter := quorumGeq(verifiedCounters)
 	matchIndex := Index(quorumGeq(matchIndexes))
 
-	oldCommitIndex := r.shared.getCommitIndex()
+	oldCommitIndex := r.commitIndex
 	if matchIndex > oldCommitIndex && matchIndex >= r.leaderState.startIndex {
 		r.updateCommitIndex(oldCommitIndex, matchIndex)
 	}
@@ -1101,9 +1101,9 @@ func (r *raftServer) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	if cap := a.PrevLogEntry + Index(len(a.Entries)); a.LeaderCommitIndex > cap {
 		a.LeaderCommitIndex = cap
 	}
-	if a.LeaderCommitIndex > r.shared.getCommitIndex() {
+	if a.LeaderCommitIndex > r.commitIndex {
 		start := time.Now()
-		r.shared.setCommitIndex(a.LeaderCommitIndex)
+		r.commitIndex = a.LeaderCommitIndex
 		if r.memberships.latestIndex <= a.LeaderCommitIndex {
 			r.memberships.committed = r.memberships.latest
 			r.memberships.committedIndex = r.memberships.latestIndex
@@ -1422,7 +1422,7 @@ func (r *raftServer) stats() *Stats {
 		Term:               r.shared.getCurrentTerm(),
 		LastLogIndex:       lastLogIndex,
 		LastLogTerm:        lastLogTerm,
-		CommitIndex:        r.shared.getCommitIndex(),
+		CommitIndex:        r.commitIndex,
 		AppliedIndex:       r.shared.getLastApplied(),
 		FSMPending:         len(r.fsmCommitCh),
 		LastSnapshotIndex:  lastSnapIndex,

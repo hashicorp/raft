@@ -45,9 +45,6 @@ type raftShared struct {
 	// The current term, cache of StableStore
 	currentTerm Term
 
-	// Highest committed log entry
-	commitIndex Index
-
 	// Last applied log to the FSM
 	lastApplied Index
 
@@ -112,14 +109,6 @@ func (r *raftShared) setLastSnapshot(index Index, term Term) {
 	r.lastSnapshotIndex = index
 	r.lastSnapshotTerm = term
 	r.lastLock.Unlock()
-}
-
-func (r *raftShared) getCommitIndex() Index {
-	return Index(atomic.LoadUint64((*uint64)(&r.commitIndex)))
-}
-
-func (r *raftShared) setCommitIndex(index Index) {
-	atomic.StoreUint64((*uint64)(&r.commitIndex), uint64(index))
 }
 
 func (r *raftShared) getLastApplied() Index {
