@@ -2,6 +2,35 @@ package raft
 
 import "fmt"
 
+// Membership changes follow the single-server algorithm described in Diego
+// Ongaro's PhD dissertation. The Membership struct defines a cluster membership
+// configuration, which is a set of servers, each of which is either a Voter,
+// Nonvoter, or Staging (defined below).
+//
+// All changes to the membership configuration is done by writing a new
+// membership configuration to the log, which the server does in
+// appendMembershipEntry(). The new configuration will be in affect as soon as
+// it is appended to the log (not when it is committed like a normal state
+// machine command). Note that, for safety purposes, there can be at most one
+// uncommitted configuration at a time (the next configuration may not be
+// created until the prior one has been committed). It's not strictly necessary
+// to follow these same rules for the nonvoter/staging servers, but those
+// changes are treated uniformly for simplicity.
+//
+// Each server tracks two membership configurations (in its "memberships"
+// struct, defined below):
+// 1. the committed configuration: the latest configuration in the
+//    log/snapshot that has been committed, along with its index.
+// 2. the latest configuration: the latest configuration in the log/snapshot
+//    (may be committed or uncommitted), along with its index.
+//
+// When there's no membership change happening, these two will be the same.
+// The latest membership configuration is almost always the one used, except:
+// - When followers truncate the suffix of their logs, they may need to fall
+//   back to the committed configuration.
+// - When snapshotting, the committed configuration is written, to correspond
+//   with the committed log prefix that is being snapshotted.
+
 // ServerSuffrage determines whether a Server in a Configuration gets a vote.
 type ServerSuffrage int
 
@@ -63,7 +92,29 @@ func (m *Membership) Clone() (copy Membership) {
 }
 
 // MembershipChangeCommand is the different ways to change the cluster
-// configuration.
+// configuration, as illustrated in the following diagram:
+//
+//                       Start ->  +--------+
+//             ,------<------------|        |
+//            /                    | absent |
+//           /     RemoveServer--> |        | <-RemoveServer
+//          /            |         +--------+               \
+//         /             |            |                      \
+//    AddNonvoter        |        AddStaging                  \
+//        |       ,->---' `--<-.      |                        \
+//        v      /              \     v                         \
+//   +----------+                +----------+                    +----------+
+//   |          | --AddStaging-> |          | -----Promote-----> |          |
+//   | nonvoter |                | staging  |                    |  voter   |
+//   |          | <-DemoteVoter- |          |                 ,- |          |
+//   +----------+         \      +----------+                /   +----------+
+//                         \                                /
+//                          `--------------<---------------'
+//
+// Note that these are the internal commands the leader places in the log, which
+// differ from client requests when adding voters. Specifically, when clients
+// request AddVoter, the leader will append an AddStaging command. Once the
+// server is ready, the leader will append a Promote command.
 type MembershipChangeCommand uint8
 
 const (
