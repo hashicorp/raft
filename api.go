@@ -108,6 +108,9 @@ type raftServer struct {
 	// Highest committed log entry
 	commitIndex Index
 
+	// Last log entry sent to the FSM
+	lastApplied Index
+
 	api *apiChannels
 
 	// Configuration provided at Raft initialization
@@ -569,7 +572,7 @@ func (r *raftServer) restoreSnapshot() error {
 		r.logger.Info("Restored from snapshot %v", snapshot.ID)
 
 		// Update the lastApplied so we don't replay old logs
-		r.shared.setLastApplied(snapshot.Index)
+		r.lastApplied = snapshot.Index
 
 		// Update the last stable snapshot info
 		r.shared.setLastSnapshot(snapshot.Index, snapshot.Term)
@@ -890,11 +893,18 @@ func (r *raftServer) getLastContact() time.Time {
 }
 
 type Stats struct {
-	State                 RaftState
-	Term                  Term
-	LastLogIndex          Index
-	LastLogTerm           Term
-	CommitIndex           Index
+	State        RaftState
+	Term         Term
+	LastLogIndex Index
+	LastLogTerm  Term
+	CommitIndex  Index
+	// AppliedIndex is the last index applied to the FSM. This is generally
+	// lagging behind the last index, especially for indexes that are persisted but
+	// have not yet been considered committed by the leader. NOTE - this reflects
+	// the last index that was sent to the application's FSM over the apply channel
+	// but DOES NOT mean that the application's FSM has yet consumed it and applied
+	// it to its internal state. Thus, the application's state may lag behind this
+	// index.
 	AppliedIndex          Index
 	FSMPending            int
 	LastSnapshotIndex     Index
@@ -978,15 +988,4 @@ func (r *Raft) Stats() StatsFuture {
 // either from the last log or from the last snapshot.
 func (r *Raft) LastIndex() Index {
 	return r.server.shared.getLastIndex()
-}
-
-// AppliedIndex returns the last index applied to the FSM. This is generally
-// lagging behind the last index, especially for indexes that are persisted but
-// have not yet been considered committed by the leader. NOTE - this reflects
-// the last index that was sent to the application's FSM over the apply channel
-// but DOES NOT mean that the application's FSM has yet consumed it and applied
-// it to its internal state. Thus, the application's state may lag behind this
-// index.
-func (r *Raft) AppliedIndex() Index {
-	return r.server.shared.getLastApplied()
 }

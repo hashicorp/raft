@@ -45,9 +45,6 @@ type raftShared struct {
 	// The current term, cache of StableStore
 	currentTerm Term
 
-	// Last applied log to the FSM
-	lastApplied Index
-
 	// protects 4 next fields
 	lastLock sync.Mutex
 
@@ -109,14 +106,6 @@ func (r *raftShared) setLastSnapshot(index Index, term Term) {
 	r.lastSnapshotIndex = index
 	r.lastSnapshotTerm = term
 	r.lastLock.Unlock()
-}
-
-func (r *raftShared) getLastApplied() Index {
-	return Index(atomic.LoadUint64((*uint64)(&r.lastApplied)))
-}
-
-func (r *raftShared) setLastApplied(index Index) {
-	atomic.StoreUint64((*uint64)(&r.lastApplied), uint64(index))
 }
 
 // getLastIndex returns the last index in stable storage.

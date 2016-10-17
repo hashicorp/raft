@@ -1515,7 +1515,12 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 	c.rafts[0] = r2
 
 	// We should have restored from the snapshot!
-	if last := r2.server.shared.getLastApplied(); last != snap.Index {
+	statsFuture := r2.Stats()
+	err = statsFuture.Error()
+	if err != nil {
+		c.FailNowf("[ERR] failed to get stats: %v", err)
+	}
+	if last := statsFuture.Stats().AppliedIndex; last != snap.Index {
 		c.FailNowf("[ERR] bad last index: %d, expecting %d", last, snap.Index)
 	}
 }
@@ -1622,7 +1627,13 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 
 	// We should have restored from the snapshot! Note that there's one
 	// index bump from the noop the leader tees up when it takes over.
-	if last := r2.server.shared.getLastApplied(); last != 103 {
+
+	statsFuture := r2.Stats()
+	err = statsFuture.Error()
+	if err != nil {
+		c.FailNowf("[ERR] failed to get stats: %v", err)
+	}
+	if last := statsFuture.Stats().AppliedIndex; last != 103 {
 		c.FailNowf("[ERR] bad last: %v", last)
 	}
 

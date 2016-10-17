@@ -877,14 +877,13 @@ func (r *raftServer) dispatchLogs(applyLogs []*logFuture) {
 // the future from inflights.
 func (r *raftServer) processLogs(index Index, future *logFuture) {
 	// Reject logs we've applied already
-	lastApplied := r.shared.getLastApplied()
-	if index <= lastApplied {
+	if index <= r.lastApplied {
 		r.logger.Warn("Skipping application of old log: %d", index)
 		return
 	}
 
 	// Apply all the preceding logs
-	for idx := r.shared.getLastApplied() + 1; idx <= index; idx++ {
+	for idx := r.lastApplied + 1; idx <= index; idx++ {
 		// Get the log, either from the future or from our log store
 		if future != nil && future.log.Index == idx {
 			r.processLog(&future.log, future)
@@ -899,7 +898,7 @@ func (r *raftServer) processLogs(index Index, future *logFuture) {
 		}
 
 		// Update the lastApplied index and term
-		r.shared.setLastApplied(idx)
+		r.lastApplied = idx
 	}
 }
 
@@ -1326,7 +1325,7 @@ func (r *raftServer) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	}
 
 	// Update the lastApplied so we don't replay old logs
-	r.shared.setLastApplied(req.LastLogIndex)
+	r.lastApplied = req.LastLogIndex
 
 	// Update the last stable snapshot info
 	r.shared.setLastSnapshot(req.LastLogIndex, req.LastLogTerm)
@@ -1423,7 +1422,7 @@ func (r *raftServer) stats() *Stats {
 		LastLogIndex:       lastLogIndex,
 		LastLogTerm:        lastLogTerm,
 		CommitIndex:        r.commitIndex,
-		AppliedIndex:       r.shared.getLastApplied(),
+		AppliedIndex:       r.lastApplied,
 		FSMPending:         len(r.fsmCommitCh),
 		LastSnapshotIndex:  lastSnapIndex,
 		LastSnapshotTerm:   lastSnapTerm,
