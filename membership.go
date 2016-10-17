@@ -52,23 +52,23 @@ type Server struct {
 // votes. This should include the local server, if it's a member of the cluster.
 // The servers are listed no particular order, but each should only appear once.
 // These entries are appended to the log during membership changes.
-type Configuration struct {
+type Membership struct {
 	Servers []Server
 }
 
-// Clone makes a deep copy of a Configuration.
-func (c *Configuration) Clone() (copy Configuration) {
-	copy.Servers = append(copy.Servers, c.Servers...)
+// Clone makes a deep copy of a Membership.
+func (m *Membership) Clone() (copy Membership) {
+	copy.Servers = append(copy.Servers, m.Servers...)
 	return
 }
 
-// ConfigurationChangeCommand is the different ways to change the cluster
+// MembershipChangeCommand is the different ways to change the cluster
 // configuration.
-type ConfigurationChangeCommand uint8
+type MembershipChangeCommand uint8
 
 const (
 	// AddStaging makes a server Staging unless its Voter.
-	AddStaging ConfigurationChangeCommand = iota
+	AddStaging MembershipChangeCommand = iota
 	// AddNonvoter makes a server Nonvoter unless its Staging or Voter.
 	AddNonvoter
 	// DemoteVoter makes a server Nonvoter unless its absent.
@@ -80,8 +80,8 @@ const (
 	Promote
 )
 
-func (c ConfigurationChangeCommand) String() string {
-	switch c {
+func (m MembershipChangeCommand) String() string {
+	switch m {
 	case AddStaging:
 		return "AddStaging"
 	case AddNonvoter:
@@ -93,14 +93,15 @@ func (c ConfigurationChangeCommand) String() string {
 	case Promote:
 		return "Promote"
 	}
-	return "ConfigurationChangeCommand"
+	return "MembershipChangeCommand"
 }
 
-// configurationChangeRequest describes a change that a leader would like to
-// make to its current configuration. It's used only within a single server
-// (never serialized into the log), as part of `configurationChangeFuture`.
-type configurationChangeRequest struct {
-	command       ConfigurationChangeCommand
+// membershipChangeRequest describes a change that a leader would like to
+// make to its current membership configuration. It's used only within a
+// single server (never serialized into the log), as part of
+// `membershipChangeFuture`.
+type membershipChangeRequest struct {
+	command       MembershipChangeCommand
 	serverID      ServerID
 	serverAddress ServerAddress // only present for AddStaging, AddNonvoter
 	// prevIndex, if nonzero, is the index of the only configuration upon which
@@ -109,43 +110,45 @@ type configurationChangeRequest struct {
 	prevIndex Index
 }
 
-// configurations is state tracked on every server about its Configurations.
+// memberships is state tracked on every server about its Cluster Membership.
 // Note that, per Diego's dissertation, there can be at most one uncommitted
-// configuration at a time (the next configuration may not be created until the
+// membership at a time (the next configuration may not be created until the
 // prior one has been committed).
 //
-// One downside to storing just two configurations is that if you try to take a
-// snahpsot when your state machine hasn't yet applied the committedIndex, we
-// have no record of the configuration that would logically fit into that
+// One downside to storing just two memberships is that if you try to take a
+// snapshot when your state machine hasn't yet applied the committedIndex, we
+// have no record of the membership that would logically fit into that
 // snapshot. We disallow snapshots in that case now. An alternative approach,
-// which LogCabin uses, is to track every configuration change in the
+// which LogCabin uses, is to track every membership change in the
 // log.
-type configurations struct {
-	// committed is the latest configuration in the log/snapshot that has been
+// Unless there's a membership change in progress, commited & latest will
+// be the same
+type memberships struct {
+	// committed is the latest membership in the log/snapshot that has been
 	// committed (the one with the largest index).
-	committed Configuration
+	committed Membership
 	// committedIndex is the log index where 'committed' was written.
 	committedIndex Index
 	// latest is the latest configuration in the log/snapshot (may be committed
 	// or uncommitted)
-	latest Configuration
+	latest Membership
 	// latestIndex is the log index where 'latest' was written.
 	latestIndex Index
 }
 
-// Clone makes a deep copy of a configurations object.
-func (c *configurations) Clone() (copy configurations) {
-	copy.committed = c.committed.Clone()
-	copy.committedIndex = c.committedIndex
-	copy.latest = c.latest.Clone()
-	copy.latestIndex = c.latestIndex
+// Clone makes a deep copy of a memberships object.
+func (m *memberships) Clone() (copy memberships) {
+	copy.committed = m.committed.Clone()
+	copy.committedIndex = m.committedIndex
+	copy.latest = m.latest.Clone()
+	copy.latestIndex = m.latestIndex
 	return
 }
 
 // hasVote returns true if the server identified by 'id' is a Voter in the
-// provided Configuration.
-func hasVote(configuration Configuration, id ServerID) bool {
-	for _, server := range configuration.Servers {
+// provided Membership.
+func hasVote(membership Membership, id ServerID) bool {
+	for _, server := range membership.Servers {
 		if server.ID == id {
 			return server.Suffrage == Voter
 		}
@@ -153,25 +156,24 @@ func hasVote(configuration Configuration, id ServerID) bool {
 	return false
 }
 
-// checkConfiguration tests a cluster membership configuration for common
-// errors.
-func checkConfiguration(configuration Configuration) error {
+// check tests a cluster membership configuration for common errors.
+func (membership *Membership) check() error {
 	idSet := make(map[ServerID]bool)
 	addressSet := make(map[ServerAddress]bool)
 	var voters int
-	for _, server := range configuration.Servers {
+	for _, server := range membership.Servers {
 		if server.ID == "" {
-			return fmt.Errorf("Empty ID in configuration: %v", configuration)
+			return fmt.Errorf("Empty ID in membership: %v", membership)
 		}
 		if server.Address == "" {
-			return fmt.Errorf("Empty address in configuration: %v", server)
+			return fmt.Errorf("Empty address in membership: %v", server)
 		}
 		if idSet[server.ID] {
-			return fmt.Errorf("Found duplicate ID in configuration: %v", server.ID)
+			return fmt.Errorf("Found duplicate ID in membership: %v", server.ID)
 		}
 		idSet[server.ID] = true
 		if addressSet[server.Address] {
-			return fmt.Errorf("Found duplicate address in configuration: %v", server.Address)
+			return fmt.Errorf("Found duplicate address in membership: %v", server.Address)
 		}
 		addressSet[server.Address] = true
 		if server.Suffrage == Voter {
@@ -179,20 +181,20 @@ func checkConfiguration(configuration Configuration) error {
 		}
 	}
 	if voters == 0 {
-		return fmt.Errorf("Need at least one voter in configuration: %v", configuration)
+		return fmt.Errorf("Need at least one voter in membership: %v", membership)
 	}
 	return nil
 }
 
-// nextConfiguration generates a new Configuration from the current one and a
-// configuration change request. It's split from appendConfigurationEntry so
+// nextMembership generates a new Membership from the current one and a
+// membership change request. It's split from appendMembershipEntry so
 // that it can be unit tested easily.
-func nextConfiguration(current Configuration, currentIndex Index, change configurationChangeRequest) (Configuration, error) {
+func nextMembership(current Membership, currentIndex Index, change membershipChangeRequest) (Membership, error) {
 	if change.prevIndex > 0 && change.prevIndex != currentIndex {
-		return Configuration{}, fmt.Errorf("Configuration changed since %v (latest is %v)", change.prevIndex, currentIndex)
+		return Membership{}, fmt.Errorf("Membership changed since %v (latest is %v)", change.prevIndex, currentIndex)
 	}
 
-	configuration := current.Clone()
+	membership := current.Clone()
 	switch change.command {
 	case AddStaging:
 		// TODO: barf on new address?
@@ -208,19 +210,19 @@ func nextConfiguration(current Configuration, currentIndex Index, change configu
 			Address:  change.serverAddress,
 		}
 		found := false
-		for i, server := range configuration.Servers {
+		for i, server := range membership.Servers {
 			if server.ID == change.serverID {
 				if server.Suffrage == Voter {
-					configuration.Servers[i].Address = change.serverAddress
+					membership.Servers[i].Address = change.serverAddress
 				} else {
-					configuration.Servers[i] = newServer
+					membership.Servers[i] = newServer
 				}
 				found = true
 				break
 			}
 		}
 		if !found {
-			configuration.Servers = append(configuration.Servers, newServer)
+			membership.Servers = append(membership.Servers, newServer)
 		}
 	case AddNonvoter:
 		newServer := Server{
@@ -229,59 +231,59 @@ func nextConfiguration(current Configuration, currentIndex Index, change configu
 			Address:  change.serverAddress,
 		}
 		found := false
-		for i, server := range configuration.Servers {
+		for i, server := range membership.Servers {
 			if server.ID == change.serverID {
 				if server.Suffrage != Nonvoter {
-					configuration.Servers[i].Address = change.serverAddress
+					membership.Servers[i].Address = change.serverAddress
 				} else {
-					configuration.Servers[i] = newServer
+					membership.Servers[i] = newServer
 				}
 				found = true
 				break
 			}
 		}
 		if !found {
-			configuration.Servers = append(configuration.Servers, newServer)
+			membership.Servers = append(membership.Servers, newServer)
 		}
 	case DemoteVoter:
-		for i, server := range configuration.Servers {
+		for i, server := range membership.Servers {
 			if server.ID == change.serverID {
-				configuration.Servers[i].Suffrage = Nonvoter
+				membership.Servers[i].Suffrage = Nonvoter
 				break
 			}
 		}
 	case RemoveServer:
-		for i, server := range configuration.Servers {
+		for i, server := range membership.Servers {
 			if server.ID == change.serverID {
-				configuration.Servers = append(configuration.Servers[:i], configuration.Servers[i+1:]...)
+				membership.Servers = append(membership.Servers[:i], membership.Servers[i+1:]...)
 				break
 			}
 		}
 	case Promote:
-		for i, server := range configuration.Servers {
+		for i, server := range membership.Servers {
 			if server.ID == change.serverID && server.Suffrage == Staging {
-				configuration.Servers[i].Suffrage = Voter
+				membership.Servers[i].Suffrage = Voter
 				break
 			}
 		}
 	}
 
 	// Make sure we didn't do something bad like remove the last voter
-	if err := checkConfiguration(configuration); err != nil {
-		return Configuration{}, err
+	if err := membership.check(); err != nil {
+		return Membership{}, err
 	}
 
-	return configuration, nil
+	return membership, nil
 }
 
-// encodePeers is used to serialize a Configuration into the old peers format.
+// encodePeers is used to serialize a Membership into the old peers format.
 // This is here for backwards compatibility when operating with a mix of old
 // servers and should be removed once we deprecate support for protocol version 1.
-func encodePeers(configuration Configuration, trans Transport) []byte {
+func encodePeers(membership Membership, trans Transport) []byte {
 	// Gather up all the voters, other suffrage types are not supported by
 	// this data format.
 	var encPeers [][]byte
-	for _, server := range configuration.Servers {
+	for _, server := range membership.Servers {
 		if server.Suffrage == Voter {
 			encPeers = append(encPeers, trans.EncodePeer(server.Address))
 		}
@@ -296,10 +298,10 @@ func encodePeers(configuration Configuration, trans Transport) []byte {
 	return buf.Bytes()
 }
 
-// decodePeers is used to deserialize an old list of peers into a Configuration.
+// decodePeers is used to deserialize an old list of peers into a Membership.
 // This is here for backwards compatibility with old log entries and snapshots;
 // it should be removed eventually.
-func decodePeers(buf []byte, trans Transport) Configuration {
+func decodePeers(buf []byte, trans Transport) Membership {
 	// Decode the buffer first.
 	var encPeers [][]byte
 	if err := decodeMsgPack(buf, &encPeers); err != nil {
@@ -317,27 +319,27 @@ func decodePeers(buf []byte, trans Transport) Configuration {
 		})
 	}
 
-	return Configuration{
+	return Membership{
 		Servers: servers,
 	}
 }
 
-// encodeConfiguration serializes a Configuration using MsgPack, or panics on
+// encodeMembership serializes a Membership using MsgPack, or panics on
 // errors.
-func encodeConfiguration(configuration Configuration) []byte {
-	buf, err := encodeMsgPack(configuration)
+func encodeMembership(membership Membership) []byte {
+	buf, err := encodeMsgPack(membership)
 	if err != nil {
-		panic(fmt.Errorf("failed to encode configuration: %v", err))
+		panic(fmt.Errorf("failed to encode membership: %v", err))
 	}
 	return buf.Bytes()
 }
 
-// decodeConfiguration deserializes a Configuration using MsgPack, or panics on
+// decodeMembership deserializes a Membership using MsgPack, or panics on
 // errors.
-func decodeConfiguration(buf []byte) Configuration {
-	var configuration Configuration
-	if err := decodeMsgPack(buf, &configuration); err != nil {
-		panic(fmt.Errorf("failed to decode configuration: %v", err))
+func decodeMembership(buf []byte) Membership {
+	var membership Membership
+	if err := decodeMsgPack(buf, &membership); err != nil {
+		panic(fmt.Errorf("failed to decode membership: %v", err))
 	}
-	return configuration
+	return membership
 }

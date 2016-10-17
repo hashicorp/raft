@@ -529,22 +529,22 @@ WAIT:
 	goto CHECK
 }
 
-// getConfiguration returns the configuration of the given Raft instance, or
+// getMembership returns the membership configuration of the given Raft instance, or
 // fails the test if there's an error
-func (c *cluster) getConfiguration(r *Raft) Configuration {
-	future := r.GetConfiguration()
+func (c *cluster) getMembership(r *Raft) Membership {
+	future := r.GetMembership()
 	if err := future.Error(); err != nil {
-		c.FailNowf("[ERR] failed to get configuration: %v", err)
-		return Configuration{}
+		c.FailNowf("[ERR] failed to get membership: %v", err)
+		return Membership{}
 	}
 
-	return future.Configuration()
+	return future.Membership()
 }
 
 // EnsureSamePeers makes sure all the rafts have the same set of peers.
 func (c *cluster) EnsureSamePeers(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
-	peerSet := c.getConfiguration(c.rafts[0])
+	peerSet := c.getMembership(c.rafts[0])
 
 CHECK:
 	for i, raft := range c.rafts {
@@ -552,7 +552,7 @@ CHECK:
 			continue
 		}
 
-		otherSet := c.getConfiguration(raft)
+		otherSet := c.getMembership(raft)
 		if !reflect.DeepEqual(peerSet, otherSet) {
 			if time.Now().After(limit) {
 				c.FailNowf("[ERR] peer mismatch: %+v %+v", peerSet, otherSet)
@@ -588,7 +588,7 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
 		failedCh:         make(chan struct{}),
 	}
 	c.t = t
-	var configuration Configuration
+	var membership Membership
 
 	// Setup the stores and transports
 	for i := 0; i < n; i++ {
@@ -612,7 +612,7 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
 		if conf.ProtocolVersion < 3 {
 			localID = ServerID(addr)
 		}
-		configuration.Servers = append(configuration.Servers, Server{
+		membership.Servers = append(membership.Servers, Server{
 			Suffrage: Voter,
 			ID:       localID,
 			Address:  addr,
@@ -631,11 +631,11 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
 		trans := c.trans[i]
 
 		peerConf := conf
-		peerConf.LocalID = configuration.Servers[i].ID
-		peerConf.Logger = newTestLoggerWithPrefix(t, string(configuration.Servers[i].ID))
+		peerConf.LocalID = membership.Servers[i].ID
+		peerConf.Logger = newTestLoggerWithPrefix(t, string(membership.Servers[i].ID))
 
 		if bootstrap {
-			err := BootstrapCluster(peerConf, logs, store, snap, trans, configuration)
+			err := BootstrapCluster(peerConf, logs, store, snap, trans, membership)
 			if err != nil {
 				c.FailNowf("[ERR] BootstrapCluster failed: %v", err)
 			}
@@ -713,17 +713,17 @@ func TestRaft_LiveBootstrap(t *testing.T) {
 	defer c.Close()
 
 	// Build the configuration.
-	configuration := Configuration{}
+	membership := Membership{}
 	for _, r := range c.rafts {
 		server := Server{
 			ID:      r.localID,
 			Address: r.localAddr,
 		}
-		configuration.Servers = append(configuration.Servers, server)
+		membership.Servers = append(membership.Servers, server)
 	}
 
 	// Bootstrap one of the nodes live.
-	boot := c.rafts[0].BootstrapCluster(configuration)
+	boot := c.rafts[0].BootstrapCluster(membership)
 	if err := boot.Error(); err != nil {
 		c.FailNowf("[ERR] bootstrap err: %v", err)
 	}
@@ -741,7 +741,7 @@ func TestRaft_LiveBootstrap(t *testing.T) {
 	c.WaitForReplication(1)
 
 	// Make sure the live bootstrap fails now that things are started up.
-	boot = c.rafts[0].BootstrapCluster(configuration)
+	boot = c.rafts[0].BootstrapCluster(membership)
 	if err := boot.Error(); err != ErrCantBootstrap {
 		c.FailNowf("[ERR] bootstrap should have failed: %v", err)
 	}
@@ -752,16 +752,15 @@ func TestRaft_RecoverCluster_NoState(t *testing.T) {
 	defer c.Close()
 
 	r := c.rafts[0]
-	configuration := Configuration{
-		Servers: []Server{
-			Server{
-				ID:      r.localID,
-				Address: r.localAddr,
-			},
+	membership := Membership{
+		Servers: []Server{{
+			ID:      r.localID,
+			Address: r.localAddr,
+		},
 		},
 	}
 	err := RecoverCluster(&r.conf, &MockFSM{}, r.logs, r.stable,
-		r.snapshots, r.trans, configuration)
+		r.snapshots, r.trans, membership)
 	if err == nil || !strings.Contains(err.Error(), "no initial state") {
 		c.FailNowf("[ERR] should have failed for no initial state: %v", err)
 	}
@@ -787,12 +786,12 @@ func TestRaft_RecoverCluster(t *testing.T) {
 			}
 		}
 
-		// Snap the configuration.
-		future := leader.GetConfiguration()
+		// Snap the membership configuration.
+		future := leader.GetMembership()
 		if err := future.Error(); err != nil {
-			c.FailNowf("[ERR] get configuration err: %v", err)
+			c.FailNowf("[ERR] get membership err: %v", err)
 		}
-		configuration := future.Configuration()
+		membership := future.Membership()
 
 		// Shut down the cluster.
 		for _, sec := range c.rafts {
@@ -809,7 +808,7 @@ func TestRaft_RecoverCluster(t *testing.T) {
 				c.FailNowf("[ERR] snapshot list err: %v", err)
 			}
 			if err := RecoverCluster(&r.conf, &MockFSM{}, r.logs, r.stable,
-				r.snapshots, r.trans, configuration); err != nil {
+				r.snapshots, r.trans, membership); err != nil {
 				c.FailNowf("[ERR] recover err: %v", err)
 			}
 
@@ -1253,10 +1252,10 @@ func TestRaft_RemoveFollower(t *testing.T) {
 	time.Sleep(c.propagateTimeout)
 
 	// Other nodes should have fewer peers
-	if configuration := c.getConfiguration(leader); len(configuration.Servers) != 2 {
+	if membership := c.getMembership(leader); len(membership.Servers) != 2 {
 		c.FailNowf("[ERR] too many peers")
 	}
-	if configuration := c.getConfiguration(followers[1]); len(configuration.Servers) != 2 {
+	if membership := c.getMembership(followers[1]); len(membership.Servers) != 2 {
 		c.FailNowf("[ERR] too many peers")
 	}
 }
@@ -1299,8 +1298,8 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	}
 
 	// Other nodes should have fewer peers
-	if configuration := c.getConfiguration(newLeader); len(configuration.Servers) != 2 {
-		c.FailNowf("[ERR] wrong number of peers %d", len(configuration.Servers))
+	if membership := c.getMembership(newLeader); len(membership.Servers) != 2 {
+		c.FailNowf("[ERR] wrong number of peers %d", len(membership.Servers))
 	}
 
 	// Old leader should be shutdown
@@ -1346,11 +1345,11 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	time.Sleep(c.propagateTimeout)
 
 	// Other nodes should have pulled the leader.
-	configuration := c.getConfiguration(newLeader)
-	if len(configuration.Servers) != 2 {
+	membership := c.getMembership(newLeader)
+	if len(membership.Servers) != 2 {
 		c.FailNowf("[ERR] too many peers")
 	}
-	if hasVote(configuration, leader.localID) {
+	if hasVote(membership, leader.localID) {
 		c.FailNowf("[ERR] old leader should no longer have a vote")
 	}
 
@@ -1360,11 +1359,11 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	}
 
 	// Old leader should not include itself in its peers.
-	configuration = c.getConfiguration(leader)
-	if len(configuration.Servers) != 2 {
+	membership = c.getMembership(leader)
+	if len(membership.Servers) != 2 {
 		c.FailNowf("[ERR] too many peers")
 	}
-	if hasVote(configuration, leader.localID) {
+	if hasVote(membership, leader.localID) {
 		c.FailNowf("[ERR] old leader should no longer have a vote")
 	}
 
@@ -1387,8 +1386,8 @@ func TestRaft_RemoveFollower_SplitCluster(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
 	for time.Now().Before(limit) && numServers != 4 {
 		time.Sleep(c.propagateTimeout)
-		configuration := c.getConfiguration(leader)
-		numServers = len(configuration.Servers)
+		membership := c.getMembership(leader)
+		numServers = len(membership.Servers)
 	}
 	if numServers != 4 {
 		c.FailNowf("[ERR] Leader should have 4 servers, got %d", numServers)
@@ -1409,6 +1408,16 @@ func TestRaft_RemoveFollower_SplitCluster(t *testing.T) {
 	}
 }
 
+func getCommittedMembership(c *cluster, n *Raft) (Membership, Index) {
+	req := &membershipsFuture{}
+	req.init()
+	n.membershipsCh <- req
+	if err := req.Error(); err != nil {
+		c.FailNowf("[ERR] Getting membership error: %v", err)
+	}
+	return req.memberships.committed, req.memberships.committedIndex
+}
+
 func TestRaft_AddKnownPeer(t *testing.T) {
 	// Make a cluster
 	c := MakeCluster(3, t, nil)
@@ -1418,28 +1427,15 @@ func TestRaft_AddKnownPeer(t *testing.T) {
 	leader := c.Leader()
 	followers := c.GetInState(Follower)
 
-	configReq := &configurationsFuture{}
-	configReq.init()
-	leader.configurationsCh <- configReq
-	if err := configReq.Error(); err != nil {
-		c.FailNowf("[ERR] err: %v", err)
-	}
-	startingConfig := configReq.configurations.committed
-	startingConfigIdx := configReq.configurations.committedIndex
+	startingConfig, startingConfigIdx := getCommittedMembership(c, leader)
 
 	// Add a follower
 	future := leader.AddVoter(followers[0].localID, followers[0].localAddr, 0, 0)
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] AddVoter() err: %v", err)
 	}
-	configReq = &configurationsFuture{}
-	configReq.init()
-	leader.configurationsCh <- configReq
-	if err := configReq.Error(); err != nil {
-		c.FailNowf("[ERR] err: %v", err)
-	}
-	newConfig := configReq.configurations.committed
-	newConfigIdx := configReq.configurations.committedIndex
+	newConfig, newConfigIdx := getCommittedMembership(c, leader)
+
 	if newConfigIdx <= startingConfigIdx {
 		c.FailNowf("[ERR] AddVoter should have written a new config entry, but configurations.commitedIndex still %d", newConfigIdx)
 	}
@@ -1455,14 +1451,7 @@ func TestRaft_RemoveUnknownPeer(t *testing.T) {
 
 	// Get the leader
 	leader := c.Leader()
-	configReq := &configurationsFuture{}
-	configReq.init()
-	leader.configurationsCh <- configReq
-	if err := configReq.Error(); err != nil {
-		c.FailNowf("[ERR] err: %v", err)
-	}
-	startingConfig := configReq.configurations.committed
-	startingConfigIdx := configReq.configurations.committedIndex
+	startingConfig, startingConfigIdx := getCommittedMembership(c, leader)
 
 	// Remove unknown
 	c.logger.Printf("[INFO] RemoveServer")
@@ -1473,16 +1462,8 @@ func TestRaft_RemoveUnknownPeer(t *testing.T) {
 	}
 
 	c.logger.Printf("[INFO] getting configurations")
-	configReq = &configurationsFuture{}
-	configReq.init()
-	leader.configurationsCh <- configReq
-	if err := configReq.Error(); err != nil {
-		c.FailNowf("[ERR] err: %v", err)
-	}
-	c.logger.Printf("[INFO] got configurations")
+	newConfig, newConfigIdx := getCommittedMembership(c, leader)
 
-	newConfig := configReq.configurations.committed
-	newConfigIdx := configReq.configurations.committedIndex
 	if newConfigIdx <= startingConfigIdx {
 		c.FailNowf("[ERR] RemoveServer should have written a new config entry, but configurations.commitedIndex still %d", newConfigIdx)
 	}
@@ -1850,11 +1831,11 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 
 	// Other nodes should have fewer peers.
 	time.Sleep(c.propagateTimeout)
-	if configuration := c.getConfiguration(leader); len(configuration.Servers) != 2 {
-		c.FailNowf("[ERR] too many peers: %v", configuration)
+	if membership := c.getMembership(leader); len(membership.Servers) != 2 {
+		c.FailNowf("[ERR] too many peers: %v", membership)
 	}
-	if configuration := c.getConfiguration(followers[1]); len(configuration.Servers) != 2 {
-		c.FailNowf("[ERR] too many peers: %v", configuration)
+	if membership := c.getMembership(followers[1]); len(membership.Servers) != 2 {
+		c.FailNowf("[ERR] too many peers: %v", membership)
 	}
 
 	// Get the leader. We can't use the normal stability checker here because
@@ -1884,11 +1865,11 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	// stability check here to make sure the cluster gets to a state where
 	// there's a solid leader.
 	leader = c.Leader()
-	if configuration := c.getConfiguration(leader); len(configuration.Servers) != 3 {
-		c.FailNowf("[ERR] missing peers: %v", configuration)
+	if membership := c.getMembership(leader); len(membership.Servers) != 3 {
+		c.FailNowf("[ERR] missing peers: %v", membership)
 	}
-	if configuration := c.getConfiguration(followers[1]); len(configuration.Servers) != 3 {
-		c.FailNowf("[ERR] missing peers: %v", configuration)
+	if membership := c.getMembership(followers[1]); len(membership.Servers) != 3 {
+		c.FailNowf("[ERR] missing peers: %v", membership)
 	}
 
 	// Should be a follower now.

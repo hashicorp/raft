@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-var sampleConfiguration Configuration = Configuration{
+var sampleMembership Membership = Membership{
 	Servers: []Server{
 		Server{
 			Suffrage: Nonvoter,
@@ -27,87 +27,87 @@ var sampleConfiguration Configuration = Configuration{
 	},
 }
 
-func TestConfiguration_Configuration_Clone(t *testing.T) {
-	cloned := sampleConfiguration.Clone()
-	if !reflect.DeepEqual(sampleConfiguration, cloned) {
-		t.Fatalf("mismatch %v %v", sampleConfiguration, cloned)
+func TestMembership_Membership_Clone(t *testing.T) {
+	cloned := sampleMembership.Clone()
+	if !reflect.DeepEqual(sampleMembership, cloned) {
+		t.Fatalf("mismatch %v %v", sampleMembership, cloned)
 	}
 	cloned.Servers[1].ID = "scribble"
-	if sampleConfiguration.Servers[1].ID == "scribble" {
+	if sampleMembership.Servers[1].ID == "scribble" {
 		t.Fatalf("cloned configuration shouldn't alias Servers")
 	}
 }
 
-func TestConfiguration_configurations_Clone(t *testing.T) {
-	configurations := configurations{
-		committed:      sampleConfiguration,
+func TestMembership_Memberships_Clone(t *testing.T) {
+	memberships := memberships{
+		committed:      sampleMembership,
 		committedIndex: 1,
-		latest:         sampleConfiguration,
+		latest:         sampleMembership,
 		latestIndex:    2,
 	}
-	cloned := configurations.Clone()
-	if !reflect.DeepEqual(configurations, cloned) {
-		t.Fatalf("mismatch %v %v", configurations, cloned)
+	cloned := memberships.Clone()
+	if !reflect.DeepEqual(memberships, cloned) {
+		t.Fatalf("mismatch %v %v", memberships, cloned)
 	}
 	cloned.committed.Servers[1].ID = "scribble"
 	cloned.latest.Servers[1].ID = "scribble"
-	if configurations.committed.Servers[1].ID == "scribble" ||
-		configurations.latest.Servers[1].ID == "scribble" {
+	if memberships.committed.Servers[1].ID == "scribble" ||
+		memberships.latest.Servers[1].ID == "scribble" {
 		t.Fatalf("cloned configuration shouldn't alias Servers")
 	}
 }
 
-func TestConfiguration_hasVote(t *testing.T) {
-	if hasVote(sampleConfiguration, "id0") {
+func TestMembership_hasVote(t *testing.T) {
+	if hasVote(sampleMembership, "id0") {
 		t.Fatalf("id0 should not have vote")
 	}
-	if !hasVote(sampleConfiguration, "id1") {
+	if !hasVote(sampleMembership, "id1") {
 		t.Fatalf("id1 should have vote")
 	}
-	if hasVote(sampleConfiguration, "id2") {
+	if hasVote(sampleMembership, "id2") {
 		t.Fatalf("id2 should not have vote")
 	}
-	if hasVote(sampleConfiguration, "someotherid") {
+	if hasVote(sampleMembership, "someotherid") {
 		t.Fatalf("someotherid should not have vote")
 	}
 }
 
-func TestConfiguration_checkConfiguration(t *testing.T) {
-	var configuration Configuration
-	if checkConfiguration(configuration) == nil {
+func TestMembership_checkMembership(t *testing.T) {
+	var membership Membership
+	if membership.check() == nil {
 		t.Fatalf("empty configuration should be error")
 	}
 
-	configuration.Servers = append(configuration.Servers, Server{
+	membership.Servers = append(membership.Servers, Server{
 		Suffrage: Nonvoter,
 		ID:       ServerID("id0"),
 		Address:  ServerAddress("addr0"),
 	})
-	if checkConfiguration(configuration) == nil {
+	if membership.check() == nil {
 		t.Fatalf("lack of voter should be error")
 	}
 
-	configuration.Servers = append(configuration.Servers, Server{
+	membership.Servers = append(membership.Servers, Server{
 		Suffrage: Voter,
 		ID:       ServerID("id1"),
 		Address:  ServerAddress("addr1"),
 	})
-	if err := checkConfiguration(configuration); err != nil {
+	if err := membership.check(); err != nil {
 		t.Fatalf("should be OK: %v", err)
 	}
 
-	configuration.Servers[1].ID = "id0"
-	err := checkConfiguration(configuration)
+	membership.Servers[1].ID = "id0"
+	err := membership.check()
 	if err == nil {
 		t.Fatalf("duplicate ID should be error")
 	}
 	if !strings.Contains(err.Error(), "duplicate ID") {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	configuration.Servers[1].ID = "id1"
+	membership.Servers[1].ID = "id1"
 
-	configuration.Servers[1].Address = "addr0"
-	err = checkConfiguration(configuration)
+	membership.Servers[1].Address = "addr0"
+	err = membership.check()
 	if err == nil {
 		t.Fatalf("duplicate address should be error")
 	}
@@ -116,7 +116,7 @@ func TestConfiguration_checkConfiguration(t *testing.T) {
 	}
 }
 
-var singleServer = Configuration{
+var singleServer = Membership{
 	Servers: []Server{
 		Server{
 			Suffrage: Voter,
@@ -126,7 +126,7 @@ var singleServer = Configuration{
 	},
 }
 
-var oneOfEach = Configuration{
+var oneOfEach = Membership{
 	Servers: []Server{
 		Server{
 			Suffrage: Voter,
@@ -146,7 +146,7 @@ var oneOfEach = Configuration{
 	},
 }
 
-var voterPair = Configuration{
+var voterPair = Membership{
 	Servers: []Server{
 		Server{
 			Suffrage: Voter,
@@ -161,14 +161,14 @@ var voterPair = Configuration{
 	},
 }
 
-var nextConfigurationTests = []struct {
-	current  Configuration
-	command  ConfigurationChangeCommand
+var nextMembershipTests = []struct {
+	current  Membership
+	command  MembershipChangeCommand
 	serverID int
 	next     string
 }{
 	// AddStaging: was missing.
-	{Configuration{}, AddStaging, 1, "{[{Voter id1 addr1}]}"},
+	{Membership{}, AddStaging, 1, "{[{Voter id1 addr1}]}"},
 	{singleServer, AddStaging, 2, "{[{Voter id1 addr1x} {Voter id2 addr2}]}"},
 	// AddStaging: was Voter.
 	{singleServer, AddStaging, 1, "{[{Voter id1 addr1}]}"},
@@ -214,81 +214,81 @@ var nextConfigurationTests = []struct {
 	{oneOfEach, Promote, 3, "{[{Voter id1 addr1x} {Staging id2 addr2x} {Nonvoter id3 addr3x}]}"},
 }
 
-func TestConfiguration_nextConfiguration_table(t *testing.T) {
-	for i, tt := range nextConfigurationTests {
-		req := configurationChangeRequest{
+func TestMembership_nextMembership_table(t *testing.T) {
+	for i, tt := range nextMembershipTests {
+		req := membershipChangeRequest{
 			command:       tt.command,
 			serverID:      ServerID(fmt.Sprintf("id%d", tt.serverID)),
 			serverAddress: ServerAddress(fmt.Sprintf("addr%d", tt.serverID)),
 		}
-		next, err := nextConfiguration(tt.current, 1, req)
+		next, err := nextMembership(tt.current, 1, req)
 		if err != nil {
-			t.Errorf("nextConfiguration %d should have succeeded, got %v", i, err)
+			t.Errorf("nextMembership %d should have succeeded, got %v", i, err)
 			continue
 		}
 		if fmt.Sprintf("%v", next) != tt.next {
-			t.Errorf("nextConfiguration %d returned %v, expected %s", i, next, tt.next)
+			t.Errorf("nextMembership %d returned %v, expected %s", i, next, tt.next)
 			continue
 		}
 	}
 }
 
-func TestConfiguration_nextConfiguration_prevIndex(t *testing.T) {
+func TestMembership_nextMembership_prevIndex(t *testing.T) {
 	// Stale prevIndex.
-	req := configurationChangeRequest{
+	req := membershipChangeRequest{
 		command:       AddStaging,
 		serverID:      ServerID("id1"),
 		serverAddress: ServerAddress("addr1"),
 		prevIndex:     1,
 	}
-	_, err := nextConfiguration(singleServer, 2, req)
+	_, err := nextMembership(singleServer, 2, req)
 	if err == nil || !strings.Contains(err.Error(), "changed") {
-		t.Fatalf("nextConfiguration should have failed due to intervening configuration change")
+		t.Fatalf("nextMembership should have failed due to intervening configuration change")
 	}
 
 	// Current prevIndex.
-	req = configurationChangeRequest{
+	req = membershipChangeRequest{
 		command:       AddStaging,
 		serverID:      ServerID("id2"),
 		serverAddress: ServerAddress("addr2"),
 		prevIndex:     2,
 	}
-	_, err = nextConfiguration(singleServer, 2, req)
+	_, err = nextMembership(singleServer, 2, req)
 	if err != nil {
-		t.Fatalf("nextConfiguration should have succeeded, got %v", err)
+		t.Fatalf("nextMembership should have succeeded, got %v", err)
 	}
 
 	// Zero prevIndex.
-	req = configurationChangeRequest{
+	req = membershipChangeRequest{
 		command:       AddStaging,
 		serverID:      ServerID("id3"),
 		serverAddress: ServerAddress("addr3"),
 		prevIndex:     0,
 	}
-	_, err = nextConfiguration(singleServer, 2, req)
+	_, err = nextMembership(singleServer, 2, req)
 	if err != nil {
-		t.Fatalf("nextConfiguration should have succeeded, got %v", err)
+		t.Fatalf("nextMembership should have succeeded, got %v", err)
 	}
 }
 
-func TestConfiguration_nextConfiguration_checkConfiguration(t *testing.T) {
-	req := configurationChangeRequest{
+func TestMembership_nextMembership_checkMembership(t *testing.T) {
+	req := membershipChangeRequest{
 		command:       AddNonvoter,
 		serverID:      ServerID("id1"),
 		serverAddress: ServerAddress("addr1"),
 	}
-	_, err := nextConfiguration(Configuration{}, 1, req)
+	_, err := nextMembership(Membership{}, 1, req)
 	if err == nil || !strings.Contains(err.Error(), "at least one voter") {
-		t.Fatalf("nextConfiguration should have failed for not having a voter")
+		t.Fatalf("nextMembership should have failed for not having a voter")
 	}
 }
 
-func TestConfiguration_encodeDecodePeers(t *testing.T) {
-	// Set up configuration.
-	var configuration Configuration
+func TestMembership_encodeDecodePeers(t *testing.T) {
+	// Set up membership.
+	var membership Membership
 	for i := 0; i < 3; i++ {
 		address := NewInmemAddr()
-		configuration.Servers = append(configuration.Servers, Server{
+		membership.Servers = append(membership.Servers, Server{
 			Suffrage: Voter,
 			ID:       ServerID(address),
 			Address:  ServerAddress(address),
@@ -297,18 +297,18 @@ func TestConfiguration_encodeDecodePeers(t *testing.T) {
 
 	// Encode into the old format.
 	_, trans := NewInmemTransport("")
-	buf := encodePeers(configuration, trans)
+	buf := encodePeers(membership, trans)
 
 	// Decode from old format, as if reading an old log entry.
 	decoded := decodePeers(buf, trans)
-	if !reflect.DeepEqual(configuration, decoded) {
-		t.Fatalf("mismatch %v %v", configuration, decoded)
+	if !reflect.DeepEqual(membership, decoded) {
+		t.Fatalf("mismatch %v %v", membership, decoded)
 	}
 }
 
-func TestConfiguration_encodeDecodeConfiguration(t *testing.T) {
-	decoded := decodeConfiguration(encodeConfiguration(sampleConfiguration))
-	if !reflect.DeepEqual(sampleConfiguration, decoded) {
-		t.Fatalf("mismatch %v %v", sampleConfiguration, decoded)
+func TestMembership_encodeDecodeMembership(t *testing.T) {
+	decoded := decodeMembership(encodeMembership(sampleMembership))
+	if !reflect.DeepEqual(sampleMembership, decoded) {
+		t.Fatalf("mismatch %v %v", sampleMembership, decoded)
 	}
 }
