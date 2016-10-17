@@ -30,7 +30,7 @@ type TestingPeer struct {
 }
 
 var (
-	configuration3 = Configuration{}
+	configuration3 = Membership{}
 	entry14        = Log{
 		Index: 14,
 		Term:  70,
@@ -1013,7 +1013,7 @@ func TestPeer_InstallSnapshotRPC_success(t *testing.T) {
 		LastLogIndex:       15,
 		LastLogTerm:        75,
 		Peers:              encodePeers(configuration3, tp.localTrans),
-		Configuration:      encodeConfiguration(configuration3),
+		Configuration:      encodeMembership(configuration3),
 		ConfigurationIndex: 3,
 		Size:               5,
 	}

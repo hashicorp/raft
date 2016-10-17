@@ -20,7 +20,7 @@ func NewDiscardSnapshotStore() *DiscardSnapshotStore {
 }
 
 func (d *DiscardSnapshotStore) Create(version SnapshotVersion, index Index, term Term,
-	configuration Configuration, configurationIndex Index, trans Transport) (SnapshotSink, error) {
+	membership Membership, configurationIndex Index, trans Transport) (SnapshotSink, error) {
 	return &DiscardSnapshotSink{}, nil
 }
 

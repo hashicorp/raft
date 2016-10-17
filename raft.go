@@ -103,22 +103,22 @@ func (r *Raft) setLeader(leader ServerAddress) {
 	r.leaderLock.Unlock()
 }
 
-// requestConfigChange is a helper for the above functions that make
-// configuration change requests. 'req' describes the change. For timeout,
+// requestMembershipChange is a helper for the functions that make
+// membership change requests. 'req' describes the change. For timeout,
 // see AddVoter.
-func (r *Raft) requestConfigChange(req configurationChangeRequest, timeout time.Duration) IndexFuture {
+func (r *Raft) requestMembershipChange(req membershipChangeRequest, timeout time.Duration) IndexFuture {
 	var timer <-chan time.Time
 	if timeout > 0 {
 		timer = time.After(timeout)
 	}
-	future := &configurationChangeFuture{
+	future := &membershipChangeFuture{
 		req: req,
 	}
 	future.init()
 	select {
 	case <-timer:
 		return errorFuture{ErrEnqueueTimeout}
-	case r.configurationChangeCh <- future:
+	case r.membershipChangeCh <- future:
 		return future
 	case <-r.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
@@ -161,7 +161,7 @@ func (r *Raft) runFollower() {
 		case rpc := <-r.rpcCh:
 			r.processRPC(rpc)
 
-		case c := <-r.configurationChangeCh:
+		case c := <-r.membershipChangeCh:
 			// Reject any operations since we are not the leader
 			c.respond(ErrNotLeader)
 
@@ -173,12 +173,12 @@ func (r *Raft) runFollower() {
 			// Reject any operations since we are not the leader
 			v.respond(ErrNotLeader)
 
-		case c := <-r.configurationsCh:
-			c.configurations = r.configurations.Clone()
+		case c := <-r.membershipsCh:
+			c.memberships = r.memberships.Clone()
 			c.respond(nil)
 
 		case b := <-r.bootstrapCh:
-			b.respond(r.liveBootstrap(b.configuration))
+			b.respond(r.liveBootstrap(b.membership))
 
 		case <-heartbeatTimer:
 			// Restart the heartbeat timer
@@ -194,15 +194,15 @@ func (r *Raft) runFollower() {
 			lastLeader := r.Leader()
 			r.setLeader("")
 
-			if r.configurations.latestIndex == 0 {
+			if r.memberships.latestIndex == 0 {
 				if !didWarn {
 					r.logger.Warn("no known peers, aborting election")
 					didWarn = true
 				}
-			} else if r.configurations.latestIndex == r.configurations.committedIndex &&
-				!hasVote(r.configurations.latest, r.localID) {
+			} else if r.memberships.latestIndex == r.memberships.committedIndex &&
+				!hasVote(r.memberships.latest, r.localID) {
 				if !didWarn {
-					r.logger.Warn("not part of stable configuration, aborting election")
+					r.logger.Warn("not part of stable membership configuration, aborting election")
 					didWarn = true
 				}
 			} else {
@@ -223,10 +223,10 @@ func (r *Raft) runFollower() {
 // liveBootstrap attempts to seed an initial configuration for the cluster. See
 // the Raft object's member BootstrapCluster for more details. This must only be
 // called on the main thread, and only makes sense in the follower state.
-func (r *Raft) liveBootstrap(configuration Configuration) error {
+func (r *Raft) liveBootstrap(membership Membership) error {
 	// Use the pre-init API to make the static updates.
 	err := BootstrapCluster(&r.conf, r.logs, r.stable, r.snapshots,
-		r.trans, configuration)
+		r.trans, membership)
 	if err != nil {
 		return err
 	}
@@ -238,7 +238,7 @@ func (r *Raft) liveBootstrap(configuration Configuration) error {
 	}
 	r.setCurrentTerm(1)
 	r.setLastLog(entry.Index, entry.Term)
-	r.processConfigurationLogEntry(&entry)
+	r.processMembershipLogEntry(&entry)
 	return nil
 }
 
@@ -255,7 +255,7 @@ func (r *Raft) runCandidate() {
 	// Set a timeout
 	electionTimer := randomTimeout(r.conf.ElectionTimeout)
 
-	if hasVote(r.configurations.latest, r.localID) {
+	if hasVote(r.memberships.latest, r.localID) {
 		// Persist a vote for ourselves
 		err := r.persistVote(r.getCurrentTerm(), r.trans.EncodePeer(r.localAddr))
 		if err != nil {
@@ -280,7 +280,7 @@ func (r *Raft) runCandidate() {
 				r.computeCandidateProgress()
 			}
 
-		case c := <-r.configurationChangeCh:
+		case c := <-r.membershipChangeCh:
 			// Reject any operations since we are not the leader
 			c.respond(ErrNotLeader)
 
@@ -292,8 +292,8 @@ func (r *Raft) runCandidate() {
 			// Reject any operations since we are not the leader
 			v.respond(ErrNotLeader)
 
-		case c := <-r.configurationsCh:
-			c.configurations = r.configurations.Clone()
+		case c := <-r.membershipsCh:
+			c.memberships = r.memberships.Clone()
 			c.respond(nil)
 
 		case b := <-r.bootstrapCh:
@@ -413,10 +413,10 @@ func (r *Raft) runLeader() {
 // existing peers updated control information, and stop communication with
 // removed peers. This must only be called from the main thread.
 func (r *Raft) updatePeers() {
-	inConfig := make(map[ServerID]Server, len(r.configurations.latest.Servers))
+	inConfig := make(map[ServerID]Server, len(r.memberships.latest.Servers))
 
 	// Start replication goroutines that need starting
-	for _, server := range r.configurations.latest.Servers {
+	for _, server := range r.memberships.latest.Servers {
 		if server.ID == r.localID {
 			continue
 		}
@@ -485,20 +485,20 @@ func (r *Raft) shutdownPeers() {
 	}
 }
 
-// configurationChangeChIfStable returns r.configurationChangeCh if it's safe
+// membershipChangeChIfStable returns r.membershipChangeCh if it's safe
 // to process requests from it, or nil otherwise. This must only be called
 // from the main thread.
 //
 // Note that if the conditions here were to change outside of leaderLoop to take
 // this from nil to non-nil, we would need leaderLoop to be kicked.
-func (r *Raft) configurationChangeChIfStable() chan *configurationChangeFuture {
+func (r *Raft) membershipChangeChIfStable() chan *membershipChangeFuture {
 	// Have to wait until:
 	// 1. The latest configuration is committed, and
 	// 2. This leader has committed some entry (the noop) in this term
 	//    https://groups.google.com/forum/#!msg/raft-dev/t4xj6dJTP6E/d2D9LrWRza8J
-	if r.configurations.latestIndex == r.configurations.committedIndex &&
+	if r.memberships.latestIndex == r.memberships.committedIndex &&
 		r.getCommitIndex() >= r.leaderState.startIndex {
-		return r.configurationChangeCh
+		return r.membershipChangeCh
 	}
 	return nil
 }
@@ -536,12 +536,12 @@ func (r *Raft) leaderLoop() {
 			}
 			r.verifyLeader(futures)
 
-		case c := <-r.configurationsCh:
-			c.configurations = r.configurations.Clone()
+		case c := <-r.membershipsCh:
+			c.memberships = r.memberships.Clone()
 			c.respond(nil)
 
-		case future := <-r.configurationChangeChIfStable():
-			r.appendConfigurationEntry(future)
+		case future := <-r.membershipChangeChIfStable():
+			r.appendMembershipEntry(future)
 
 		case b := <-r.bootstrapCh:
 			b.respond(ErrCantBootstrap)
@@ -592,11 +592,11 @@ func (r *Raft) updateCommitIndex(oldCommitIndex, commitIndex Index) {
 	stepDown := false
 	r.setCommitIndex(commitIndex)
 	// Process the newly committed entries
-	if r.configurations.latestIndex > oldCommitIndex &&
-		r.configurations.latestIndex <= commitIndex {
-		r.configurations.committed = r.configurations.latest
-		r.configurations.committedIndex = r.configurations.latestIndex
-		if !hasVote(r.configurations.committed, r.localID) {
+	if r.memberships.latestIndex > oldCommitIndex &&
+		r.memberships.latestIndex <= commitIndex {
+		r.memberships.committed = r.memberships.latest
+		r.memberships.committedIndex = r.memberships.latestIndex
+		if !hasVote(r.memberships.committed, r.localID) {
 			stepDown = true
 		}
 	}
@@ -652,9 +652,9 @@ func (r *Raft) verified(count uint64) {
 }
 
 func (r *Raft) computeCandidateProgress() {
-	servers := len(r.configurations.latest.Servers)
+	servers := len(r.memberships.latest.Servers)
 	votes := make([]uint64, 0, servers)
-	if hasVote(r.configurations.latest, r.localID) {
+	if hasVote(r.memberships.latest, r.localID) {
 		votes = append(votes, 1)
 	}
 	for peerID, peer := range r.peers {
@@ -664,7 +664,7 @@ func (r *Raft) computeCandidateProgress() {
 			r.updateTerm(peer.progress.term)
 			return
 		case peer.progress.term == r.getCurrentTerm():
-			if hasVote(r.configurations.latest, peerID) {
+			if hasVote(r.memberships.latest, peerID) {
 				if peer.progress.voteGranted {
 					votes = append(votes, 1)
 				} else {
@@ -684,10 +684,10 @@ func (r *Raft) computeCandidateProgress() {
 }
 
 func (r *Raft) computeLeaderProgress() {
-	servers := len(r.configurations.latest.Servers)
+	servers := len(r.memberships.latest.Servers)
 	verifiedCounters := make([]uint64, 0, servers)
 	matchIndexes := make([]uint64, 0, servers)
-	if hasVote(r.configurations.latest, r.localID) {
+	if hasVote(r.memberships.latest, r.localID) {
 		verifiedCounters = append(verifiedCounters, r.verifyCounter)
 		matchIndexes = append(matchIndexes, uint64(r.getLastIndex()))
 	}
@@ -698,7 +698,7 @@ func (r *Raft) computeLeaderProgress() {
 			r.updateTerm(peer.progress.term)
 			return
 		case peer.progress.term == r.getCurrentTerm():
-			if hasVote(r.configurations.latest, peerID) {
+			if hasVote(r.memberships.latest, peerID) {
 				verifiedCounters = append(verifiedCounters, peer.progress.verifiedCounter)
 				matchIndexes = append(matchIndexes, uint64(peer.progress.matchIndex))
 			}
@@ -760,13 +760,13 @@ func (r *Raft) verifyLeader(futures []*verifyFuture) {
 // as we may have lost connectivity. Returns the maximum duration without
 // contact. This must only be called from the main thread.
 func (r *Raft) checkLeaderLease() {
-	servers := len(r.configurations.latest.Servers)
+	servers := len(r.memberships.latest.Servers)
 	lastContacts := make([]uint64, 0, servers)
-	if hasVote(r.configurations.latest, r.localID) {
+	if hasVote(r.memberships.latest, r.localID) {
 		lastContacts = append(lastContacts, uint64(time.Now().UnixNano()))
 	}
 	for peerID, peer := range r.peers {
-		if hasVote(r.configurations.latest, peerID) {
+		if hasVote(r.memberships.latest, peerID) {
 			lastContacts = append(lastContacts, uint64(peer.progress.lastContact.UnixNano()))
 		}
 	}
@@ -781,18 +781,18 @@ func (r *Raft) checkLeaderLease() {
 	}
 }
 
-// appendConfigurationEntry changes the configuration and adds a new
+// appendMembershipEntry changes the configuration and adds a new membership
 // configuration entry to the log. This must only be called from the
 // main thread.
-func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
-	configuration, err := nextConfiguration(r.configurations.latest, r.configurations.latestIndex, future.req)
+func (r *Raft) appendMembershipEntry(future *membershipChangeFuture) {
+	membership, err := nextMembership(r.memberships.latest, r.memberships.latestIndex, future.req)
 	if err != nil {
 		future.respond(err)
 		return
 	}
 
-	r.logger.Info("Updating configuration with %s (%v, %v) to %+v",
-		future.req.command, future.req.serverID, future.req.serverAddress, configuration.Servers)
+	r.logger.Info("Updating membership configuration with %s (%v, %v) to %+v",
+		future.req.command, future.req.serverID, future.req.serverAddress, membership.Servers)
 
 	// In pre-ID compatibility mode we translate all configuration changes
 	// in to an old remove peer message, which can handle all supported
@@ -804,12 +804,12 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 	if r.protocolVersion < 2 {
 		future.log = Log{
 			Type: LogRemovePeerDeprecated,
-			Data: encodePeers(configuration, r.trans),
+			Data: encodePeers(membership, r.trans),
 		}
 	} else {
 		future.log = Log{
 			Type: LogConfiguration,
-			Data: encodeConfiguration(configuration),
+			Data: encodeMembership(membership),
 		}
 	}
 
@@ -833,7 +833,7 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 		applyLog.log.Term = term
 		logs[idx] = &applyLog.log
 		r.leaderState.inflight.PushBack(applyLog)
-		r.processConfigurationLogEntry(&applyLog.log)
+		r.processMembershipLogEntry(&applyLog.log)
 	}
 
 	// Write the log entry locally
@@ -1053,9 +1053,9 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 					r.logger.Error("Failed to clear log suffix: %v", err)
 					return
 				}
-				if entry.Index <= r.configurations.latestIndex {
-					r.configurations.latest = r.configurations.committed
-					r.configurations.latestIndex = r.configurations.committedIndex
+				if entry.Index <= r.memberships.latestIndex {
+					r.memberships.latest = r.memberships.committed
+					r.memberships.latestIndex = r.memberships.committedIndex
 					r.updatePeers()
 				}
 				newEntries = a.Entries[i:]
@@ -1074,7 +1074,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 
 			// Handle any new configuration changes
 			for _, newEntry := range newEntries {
-				r.processConfigurationLogEntry(newEntry)
+				r.processMembershipLogEntry(newEntry)
 			}
 
 			// Update the lastLog
@@ -1092,9 +1092,9 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	if a.LeaderCommitIndex > r.getCommitIndex() {
 		start := time.Now()
 		r.setCommitIndex(a.LeaderCommitIndex)
-		if r.configurations.latestIndex <= a.LeaderCommitIndex {
-			r.configurations.committed = r.configurations.latest
-			r.configurations.committedIndex = r.configurations.latestIndex
+		if r.memberships.latestIndex <= a.LeaderCommitIndex {
+			r.memberships.committed = r.memberships.latest
+			r.memberships.committedIndex = r.memberships.latestIndex
 		}
 		r.processLogs(a.LeaderCommitIndex, nil)
 		metrics.MeasureSince([]string{"raft", "rpc", "appendEntries", "processLogs"}, start)
@@ -1105,20 +1105,20 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	return
 }
 
-// processConfigurationLogEntry takes a log entry and updates the latest
-// configuration if the entry results in a new configuration. This must only be
+// processMembershipLogEntry takes a log entry and updates the latest
+// membership if the entry results in a new membership. This must only be
 // called from the main thread, or from NewRaft() before any threads have begun.
-func (r *Raft) processConfigurationLogEntry(entry *Log) {
+func (r *Raft) processMembershipLogEntry(entry *Log) {
 	if entry.Type == LogConfiguration {
-		r.configurations.committed = r.configurations.latest
-		r.configurations.committedIndex = r.configurations.latestIndex
-		r.configurations.latest = decodeConfiguration(entry.Data)
-		r.configurations.latestIndex = entry.Index
+		r.memberships.committed = r.memberships.latest
+		r.memberships.committedIndex = r.memberships.latestIndex
+		r.memberships.latest = decodeMembership(entry.Data)
+		r.memberships.latestIndex = entry.Index
 	} else if entry.Type == LogAddPeerDeprecated || entry.Type == LogRemovePeerDeprecated {
-		r.configurations.committed = r.configurations.latest
-		r.configurations.committedIndex = r.configurations.latestIndex
-		r.configurations.latest = decodePeers(entry.Data, r.trans)
-		r.configurations.latestIndex = entry.Index
+		r.memberships.committed = r.memberships.latest
+		r.memberships.committedIndex = r.memberships.latestIndex
+		r.memberships.latest = decodePeers(entry.Data, r.trans)
+		r.memberships.latestIndex = entry.Index
 	}
 	r.updatePeers()
 }
@@ -1142,7 +1142,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// Version 0 servers will panic unless the peers is present. It's only
 	// used on them to produce a warning message.
 	if r.protocolVersion < 2 {
-		resp.Peers = encodePeers(r.configurations.latest, r.trans)
+		resp.Peers = encodePeers(r.memberships.latest, r.trans)
 	}
 
 	// Check if we have an existing leader [who's not the candidate]
@@ -1253,10 +1253,10 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	defer r.setLastContact()
 
 	// Create a new snapshot
-	var reqConfiguration Configuration
+	var reqConfiguration Membership
 	var reqConfigurationIndex Index
 	if req.SnapshotVersion > 0 {
-		reqConfiguration = decodeConfiguration(req.Configuration)
+		reqConfiguration = decodeMembership(req.Configuration)
 		reqConfigurationIndex = req.ConfigurationIndex
 	} else {
 		reqConfiguration = decodePeers(req.Peers, r.trans)
@@ -1320,10 +1320,10 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	r.setLastSnapshot(req.LastLogIndex, req.LastLogTerm)
 
 	// Restore the peer set
-	r.configurations.latest = reqConfiguration
-	r.configurations.latestIndex = reqConfigurationIndex
-	r.configurations.committed = reqConfiguration
-	r.configurations.committedIndex = reqConfigurationIndex
+	r.memberships.latest = reqConfiguration
+	r.memberships.latestIndex = reqConfigurationIndex
+	r.memberships.committed = reqConfiguration
+	r.memberships.committedIndex = reqConfigurationIndex
 	r.updatePeers()
 
 	// Compact logs, continue even if this fails

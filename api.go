@@ -102,12 +102,12 @@ type Raft struct {
 	// LogStore provides durable storage for logs
 	logs LogStore
 
-	// Used to request the leader to make configuration changes.
-	configurationChangeCh chan *configurationChangeFuture
+	// Used to request the leader to make membership configuration changes.
+	membershipChangeCh chan *membershipChangeFuture
 
-	// Tracks the latest configuration and latest committed configuration from
-	// the log/snapshot.
-	configurations configurations
+	// Tracks the latest membership configuration and
+	// latest committed membership from the log/snapshot.
+	memberships memberships
 
 	// RPC chan comes from the transport layer
 	rpcCh <-chan RPC
@@ -134,9 +134,9 @@ type Raft struct {
 	// to verify we are still the leader
 	verifyCh chan *verifyFuture
 
-	// configurationsCh is used to get the configuration data safely from
-	// outside of the main thread.
-	configurationsCh chan *configurationsFuture
+	// membershipsCh is used to get the membership configuration
+	// data safely from outside of the main thread.
+	membershipsCh chan *membershipsFuture
 
 	// bootstrapCh is used to attempt an initial bootstrap from outside of
 	// the main thread.
@@ -161,14 +161,14 @@ type Raft struct {
 // listing just itself as a Voter, then invoke AddVoter() on it to add other
 // servers to the cluster.
 func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
-	snaps SnapshotStore, trans Transport, configuration Configuration) error {
+	snaps SnapshotStore, trans Transport, membership Membership) error {
 	// Validate the Raft server config.
 	if err := ValidateConfig(conf); err != nil {
 		return err
 	}
 
-	// Sanity check the Raft peer configuration.
-	if err := checkConfiguration(configuration); err != nil {
+	// Sanity check the Raft peer membership configuration.
+	if err := membership.check(); err != nil {
 		return err
 	}
 
@@ -193,10 +193,10 @@ func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
 	}
 	if conf.ProtocolVersion < 3 {
 		entry.Type = LogRemovePeerDeprecated
-		entry.Data = encodePeers(configuration, trans)
+		entry.Data = encodePeers(membership, trans)
 	} else {
 		entry.Type = LogConfiguration
-		entry.Data = encodeConfiguration(configuration)
+		entry.Data = encodeMembership(membership)
 	}
 	if err := logs.StoreLog(entry); err != nil {
 		return fmt.Errorf("failed to append configuration entry to log: %v", err)
@@ -234,14 +234,14 @@ func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
 // the sole voter, and then join up other new clean-state peer servers using
 // the usual APIs in order to bring the cluster back into a known state.
 func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
-	snaps SnapshotStore, trans Transport, configuration Configuration) error {
+	snaps SnapshotStore, trans Transport, membership Membership) error {
 	// Validate the Raft server config.
 	if err := ValidateConfig(conf); err != nil {
 		return err
 	}
 
-	// Sanity check the Raft peer configuration.
-	if err := checkConfiguration(configuration); err != nil {
+	// Sanity check the Raft peer membership configuration.
+	if err := membership.check(); err != nil {
 		return err
 	}
 
@@ -316,7 +316,7 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 		return fmt.Errorf("failed to snapshot FSM: %v", err)
 	}
 	version := getSnapshotVersion(conf.ProtocolVersion)
-	sink, err := snaps.Create(version, lastIndex, lastTerm, configuration, 1, trans)
+	sink, err := snaps.Create(version, lastIndex, lastTerm, membership, 1, trans)
 	if err != nil {
 		return fmt.Errorf("failed to create snapshot: %v", err)
 	}
@@ -431,32 +431,32 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 
 	// Create Raft struct.
 	r := &Raft{
-		protocolVersion: protocolVersion,
-		peerProgressCh:  make(chan peerProgress),
-		peers:           make(map[ServerID]*raftPeer),
-		applyCh:         make(chan *logFuture),
-		conf:            *conf,
-		fsm:             fsm,
-		fsmCommitCh:     make(chan commitTuple, 128),
-		fsmRestoreCh:    make(chan *restoreFuture),
-		fsmSnapshotCh:   make(chan *reqSnapshotFuture),
-		leaderCh:        make(chan bool),
-		localID:         localID,
-		localAddr:       localAddr,
-		logger:          logger,
-		logs:            logs,
-		configurationChangeCh: make(chan *configurationChangeFuture),
-		configurations:        configurations{},
-		rpcCh:                 trans.Consumer(),
-		snapshots:             snaps,
-		snapshotCh:            make(chan *snapshotFuture),
-		shutdownCh:            make(chan struct{}),
-		stable:                stable,
-		trans:                 trans,
-		verifyCh:              make(chan *verifyFuture, 64),
-		configurationsCh:      make(chan *configurationsFuture, 8),
-		bootstrapCh:           make(chan *bootstrapFuture),
-		observers:             make(map[uint64]*Observer),
+		protocolVersion:    protocolVersion,
+		peerProgressCh:     make(chan peerProgress),
+		peers:              make(map[ServerID]*raftPeer),
+		applyCh:            make(chan *logFuture),
+		conf:               *conf,
+		fsm:                fsm,
+		fsmCommitCh:        make(chan commitTuple, 128),
+		fsmRestoreCh:       make(chan *restoreFuture),
+		fsmSnapshotCh:      make(chan *reqSnapshotFuture),
+		leaderCh:           make(chan bool),
+		localID:            localID,
+		localAddr:          localAddr,
+		logger:             logger,
+		logs:               logs,
+		membershipChangeCh: make(chan *membershipChangeFuture),
+		memberships:        memberships{},
+		rpcCh:              trans.Consumer(),
+		snapshots:          snaps,
+		snapshotCh:         make(chan *snapshotFuture),
+		shutdownCh:         make(chan struct{}),
+		stable:             stable,
+		trans:              trans,
+		verifyCh:           make(chan *verifyFuture, 64),
+		membershipsCh:      make(chan *membershipsFuture, 8),
+		bootstrapCh:        make(chan *bootstrapFuture),
+		observers:          make(map[uint64]*Observer),
 	}
 	r.goRoutines = &waitGroup{}
 
@@ -487,10 +487,10 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 			r.logger.Error("Failed to get log at %d: %v", index, err)
 			panic(err)
 		}
-		r.processConfigurationLogEntry(&entry)
+		r.processMembershipLogEntry(&entry)
 	}
-	r.logger.Info("Initial configuration (index=%d): %+v",
-		r.configurations.latestIndex, r.configurations.latest.Servers)
+	r.logger.Info("Initial membership (index=%d): %+v",
+		r.memberships.latestIndex, r.memberships.latest.Servers)
 
 	// Setup a heartbeat fast-path to avoid head-of-line
 	// blocking where possible. It MUST be safe for this
@@ -540,16 +540,16 @@ func (r *Raft) restoreSnapshot() error {
 
 		// Update the configuration
 		if snapshot.Version > 0 {
-			r.configurations.committed = snapshot.Configuration
-			r.configurations.committedIndex = snapshot.ConfigurationIndex
-			r.configurations.latest = snapshot.Configuration
-			r.configurations.latestIndex = snapshot.ConfigurationIndex
+			r.memberships.committed = snapshot.Membership
+			r.memberships.committedIndex = snapshot.MembershipIndex
+			r.memberships.latest = snapshot.Membership
+			r.memberships.latestIndex = snapshot.MembershipIndex
 		} else {
 			configuration := decodePeers(snapshot.Peers, r.trans)
-			r.configurations.committed = configuration
-			r.configurations.committedIndex = snapshot.Index
-			r.configurations.latest = configuration
-			r.configurations.latestIndex = snapshot.Index
+			r.memberships.committed = configuration
+			r.memberships.committedIndex = snapshot.Index
+			r.memberships.latest = configuration
+			r.memberships.latestIndex = snapshot.Index
 		}
 
 		// Success!
@@ -569,10 +569,10 @@ func (r *Raft) restoreSnapshot() error {
 // absolutely must make sure that you call it with the same configuration on all
 // the Voter servers. There is no need to bootstrap Nonvoter and Staging
 // servers.
-func (r *Raft) BootstrapCluster(configuration Configuration) Future {
+func (r *Raft) BootstrapCluster(membership Membership) Future {
 	bootstrapReq := &bootstrapFuture{}
 	bootstrapReq.init()
-	bootstrapReq.configuration = configuration
+	bootstrapReq.membership = membership
 	select {
 	case <-r.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
@@ -667,17 +667,17 @@ func (r *Raft) VerifyLeader() Future {
 	}
 }
 
-// GetConfiguration returns the latest configuration and its associated index
+// GetMembership returns the latest membership configuration and its associated index
 // currently in use. This may not yet be committed. This must not be called on
 // the main thread (which can access the information directly).
-func (r *Raft) GetConfiguration() ConfigurationFuture {
-	configReq := &configurationsFuture{}
+func (r *Raft) GetMembership() MembershipFuture {
+	configReq := &membershipsFuture{}
 	configReq.init()
 	select {
 	case <-r.shutdownCh:
 		configReq.respond(ErrRaftShutdown)
 		return configReq
-	case r.configurationsCh <- configReq:
+	case r.membershipsCh <- configReq:
 		return configReq
 	}
 }
@@ -689,7 +689,7 @@ func (r *Raft) AddPeer(peer ServerAddress) Future {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
-	return r.requestConfigChange(configurationChangeRequest{
+	return r.requestMembershipChange(membershipChangeRequest{
 		command:       AddStaging,
 		serverID:      ServerID(peer),
 		serverAddress: peer,
@@ -706,7 +706,7 @@ func (r *Raft) RemovePeer(peer ServerAddress) Future {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
-	return r.requestConfigChange(configurationChangeRequest{
+	return r.requestMembershipChange(membershipChangeRequest{
 		command:   RemoveServer,
 		serverID:  ServerID(peer),
 		prevIndex: 0,
@@ -726,7 +726,7 @@ func (r *Raft) AddVoter(id ServerID, address ServerAddress, prevIndex Index, tim
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
-	return r.requestConfigChange(configurationChangeRequest{
+	return r.requestMembershipChange(membershipChangeRequest{
 		command:       AddStaging,
 		serverID:      id,
 		serverAddress: address,
@@ -744,7 +744,7 @@ func (r *Raft) AddNonvoter(id ServerID, address ServerAddress, prevIndex Index, 
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
-	return r.requestConfigChange(configurationChangeRequest{
+	return r.requestMembershipChange(membershipChangeRequest{
 		command:       AddNonvoter,
 		serverID:      id,
 		serverAddress: address,
@@ -760,7 +760,7 @@ func (r *Raft) RemoveServer(id ServerID, prevIndex Index, timeout time.Duration)
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
-	return r.requestConfigChange(configurationChangeRequest{
+	return r.requestMembershipChange(membershipChangeRequest{
 		command:   RemoveServer,
 		serverID:  id,
 		prevIndex: prevIndex,
@@ -777,7 +777,7 @@ func (r *Raft) DemoteVoter(id ServerID, prevIndex Index, timeout time.Duration) 
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
-	return r.requestConfigChange(configurationChangeRequest{
+	return r.requestMembershipChange(membershipChangeRequest{
 		command:   DemoteVoter,
 		serverID:  id,
 		prevIndex: prevIndex,
@@ -890,18 +890,18 @@ func (r *Raft) Stats() map[string]string {
 		"snapshot_version_max": toString(uint64(SnapshotVersionMax)),
 	}
 
-	future := r.GetConfiguration()
+	future := r.GetMembership()
 	if err := future.Error(); err != nil {
 		r.logger.Warn("could not get configuration for Stats: %v", err)
 	} else {
-		configuration := future.Configuration()
+		membership := future.Membership()
 		s["latest_configuration_index"] = toString(uint64(future.Index()))
-		s["latest_configuration"] = fmt.Sprintf("%+v", configuration.Servers)
+		s["latest_configuration"] = fmt.Sprintf("%+v", membership.Servers)
 
 		// This is a legacy metric that we've seen people use in the wild.
 		hasUs := false
 		numPeers := 0
-		for _, server := range configuration.Servers {
+		for _, server := range membership.Servers {
 			if server.Suffrage == Voter {
 				if server.ID == r.localID {
 					hasUs = true

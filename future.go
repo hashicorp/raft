@@ -33,14 +33,14 @@ type ApplyFuture interface {
 	Response() interface{}
 }
 
-// ConfigurationFuture is used for GetConfiguration and can return the
-// latest configuration in use by Raft.
-type ConfigurationFuture interface {
+// MembershipFuture is used for GetMembership and can return the
+// latest membership configuration in use by Raft.
+type MembershipFuture interface {
 	IndexFuture
 
-	// Configuration contains the latest configuration. This must
+	// Membership contains the latest membership. This must
 	// not be called until after the Error method has returned.
-	Configuration() Configuration
+	Membership() Membership
 }
 
 // errorFuture is used to return a static error.
@@ -98,12 +98,12 @@ func (d *deferError) respond(err error) {
 	d.responded = true
 }
 
-// There are several types of requests that cause a configuration entry to
-// be appended to the log. These are encoded here for leaderLoop() to process.
+// membershipChangeFuture is to track a membership configuration change that is
+// being applied to the log. These are encoded here for leaderLoop() to process.
 // This is internal to a single server.
-type configurationChangeFuture struct {
+type membershipChangeFuture struct {
 	logFuture
-	req configurationChangeRequest
+	req membershipChangeRequest
 }
 
 // bootstrapFuture is used to attempt a live bootstrap of the cluster. See the
@@ -111,8 +111,8 @@ type configurationChangeFuture struct {
 type bootstrapFuture struct {
 	deferError
 
-	// configuration is the proposed bootstrap configuration to apply.
-	configuration Configuration
+	// membership is the proposed bootstrap membership configuration to apply.
+	membership Membership
 }
 
 // logFuture is used to apply a log entry and waits until
@@ -176,21 +176,21 @@ type verifyFuture struct {
 	deferError
 }
 
-// configurationsFuture is used to retrieve the current configurations. This is
+// membershipsFuture is used to retrieve the current memberships. This is
 // used to allow safe access to this information outside of the main thread.
-type configurationsFuture struct {
+type membershipsFuture struct {
 	deferError
-	configurations configurations
+	memberships memberships
 }
 
-// Configuration returns the latest configuration in use by Raft.
-func (c *configurationsFuture) Configuration() Configuration {
-	return c.configurations.latest
+// Membership returns the latest membership configuration in use by Raft.
+func (f *membershipsFuture) Membership() Membership {
+	return f.memberships.latest
 }
 
-// Index returns the index of the latest configuration in use by Raft.
-func (c *configurationsFuture) Index() Index {
-	return c.configurations.latestIndex
+// Index returns the index of the latest membership in use by Raft.
+func (f *membershipsFuture) Index() Index {
+	return f.memberships.latestIndex
 }
 
 // appendFuture is used for waiting on a pipelined append
