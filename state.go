@@ -42,9 +42,6 @@ func (s RaftState) String() string {
 // and provides an interface to set/get the variables in a
 // thread safe manner.
 type raftShared struct {
-	// The current term, cache of StableStore
-	currentTerm Term
-
 	// protects 4 next fields
 	lastLock sync.Mutex
 
@@ -68,14 +65,6 @@ func (r *raftShared) getState() RaftState {
 func (r *raftShared) setState(s RaftState) {
 	stateAddr := (*uint32)(&r.state)
 	atomic.StoreUint32(stateAddr, uint32(s))
-}
-
-func (r *raftShared) getCurrentTerm() Term {
-	return Term(atomic.LoadUint64((*uint64)(&r.currentTerm)))
-}
-
-func (r *raftShared) setCurrentTerm(term Term) {
-	atomic.StoreUint64((*uint64)(&r.currentTerm), uint64(term))
 }
 
 func (r *raftShared) getLastLog() (index Index, term Term) {

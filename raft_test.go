@@ -257,6 +257,17 @@ CHECK:
 	}
 }
 
+func (c *cluster) getTerm(r *Raft) Term {
+	fut := r.Stats()
+	err := fut.Error()
+	if err == ErrRaftShutdown {
+		return r.server.currentTerm
+	} else if err != nil {
+		c.FailNowf("[ERR] failed to get stats: %v", err)
+	}
+	return fut.Stats().Term
+}
+
 // pollState takes a snapshot of the state of the cluster. This might not be
 // stable, so use GetInState() to apply some additional checks when waiting
 // for the cluster to achieve a particular state.
@@ -267,7 +278,7 @@ func (c *cluster) pollState(s RaftState) ([]*Raft, Term) {
 		if r.State() == s {
 			in = append(in, r)
 		}
-		term := r.server.shared.getCurrentTerm()
+		term := c.getTerm(r)
 		if term > highestTerm {
 			highestTerm = term
 		}
@@ -959,7 +970,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 
 	// Disconnect the leader now
 	t.Logf("[INFO] Disconnecting %v", leader)
-	leaderTerm := leader.server.shared.getCurrentTerm()
+	leaderTerm := c.getTerm(leader)
 	c.Disconnect(leader.server.localAddr)
 
 	// Wait for new leader
@@ -977,9 +988,9 @@ func TestRaft_LeaderFail(t *testing.T) {
 	}
 
 	// Ensure the term is greater
-	if newLead.server.shared.getCurrentTerm() <= leaderTerm {
+	if t := c.getTerm(newLead); t <= leaderTerm {
 		c.FailNowf("[ERR] expected newer term! %d %d (%v, %v)",
-			newLead.server.shared.getCurrentTerm(), leaderTerm, newLead, leader)
+			t, leaderTerm, newLead, leader)
 	}
 
 	// Apply should work not work on old leader
@@ -2020,7 +2031,7 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 
 	// Force follower to different term
 	follower := followers[0].server
-	follower.setCurrentTerm(follower.shared.getCurrentTerm() + 1)
+	follower.currentTerm += 1 // thread unsafe
 
 	// Verify we are leader
 	verify := leader.VerifyLeader()
@@ -2155,10 +2166,10 @@ func TestRaft_Voting(t *testing.T) {
 
 	reqVote := RequestVoteRequest{
 		RPCHeader:    ldr.server.getRPCHeader(),
-		Term:         ldr.server.shared.getCurrentTerm() + 10,
+		Term:         c.getTerm(ldr) + 10,
 		Candidate:    ldrT.EncodePeer(ldr.server.localAddr),
 		LastLogIndex: ldr.LastIndex(),
-		LastLogTerm:  ldr.server.shared.getCurrentTerm(),
+		LastLogTerm:  c.getTerm(ldr),
 	}
 	// a follower that thinks there's a leader should vote for that leader.
 	var resp RequestVoteResponse
@@ -2189,10 +2200,10 @@ func TestRaft_ProtocolVersion_RejectRPC(t *testing.T) {
 		RPCHeader: RPCHeader{
 			ProtocolVersion: ProtocolVersionMax + 1,
 		},
-		Term:         ldr.server.shared.getCurrentTerm() + 10,
+		Term:         c.getTerm(ldr) + 10,
 		Candidate:    ldrT.EncodePeer(ldr.server.localAddr),
 		LastLogIndex: ldr.LastIndex(),
-		LastLogTerm:  ldr.server.shared.getCurrentTerm(),
+		LastLogTerm:  c.getTerm(ldr),
 	}
 
 	// Reject a message from a future version we don't understand.

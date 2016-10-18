@@ -111,6 +111,10 @@ type raftServer struct {
 	// Last log entry sent to the FSM
 	lastApplied Index
 
+	// The latest term this server has seen. This value is kept in StableStore;
+	// after updating it, invoke persistCurrentTerm().
+	currentTerm Term
+
 	api *apiChannels
 
 	// Configuration provided at Raft initialization
@@ -504,7 +508,8 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	}
 
 	// Restore the current term and the last log.
-	r.setCurrentTerm(currentTerm)
+	r.currentTerm = currentTerm
+	r.persistCurrentTerm()
 	r.shared.setLastLog(lastLog.Index, lastLog.Term)
 
 	// Attempt to restore a snapshot if there are any.

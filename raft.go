@@ -211,7 +211,7 @@ func (r *raftServer) runFollower() {
 				}
 			} else {
 				r.logger.Warn("Heartbeat timeout from %q reached in term %d (last contact %v), starting election",
-					lastLeader, r.shared.getCurrentTerm(), lastContact)
+					lastLeader, r.currentTerm, lastContact)
 				metrics.IncrCounter([]string{"raft", "transition", "heartbeat_timeout"}, 1)
 				r.setState(Candidate)
 				r.updatePeers()
@@ -240,7 +240,8 @@ func (r *raftServer) liveBootstrap(membership Membership) error {
 	if err := r.logs.GetLog(1, &entry); err != nil {
 		panic(err)
 	}
-	r.setCurrentTerm(1)
+	r.currentTerm = 1
+	r.persistCurrentTerm()
 	r.shared.setLastLog(entry.Index, entry.Term)
 	r.processMembershipLogEntry(&entry)
 	return nil
@@ -248,20 +249,20 @@ func (r *raftServer) liveBootstrap(membership Membership) error {
 
 // runCandidate runs the FSM for a candidate.
 func (r *raftServer) runCandidate() {
-	r.logger.Info("%v entering Candidate state in term %v",
-		r, r.shared.getCurrentTerm()+1)
 	metrics.IncrCounter([]string{"raft", "state", "candidate"}, 1)
 	defer metrics.MeasureSince([]string{"raft", "candidate", "electSelf"}, time.Now())
 
 	// Increment the term
-	r.setCurrentTerm(r.shared.getCurrentTerm() + 1)
+	r.currentTerm += 1
+	r.persistCurrentTerm()
+	r.logger.Info("%v entering Candidate state in term %v", r, r.currentTerm)
 
 	// Set a timeout
 	electionTimer := randomTimeout(r.conf.ElectionTimeout)
 
 	if hasVote(r.memberships.latest, r.localID) {
 		// Persist a vote for ourselves
-		err := r.persistVote(r.shared.getCurrentTerm(), r.trans.EncodePeer(r.localAddr))
+		err := r.persistVote(r.currentTerm, r.trans.EncodePeer(r.localAddr))
 		if err != nil {
 			r.logger.Error("Failed to persist vote : %v", err)
 			return // TODO: panic?
@@ -468,7 +469,7 @@ func (r *raftServer) updatePeers() {
 			}
 		}
 		control := peerControl{
-			term:          r.shared.getCurrentTerm(),
+			term:          r.currentTerm,
 			role:          role,
 			verifyCounter: verifyCounter,
 			lastIndex:     lastIndex,
@@ -482,7 +483,7 @@ func (r *raftServer) updatePeers() {
 // shutdownPeers instructs all peers to exit immediately.
 func (r *raftServer) shutdownPeers() {
 	control := peerControl{
-		term: r.shared.getCurrentTerm(),
+		term: r.currentTerm,
 		role: Shutdown,
 	}
 	for serverID, peer := range r.peers {
@@ -671,11 +672,11 @@ func (r *raftServer) computeCandidateProgress() {
 	}
 	for peerID, peer := range r.peers {
 		switch {
-		case peer.progress.term > r.shared.getCurrentTerm():
+		case peer.progress.term > r.currentTerm:
 			r.logger.Debug("Newer term discovered, fallback to follower")
 			r.updateTerm(peer.progress.term)
 			return
-		case peer.progress.term == r.shared.getCurrentTerm():
+		case peer.progress.term == r.currentTerm:
 			if hasVote(r.memberships.latest, peerID) {
 				if peer.progress.voteGranted {
 					votes = append(votes, 1)
@@ -683,7 +684,7 @@ func (r *raftServer) computeCandidateProgress() {
 					votes = append(votes, 0)
 				}
 			}
-		case peer.progress.term < r.shared.getCurrentTerm():
+		case peer.progress.term < r.currentTerm:
 			votes = append(votes, 0)
 		}
 	}
@@ -705,16 +706,16 @@ func (r *raftServer) computeLeaderProgress() {
 	}
 	for peerID, peer := range r.peers {
 		switch {
-		case peer.progress.term > r.shared.getCurrentTerm():
+		case peer.progress.term > r.currentTerm:
 			r.logger.Debug("Newer term discovered, fallback to follower")
 			r.updateTerm(peer.progress.term)
 			return
-		case peer.progress.term == r.shared.getCurrentTerm():
+		case peer.progress.term == r.currentTerm:
 			if hasVote(r.memberships.latest, peerID) {
 				verifiedCounters = append(verifiedCounters, peer.progress.verifiedCounter)
 				matchIndexes = append(matchIndexes, uint64(peer.progress.matchIndex))
 			}
-		case peer.progress.term < r.shared.getCurrentTerm():
+		case peer.progress.term < r.currentTerm:
 			verifiedCounters = append(verifiedCounters, 0)
 			matchIndexes = append(matchIndexes, 0)
 		}
@@ -834,7 +835,6 @@ func (r *raftServer) dispatchLogs(applyLogs []*logFuture) {
 	now := time.Now()
 	defer metrics.MeasureSince([]string{"raft", "leader", "dispatchLog"}, now)
 
-	term := r.shared.getCurrentTerm()
 	lastIndex := r.shared.getLastIndex()
 	logs := make([]*Log, len(applyLogs))
 
@@ -842,7 +842,7 @@ func (r *raftServer) dispatchLogs(applyLogs []*logFuture) {
 		applyLog.dispatch = now
 		lastIndex++
 		applyLog.log.Index = lastIndex
-		applyLog.log.Term = term
+		applyLog.log.Term = r.currentTerm
 		logs[idx] = &applyLog.log
 		r.leaderState.inflight.PushBack(applyLog)
 		r.processMembershipLogEntry(&applyLog.log)
@@ -859,7 +859,7 @@ func (r *raftServer) dispatchLogs(applyLogs []*logFuture) {
 	}
 
 	// Update the last log since it's on disk now
-	r.shared.setLastLog(lastIndex, term)
+	r.shared.setLastLog(lastIndex, r.currentTerm)
 
 	// In case we're a 1-server cluster, this might be committed already.
 	r.computeLeaderProgress()
@@ -990,7 +990,7 @@ func (r *raftServer) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	// Setup a response
 	resp := &AppendEntriesResponse{
 		RPCHeader: r.getRPCHeader(),
-		Term:      r.shared.getCurrentTerm(),
+		Term:      r.currentTerm,
 		LastLog:   r.shared.getLastIndex(),
 		Success:   false,
 	}
@@ -1000,13 +1000,13 @@ func (r *raftServer) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	}()
 
 	// Ignore an older term
-	if a.Term < r.shared.getCurrentTerm() {
+	if a.Term < r.currentTerm {
 		return
 	}
 
 	// Increase the term if we see a newer one, also transition to follower
 	// if we ever get an appendEntries call
-	if a.Term > r.shared.getCurrentTerm() {
+	if a.Term > r.currentTerm {
 		r.updateTerm(a.Term)
 		resp.Term = a.Term
 	}
@@ -1142,7 +1142,7 @@ func (r *raftServer) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// Setup a response
 	resp := &RequestVoteResponse{
 		RPCHeader: r.getRPCHeader(),
-		Term:      r.shared.getCurrentTerm(),
+		Term:      r.currentTerm,
 		Granted:   false,
 	}
 	var rpcErr error
@@ -1165,12 +1165,12 @@ func (r *raftServer) requestVote(rpc RPC, req *RequestVoteRequest) {
 	}
 
 	// Ignore an older term
-	if req.Term < r.shared.getCurrentTerm() {
+	if req.Term < r.currentTerm {
 		return
 	}
 
 	// Increase the term if we see a newer one
-	if req.Term > r.shared.getCurrentTerm() {
+	if req.Term > r.currentTerm {
 		r.updateTerm(req.Term)
 		resp.Term = req.Term
 	}
@@ -1233,7 +1233,7 @@ func (r *raftServer) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "installSnapshot"}, time.Now())
 	// Setup a response
 	resp := &InstallSnapshotResponse{
-		Term:    r.shared.getCurrentTerm(),
+		Term:    r.currentTerm,
 		Success: false,
 	}
 	var rpcErr error
@@ -1249,12 +1249,12 @@ func (r *raftServer) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	}
 
 	// Ignore an older term
-	if req.Term < r.shared.getCurrentTerm() {
+	if req.Term < r.currentTerm {
 		return
 	}
 
 	// Increase the term if we see a newer one
-	if req.Term > r.shared.getCurrentTerm() {
+	if req.Term > r.currentTerm {
 		r.updateTerm(req.Term)
 		resp.Term = req.Term
 	}
@@ -1379,23 +1379,22 @@ func (r *raftServer) stepDown() {
 
 func (r *raftServer) updateTerm(term Term) {
 	r.setState(Follower)
-	oldTerm := r.shared.getCurrentTerm()
-	if term > oldTerm {
-		r.setCurrentTerm(term)
-	} else if term < oldTerm {
+	if term > r.currentTerm {
+		r.currentTerm = term
+		r.persistCurrentTerm()
+	} else if term < r.currentTerm {
 		panic("Can't step down to older term")
 	}
 	r.updatePeers()
 }
 
-// setCurrentTerm is used to set the current term in a durable manner.
+// persistCurrentTerm is used to save the current term in a durable manner.
 // The caller must call updatePeers() after changing the term.
-func (r *raftServer) setCurrentTerm(t Term) {
+func (r *raftServer) persistCurrentTerm() {
 	// Persist to disk first
-	if err := r.stable.SetUint64(keyCurrentTerm, uint64(t)); err != nil {
+	if err := r.stable.SetUint64(keyCurrentTerm, uint64(r.currentTerm)); err != nil {
 		panic(fmt.Errorf("failed to save current term: %v", err))
 	}
-	r.shared.setCurrentTerm(t)
 }
 
 // setState is used to update the current state. Any state
@@ -1418,7 +1417,7 @@ func (r *raftServer) stats() *Stats {
 	lastSnapIndex, lastSnapTerm := r.shared.getLastSnapshot()
 	s := &Stats{
 		State:              r.shared.getState(),
-		Term:               r.shared.getCurrentTerm(),
+		Term:               r.currentTerm,
 		LastLogIndex:       lastLogIndex,
 		LastLogTerm:        lastLogTerm,
 		CommitIndex:        r.commitIndex,
