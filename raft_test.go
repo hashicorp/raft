@@ -80,40 +80,22 @@ func inmemConfig(t *testing.T) *Config {
 	return conf
 }
 
-// This can be used as the destination for a logger and it'll
-// map them into calls to testing.T.Log, so that you only see
-// the logging for failed tests.
-type testLoggerAdapter struct {
-	t      *testing.T
-	prefix string
-}
-
-func (a *testLoggerAdapter) Write(d []byte) (int, error) {
-	if d[len(d)-1] == '\n' {
-		d = d[:len(d)-1]
-	}
-	if a.prefix != "" {
-		l := a.prefix + ": " + string(d)
-		if testing.Verbose() {
-			fmt.Printf("testLoggerAdapter verbose: %s\n", l)
-		}
-		a.t.Log(l)
-		return len(l), nil
-	}
-
-	if testing.Verbose() {
-		fmt.Printf("testLoggerAdapter verbose: %s\n", d)
-	}
-	a.t.Log(string(d))
-	return len(d), nil
-}
-
 func newTestLogger(t *testing.T) Logger {
-	return NewStdLogger(log.New(&testLoggerAdapter{t: t}, "", log.Lmicroseconds), LogDebug)
+	return newTestLoggerWithPrefix(t, "")
 }
 
 func newTestLoggerWithPrefix(t *testing.T, prefix string) Logger {
-	return NewStdLogger(log.New(&testLoggerAdapter{t: t, prefix: prefix}, "", log.Lmicroseconds), LogDebug)
+	if prefix != "" && prefix[len(prefix)-1] != ' ' {
+		prefix += " "
+	}
+	verboseLogger := log.New(os.Stderr, "go test -v: ", log.LstdFlags|log.Lshortfile)
+	return func(calldepth int, level LogLevel, msg string, values ...interface{}) {
+		s := fmt.Sprintf("[%v] %v%s", level, prefix, fmt.Sprintf(msg, values...))
+		t.Log(s) // There doesn't seem to be a way to get correct line numbers here.
+		if testing.Verbose() {
+			verboseLogger.Output(calldepth+4, s)
+		}
+	}
 }
 
 type cluster struct {
@@ -165,7 +147,7 @@ func (c *cluster) notifyFailed() {
 // thread to block until all goroutines have completed in order to reliably
 // fail tests using this function.
 func (c *cluster) Failf(format string, args ...interface{}) {
-	c.logger.Debug(format, args...)
+	(c.logger)(1, LogError, format, args...)
 	c.t.Fail()
 	c.notifyFailed()
 }
@@ -176,7 +158,7 @@ func (c *cluster) Failf(format string, args ...interface{}) {
 // other goroutines created during the test. Calling FailNowf does not stop
 // those other goroutines.
 func (c *cluster) FailNowf(format string, args ...interface{}) {
-	c.logger.Debug(format, args...)
+	(c.logger)(1, LogError, format, args...)
 	c.t.FailNow()
 }
 

@@ -30,11 +30,11 @@ type RaftEnv struct {
 	snapshot *FileSnapshotStore
 	trans    *NetworkTransport
 	raft     *Raft
-	logger   *log.Logger
+	logger   Logger
 }
 
 func (r *RaftEnv) Release() {
-	r.logger.Printf("[WARN] Release node at %v", r.raft.localAddr)
+	r.logger.Warn("Release node at %v", r.raft.localAddr)
 	f := r.raft.Shutdown()
 	if err := f.Error(); err != nil {
 		panic(err)
@@ -67,7 +67,7 @@ func MakeRaft(t *testing.T, conf *Config, bootstrap bool) *RaftEnv {
 		store:    stable,
 		snapshot: snap,
 		fsm:      &MockFSM{},
-		logger:   log.New(&testLoggerAdapter{t: t}, "", log.Lmicroseconds),
+		logger:   newTestLogger(t),
 	}
 
 	trans, err := NewTCPTransport("127.0.0.1:0", nil, 2, time.Second, nil)
@@ -195,7 +195,7 @@ func TestRaft_Integ(t *testing.T) {
 	}
 	for _, f := range futures {
 		NoErr(WaitFuture(f, t), t)
-		env1.logger.Printf("[DEBUG] Applied %v", f)
+		env1.logger.Debug("Applied %v", f)
 	}
 
 	// Do a snapshot
@@ -222,7 +222,7 @@ func TestRaft_Integ(t *testing.T) {
 	}
 	for _, f := range futures {
 		NoErr(WaitFuture(f, t), t)
-		leader.logger.Printf("[DEBUG] Applied %v", f)
+		leader.logger.Debug("Applied %v", f)
 	}
 
 	// Shoot two nodes in the head!
@@ -243,7 +243,7 @@ func TestRaft_Integ(t *testing.T) {
 	}
 	for _, f := range futures {
 		NoErr(WaitFuture(f, t), t)
-		leader.logger.Printf("[DEBUG] Applied %v", f)
+		leader.logger.Debug("Applied %v", f)
 	}
 
 	// Join a few new nodes!
