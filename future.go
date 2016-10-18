@@ -66,6 +66,9 @@ type deferError struct {
 	err       error
 	errCh     chan error
 	responded bool
+	// Optional. Closed on shutdown. Useful when the future might get stuck in a
+	// buffered channel somewhere.
+	shutdownCh chan struct{}
 }
 
 func (d *deferError) init() {
@@ -82,7 +85,11 @@ func (d *deferError) Error() error {
 	if d.errCh == nil {
 		panic("waiting for response on nil channel")
 	}
-	d.err = <-d.errCh
+	select {
+	case d.err = <-d.errCh:
+	case <-d.shutdownCh:
+		d.err = ErrRaftShutdown
+	}
 	return d.err
 }
 

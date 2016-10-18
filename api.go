@@ -701,6 +701,7 @@ func (r *Raft) Barrier(timeout time.Duration) Future {
 func (r *Raft) VerifyLeader() Future {
 	metrics.IncrCounter([]string{"raft", "verify_leader"}, 1)
 	verifyFuture := &verifyFuture{}
+	verifyFuture.shutdownCh = r.channels.shutdownCh
 	verifyFuture.init()
 	select {
 	case <-r.channels.shutdownCh:
@@ -715,6 +716,7 @@ func (r *Raft) VerifyLeader() Future {
 // the main thread (which can access the information directly).
 func (r *Raft) GetMembership() MembershipFuture {
 	configReq := &membershipsFuture{}
+	configReq.shutdownCh = r.channels.shutdownCh
 	configReq.init()
 	select {
 	case <-r.channels.shutdownCh:
@@ -975,6 +977,7 @@ func (s *Stats) String() string {
 // Stats returns various internal stats.
 func (r *Raft) Stats() StatsFuture {
 	statsReq := &statsFuture{}
+	statsReq.shutdownCh = r.channels.shutdownCh
 	statsReq.init()
 	select {
 	case <-r.channels.shutdownCh:
