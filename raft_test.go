@@ -1759,8 +1759,7 @@ func snapshotAndRestore(t *testing.T, offset uint64) {
 		c.FailNowf("[ERR] Snapshot open failed: %v", err)
 	}
 	defer reader.Close()
-	restore := leader.Restore(meta, reader, 5*time.Second)
-	if err := restore.Error(); err != nil {
+	if err := leader.Restore(meta, reader, 5*time.Second); err != nil {
 		c.FailNowf("[ERR] Restore failed: %v", err)
 	}
 
