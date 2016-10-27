@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-msgpack/codec"
+	log "github.com/mgutz/logxi/v1"
 )
 
 const (
@@ -63,7 +64,7 @@ type NetworkTransport struct {
 	heartbeatFn     func(RPC)
 	heartbeatFnLock sync.Mutex
 
-	logger Logger
+	logger log.Logger
 
 	maxPool int
 
@@ -134,7 +135,7 @@ func NewNetworkTransportWithLogger(
 	stream StreamLayer,
 	maxPool int,
 	timeout time.Duration,
-	logger Logger,
+	logger log.Logger,
 ) *NetworkTransport {
 	if logger == nil {
 		logger = DefaultStdLogger(os.Stderr)

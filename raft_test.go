@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-msgpack/codec"
+	log "github.com/mgutz/logxi/v1"
 )
 
 // MockFSM is an implementation of the FSM interface, and just stores
@@ -80,22 +80,12 @@ func inmemConfig(t *testing.T) *Config {
 	return conf
 }
 
-func newTestLogger(t *testing.T) Logger {
+func newTestLogger(t *testing.T) log.Logger {
 	return newTestLoggerWithPrefix(t, "")
 }
 
-func newTestLoggerWithPrefix(t *testing.T, prefix string) Logger {
-	if prefix != "" && prefix[len(prefix)-1] != ' ' {
-		prefix += " "
-	}
-	verboseLogger := log.New(os.Stderr, "go test -v: ", log.LstdFlags|log.Lshortfile)
-	return func(calldepth int, level LogLevel, msg string, values ...interface{}) {
-		s := fmt.Sprintf("[%v] %v%s", level, prefix, fmt.Sprintf(msg, values...))
-		t.Log(s) // There doesn't seem to be a way to get correct line numbers here.
-		if testing.Verbose() {
-			verboseLogger.Output(calldepth+4, s)
-		}
-	}
+func newTestLoggerWithPrefix(t *testing.T, prefix string) log.Logger {
+	return NewRaftLoggerForTesting(os.Stderr, prefix)
 }
 
 type cluster struct {
@@ -110,7 +100,7 @@ type cluster struct {
 	conf             *Config
 	propagateTimeout time.Duration
 	longstopTimeout  time.Duration
-	logger           Logger
+	logger           log.Logger
 	startTime        time.Time
 
 	failedLock sync.Mutex
@@ -147,7 +137,7 @@ func (c *cluster) notifyFailed() {
 // thread to block until all goroutines have completed in order to reliably
 // fail tests using this function.
 func (c *cluster) Failf(format string, args ...interface{}) {
-	(c.logger)(1, LogError, format, args...)
+	c.logger.Error(format, args...)
 	c.t.Fail()
 	c.notifyFailed()
 }
@@ -158,7 +148,7 @@ func (c *cluster) Failf(format string, args ...interface{}) {
 // other goroutines created during the test. Calling FailNowf does not stop
 // those other goroutines.
 func (c *cluster) FailNowf(format string, args ...interface{}) {
-	(c.logger)(1, LogError, format, args...)
+	c.logger.Error(format, args...)
 	c.t.FailNow()
 }
 

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	log "github.com/mgutz/logxi/v1"
 )
 
 type TestingPeer struct {
@@ -16,7 +18,7 @@ type TestingPeer struct {
 	peerTrans    *InmemTransport
 	localAddr    ServerAddress
 	localTrans   *InmemTransport
-	logger       Logger
+	logger       log.Logger
 	logs         LogStore
 	snapshots    SnapshotStore
 	snapshotDir  string

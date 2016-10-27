@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	log "github.com/mgutz/logxi/v1"
 )
 
 const (
@@ -29,7 +31,7 @@ const (
 type FileSnapshotStore struct {
 	path   string
 	retain int
-	logger Logger
+	logger log.Logger
 }
 
 type snapMetaSlice []*fileSnapshotMeta
@@ -37,7 +39,7 @@ type snapMetaSlice []*fileSnapshotMeta
 // FileSnapshotSink implements SnapshotSink with a file.
 type FileSnapshotSink struct {
 	store  *FileSnapshotStore
-	logger Logger
+	logger log.Logger
 	dir    string
 	meta   fileSnapshotMeta
 
@@ -73,7 +75,7 @@ func (b *bufferedFile) Close() error {
 // NewFileSnapshotStoreWithLogger creates a new FileSnapshotStore based
 // on a base directory. The `retain` parameter controls how many
 // snapshots are retained. Must be at least 1.
-func NewFileSnapshotStoreWithLogger(base string, retain int, logger Logger) (*FileSnapshotStore, error) {
+func NewFileSnapshotStoreWithLogger(base string, retain int, logger log.Logger) (*FileSnapshotStore, error) {
 	if retain < 1 {
 		return nil, fmt.Errorf("must retain at least one snapshot")
 	}

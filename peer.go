@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/armon/go-metrics"
+	log "github.com/mgutz/logxi/v1"
 )
 
 // Settings controlling Peer behavior, as passed to startPeer().
@@ -41,7 +42,7 @@ type peerShared struct {
 	options peerOptions
 
 	// Where to print debug messages.
-	logger Logger
+	logger log.Logger
 
 	// Used to spawn goroutines so others can wait on their exit.
 	goRoutines *waitGroup
@@ -271,7 +272,7 @@ type peerState struct {
 // startPeer is the normal way for peers to be created.
 func startPeer(serverID ServerID,
 	serverAddress ServerAddress,
-	logger Logger,
+	logger log.Logger,
 	logs LogStore,
 	snapshots SnapshotStore,
 	goRoutines *waitGroup,
@@ -289,7 +290,7 @@ func startPeer(serverID ServerID,
 // makePeerInternal is used for unit tests. Everyone else should use startPeer.
 func makePeerInternal(serverID ServerID,
 	serverAddress ServerAddress,
-	logger Logger,
+	logger log.Logger,
 	logs LogStore,
 	snapshots SnapshotStore,
 	goRoutines *waitGroup,
@@ -396,7 +397,9 @@ func (p *peerState) checkInvariants() error {
 func (p *peerState) selectLoop() {
 	for p.control.role != Shutdown {
 		if err := p.checkInvariants(); err != nil {
-			p.shared.logger.Panic("Peer %v invariant violated: %v", p.shared.peerID, err)
+			msg := fmt.Sprintf("Peer %v invariant violated: %v", p.shared.peerID, err)
+			p.shared.logger.Error(msg)
+			panic(msg)
 		}
 
 		didSomething := p.issueWork()

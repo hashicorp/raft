@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"os"
 	"testing"
 	"time"
+
+	log "github.com/mgutz/logxi/v1"
 )
 
 // CheckInteg will skip a test if integration testing is not enabled.
@@ -30,7 +31,7 @@ type RaftEnv struct {
 	snapshot *FileSnapshotStore
 	trans    *NetworkTransport
 	raft     *Raft
-	logger   Logger
+	logger   log.Logger
 }
 
 func (r *RaftEnv) Release() {
@@ -90,7 +91,7 @@ func MakeRaft(t *testing.T, conf *Config, bootstrap bool) *RaftEnv {
 		}
 	}
 
-	log.Printf("[INFO] Starting node at %v", trans.LocalAddr())
+	log.Info("Starting node at %v", trans.LocalAddr())
 	raft, err := NewRaft(conf, env.fsm, stable, stable, snap, trans)
 	if err != nil {
 		t.Fatalf("err: %v", err)

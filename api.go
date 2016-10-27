@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/armon/go-metrics"
+	log "github.com/mgutz/logxi/v1"
 )
 
 var (
@@ -154,7 +155,7 @@ type raftServer struct {
 	localAddr ServerAddress
 
 	// Used for our logging
-	logger Logger
+	logger log.Logger
 
 	// LogStore provides durable storage for logs
 	logs LogStore
@@ -421,7 +422,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	}
 
 	// Ensure we have a LogOutput.
-	var logger Logger
+	var logger log.Logger
 	if conf.Logger != nil {
 		logger = conf.Logger
 	} else {
