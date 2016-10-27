@@ -3,7 +3,6 @@ package raft
 import (
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"strconv"
 	"sync"
@@ -98,7 +97,7 @@ type Raft struct {
 	localAddr ServerAddress
 
 	// Used for our logging
-	logger *log.Logger
+	logger Logger
 
 	// LogStore provides durable storage for logs
 	logs LogStore
@@ -388,14 +387,14 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	}
 
 	// Ensure we have a LogOutput.
-	var logger *log.Logger
+	var logger Logger
 	if conf.Logger != nil {
 		logger = conf.Logger
 	} else {
 		if conf.LogOutput == nil {
 			conf.LogOutput = os.Stderr
 		}
-		logger = log.New(conf.LogOutput, "", log.LstdFlags)
+		logger = DefaultStdLogger(conf.LogOutput)
 	}
 
 	// Try to restore the current term.
@@ -485,12 +484,12 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	for index := snapshotIndex + 1; index <= lastLog.Index; index++ {
 		var entry Log
 		if err := r.logs.GetLog(index, &entry); err != nil {
-			r.logger.Printf("[ERR] raft: Failed to get log at %d: %v", index, err)
+			r.logger.Error("Failed to get log at %d: %v", index, err)
 			panic(err)
 		}
 		r.processMembershipLogEntry(&entry)
 	}
-	r.logger.Printf("[INFO] raft: Initial membership (index=%d): %+v",
+	r.logger.Info("Initial membership (index=%d): %+v",
 		r.memberships.latestIndex, r.memberships.latest.Servers)
 
 	// Setup a heartbeat fast-path to avoid head-of-line
@@ -512,7 +511,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 func (r *Raft) restoreSnapshot() error {
 	snapshots, err := r.snapshots.List()
 	if err != nil {
-		r.logger.Printf("[ERR] raft: Failed to list snapshots: %v", err)
+		r.logger.Error("Failed to list snapshots: %v", err)
 		return err
 	}
 
@@ -520,18 +519,18 @@ func (r *Raft) restoreSnapshot() error {
 	for _, snapshot := range snapshots {
 		_, source, err := r.snapshots.Open(snapshot.ID)
 		if err != nil {
-			r.logger.Printf("[ERR] raft: Failed to open snapshot %v: %v", snapshot.ID, err)
+			r.logger.Error("Failed to open snapshot %v: %v", snapshot.ID, err)
 			continue
 		}
 		defer source.Close()
 
 		if err := r.fsm.Restore(source); err != nil {
-			r.logger.Printf("[ERR] raft: Failed to restore snapshot %v: %v", snapshot.ID, err)
+			r.logger.Error("Failed to restore snapshot %v: %v", snapshot.ID, err)
 			continue
 		}
 
 		// Log success
-		r.logger.Printf("[INFO] raft: Restored from snapshot %v", snapshot.ID)
+		r.logger.Info("Restored from snapshot %v", snapshot.ID)
 
 		// Update the lastApplied so we don't replay old logs
 		r.setLastApplied(snapshot.Index)
@@ -893,7 +892,7 @@ func (r *Raft) Stats() map[string]string {
 
 	future := r.GetMembership()
 	if err := future.Error(); err != nil {
-		r.logger.Printf("[WARN] raft: could not get configuration for Stats: %v", err)
+		r.logger.Warn("could not get configuration for Stats: %v", err)
 	} else {
 		membership := future.Membership()
 		s["latest_configuration_index"] = toString(uint64(future.Index()))

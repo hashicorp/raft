@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"os"
 	"sync"
@@ -64,7 +63,7 @@ type NetworkTransport struct {
 	heartbeatFn     func(RPC)
 	heartbeatFnLock sync.Mutex
 
-	logger *log.Logger
+	logger Logger
 
 	maxPool int
 
@@ -124,7 +123,7 @@ func NewNetworkTransport(
 	if logOutput == nil {
 		logOutput = os.Stderr
 	}
-	return NewNetworkTransportWithLogger(stream, maxPool, timeout, log.New(logOutput, "", log.LstdFlags))
+	return NewNetworkTransportWithLogger(stream, maxPool, timeout, DefaultStdLogger(logOutput))
 }
 
 // NewNetworkTransportWithLogger creates a new network transport with the given dialer
@@ -135,10 +134,10 @@ func NewNetworkTransportWithLogger(
 	stream StreamLayer,
 	maxPool int,
 	timeout time.Duration,
-	logger *log.Logger,
+	logger Logger,
 ) *NetworkTransport {
 	if logger == nil {
-		logger = log.New(os.Stderr, "", log.LstdFlags)
+		logger = DefaultStdLogger(os.Stderr)
 	}
 	trans := &NetworkTransport{
 		connPool:     make(map[ServerAddress][]*netConn),
@@ -363,10 +362,10 @@ func (n *NetworkTransport) listen() {
 			if n.IsShutdown() {
 				return
 			}
-			n.logger.Printf("[ERR] raft-net: Failed to accept connection: %v", err)
+			n.logger.Error("Failed to accept connection: %v", err)
 			continue
 		}
-		n.logger.Printf("[DEBUG] raft-net: %v accepted connection from: %v", n.LocalAddr(), conn.RemoteAddr())
+		n.logger.Debug("%v accepted connection from: %v", n.LocalAddr(), conn.RemoteAddr())
 
 		// Handle the connection in dedicated routine
 		go n.handleConn(conn)
@@ -384,12 +383,12 @@ func (n *NetworkTransport) handleConn(conn net.Conn) {
 	for {
 		if err := n.handleCommand(r, dec, enc); err != nil {
 			if err != io.EOF {
-				n.logger.Printf("[ERR] raft-net: Failed to decode incoming command: %v", err)
+				n.logger.Error("Failed to decode incoming command: %v", err)
 			}
 			return
 		}
 		if err := w.Flush(); err != nil {
-			n.logger.Printf("[ERR] raft-net: Failed to flush response: %v", err)
+			n.logger.Error("Failed to flush response: %v", err)
 			return
 		}
 	}

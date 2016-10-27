@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"strings"
 	"testing"
@@ -17,7 +16,7 @@ type TestingPeer struct {
 	peerTrans    *InmemTransport
 	localAddr    ServerAddress
 	localTrans   *InmemTransport
-	logger       *log.Logger
+	logger       Logger
 	logs         LogStore
 	snapshots    SnapshotStore
 	snapshotDir  string
@@ -265,10 +264,10 @@ func serveReplies(tp *TestingPeer, replies []cannedReply) Future {
 				}
 				errReply, ok := reply.reply.(error)
 				if ok {
-					tp.peer.shared.logger.Printf("Peer Test: Replying to %T with error", rpc.Command)
+					tp.peer.shared.logger.Info("Peer Test: Replying to %T with error", rpc.Command)
 					rpc.Respond(nil, errReply)
 				} else {
-					tp.peer.shared.logger.Printf("Peer Test: Replying to %T", rpc.Command)
+					tp.peer.shared.logger.Info("Peer Test: Replying to %T", rpc.Command)
 					rpc.Respond(reply.reply, nil)
 				}
 			case <-time.After(time.Millisecond * 100):
@@ -1003,7 +1002,7 @@ func TestPeer_InstallSnapshotRPC_success(t *testing.T) {
 	}
 	err := waitFor(tp, func() bool { return tp.peer.leader.needsSnapshot })
 	if err != nil {
-		t.Error("expected AppendEntries RPC to set needsSnapshot: %v", err)
+		t.Errorf("expected AppendEntries RPC to set needsSnapshot: %v", err)
 	}
 
 	exp := InstallSnapshotRequest{

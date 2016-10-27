@@ -80,40 +80,22 @@ func inmemConfig(t *testing.T) *Config {
 	return conf
 }
 
-// This can be used as the destination for a logger and it'll
-// map them into calls to testing.T.Log, so that you only see
-// the logging for failed tests.
-type testLoggerAdapter struct {
-	t      *testing.T
-	prefix string
+func newTestLogger(t *testing.T) Logger {
+	return newTestLoggerWithPrefix(t, "")
 }
 
-func (a *testLoggerAdapter) Write(d []byte) (int, error) {
-	if d[len(d)-1] == '\n' {
-		d = d[:len(d)-1]
+func newTestLoggerWithPrefix(t *testing.T, prefix string) Logger {
+	if prefix != "" && prefix[len(prefix)-1] != ' ' {
+		prefix += " "
 	}
-	if a.prefix != "" {
-		l := a.prefix + ": " + string(d)
+	verboseLogger := log.New(os.Stderr, "go test -v: ", log.LstdFlags|log.Lshortfile)
+	return func(calldepth int, level LogLevel, msg string, values ...interface{}) {
+		s := fmt.Sprintf("[%v] %v%s", level, prefix, fmt.Sprintf(msg, values...))
+		t.Log(s) // There doesn't seem to be a way to get correct line numbers here.
 		if testing.Verbose() {
-			fmt.Printf("testLoggerAdapter verbose: %s\n", l)
+			verboseLogger.Output(calldepth+4, s)
 		}
-		a.t.Log(l)
-		return len(l), nil
 	}
-
-	if testing.Verbose() {
-		fmt.Printf("testLoggerAdapter verbose: %s\n", d)
-	}
-	a.t.Log(string(d))
-	return len(d), nil
-}
-
-func newTestLogger(t *testing.T) *log.Logger {
-	return log.New(&testLoggerAdapter{t: t}, "", log.Lmicroseconds)
-}
-
-func newTestLoggerWithPrefix(t *testing.T, prefix string) *log.Logger {
-	return log.New(&testLoggerAdapter{t: t, prefix: prefix}, "", log.Lmicroseconds)
 }
 
 type cluster struct {
@@ -128,7 +110,7 @@ type cluster struct {
 	conf             *Config
 	propagateTimeout time.Duration
 	longstopTimeout  time.Duration
-	logger           *log.Logger
+	logger           Logger
 	startTime        time.Time
 
 	failedLock sync.Mutex
@@ -165,7 +147,7 @@ func (c *cluster) notifyFailed() {
 // thread to block until all goroutines have completed in order to reliably
 // fail tests using this function.
 func (c *cluster) Failf(format string, args ...interface{}) {
-	c.logger.Printf(format, args...)
+	(c.logger)(1, LogError, format, args...)
 	c.t.Fail()
 	c.notifyFailed()
 }
@@ -176,7 +158,7 @@ func (c *cluster) Failf(format string, args ...interface{}) {
 // other goroutines created during the test. Calling FailNowf does not stop
 // those other goroutines.
 func (c *cluster) FailNowf(format string, args ...interface{}) {
-	c.logger.Printf(format, args...)
+	(c.logger)(1, LogError, format, args...)
 	c.t.FailNow()
 }
 
@@ -296,7 +278,7 @@ func (c *cluster) pollState(s RaftState) ([]*Raft, Term) {
 // GetInState polls the state of the cluster and attempts to identify when it has
 // settled into the given state.
 func (c *cluster) GetInState(s RaftState) []*Raft {
-	c.logger.Printf("[INFO] Starting stability test for raft state: %+v", s)
+	c.logger.Info("Starting stability test for raft state: %+v", s)
 	limitCh := time.After(c.longstopTimeout)
 
 	// An election should complete after 2 * max(HeartbeatTimeout, ElectionTimeout)
@@ -356,13 +338,13 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 			c.FailNowf("[ERR] Timeout waiting for stable %s state", s)
 
 		case <-c.WaitEventChan(filter, 0):
-			c.logger.Printf("[DEBUG] Resetting stability timeout")
+			c.logger.Debug("Resetting stability timeout")
 
 		case t, ok := <-timer.C:
 			if !ok {
 				c.FailNowf("[ERR] Timer channel errored")
 			}
-			c.logger.Printf("[INFO] Stable state for %s reached at %s (%d nodes), %s from start of poll, %s from cluster start. Timeout at %s, %s after stability",
+			c.logger.Info("Stable state for %s reached at %s (%d nodes), %s from start of poll, %s from cluster start. Timeout at %s, %s after stability",
 				s, inStateTime, len(inState), inStateTime.Sub(pollStartTime), inStateTime.Sub(c.startTime), t, t.Sub(inStateTime))
 			return inState
 		}
@@ -391,7 +373,7 @@ func (c *cluster) Followers() []*Raft {
 
 // FullyConnect connects all the transports together.
 func (c *cluster) FullyConnect() {
-	c.logger.Printf("[DEBUG] Fully Connecting")
+	c.logger.Debug("Fully Connecting")
 	for i, t1 := range c.trans {
 		for j, t2 := range c.trans {
 			if i != j {
@@ -404,7 +386,7 @@ func (c *cluster) FullyConnect() {
 
 // Disconnect disconnects all transports from the given address.
 func (c *cluster) Disconnect(a ServerAddress) {
-	c.logger.Printf("[DEBUG] Disconnecting %v", a)
+	c.logger.Debug("Disconnecting %v", a)
 	for _, t := range c.trans {
 		if t.LocalAddr() == a {
 			t.DisconnectAll()
@@ -417,7 +399,7 @@ func (c *cluster) Disconnect(a ServerAddress) {
 // Partition keeps the given list of addresses connected but isolates them
 // from the other members of the cluster.
 func (c *cluster) Partition(far []ServerAddress) {
-	c.logger.Printf("[DEBUG] Partitioning %v", far)
+	c.logger.Debug("Partitioning %v", far)
 
 	// Gather the set of nodes on the "near" side of the partition (we
 	// will call the supplied list of nodes the "far" side).
@@ -472,9 +454,9 @@ func (c *cluster) EnsureLeader(t *testing.T, expect ServerAddress) {
 				leader = "[none]"
 			}
 			if expect == "" {
-				c.logger.Printf("[ERR] Peer %s sees leader %v expected [none]", r, leader)
+				c.logger.Error("Peer %s sees leader %v expected [none]", r, leader)
 			} else {
-				c.logger.Printf("[ERR] Peer %s sees leader %v expected %v", r, leader, expect)
+				c.logger.Error("Peer %s sees leader %v expected %v", r, leader, expect)
 			}
 			fail = true
 		}
@@ -777,7 +759,7 @@ func TestRaft_RecoverCluster(t *testing.T) {
 		defer c.Close()
 
 		// Perform some commits.
-		c.logger.Printf("[DEBUG] Running with applies=%d", applies)
+		c.logger.Debug("Running with applies=%d", applies)
 		leader := c.Leader()
 		for i := 0; i < applies; i++ {
 			future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
@@ -1454,14 +1436,14 @@ func TestRaft_RemoveUnknownPeer(t *testing.T) {
 	startingConfig, startingConfigIdx := getCommittedMembership(c, leader)
 
 	// Remove unknown
-	c.logger.Printf("[INFO] RemoveServer")
+	c.logger.Info("RemoveServer")
 	future := leader.RemoveServer(ServerID(NewInmemAddr()), 0, 0)
 	// nothing to do, should be a new config entry that's the same as before
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] RemoveServer() err: %v", err)
 	}
 
-	c.logger.Printf("[INFO] getting configurations")
+	c.logger.Info("getting configurations")
 	newConfig, newConfigIdx := getCommittedMembership(c, leader)
 
 	if newConfigIdx <= startingConfigIdx {
@@ -1750,14 +1732,14 @@ func TestRaft_SendSnapshotAndLogsFollower(t *testing.T) {
 	defer c.Close()
 
 	// Disconnect one follower
-	c.logger.Printf("[INFO] Disconnecting behind node")
+	c.logger.Info("Disconnecting behind node")
 	followers := c.Followers()
 	leader := c.Leader()
 	behind := followers[0]
 	c.Disconnect(behind.localAddr)
 
 	// Commit a lot of things
-	c.logger.Printf("[INFO] Committing 100 entries")
+	c.logger.Info("Committing 100 entries")
 	var future Future
 	for i := 0; i < 100; i++ {
 		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
@@ -1771,7 +1753,7 @@ func TestRaft_SendSnapshotAndLogsFollower(t *testing.T) {
 	}
 
 	// Snapshot, this will truncate logs!
-	c.logger.Printf("[INFO] Snapshotting on each server")
+	c.logger.Info("Snapshotting on each server")
 	for _, r := range c.rafts {
 		future = r.Snapshot()
 		// the disconnected node will have nothing to snapshot, so that's expected
@@ -1781,7 +1763,7 @@ func TestRaft_SendSnapshotAndLogsFollower(t *testing.T) {
 	}
 
 	// Commit more logs past the snapshot.
-	c.logger.Printf("[INFO] Committing 100 more entries")
+	c.logger.Info("Committing 100 more entries")
 	for i := 100; i < 200; i++ {
 		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
 	}
@@ -1793,7 +1775,7 @@ func TestRaft_SendSnapshotAndLogsFollower(t *testing.T) {
 		t.Logf("[INFO] Finished apply without behind follower")
 	}
 
-	c.logger.Printf("[INFO] Re-connecting behind node")
+	c.logger.Info("Re-connecting behind node")
 	// Reconnect the behind node
 	c.FullyConnect()
 
@@ -1978,11 +1960,11 @@ func TestRaft_VerifyLeader(t *testing.T) {
 	leader := c.Leader()
 
 	// Verify we are leader
-	c.logger.Printf("[INFO] Verifying leader")
+	c.logger.Info("Verifying leader")
 	verify := leader.VerifyLeader()
 
 	// Wait for the verify to apply
-	c.logger.Printf("[INFO] Waiting on verify future")
+	c.logger.Info("Waiting on verify future")
 	if err := verify.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
