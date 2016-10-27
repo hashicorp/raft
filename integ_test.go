@@ -34,7 +34,7 @@ type RaftEnv struct {
 }
 
 func (r *RaftEnv) Release() {
-	r.logger.Warn("Release node at %v", r.raft.localAddr)
+	r.logger.Warn("Release node at %v", r.raft.server.localAddr)
 	f := r.raft.Shutdown()
 	if err := f.Error(); err != nil {
 		panic(err)
@@ -256,8 +256,8 @@ func TestRaft_Integ(t *testing.T) {
 	}
 
 	// Remove the old nodes
-	NoErr(WaitFuture(leader.raft.RemoveServer(rm1.raft.localID, 0, 0), t), t)
-	NoErr(WaitFuture(leader.raft.RemoveServer(rm2.raft.localID, 0, 0), t), t)
+	NoErr(WaitFuture(leader.raft.RemoveServer(rm1.raft.server.localID, 0, 0), t), t)
+	NoErr(WaitFuture(leader.raft.RemoveServer(rm2.raft.server.localID, 0, 0), t), t)
 
 	// Shoot the leader
 	env1.Release()

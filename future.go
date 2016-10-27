@@ -66,6 +66,9 @@ type deferError struct {
 	err       error
 	errCh     chan error
 	responded bool
+	// Optional. Closed on shutdown. Useful when the future might get stuck in a
+	// buffered channel somewhere.
+	shutdownCh chan struct{}
 }
 
 func (d *deferError) init() {
@@ -82,7 +85,11 @@ func (d *deferError) Error() error {
 	if d.errCh == nil {
 		panic("waiting for response on nil channel")
 	}
-	d.err = <-d.errCh
+	select {
+	case d.err = <-d.errCh:
+	case <-d.shutdownCh:
+		d.err = ErrRaftShutdown
+	}
 	return d.err
 }
 
@@ -140,8 +147,8 @@ func (s *shutdownFuture) Error() error {
 	if s.raft == nil {
 		return nil
 	}
-	s.raft.goRoutines.waitShutdown()
-	if closeable, ok := s.raft.trans.(WithClose); ok {
+	s.raft.server.goRoutines.waitShutdown()
+	if closeable, ok := s.raft.server.trans.(WithClose); ok {
 		closeable.Close()
 	}
 	return nil
@@ -212,4 +219,20 @@ func (a *appendFuture) Request() *AppendEntriesRequest {
 
 func (a *appendFuture) Response() *AppendEntriesResponse {
 	return a.resp
+}
+
+type StatsFuture interface {
+	Future
+	// Stats returns variuos bits of internal information. This must
+	// not be called until after the Error method has returned.
+	Stats() *Stats
+}
+
+type statsFuture struct {
+	deferError
+	stats *Stats
+}
+
+func (s *statsFuture) Stats() *Stats {
+	return s.stats
 }

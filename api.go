@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,9 +45,57 @@ var (
 	ErrCantBootstrap = errors.New("bootstrap only works on new clusters")
 )
 
-// Raft implements a Raft node.
+// This struct belongs to api.go in the implementation.
 type Raft struct {
-	raftState
+	channels *apiChannels
+
+	// Shutdown channel to exit, protected to prevent concurrent exits
+	shutdown     bool
+	shutdownLock sync.Mutex
+
+	// This will be going away eventually.
+	server *raftServer
+}
+
+type apiChannels struct {
+	// applyCh is used to async send logs to the main thread to
+	// be committed and applied to the FSM.
+	applyCh chan *logFuture
+
+	// Used to request the leader to make membership configuration changes.
+	membershipChangeCh chan *membershipChangeFuture
+
+	// snapshotCh is used for user triggered snapshots
+	snapshotCh chan *snapshotFuture
+
+	// verifyCh is used to async send verify futures to the main thread
+	// to verify we are still the leader
+	verifyCh chan *verifyFuture
+
+	// membershipsCh is used to get the membership configuration
+	// data safely from outside of the main thread.
+	membershipsCh chan *membershipsFuture
+
+	// statsCh is used to get stats safely from outside of the main thread.
+	statsCh chan *statsFuture
+
+	// bootstrapCh is used to attempt an initial bootstrap from outside of
+	// the main thread.
+	bootstrapCh chan *bootstrapFuture
+
+	// Shutdown channel to exit, protected to prevent concurrent exits
+	shutdownCh chan struct{}
+}
+
+// Raft implements a Raft node.
+type raftServer struct {
+	shared raftShared
+
+	// Tracks running goroutines
+	goRoutines *waitGroup
+
+	// TODO(ongaro): clean this up
+	Shutdown func()
 
 	// protocolVersion is used to inter-operate with Raft servers running
 	// different versions of the library. See comments in config.go for more
@@ -56,9 +105,17 @@ type Raft struct {
 	peerProgressCh chan peerProgress
 	peers          map[ServerID]*raftPeer
 
-	// applyCh is used to async send logs to the main thread to
-	// be committed and applied to the FSM.
-	applyCh chan *logFuture
+	// Highest committed log entry
+	commitIndex Index
+
+	// Last log entry sent to the FSM
+	lastApplied Index
+
+	// The latest term this server has seen. This value is kept in StableStore;
+	// after updating it, invoke persistCurrentTerm().
+	currentTerm Term
+
+	api *apiChannels
 
 	// Configuration provided at Raft initialization
 	conf Config
@@ -102,9 +159,6 @@ type Raft struct {
 	// LogStore provides durable storage for logs
 	logs LogStore
 
-	// Used to request the leader to make membership configuration changes.
-	membershipChangeCh chan *membershipChangeFuture
-
 	// Tracks the latest membership configuration and
 	// latest committed membership from the log/snapshot.
 	memberships memberships
@@ -112,35 +166,15 @@ type Raft struct {
 	// RPC chan comes from the transport layer
 	rpcCh <-chan RPC
 
-	// Shutdown channel to exit, protected to prevent concurrent exits
-	shutdown     bool
-	shutdownCh   chan struct{}
-	shutdownLock sync.Mutex
-
 	// snapshots is used to store and retrieve snapshots
 	snapshots SnapshotStore
 
-	// snapshotCh is used for user triggered snapshots
-	snapshotCh chan *snapshotFuture
-
 	// stable is a StableStore implementation for durable state
-	// It provides stable storage for many fields in raftState
+	// It provides stable storage for many fields in raftShared
 	stable StableStore
 
 	// The transport layer we use
 	trans Transport
-
-	// verifyCh is used to async send verify futures to the main thread
-	// to verify we are still the leader
-	verifyCh chan *verifyFuture
-
-	// membershipsCh is used to get the membership configuration
-	// data safely from outside of the main thread.
-	membershipsCh chan *membershipsFuture
-
-	// bootstrapCh is used to attempt an initial bootstrap from outside of
-	// the main thread.
-	bootstrapCh chan *bootstrapFuture
 
 	// List of observers and the mutex that protects them. The observers list
 	// is indexed by an artificial ID which is used for deregistration.
@@ -430,33 +464,36 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	}
 
 	// Create Raft struct.
-	r := &Raft{
-		protocolVersion:    protocolVersion,
-		peerProgressCh:     make(chan peerProgress),
-		peers:              make(map[ServerID]*raftPeer),
-		applyCh:            make(chan *logFuture),
-		conf:               *conf,
-		fsm:                fsm,
-		fsmCommitCh:        make(chan commitTuple, 128),
-		fsmRestoreCh:       make(chan *restoreFuture),
-		fsmSnapshotCh:      make(chan *reqSnapshotFuture),
-		leaderCh:           make(chan bool),
-		localID:            localID,
-		localAddr:          localAddr,
-		logger:             logger,
-		logs:               logs,
-		membershipChangeCh: make(chan *membershipChangeFuture),
-		memberships:        memberships{},
-		rpcCh:              trans.Consumer(),
-		snapshots:          snaps,
-		snapshotCh:         make(chan *snapshotFuture),
-		shutdownCh:         make(chan struct{}),
-		stable:             stable,
-		trans:              trans,
-		verifyCh:           make(chan *verifyFuture, 64),
-		membershipsCh:      make(chan *membershipsFuture, 8),
-		bootstrapCh:        make(chan *bootstrapFuture),
-		observers:          make(map[uint64]*Observer),
+	r := &raftServer{
+		protocolVersion: protocolVersion,
+		peerProgressCh:  make(chan peerProgress),
+		peers:           make(map[ServerID]*raftPeer),
+		api: &apiChannels{
+			applyCh:            make(chan *logFuture),
+			membershipChangeCh: make(chan *membershipChangeFuture),
+			snapshotCh:         make(chan *snapshotFuture),
+			verifyCh:           make(chan *verifyFuture, 64),
+			membershipsCh:      make(chan *membershipsFuture, 8),
+			statsCh:            make(chan *statsFuture, 8),
+			bootstrapCh:        make(chan *bootstrapFuture),
+			shutdownCh:         make(chan struct{}),
+		},
+		conf:          *conf,
+		fsm:           fsm,
+		fsmCommitCh:   make(chan commitTuple, 128),
+		fsmRestoreCh:  make(chan *restoreFuture),
+		fsmSnapshotCh: make(chan *reqSnapshotFuture),
+		leaderCh:      make(chan bool),
+		localID:       localID,
+		localAddr:     localAddr,
+		logger:        logger,
+		logs:          logs,
+		memberships:   memberships{},
+		rpcCh:         trans.Consumer(),
+		snapshots:     snaps,
+		stable:        stable,
+		trans:         trans,
+		observers:     make(map[uint64]*Observer),
 	}
 	r.goRoutines = &waitGroup{}
 
@@ -471,8 +508,9 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	}
 
 	// Restore the current term and the last log.
-	r.setCurrentTerm(currentTerm)
-	r.setLastLog(lastLog.Index, lastLog.Term)
+	r.currentTerm = currentTerm
+	r.persistCurrentTerm()
+	r.shared.setLastLog(lastLog.Index, lastLog.Term)
 
 	// Attempt to restore a snapshot if there are any.
 	if err := r.restoreSnapshot(); err != nil {
@@ -480,7 +518,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	}
 
 	// Scan through the log for any configuration change entries.
-	snapshotIndex, _ := r.getLastSnapshot()
+	snapshotIndex, _ := r.shared.getLastSnapshot()
 	for index := snapshotIndex + 1; index <= lastLog.Index; index++ {
 		var entry Log
 		if err := r.logs.GetLog(index, &entry); err != nil {
@@ -502,13 +540,19 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	r.goRoutines.spawn(r.run)
 	r.goRoutines.spawn(r.runFSM)
 	r.goRoutines.spawn(r.runSnapshots)
-	return r, nil
+
+	api := &Raft{
+		channels: r.api,
+		server:   r,
+	}
+	r.Shutdown = func() { api.Shutdown() }
+	return api, nil
 }
 
 // restoreSnapshot attempts to restore the latest snapshots, and fails if none
 // of them can be restored. This is called at initialization time, and is
 // completely unsafe to call at any other time.
-func (r *Raft) restoreSnapshot() error {
+func (r *raftServer) restoreSnapshot() error {
 	snapshots, err := r.snapshots.List()
 	if err != nil {
 		r.logger.Error("Failed to list snapshots: %v", err)
@@ -533,10 +577,10 @@ func (r *Raft) restoreSnapshot() error {
 		r.logger.Info("Restored from snapshot %v", snapshot.ID)
 
 		// Update the lastApplied so we don't replay old logs
-		r.setLastApplied(snapshot.Index)
+		r.lastApplied = snapshot.Index
 
 		// Update the last stable snapshot info
-		r.setLastSnapshot(snapshot.Index, snapshot.Term)
+		r.shared.setLastSnapshot(snapshot.Index, snapshot.Term)
 
 		// Update the configuration
 		if snapshot.Version > 0 {
@@ -574,9 +618,9 @@ func (r *Raft) BootstrapCluster(membership Membership) Future {
 	bootstrapReq.init()
 	bootstrapReq.membership = membership
 	select {
-	case <-r.shutdownCh:
+	case <-r.channels.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
-	case r.bootstrapCh <- bootstrapReq:
+	case r.channels.bootstrapCh <- bootstrapReq:
 		return bootstrapReq
 	}
 }
@@ -585,6 +629,10 @@ func (r *Raft) BootstrapCluster(membership Membership) Future {
 // It may return empty string if there is no current leader
 // or the leader is unknown.
 func (r *Raft) Leader() ServerAddress {
+	return r.server.getLeader()
+}
+
+func (r *raftServer) getLeader() ServerAddress {
 	r.leaderLock.RLock()
 	leader := r.leader
 	r.leaderLock.RUnlock()
@@ -615,9 +663,9 @@ func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
 	select {
 	case <-timer:
 		return errorFuture{ErrEnqueueTimeout}
-	case <-r.shutdownCh:
+	case <-r.channels.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
-	case r.applyCh <- logFuture:
+	case r.channels.applyCh <- logFuture:
 		return logFuture
 	}
 }
@@ -645,9 +693,9 @@ func (r *Raft) Barrier(timeout time.Duration) Future {
 	select {
 	case <-timer:
 		return errorFuture{ErrEnqueueTimeout}
-	case <-r.shutdownCh:
+	case <-r.channels.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
-	case r.applyCh <- logFuture:
+	case r.channels.applyCh <- logFuture:
 		return logFuture
 	}
 }
@@ -658,11 +706,12 @@ func (r *Raft) Barrier(timeout time.Duration) Future {
 func (r *Raft) VerifyLeader() Future {
 	metrics.IncrCounter([]string{"raft", "verify_leader"}, 1)
 	verifyFuture := &verifyFuture{}
+	verifyFuture.shutdownCh = r.channels.shutdownCh
 	verifyFuture.init()
 	select {
-	case <-r.shutdownCh:
+	case <-r.channels.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
-	case r.verifyCh <- verifyFuture:
+	case r.channels.verifyCh <- verifyFuture:
 		return verifyFuture
 	}
 }
@@ -672,12 +721,13 @@ func (r *Raft) VerifyLeader() Future {
 // the main thread (which can access the information directly).
 func (r *Raft) GetMembership() MembershipFuture {
 	configReq := &membershipsFuture{}
+	configReq.shutdownCh = r.channels.shutdownCh
 	configReq.init()
 	select {
-	case <-r.shutdownCh:
+	case <-r.channels.shutdownCh:
 		configReq.respond(ErrRaftShutdown)
 		return configReq
-	case r.membershipsCh <- configReq:
+	case r.channels.membershipsCh <- configReq:
 		return configReq
 	}
 }
@@ -685,7 +735,7 @@ func (r *Raft) GetMembership() MembershipFuture {
 // AddPeer (deprecated) is used to add a new peer into the cluster. This must be
 // run on the leader or it will fail. Use AddVoter/AddNonvoter instead.
 func (r *Raft) AddPeer(peer ServerAddress) Future {
-	if r.protocolVersion > 2 {
+	if r.server.protocolVersion > 2 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
@@ -702,7 +752,7 @@ func (r *Raft) AddPeer(peer ServerAddress) Future {
 // to occur. This must be run on the leader or it will fail.
 // Use RemoveServer instead.
 func (r *Raft) RemovePeer(peer ServerAddress) Future {
-	if r.protocolVersion > 2 {
+	if r.server.protocolVersion > 2 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
@@ -722,7 +772,7 @@ func (r *Raft) RemovePeer(peer ServerAddress) Future {
 // If nonzero, timeout is how long this server should wait before the
 // configuration change log entry is appended.
 func (r *Raft) AddVoter(id ServerID, address ServerAddress, prevIndex Index, timeout time.Duration) IndexFuture {
-	if r.protocolVersion < 2 {
+	if r.server.protocolVersion < 2 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
@@ -740,7 +790,7 @@ func (r *Raft) AddVoter(id ServerID, address ServerAddress, prevIndex Index, tim
 // a staging server or voter, this does nothing. This must be run on the leader
 // or it will fail. For prevIndex and timeout, see AddVoter.
 func (r *Raft) AddNonvoter(id ServerID, address ServerAddress, prevIndex Index, timeout time.Duration) IndexFuture {
-	if r.protocolVersion < 3 {
+	if r.server.protocolVersion < 3 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
@@ -756,7 +806,7 @@ func (r *Raft) AddNonvoter(id ServerID, address ServerAddress, prevIndex Index, 
 // leader is being removed, it will cause a new election to occur. This must be
 // run on the leader or it will fail. For prevIndex and timeout, see AddVoter.
 func (r *Raft) RemoveServer(id ServerID, prevIndex Index, timeout time.Duration) IndexFuture {
-	if r.protocolVersion < 2 {
+	if r.server.protocolVersion < 2 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
@@ -773,7 +823,7 @@ func (r *Raft) RemoveServer(id ServerID, prevIndex Index, timeout time.Duration)
 // does nothing. This must be run on the leader or it will fail. For prevIndex
 // and timeout, see AddVoter.
 func (r *Raft) DemoteVoter(id ServerID, prevIndex Index, timeout time.Duration) IndexFuture {
-	if r.protocolVersion < 3 {
+	if r.server.protocolVersion < 3 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
@@ -792,9 +842,9 @@ func (r *Raft) Shutdown() Future {
 	defer r.shutdownLock.Unlock()
 
 	if !r.shutdown {
-		close(r.shutdownCh)
+		close(r.channels.shutdownCh)
 		r.shutdown = true
-		r.setState(Shutdown)
+		r.server.setState(Shutdown)
 		return &shutdownFuture{r}
 	}
 
@@ -808,9 +858,9 @@ func (r *Raft) Snapshot() Future {
 	snapFuture := &snapshotFuture{}
 	snapFuture.init()
 	select {
-	case r.snapshotCh <- snapFuture:
+	case r.channels.snapshotCh <- snapFuture:
 		return snapFuture
-	case <-r.shutdownCh:
+	case <-r.channels.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
 	}
 
@@ -818,7 +868,7 @@ func (r *Raft) Snapshot() Future {
 
 // State is used to return the current raft state.
 func (r *Raft) State() RaftState {
-	return r.getState()
+	return r.server.shared.getState()
 }
 
 // LeaderCh is used to get a channel which delivers signals on
@@ -826,120 +876,124 @@ func (r *Raft) State() RaftState {
 // the leader, and false if we lose it. The channel is not buffered,
 // and does not block on writes.
 func (r *Raft) LeaderCh() <-chan bool {
-	return r.leaderCh
+	return r.server.leaderCh
 }
 
 // String returns a string representation of this Raft node.
 func (r *Raft) String() string {
-	return fmt.Sprintf("Node at %s [%v]", r.localAddr, r.getState())
+	return fmt.Sprintf("Node at %s [%v]",
+		r.server.localAddr,
+		r.server.shared.getState())
 }
 
 // LastContact returns the time of last contact by a leader.
 // This only makes sense if we are currently a follower.
 func (r *Raft) LastContact() time.Time {
+	return r.server.getLastContact()
+}
+
+func (r *raftServer) getLastContact() time.Time {
 	r.lastContactLock.RLock()
 	last := r.lastContact
 	r.lastContactLock.RUnlock()
 	return last
 }
 
-// Stats is used to return a map of various internal stats. This
-// should only be used for informative purposes or debugging.
-//
-// Keys are: "state", "term", "last_log_index", "last_log_term",
-// "commit_index", "applied_index", "fsm_pending",
-// "last_snapshot_index", "last_snapshot_term",
-// "latest_configuration", "last_contact", and "num_peers".
-//
-// The value of "state" is a numerical value representing a
-// RaftState const.
-//
-// The value of "latest_configuration" is a string which contains
-// the id of each server, its suffrage status, and its address.
+type Stats struct {
+	State        RaftState
+	Term         Term
+	LastLogIndex Index
+	LastLogTerm  Term
+	CommitIndex  Index
+	// AppliedIndex is the last index applied to the FSM. This is generally
+	// lagging behind the last index, especially for indexes that are persisted but
+	// have not yet been considered committed by the leader. NOTE - this reflects
+	// the last index that was sent to the application's FSM over the apply channel
+	// but DOES NOT mean that the application's FSM has yet consumed it and applied
+	// it to its internal state. Thus, the application's state may lag behind this
+	// index.
+	AppliedIndex          Index
+	FSMPending            int
+	LastSnapshotIndex     Index
+	LastSnapshotTerm      Term
+	LatestMembership      Membership
+	LatestMembershipIndex Index
+	LastContact           time.Time
+	// numPeers is the number of other voting servers in the cluster, not
+	// including this node. If this node isn't part of the configuration then this
+	// will be 0.
+	NumPeers           int
+	ProtocolVersion    ProtocolVersion
+	ProtocolVersionMin ProtocolVersion
+	ProtocolVersionMax ProtocolVersion
+	SnapshotVersionMin SnapshotVersion
+	SnapshotVersionMax SnapshotVersion
+}
+
+// Stringify a Stats struct into key-value strings.
 //
 // The value of "last_contact" is either "never" if there
 // has been no contact with a leader, "0" if the node is in the
 // leader state, or the time since last contact with a leader
 // formatted as a string.
-//
-// The value of "num_peers" is the number of other voting servers in the
-// cluster, not including this node. If this node isn't part of the
-// configuration then this will be "0".
-//
-// All other values are uint64s, formatted as strings.
-func (r *Raft) Stats() map[string]string {
+func (s *Stats) Strings() []struct{ K, V string } {
 	toString := func(v uint64) string {
 		return strconv.FormatUint(v, 10)
 	}
-	lastLogIndex, lastLogTerm := r.getLastLog()
-	lastSnapIndex, lastSnapTerm := r.getLastSnapshot()
-	s := map[string]string{
-		"state":                r.getState().String(),
-		"term":                 toString(uint64(r.getCurrentTerm())),
-		"last_log_index":       toString(uint64(lastLogIndex)),
-		"last_log_term":        toString(uint64(lastLogTerm)),
-		"commit_index":         toString(uint64(r.getCommitIndex())),
-		"applied_index":        toString(uint64(r.getLastApplied())),
-		"fsm_pending":          toString(uint64(len(r.fsmCommitCh))),
-		"last_snapshot_index":  toString(uint64(lastSnapIndex)),
-		"last_snapshot_term":   toString(uint64(lastSnapTerm)),
-		"protocol_version":     toString(uint64(r.protocolVersion)),
-		"protocol_version_min": toString(uint64(ProtocolVersionMin)),
-		"protocol_version_max": toString(uint64(ProtocolVersionMax)),
-		"snapshot_version_min": toString(uint64(SnapshotVersionMin)),
-		"snapshot_version_max": toString(uint64(SnapshotVersionMax)),
-	}
-
-	future := r.GetMembership()
-	if err := future.Error(); err != nil {
-		r.logger.Warn("could not get configuration for Stats: %v", err)
+	var lastContact string
+	if s.LastContact.IsZero() {
+		lastContact = "never"
+	} else if s.State == Leader {
+		lastContact = "0"
 	} else {
-		membership := future.Membership()
-		s["latest_configuration_index"] = toString(uint64(future.Index()))
-		s["latest_configuration"] = fmt.Sprintf("%+v", membership.Servers)
-
-		// This is a legacy metric that we've seen people use in the wild.
-		hasUs := false
-		numPeers := 0
-		for _, server := range membership.Servers {
-			if server.Suffrage == Voter {
-				if server.ID == r.localID {
-					hasUs = true
-				} else {
-					numPeers++
-				}
-			}
-		}
-		if !hasUs {
-			numPeers = 0
-		}
-		s["num_peers"] = toString(uint64(numPeers))
+		lastContact = fmt.Sprintf("%v", time.Now().Sub(s.LastContact))
 	}
-
-	last := r.LastContact()
-	if last.IsZero() {
-		s["last_contact"] = "never"
-	} else if r.getState() == Leader {
-		s["last_contact"] = "0"
-	} else {
-		s["last_contact"] = fmt.Sprintf("%v", time.Now().Sub(last))
+	return []struct{ K, V string }{
+		{"state", s.State.String()},
+		{"term", toString(uint64(s.Term))},
+		{"last_log_index", toString(uint64(s.LastLogIndex))},
+		{"last_log_term", toString(uint64(s.LastLogTerm))},
+		{"commit_index", toString(uint64(s.CommitIndex))},
+		{"applied_index", toString(uint64(s.AppliedIndex))},
+		{"fsm_pending", toString(uint64(s.FSMPending))},
+		{"last_snapshot_index", toString(uint64(s.LastSnapshotIndex))},
+		{"last_snapshot_term", toString(uint64(s.LastSnapshotTerm))},
+		{"latest_membership", fmt.Sprintf("%+v", s.LatestMembership.Servers)},
+		{"latest_membership_index", toString(uint64(s.LatestMembershipIndex))},
+		{"last_contact", lastContact},
+		{"num_peers", toString(uint64(s.NumPeers))},
+		{"protocol_version", toString(uint64(s.ProtocolVersion))},
+		{"protocol_version_min", toString(uint64(s.ProtocolVersionMin))},
+		{"protocol_version_max", toString(uint64(s.ProtocolVersionMax))},
+		{"snapshot_version_min", toString(uint64(s.SnapshotVersionMin))},
+		{"snapshot_version_max", toString(uint64(s.SnapshotVersionMax))},
 	}
-	return s
+}
+
+func (s *Stats) String() string {
+	kvs := s.Strings()
+	lines := make([]string, 0, len(kvs))
+	for _, kv := range kvs {
+		lines = append(lines, fmt.Sprintf("%v: %v", kv.K, kv.V))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// Stats returns various internal stats.
+func (r *Raft) Stats() StatsFuture {
+	statsReq := &statsFuture{}
+	statsReq.shutdownCh = r.channels.shutdownCh
+	statsReq.init()
+	select {
+	case <-r.channels.shutdownCh:
+		statsReq.respond(ErrRaftShutdown)
+	case r.channels.statsCh <- statsReq:
+	}
+	return statsReq
 }
 
 // LastIndex returns the last index in stable storage,
 // either from the last log or from the last snapshot.
 func (r *Raft) LastIndex() Index {
-	return r.getLastIndex()
-}
-
-// AppliedIndex returns the last index applied to the FSM. This is generally
-// lagging behind the last index, especially for indexes that are persisted but
-// have not yet been considered committed by the leader. NOTE - this reflects
-// the last index that was sent to the application's FSM over the apply channel
-// but DOES NOT mean that the application's FSM has yet consumed it and applied
-// it to its internal state. Thus, the application's state may lag behind this
-// index.
-func (r *Raft) AppliedIndex() Index {
-	return r.getLastApplied()
+	return r.server.shared.getLastIndex()
 }

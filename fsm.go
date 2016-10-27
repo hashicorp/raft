@@ -46,7 +46,7 @@ type FSMSnapshot interface {
 // runFSM is a long running goroutine responsible for applying logs
 // to the FSM. This is done async of other logs since we don't want
 // the FSM to block our internal operations.
-func (r *Raft) runFSM() {
+func (r *raftServer) runFSM() {
 	var lastIndex Index
 	var lastTerm Term
 	for {
@@ -110,7 +110,7 @@ func (r *Raft) runFSM() {
 				commitEntry.future.response = resp
 				commitEntry.future.respond(nil)
 			}
-		case <-r.shutdownCh:
+		case <-r.api.shutdownCh:
 			return
 		}
 	}
