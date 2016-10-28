@@ -150,16 +150,13 @@ func (v *raftFormatter) formatDefault(writer io.Writer, level int, msg string, a
 		}
 
 		writer.Write([]byte(":"))
-
 		for i := 0; i < len(args); i = i + 2 {
-			var quote string
-			switch args[i+1].(type) {
-			case string:
-				if strings.ContainsRune(args[i+1].(string), ' ') {
-					quote = `"`
-				}
+			v := fmt.Sprintf("%v", args[i+1])
+			if v == "" || strings.ContainsRune(v, ' ') {
+				writer.Write([]byte(fmt.Sprintf(` %s=%q`, args[i], v)))
+			} else {
+				writer.Write([]byte(fmt.Sprintf(` %s=%s`, args[i], v)))
 			}
-			writer.Write([]byte(fmt.Sprintf(" %s=%s%v%s", args[i], quote, args[i+1], quote)))
 		}
 	}
 }
