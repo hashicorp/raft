@@ -102,23 +102,6 @@ func (v *raftFormatter) formatDefault(writer io.Writer, level int, msg string, a
 	// Write a trailing newline.
 	defer writer.Write([]byte("\n"))
 
-	// Tag is used during unit tests when we might have multiple Rafts all
-	// outputting to the same log.
-	if v.tag != "" {
-		writer.Write([]byte(fmt.Sprintf("(%s) ", v.tag)))
-	}
-
-	// This is a little jank because the depth depends on the internals of
-	// the logxi library, but it's only used during unit tests.
-	if v.withLine {
-		_, file, line, ok := runtime.Caller(4)
-		if !ok {
-			file = "???"
-			line = 0
-		}
-		writer.Write([]byte(fmt.Sprintf("%s:%d ", path.Base(file), line)))
-	}
-
 	writer.Write([]byte(time.Now().Local().Format("2006/01/02 15:04:05.000000")))
 
 	switch level {
@@ -136,6 +119,23 @@ func (v *raftFormatter) formatDefault(writer io.Writer, level int, msg string, a
 		writer.Write([]byte(" [TRACE] "))
 	default:
 		writer.Write([]byte(" [ALL  ] "))
+	}
+
+	// Tag is used during unit tests when we might have multiple Rafts all
+	// outputting to the same log.
+	if v.tag != "" {
+		writer.Write([]byte(fmt.Sprintf("(%s) ", v.tag)))
+	}
+
+	// This is a little jank because the depth depends on the internals of
+	// the logxi library, but it's only used during unit tests.
+	if v.withLine {
+		_, file, line, ok := runtime.Caller(4)
+		if !ok {
+			file = "???"
+			line = 0
+		}
+		writer.Write([]byte(fmt.Sprintf("%s:%d ", path.Base(file), line)))
 	}
 
 	if v.module != "" {
