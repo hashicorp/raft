@@ -11,7 +11,7 @@ func TestLogger_NewRaftLoggerForTesting(t *testing.T) {
 	dest := bytes.Buffer{}
 	logger := NewRaftLoggerForTesting(&dest, "tag")
 	logger.Debug("a debug msg")
-	if !strings.HasPrefix(dest.String(), "(tag) logger_test.go:13") {
+	if !strings.Contains(dest.String(), "(tag) logger_test.go:13") {
 		t.Errorf("Log message in wrong format: %q", dest.String())
 	}
 }
