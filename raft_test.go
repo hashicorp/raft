@@ -137,7 +137,7 @@ func (c *cluster) notifyFailed() {
 // thread to block until all goroutines have completed in order to reliably
 // fail tests using this function.
 func (c *cluster) Failf(format string, args ...interface{}) {
-	c.logger.Error(format, args...)
+	c.logger.Error(fmt.Sprintf(format, args...))
 	c.t.Fail()
 	c.notifyFailed()
 }
@@ -148,7 +148,7 @@ func (c *cluster) Failf(format string, args ...interface{}) {
 // other goroutines created during the test. Calling FailNowf does not stop
 // those other goroutines.
 func (c *cluster) FailNowf(format string, args ...interface{}) {
-	c.logger.Error(format, args...)
+	c.logger.Error(fmt.Sprintf(format, args...))
 	c.t.FailNow()
 }
 
@@ -279,7 +279,7 @@ func (c *cluster) pollState(s RaftState) ([]*Raft, Term) {
 // GetInState polls the state of the cluster and attempts to identify when it has
 // settled into the given state.
 func (c *cluster) GetInState(s RaftState) []*Raft {
-	c.logger.Info("Starting stability test for raft state: %+v", s)
+	c.logger.Info(fmt.Sprintf("Starting stability test for raft state: %+v", s))
 	limitCh := time.After(c.longstopTimeout)
 
 	// An election should complete after 2 * max(HeartbeatTimeout, ElectionTimeout)
@@ -345,8 +345,8 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 			if !ok {
 				c.FailNowf("[ERR] Timer channel errored")
 			}
-			c.logger.Info("Stable state for %s reached at %s (%d nodes), %s from start of poll, %s from cluster start. Timeout at %s, %s after stability",
-				s, inStateTime, len(inState), inStateTime.Sub(pollStartTime), inStateTime.Sub(c.startTime), t, t.Sub(inStateTime))
+			c.logger.Info(fmt.Sprintf("Stable state for %s reached at %s (%d nodes), %s from start of poll, %s from cluster start. Timeout at %s, %s after stability",
+				s, inStateTime, len(inState), inStateTime.Sub(pollStartTime), inStateTime.Sub(c.startTime), t, t.Sub(inStateTime)))
 			return inState
 		}
 	}
@@ -387,7 +387,6 @@ func (c *cluster) FullyConnect() {
 
 // Disconnect disconnects all transports from the given address.
 func (c *cluster) Disconnect(a ServerAddress) {
-	c.logger.Debug("Disconnecting %v", a)
 	for _, t := range c.trans {
 		if t.LocalAddr() == a {
 			t.DisconnectAll()
@@ -400,8 +399,6 @@ func (c *cluster) Disconnect(a ServerAddress) {
 // Partition keeps the given list of addresses connected but isolates them
 // from the other members of the cluster.
 func (c *cluster) Partition(far []ServerAddress) {
-	c.logger.Debug("Partitioning %v", far)
-
 	// Gather the set of nodes on the "near" side of the partition (we
 	// will call the supplied list of nodes the "far" side).
 	near := make(map[ServerAddress]struct{})
@@ -455,9 +452,9 @@ func (c *cluster) EnsureLeader(t *testing.T, expect ServerAddress) {
 				leader = "[none]"
 			}
 			if expect == "" {
-				c.logger.Error("Peer %s sees leader %v expected [none]", r, leader)
+				c.logger.Error(fmt.Sprintf("Peer %s sees leader %v expected [none]", r, leader))
 			} else {
-				c.logger.Error("Peer %s sees leader %v expected %v", r, leader, expect)
+				c.logger.Error(fmt.Sprintf("Peer %s sees leader %v expected %v", r, leader, expect))
 			}
 			fail = true
 		}
@@ -1451,7 +1448,7 @@ func TestRaft_RemoveUnknownPeer(t *testing.T) {
 		c.FailNowf("[ERR] RemoveServer() err: %v", err)
 	}
 
-	c.logger.Info("getting configurations")
+	c.logger.Info("Getting configurations")
 	newConfig, newConfigIdx := getCommittedMembership(c, leader)
 
 	if newConfigIdx <= startingConfigIdx {

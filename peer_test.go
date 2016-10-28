@@ -266,10 +266,10 @@ func serveReplies(tp *TestingPeer, replies []cannedReply) Future {
 				}
 				errReply, ok := reply.reply.(error)
 				if ok {
-					tp.peer.shared.logger.Info("Peer Test: Replying to %T with error", rpc.Command)
+					tp.peer.shared.logger.Info(fmt.Sprintf("Replying to %T with error", rpc.Command))
 					rpc.Respond(nil, errReply)
 				} else {
-					tp.peer.shared.logger.Info("Peer Test: Replying to %T", rpc.Command)
+					tp.peer.shared.logger.Info(fmt.Sprintf("Replying to %T", rpc.Command))
 					rpc.Respond(reply.reply, nil)
 				}
 			case <-time.After(time.Millisecond * 100):

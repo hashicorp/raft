@@ -35,7 +35,6 @@ type RaftEnv struct {
 }
 
 func (r *RaftEnv) Release() {
-	r.logger.Warn("Release node at %v", r.raft.server.localAddr)
 	f := r.raft.Shutdown()
 	if err := f.Error(); err != nil {
 		panic(err)
@@ -196,7 +195,6 @@ func TestRaft_Integ(t *testing.T) {
 	}
 	for _, f := range futures {
 		NoErr(WaitFuture(f, t), t)
-		env1.logger.Debug("Applied %v", f)
 	}
 
 	// Do a snapshot
@@ -223,7 +221,6 @@ func TestRaft_Integ(t *testing.T) {
 	}
 	for _, f := range futures {
 		NoErr(WaitFuture(f, t), t)
-		leader.logger.Debug("Applied %v", f)
 	}
 
 	// Shoot two nodes in the head!
@@ -244,7 +241,6 @@ func TestRaft_Integ(t *testing.T) {
 	}
 	for _, f := range futures {
 		NoErr(WaitFuture(f, t), t)
-		leader.logger.Debug("Applied %v", f)
 	}
 
 	// Join a few new nodes!

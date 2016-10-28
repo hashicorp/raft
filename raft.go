@@ -153,7 +153,7 @@ func (r *raftServer) run() {
 // runFollower runs the FSM for a follower.
 func (r *raftServer) runFollower() {
 	didWarn := false
-	r.logger.Info("%v entering Follower state (Leader: %q)", r, r.getLeader())
+	r.logger.Info("Entering Follower state", "leader", r.getLeader())
 	metrics.IncrCounter([]string{"raft", "state", "follower"}, 1)
 	heartbeatTimer := randomTimeout(r.conf.HeartbeatTimeout)
 	for {
@@ -200,18 +200,19 @@ func (r *raftServer) runFollower() {
 
 			if r.memberships.latestIndex == 0 {
 				if !didWarn {
-					r.logger.Warn("no known peers, aborting election")
+					r.logger.Warn("No known peers, aborting election")
 					didWarn = true
 				}
 			} else if r.memberships.latestIndex == r.memberships.committedIndex &&
 				!hasVote(r.memberships.latest, r.localID) {
 				if !didWarn {
-					r.logger.Warn("not part of stable membership configuration, aborting election")
+					r.logger.Warn("Not part of stable membership configuration, aborting election")
 					didWarn = true
 				}
 			} else {
-				r.logger.Warn("Heartbeat timeout from %q reached in term %d (last contact %v), starting election",
-					lastLeader, r.currentTerm, lastContact)
+				r.logger.Warn("Heartbeat timeout reached, starting election",
+					"last_leader", lastLeader, "term", r.currentTerm,
+					"last_contact", lastContact)
 				metrics.IncrCounter([]string{"raft", "transition", "heartbeat_timeout"}, 1)
 				r.setState(Candidate)
 				r.updatePeers()
@@ -255,7 +256,7 @@ func (r *raftServer) runCandidate() {
 	// Increment the term
 	r.currentTerm += 1
 	r.persistCurrentTerm()
-	r.logger.Info("%v entering Candidate state in term %v", r, r.currentTerm)
+	r.logger.Info("Entering Candidate state", "term", r.currentTerm)
 
 	// Set a timeout
 	electionTimer := randomTimeout(r.conf.ElectionTimeout)
@@ -264,7 +265,7 @@ func (r *raftServer) runCandidate() {
 		// Persist a vote for ourselves
 		err := r.persistVote(r.currentTerm, r.trans.EncodePeer(r.localAddr))
 		if err != nil {
-			r.logger.Error("Failed to persist vote : %v", err)
+			r.logger.Error("Failed to persist vote", "error", err)
 			return // TODO: panic?
 		}
 	}
@@ -323,7 +324,7 @@ func (r *raftServer) runCandidate() {
 // runLeader runs the FSM for a leader. Do the setup here and drop into
 // the leaderLoop for the hot loop.
 func (r *raftServer) runLeader() {
-	r.logger.Info("%v entering Leader state", r)
+	r.logger.Info("Entering Leader state")
 	metrics.IncrCounter([]string{"raft", "state", "leader"}, 1)
 
 	// Notify that we are the leader
@@ -431,7 +432,8 @@ func (r *raftServer) updatePeers() {
 		}
 		inConfig[server.ID] = server
 		if _, ok := r.peers[server.ID]; !ok {
-			r.logger.Info("Added peer %v, starting replication", server.ID)
+			r.logger.Info("Added peer, starting replication",
+				"id", server.ID, "address", server.Address)
 			controlCh := startPeer(server.ID, server.Address, r.logger, r.logs, r.snapshots,
 				r.goRoutines, r.trans, r.localAddr, r.peerProgressCh, peerOptions{
 					protocolVersion:   r.conf.ProtocolVersion,
@@ -457,7 +459,8 @@ func (r *raftServer) updatePeers() {
 		verifyCounter := r.verifyCounter
 		server, ok := inConfig[serverID]
 		if !ok {
-			r.logger.Info("Removed peer %v, stopping communication", serverID)
+			r.logger.Info("Removed peer, stopping communication",
+				"id", serverID, "address", server.Address)
 			delete(r.peers, serverID)
 			role = Shutdown
 		} else {
@@ -487,10 +490,10 @@ func (r *raftServer) shutdownPeers() {
 		role: Shutdown,
 	}
 	for serverID, peer := range r.peers {
-		r.logger.Info("Shutting down communication with peer %v", serverID)
+		r.logger.Info("Shutting down communication with peer", "id", serverID)
 		peer.controlCh <- control
 		delete(r.peers, serverID)
-		r.logger.Info("Shut down communication with peer %v", serverID)
+		r.logger.Info("Shut down communication with peer", "id", serverID)
 	}
 }
 
@@ -659,7 +662,7 @@ func (r *raftServer) verified(count uint64) {
 		i++
 	}
 	if i > 0 {
-		r.logger.Info("Verified leadership through counter %v", count)
+		r.logger.Info("Verified leadership through counter", "count", count)
 		r.leaderState.verifyBatches = r.leaderState.verifyBatches[i:]
 	}
 }
@@ -689,7 +692,7 @@ func (r *raftServer) computeCandidateProgress() {
 		}
 	}
 	if quorumGeq(votes) == 1 {
-		r.logger.Info("Election won. Tally: %d", sum(votes))
+		r.logger.Info("Election won", "tally", sum(votes))
 		r.setState(Leader)
 		r.setLeader(r.localAddr)
 		r.updatePeers()
@@ -758,8 +761,8 @@ func (r *raftServer) verifyLeader(futures []*verifyFuture) {
 		futures: futures,
 	})
 
-	r.logger.Info("Verifying leadership for %v requests with counter %v",
-		len(futures), counter)
+	r.logger.Info("Verifying leadership for with counter",
+		"requests", len(futures), "counter", counter)
 
 	// Trigger immediate heartbeats
 	r.updatePeers()
@@ -804,8 +807,11 @@ func (r *raftServer) appendMembershipEntry(future *membershipChangeFuture) {
 		return
 	}
 
-	r.logger.Info("Updating membership configuration with %s (%v, %v) to %+v",
-		future.req.command, future.req.serverID, future.req.serverAddress, membership.Servers)
+	r.logger.Info("Updating membership configuration",
+		"command", future.req.command,
+		"id", future.req.serverID,
+		"address", future.req.serverAddress,
+		"servers", membership.Servers)
 
 	// In pre-ID compatibility mode we translate all configuration changes
 	// in to an old remove peer message, which can handle all supported
@@ -850,7 +856,7 @@ func (r *raftServer) dispatchLogs(applyLogs []*logFuture) {
 
 	// Write the log entry locally
 	if err := r.logs.StoreLogs(logs); err != nil {
-		r.logger.Error("Failed to commit logs: %v", err)
+		r.logger.Error("Failed to commit logs", "error", err)
 		for _, applyLog := range applyLogs {
 			applyLog.respond(err)
 		}
@@ -878,7 +884,7 @@ func (r *raftServer) dispatchLogs(applyLogs []*logFuture) {
 func (r *raftServer) processLogs(index Index, future *logFuture) {
 	// Reject logs we've applied already
 	if index <= r.lastApplied {
-		r.logger.Warn("Skipping application of old log: %d", index)
+		r.logger.Warn("Skipping application of old log", "index", index)
 		return
 	}
 
@@ -891,7 +897,8 @@ func (r *raftServer) processLogs(index Index, future *logFuture) {
 		} else {
 			l := new(Log)
 			if err := r.logs.GetLog(idx, l); err != nil {
-				r.logger.Error("Failed to get log at %d: %v", idx, err)
+				r.logger.Error("Failed to get log",
+					"index", idx, "error", err)
 				panic(err)
 			}
 			r.processLog(l, nil)
@@ -955,7 +962,7 @@ func (r *raftServer) processRPC(rpc RPC) {
 	case *InstallSnapshotRequest:
 		r.installSnapshot(rpc, cmd)
 	default:
-		r.logger.Error("Got unexpected command: %#v", rpc.Command)
+		r.logger.Error("Got unexpected command", "command", rpc.Command)
 		rpc.Respond(nil, fmt.Errorf("unexpected command"))
 	}
 }
@@ -978,7 +985,7 @@ func (r *raftServer) processHeartbeat(rpc RPC) {
 	case *AppendEntriesRequest:
 		r.appendEntries(rpc, cmd)
 	default:
-		r.logger.Error("Expected heartbeat, got command: %#v", rpc.Command)
+		r.logger.Error("Expected heartbeat, got command", "command", rpc.Command)
 		rpc.Respond(nil, fmt.Errorf("unexpected command"))
 	}
 }
@@ -1026,16 +1033,19 @@ func (r *raftServer) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		} else {
 			var prevLog Log
 			if err := r.logs.GetLog(a.PrevLogEntry, &prevLog); err != nil {
-				r.logger.Warn("Failed to get previous log entry %d: %v (last: %d)",
-					a.PrevLogEntry, err, lastIdx)
+				r.logger.Warn("Failed to get previous log entry",
+					"prev_index", a.PrevLogEntry,
+					"last_index", lastIdx,
+					"error", err)
 				return
 			}
 			prevLogTerm = prevLog.Term
 		}
 
 		if a.PrevLogTerm != prevLogTerm {
-			r.logger.Warn("Previous log term mis-match: ours: %d remote: %d",
-				prevLogTerm, a.PrevLogTerm)
+			r.logger.Warn("Previous log term mis-match",
+				"our_term", prevLogTerm,
+				"their_term", a.PrevLogTerm)
 			return
 		}
 	}
@@ -1054,14 +1064,15 @@ func (r *raftServer) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 			}
 			var storeEntry Log
 			if err := r.logs.GetLog(entry.Index, &storeEntry); err != nil {
-				r.logger.Warn("Failed to get log entry %d: %v",
-					entry.Index, err)
+				r.logger.Warn("Failed to get log entry",
+					"index", entry.Index, "error", err)
 				return
 			}
 			if entry.Term != storeEntry.Term {
-				r.logger.Warn("Clearing log suffix from %d to %d", entry.Index, lastLogIdx)
+				r.logger.Warn("Clearing log suffix",
+					"from_index", entry.Index, "to_index", lastLogIdx)
 				if err := r.logs.DeleteRange(entry.Index, lastLogIdx); err != nil {
-					r.logger.Error("Failed to clear log suffix: %v", err)
+					r.logger.Error("Failed to clear log suffix", "error", err)
 					return
 				}
 				if entry.Index <= r.memberships.latestIndex {
@@ -1077,7 +1088,7 @@ func (r *raftServer) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		if n := len(newEntries); n > 0 {
 			// Append the new entries
 			if err := r.logs.StoreLogs(newEntries); err != nil {
-				r.logger.Error("Failed to append to logs: %v", err)
+				r.logger.Error("Failed to append to logs", "error", err)
 				// TODO: leaving r.getLastLog() in the wrong
 				// state if there was a truncation above
 				return
@@ -1159,8 +1170,8 @@ func (r *raftServer) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// Check if we have an existing leader [who's not the candidate]
 	candidate := r.trans.DecodePeer(req.Candidate)
 	if leader := r.getLeader(); leader != "" && leader != candidate {
-		r.logger.Warn("Rejecting vote request from %v since we have a leader: %v",
-			candidate, leader)
+		r.logger.Warn("Rejecting vote request since we have a leader",
+			"candidate", candidate, "leader", leader)
 		return
 	}
 
@@ -1179,23 +1190,25 @@ func (r *raftServer) requestVote(rpc RPC, req *RequestVoteRequest) {
 	v, err := r.stable.GetUint64(keyLastVoteTerm)
 	lastVoteTerm := Term(v)
 	if err != nil && err.Error() != "not found" {
-		r.logger.Error("Failed to get last vote term: %v", err)
+		r.logger.Error("Failed to get last vote term", "error", err)
 		return
 	}
 	lastVoteCandBytes, err := r.stable.Get(keyLastVoteCand)
 	if err != nil && err.Error() != "not found" {
-		r.logger.Error("Failed to get last vote candidate: %v", err)
+		r.logger.Error("Failed to get last vote candidate", "error", err)
 		return
 	}
 
 	// Check if we've voted in this election before
 	if lastVoteTerm == req.Term {
 		if lastVoteCandBytes != nil && bytes.Compare(lastVoteCandBytes, req.Candidate) == 0 {
-			r.logger.Warn("Duplicate RequestVote in term %d from candidate %s", req.Term, req.Candidate)
+			r.logger.Warn("Duplicate RequestVote", "term", req.Term, "candidate", req.Candidate)
 			resp.Granted = true
 		} else {
-			r.logger.Info("Already voted for %s, cannot grant vote in term %d to candidate %s",
-				lastVoteCandBytes, req.Term, req.Candidate)
+			r.logger.Info("Already voted, cannot grant new vote",
+				"voted_for", lastVoteCandBytes,
+				"rejected_term", req.Term,
+				"rejected_candidate", req.Candidate)
 		}
 		return
 	}
@@ -1203,20 +1216,24 @@ func (r *raftServer) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// Reject if their term is older
 	lastIdx, lastTerm := r.shared.getLastEntry()
 	if lastTerm > req.LastLogTerm {
-		r.logger.Warn("Rejecting vote request from %v since our last term is greater (%d, %d)",
-			candidate, lastTerm, req.LastLogTerm)
+		r.logger.Warn("Rejecting vote request since our last term is greater",
+			"last_term", lastTerm,
+			"rejected_term", req.LastLogTerm,
+			"rejected_candidate", candidate)
 		return
 	}
 
 	if lastTerm == req.LastLogTerm && lastIdx > req.LastLogIndex {
-		r.logger.Warn("Rejecting vote request from %v since our last index is greater (%d, %d)",
-			candidate, lastIdx, req.LastLogIndex)
+		r.logger.Warn("Rejecting vote request since our last index is greater",
+			"last_index", lastIdx,
+			"rejected_index", req.LastLogIndex,
+			"rejected_candidate", candidate)
 		return
 	}
 
 	// Persist a vote for safety
 	if err := r.persistVote(req.Term, req.Candidate); err != nil {
-		r.logger.Error("Failed to persist vote: %v", err)
+		r.logger.Error("Failed to persist vote", "error", err)
 		return
 	}
 
@@ -1277,7 +1294,7 @@ func (r *raftServer) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	sink, err := r.snapshots.Create(version, req.LastLogIndex, req.LastLogTerm,
 		reqConfiguration, reqConfigurationIndex, r.trans)
 	if err != nil {
-		r.logger.Error("Failed to create snapshot to install: %v", err)
+		r.logger.Error("Failed to create snapshot to install", "error", err)
 		rpcErr = fmt.Errorf("failed to create snapshot: %v", err)
 		return
 	}
@@ -1286,7 +1303,7 @@ func (r *raftServer) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	n, err := io.Copy(sink, rpc.Reader)
 	if err != nil {
 		sink.Cancel()
-		r.logger.Error("Failed to copy snapshot: %v", err)
+		r.logger.Error("Failed to copy snapshot", "error", err)
 		rpcErr = err
 		return
 	}
@@ -1294,18 +1311,19 @@ func (r *raftServer) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	// Check that we received it all
 	if n != req.Size {
 		sink.Cancel()
-		r.logger.Error("Failed to receive whole snapshot: %d / %d", n, req.Size)
+		r.logger.Error("Failed to receive whole snapshot",
+			"received_size", n, "expected_size", req.Size)
 		rpcErr = fmt.Errorf("short read")
 		return
 	}
 
 	// Finalize the snapshot
 	if err := sink.Close(); err != nil {
-		r.logger.Error("Failed to finalize snapshot: %v", err)
+		r.logger.Error("Failed to finalize snapshot", "error", err)
 		rpcErr = err
 		return
 	}
-	r.logger.Info("Copied %d bytes to local snapshot", n)
+	r.logger.Info("Wrote local snapshot", "size", n)
 
 	// Restore snapshot
 	future := &restoreFuture{ID: sink.ID()}
@@ -1319,7 +1337,7 @@ func (r *raftServer) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 
 	// Wait for the restore to happen
 	if err := future.Error(); err != nil {
-		r.logger.Error("Failed to restore snapshot: %v", err)
+		r.logger.Error("Failed to restore snapshot", "error", err)
 		rpcErr = err
 		return
 	}
@@ -1339,7 +1357,7 @@ func (r *raftServer) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 
 	// Compact logs, continue even if this fails
 	if err := r.compactLogs(req.LastLogIndex); err != nil {
-		r.logger.Error("Failed to compact logs: %v", err)
+		r.logger.Error("Failed to compact logs", "error", err)
 	}
 
 	r.logger.Info("Installed remote snapshot")
