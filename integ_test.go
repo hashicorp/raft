@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"os"
 	"testing"
 	"time"
+
+	log "github.com/mgutz/logxi/v1"
 )
 
 // CheckInteg will skip a test if integration testing is not enabled.
@@ -30,11 +31,10 @@ type RaftEnv struct {
 	snapshot *FileSnapshotStore
 	trans    *NetworkTransport
 	raft     *Raft
-	logger   Logger
+	logger   log.Logger
 }
 
 func (r *RaftEnv) Release() {
-	r.logger.Warn("Release node at %v", r.raft.server.localAddr)
 	f := r.raft.Shutdown()
 	if err := f.Error(); err != nil {
 		panic(err)
@@ -90,7 +90,7 @@ func MakeRaft(t *testing.T, conf *Config, bootstrap bool) *RaftEnv {
 		}
 	}
 
-	log.Printf("[INFO] Starting node at %v", trans.LocalAddr())
+	log.Info("Starting node at %v", trans.LocalAddr())
 	raft, err := NewRaft(conf, env.fsm, stable, stable, snap, trans)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -195,7 +195,6 @@ func TestRaft_Integ(t *testing.T) {
 	}
 	for _, f := range futures {
 		NoErr(WaitFuture(f, t), t)
-		env1.logger.Debug("Applied %v", f)
 	}
 
 	// Do a snapshot
@@ -222,7 +221,6 @@ func TestRaft_Integ(t *testing.T) {
 	}
 	for _, f := range futures {
 		NoErr(WaitFuture(f, t), t)
-		leader.logger.Debug("Applied %v", f)
 	}
 
 	// Shoot two nodes in the head!
@@ -243,7 +241,6 @@ func TestRaft_Integ(t *testing.T) {
 	}
 	for _, f := range futures {
 		NoErr(WaitFuture(f, t), t)
-		leader.logger.Debug("Applied %v", f)
 	}
 
 	// Join a few new nodes!

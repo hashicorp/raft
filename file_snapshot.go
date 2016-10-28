@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	log "github.com/mgutz/logxi/v1"
 )
 
 const (
@@ -29,7 +31,7 @@ const (
 type FileSnapshotStore struct {
 	path   string
 	retain int
-	logger Logger
+	logger log.Logger
 }
 
 type snapMetaSlice []*fileSnapshotMeta
@@ -37,7 +39,7 @@ type snapMetaSlice []*fileSnapshotMeta
 // FileSnapshotSink implements SnapshotSink with a file.
 type FileSnapshotSink struct {
 	store  *FileSnapshotStore
-	logger Logger
+	logger log.Logger
 	dir    string
 	meta   fileSnapshotMeta
 
@@ -73,7 +75,7 @@ func (b *bufferedFile) Close() error {
 // NewFileSnapshotStoreWithLogger creates a new FileSnapshotStore based
 // on a base directory. The `retain` parameter controls how many
 // snapshots are retained. Must be at least 1.
-func NewFileSnapshotStoreWithLogger(base string, retain int, logger Logger) (*FileSnapshotStore, error) {
+func NewFileSnapshotStoreWithLogger(base string, retain int, logger log.Logger) (*FileSnapshotStore, error) {
 	if retain < 1 {
 		return nil, fmt.Errorf("must retain at least one snapshot")
 	}
@@ -147,11 +149,11 @@ func (f *FileSnapshotStore) Create(version SnapshotVersion, index Index, term Te
 	// Create a new path
 	name := snapshotName(term, index)
 	path := filepath.Join(f.path, name+tmpSuffix)
-	f.logger.Info("Creating new snapshot at %s", path)
+	f.logger.Info("Creating new snapshot", "path", path)
 
 	// Make the directory
 	if err := os.MkdirAll(path, 0755); err != nil {
-		f.logger.Error("Failed to make snapshot directory: %v", err)
+		f.logger.Error("Failed to make snapshot directory", "error", err)
 		return nil, err
 	}
 
@@ -176,7 +178,7 @@ func (f *FileSnapshotStore) Create(version SnapshotVersion, index Index, term Te
 
 	// Write out the meta data
 	if err := sink.writeMeta(); err != nil {
-		f.logger.Error("Failed to write metadata: %v", err)
+		f.logger.Error("Failed to write metadata", "error", err)
 		return nil, err
 	}
 
@@ -184,7 +186,7 @@ func (f *FileSnapshotStore) Create(version SnapshotVersion, index Index, term Te
 	statePath := filepath.Join(path, stateFilePath)
 	fh, err := os.Create(statePath)
 	if err != nil {
-		f.logger.Error("Failed to create state file: %v", err)
+		f.logger.Error("Failed to create state file", "error", err)
 		return nil, err
 	}
 	sink.stateFile = fh
@@ -205,7 +207,7 @@ func (f *FileSnapshotStore) List() ([]*SnapshotMeta, error) {
 	// Get the eligible snapshots
 	snapshots, err := f.getSnapshots()
 	if err != nil {
-		f.logger.Error("Failed to get snapshots: %v", err)
+		f.logger.Error("Failed to get snapshots", "error", err)
 		return nil, err
 	}
 
@@ -224,7 +226,7 @@ func (f *FileSnapshotStore) getSnapshots() ([]*fileSnapshotMeta, error) {
 	// Get the eligible snapshots
 	snapshots, err := ioutil.ReadDir(f.path)
 	if err != nil {
-		f.logger.Error("Failed to scan snapshot dir: %v", err)
+		f.logger.Error("Failed to scan snapshot dir", "error", err)
 		return nil, err
 	}
 
@@ -239,20 +241,23 @@ func (f *FileSnapshotStore) getSnapshots() ([]*fileSnapshotMeta, error) {
 		// Ignore any temporary snapshots
 		dirName := snap.Name()
 		if strings.HasSuffix(dirName, tmpSuffix) {
-			f.logger.Warn("Found temporary snapshot: %v", dirName)
+			f.logger.Warn("Found temporary snapshot",
+				"path", dirName)
 			continue
 		}
 
 		// Try to read the meta data
 		meta, err := f.readMeta(dirName)
 		if err != nil {
-			f.logger.Warn("Failed to read metadata for %v: %v", dirName, err)
+			f.logger.Warn("Failed to read metadata",
+				"path", dirName, "error", err)
 			continue
 		}
 
 		// Make sure we can understand this version.
 		if meta.Version < SnapshotVersionMin || meta.Version > SnapshotVersionMax {
-			f.logger.Warn("Snapshot version for %v not supported: %d", dirName, meta.Version)
+			f.logger.Warn("Snapshot version not supported",
+				"path", dirName, "version", meta.Version)
 			continue
 		}
 
@@ -293,7 +298,7 @@ func (f *FileSnapshotStore) Open(id string) (*SnapshotMeta, io.ReadCloser, error
 	// Get the metadata
 	meta, err := f.readMeta(id)
 	if err != nil {
-		f.logger.Error("Failed to get meta data to open snapshot: %v", err)
+		f.logger.Error("Failed to get meta data to open snapshot", "error", err)
 		return nil, nil, err
 	}
 
@@ -301,7 +306,7 @@ func (f *FileSnapshotStore) Open(id string) (*SnapshotMeta, io.ReadCloser, error
 	statePath := filepath.Join(f.path, id, stateFilePath)
 	fh, err := os.Open(statePath)
 	if err != nil {
-		f.logger.Error("Failed to open state file: %v", err)
+		f.logger.Error("Failed to open state file", "error", err)
 		return nil, nil, err
 	}
 
@@ -311,7 +316,7 @@ func (f *FileSnapshotStore) Open(id string) (*SnapshotMeta, io.ReadCloser, error
 	// Compute the hash
 	_, err = io.Copy(stateHash, fh)
 	if err != nil {
-		f.logger.Error("Failed to read state file: %v", err)
+		f.logger.Error("Failed to read state file", "error", err)
 		fh.Close()
 		return nil, nil, err
 	}
@@ -319,15 +324,15 @@ func (f *FileSnapshotStore) Open(id string) (*SnapshotMeta, io.ReadCloser, error
 	// Verify the hash
 	computed := stateHash.Sum(nil)
 	if bytes.Compare(meta.CRC, computed) != 0 {
-		f.logger.Error("CRC checksum failed (stored: %v computed: %v)",
-			meta.CRC, computed)
+		f.logger.Error("CRC checksum failed",
+			"stored_crc", meta.CRC, "computed_crc", computed)
 		fh.Close()
 		return nil, nil, fmt.Errorf("CRC mismatch")
 	}
 
 	// Seek to the start
 	if _, err := fh.Seek(0, 0); err != nil {
-		f.logger.Error("State file seek failed: %v", err)
+		f.logger.Error("State file seek failed", "error", err)
 		fh.Close()
 		return nil, nil, err
 	}
@@ -345,15 +350,16 @@ func (f *FileSnapshotStore) Open(id string) (*SnapshotMeta, io.ReadCloser, error
 func (f *FileSnapshotStore) ReapSnapshots() error {
 	snapshots, err := f.getSnapshots()
 	if err != nil {
-		f.logger.Error("Failed to get snapshots: %v", err)
+		f.logger.Error("Failed to get snapshots", "error", err)
 		return err
 	}
 
 	for i := f.retain; i < len(snapshots); i++ {
 		path := filepath.Join(f.path, snapshots[i].ID)
-		f.logger.Info("reaping snapshot %v", path)
+		f.logger.Info("Reaping snapshot", "path", path)
 		if err := os.RemoveAll(path); err != nil {
-			f.logger.Error("Failed to reap snapshot %v: %v", path, err)
+			f.logger.Error("Failed to reap snapshot",
+				"path", path, "error", err)
 			return err
 		}
 	}
@@ -382,20 +388,20 @@ func (s *FileSnapshotSink) Close() error {
 
 	// Close the open handles
 	if err := s.finalize(); err != nil {
-		s.logger.Error("Failed to finalize snapshot: %v", err)
+		s.logger.Error("Failed to finalize snapshot", "error", err)
 		return err
 	}
 
 	// Write out the meta data
 	if err := s.writeMeta(); err != nil {
-		s.logger.Error("Failed to write metadata: %v", err)
+		s.logger.Error("Failed to write metadata", "error", err)
 		return err
 	}
 
 	// Move the directory into place
 	newPath := strings.TrimSuffix(s.dir, tmpSuffix)
 	if err := os.Rename(s.dir, newPath); err != nil {
-		s.logger.Error("Failed to move snapshot into place: %v", err)
+		s.logger.Error("Failed to move snapshot into place", "error", err)
 		return err
 	}
 
@@ -417,7 +423,7 @@ func (s *FileSnapshotSink) Cancel() error {
 
 	// Close the open handles
 	if err := s.finalize(); err != nil {
-		s.logger.Error("Failed to finalize snapshot: %v", err)
+		s.logger.Error("Failed to finalize snapshot", "error", err)
 		return err
 	}
 

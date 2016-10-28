@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-msgpack/codec"
+	log "github.com/mgutz/logxi/v1"
 )
 
 const (
@@ -63,7 +64,7 @@ type NetworkTransport struct {
 	heartbeatFn     func(RPC)
 	heartbeatFnLock sync.Mutex
 
-	logger Logger
+	logger log.Logger
 
 	maxPool int
 
@@ -134,7 +135,7 @@ func NewNetworkTransportWithLogger(
 	stream StreamLayer,
 	maxPool int,
 	timeout time.Duration,
-	logger Logger,
+	logger log.Logger,
 ) *NetworkTransport {
 	if logger == nil {
 		logger = DefaultStdLogger(os.Stderr)
@@ -362,10 +363,12 @@ func (n *NetworkTransport) listen() {
 			if n.IsShutdown() {
 				return
 			}
-			n.logger.Error("Failed to accept connection: %v", err)
+			n.logger.Error("Failed to accept connection", "error", err)
 			continue
 		}
-		n.logger.Debug("%v accepted connection from: %v", n.LocalAddr(), conn.RemoteAddr())
+		n.logger.Debug("Accepted connection",
+			"local_address", n.LocalAddr(),
+			"remote_address", conn.RemoteAddr())
 
 		// Handle the connection in dedicated routine
 		go n.handleConn(conn)
@@ -383,12 +386,12 @@ func (n *NetworkTransport) handleConn(conn net.Conn) {
 	for {
 		if err := n.handleCommand(r, dec, enc); err != nil {
 			if err != io.EOF {
-				n.logger.Error("Failed to decode incoming command: %v", err)
+				n.logger.Error("Failed to decode incoming command", "error", err)
 			}
 			return
 		}
 		if err := w.Flush(); err != nil {
-			n.logger.Error("Failed to flush response: %v", err)
+			n.logger.Error("Failed to flush response", "error", err)
 			return
 		}
 	}

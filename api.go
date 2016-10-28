@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/armon/go-metrics"
+	log "github.com/mgutz/logxi/v1"
 )
 
 var (
@@ -154,7 +155,7 @@ type raftServer struct {
 	localAddr ServerAddress
 
 	// Used for our logging
-	logger Logger
+	logger log.Logger
 
 	// LogStore provides durable storage for logs
 	logs LogStore
@@ -421,7 +422,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	}
 
 	// Ensure we have a LogOutput.
-	var logger Logger
+	var logger log.Logger
 	if conf.Logger != nil {
 		logger = conf.Logger
 	} else {
@@ -522,13 +523,13 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	for index := snapshotIndex + 1; index <= lastLog.Index; index++ {
 		var entry Log
 		if err := r.logs.GetLog(index, &entry); err != nil {
-			r.logger.Error("Failed to get log at %d: %v", index, err)
+			r.logger.Error("Failed to get log", "index", index, "error", err)
 			panic(err)
 		}
 		r.processMembershipLogEntry(&entry)
 	}
-	r.logger.Info("Initial membership (index=%d): %+v",
-		r.memberships.latestIndex, r.memberships.latest.Servers)
+	r.logger.Info("Initial membership", "index", r.memberships.latestIndex,
+		"servers", r.memberships.latest.Servers)
 
 	// Setup a heartbeat fast-path to avoid head-of-line
 	// blocking where possible. It MUST be safe for this
@@ -555,7 +556,6 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 func (r *raftServer) restoreSnapshot() error {
 	snapshots, err := r.snapshots.List()
 	if err != nil {
-		r.logger.Error("Failed to list snapshots: %v", err)
 		return err
 	}
 
@@ -563,18 +563,20 @@ func (r *raftServer) restoreSnapshot() error {
 	for _, snapshot := range snapshots {
 		_, source, err := r.snapshots.Open(snapshot.ID)
 		if err != nil {
-			r.logger.Error("Failed to open snapshot %v: %v", snapshot.ID, err)
+			r.logger.Error("Failed to open snapshot",
+				"id", snapshot.ID, "error", err)
 			continue
 		}
 		defer source.Close()
 
 		if err := r.fsm.Restore(source); err != nil {
-			r.logger.Error("Failed to restore snapshot %v: %v", snapshot.ID, err)
+			r.logger.Error("Failed to restore snapshot",
+				"id", snapshot.ID, "error", err)
 			continue
 		}
 
 		// Log success
-		r.logger.Info("Restored from snapshot %v", snapshot.ID)
+		r.logger.Info("Restored from snapshot", "id", snapshot.ID)
 
 		// Update the lastApplied so we don't replay old logs
 		r.lastApplied = snapshot.Index
