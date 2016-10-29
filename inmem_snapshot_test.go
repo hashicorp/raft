@@ -3,6 +3,7 @@ package raft
 import (
 	"bytes"
 	"io"
+	"reflect"
 	"testing"
 )
 
@@ -33,8 +34,14 @@ func TestInmemSS_CreateSnapshot(t *testing.T) {
 	}
 
 	// Create a new sink
-	peers := []byte("all my lovely friends")
-	sink, err := snap.Create(10, 3, peers)
+	var configuration Configuration
+	configuration.Servers = append(configuration.Servers, Server{
+		Suffrage: Voter,
+		ID:       ServerID("my id"),
+		Address:  ServerAddress("over here"),
+	})
+	_, trans := NewInmemTransport(NewInmemAddr())
+	sink, err := snap.Create(SnapshotVersionMax, 10, 3, configuration, 2, trans)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -70,7 +77,7 @@ func TestInmemSS_CreateSnapshot(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	if len(snaps) != 1 {
-		t.Fatalf("expect a snapshot: %v", snaps)
+		t.Fatalf("expect a snapshots: %v", snaps)
 	}
 
 	// Check the latest
@@ -81,11 +88,14 @@ func TestInmemSS_CreateSnapshot(t *testing.T) {
 	if latest.Term != 3 {
 		t.Fatalf("bad snapshot: %v", *latest)
 	}
-	if bytes.Compare(latest.Peers, peers) != 0 {
+	if !reflect.DeepEqual(latest.Configuration, configuration) {
+		t.Fatalf("bad snapshot: %v", *latest)
+	}
+	if latest.ConfigurationIndex != 2 {
 		t.Fatalf("bad snapshot: %v", *latest)
 	}
 	if latest.Size != 13 {
-		t.Fatalf("bad snapshot: %d, %v", latest.Size, *latest)
+		t.Fatalf("bad snapshot: %v", *latest)
 	}
 
 	// Read the snapshot

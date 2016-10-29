@@ -29,15 +29,24 @@ func NewInmemSnapshotStore() *InmemSnapshotStore {
 }
 
 // Create replaces the stored snapshot with a new one using the given args
-func (m *InmemSnapshotStore) Create(index, term uint64, peers []byte) (SnapshotSink, error) {
+func (m *InmemSnapshotStore) Create(version SnapshotVersion, index, term uint64,
+	configuration Configuration, configurationIndex uint64, trans Transport) (SnapshotSink, error) {
+	// We only support version 1 snapshots at this time.
+	if version != 1 {
+		return nil, fmt.Errorf("unsupported snapshot version %d", version)
+	}
+
 	name := snapshotName(term, index)
 
 	sink := m.latest
 	sink.meta = SnapshotMeta{
-		ID:    name,
-		Index: index,
-		Term:  term,
-		Peers: peers,
+		Version:            version,
+		ID:                 name,
+		Index:              index,
+		Term:               term,
+		Peers:              encodePeers(configuration, trans),
+		Configuration:      configuration,
+		ConfigurationIndex: configurationIndex,
 	}
 	sink.contents = &bytes.Buffer{}
 
