@@ -2,6 +2,7 @@ package raft
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"io/ioutil"
 )
@@ -15,14 +16,14 @@ type InmemSnapshotStore struct {
 // InmemSnapshotSink implements SnapshotSink in memory
 type InmemSnapshotSink struct {
 	meta     SnapshotMeta
-	contents []byte
+	contents *bytes.Buffer
 }
 
 // NewInmemSnapshotStore creates a blank new InmemSnapshotStore
 func NewInmemSnapshotStore() *InmemSnapshotStore {
 	return &InmemSnapshotStore{
 		latest: &InmemSnapshotSink{
-			contents: []byte{},
+			contents: &bytes.Buffer{},
 		},
 	}
 }
@@ -32,11 +33,13 @@ func (m *InmemSnapshotStore) Create(index, term uint64, peers []byte) (SnapshotS
 	name := snapshotName(term, index)
 
 	sink := m.latest
-	sink.meta.ID = name
-	sink.meta.Index = index
-	sink.meta.Term = term
-	sink.meta.Peers = peers
-	sink.contents = []byte{}
+	sink.meta = SnapshotMeta{
+		ID:    name,
+		Index: index,
+		Term:  term,
+		Peers: peers,
+	}
+	sink.contents = &bytes.Buffer{}
 
 	return sink, nil
 }
@@ -48,18 +51,22 @@ func (m *InmemSnapshotStore) List() ([]*SnapshotMeta, error) {
 
 // Open wraps an io.ReadCloser around the snapshot contents
 func (m *InmemSnapshotStore) Open(id string) (*SnapshotMeta, io.ReadCloser, error) {
-	return &m.latest.meta, ioutil.NopCloser(bytes.NewReader(m.latest.contents)), nil
+	if m.latest.meta.ID != id {
+		return nil, nil, fmt.Errorf("[ERR] snapshot: failed to open snapshot id: %s", id)
+	}
+
+	return &m.latest.meta, ioutil.NopCloser(m.latest.contents), nil
 }
 
 // Write appends the given bytes to the snapshot contents
 func (s *InmemSnapshotSink) Write(p []byte) (n int, err error) {
-	s.contents = append(s.contents, p...)
-	return len(p), nil
+	written, err := io.Copy(s.contents, bytes.NewReader(p))
+	s.meta.Size += written
+	return int(written), err
 }
 
 // Close updates the Size and is otherwise a no-op
 func (s *InmemSnapshotSink) Close() error {
-	s.meta.Size = int64(len(s.contents))
 	return nil
 }
 
