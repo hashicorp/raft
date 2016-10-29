@@ -10,7 +10,8 @@ import (
 // InmemSnapshotStore implements the SnapshotStore interface and
 // retains only the most recent snapshot
 type InmemSnapshotStore struct {
-	latest *InmemSnapshotSink
+	latest      *InmemSnapshotSink
+	hasSnapshot bool
 }
 
 // InmemSnapshotSink implements SnapshotSink in memory
@@ -49,12 +50,16 @@ func (m *InmemSnapshotStore) Create(version SnapshotVersion, index, term uint64,
 		ConfigurationIndex: configurationIndex,
 	}
 	sink.contents = &bytes.Buffer{}
+	m.hasSnapshot = true
 
 	return sink, nil
 }
 
 // List returns the latest snapshot taken
 func (m *InmemSnapshotStore) List() ([]*SnapshotMeta, error) {
+	if !m.hasSnapshot {
+		return []*SnapshotMeta{}, nil
+	}
 	return []*SnapshotMeta{&m.latest.meta}, nil
 }
 

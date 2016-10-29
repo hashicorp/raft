@@ -29,8 +29,8 @@ func TestInmemSS_CreateSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if len(snaps) != 1 {
-		t.Fatalf("should always be 1 snapshot: %v", snaps)
+	if len(snaps) != 0 {
+		t.Fatalf("did not expect any snapshots: %v", snaps)
 	}
 
 	// Create a new sink
