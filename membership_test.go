@@ -168,50 +168,50 @@ var nextMembershipTests = []struct {
 	next     string
 }{
 	// AddStaging: was missing.
-	{Membership{}, AddStaging, 1, "{[{Voter id1 addr1}]}"},
-	{singleServer, AddStaging, 2, "{[{Voter id1 addr1x} {Voter id2 addr2}]}"},
+	{Membership{}, AddStaging, 1, "[id1 at addr1 (Voter)]"},
+	{singleServer, AddStaging, 2, "[id1 at addr1x (Voter), id2 at addr2 (Voter)]"},
 	// AddStaging: was Voter.
-	{singleServer, AddStaging, 1, "{[{Voter id1 addr1}]}"},
+	{singleServer, AddStaging, 1, "[id1 at addr1 (Voter)]"},
 	// AddStaging: was Staging.
-	{oneOfEach, AddStaging, 2, "{[{Voter id1 addr1x} {Voter id2 addr2} {Nonvoter id3 addr3x}]}"},
+	{oneOfEach, AddStaging, 2, "[id1 at addr1x (Voter), id2 at addr2 (Voter), id3 at addr3x (Nonvoter)]"},
 	// AddStaging: was Nonvoter.
-	{oneOfEach, AddStaging, 3, "{[{Voter id1 addr1x} {Staging id2 addr2x} {Voter id3 addr3}]}"},
+	{oneOfEach, AddStaging, 3, "[id1 at addr1x (Voter), id2 at addr2x (Staging), id3 at addr3 (Voter)]"},
 
 	// AddNonvoter: was missing.
-	{singleServer, AddNonvoter, 2, "{[{Voter id1 addr1x} {Nonvoter id2 addr2}]}"},
+	{singleServer, AddNonvoter, 2, "[id1 at addr1x (Voter), id2 at addr2 (Nonvoter)]"},
 	// AddNonvoter: was Voter.
-	{singleServer, AddNonvoter, 1, "{[{Voter id1 addr1}]}"},
+	{singleServer, AddNonvoter, 1, "[id1 at addr1 (Voter)]"},
 	// AddNonvoter: was Staging.
-	{oneOfEach, AddNonvoter, 2, "{[{Voter id1 addr1x} {Staging id2 addr2} {Nonvoter id3 addr3x}]}"},
+	{oneOfEach, AddNonvoter, 2, "[id1 at addr1x (Voter), id2 at addr2 (Staging), id3 at addr3x (Nonvoter)]"},
 	// AddNonvoter: was Nonvoter.
-	{oneOfEach, AddNonvoter, 3, "{[{Voter id1 addr1x} {Staging id2 addr2x} {Nonvoter id3 addr3}]}"},
+	{oneOfEach, AddNonvoter, 3, "[id1 at addr1x (Voter), id2 at addr2x (Staging), id3 at addr3 (Nonvoter)]"},
 
 	// DemoteVoter: was missing.
-	{singleServer, DemoteVoter, 2, "{[{Voter id1 addr1x}]}"},
+	{singleServer, DemoteVoter, 2, "[id1 at addr1x (Voter)]"},
 	// DemoteVoter: was Voter.
-	{voterPair, DemoteVoter, 2, "{[{Voter id1 addr1x} {Nonvoter id2 addr2x}]}"},
+	{voterPair, DemoteVoter, 2, "[id1 at addr1x (Voter), id2 at addr2x (Nonvoter)]"},
 	// DemoteVoter: was Staging.
-	{oneOfEach, DemoteVoter, 2, "{[{Voter id1 addr1x} {Nonvoter id2 addr2x} {Nonvoter id3 addr3x}]}"},
+	{oneOfEach, DemoteVoter, 2, "[id1 at addr1x (Voter), id2 at addr2x (Nonvoter), id3 at addr3x (Nonvoter)]"},
 	// DemoteVoter: was Nonvoter.
-	{oneOfEach, DemoteVoter, 3, "{[{Voter id1 addr1x} {Staging id2 addr2x} {Nonvoter id3 addr3x}]}"},
+	{oneOfEach, DemoteVoter, 3, "[id1 at addr1x (Voter), id2 at addr2x (Staging), id3 at addr3x (Nonvoter)]"},
 
 	// RemoveServer: was missing.
-	{singleServer, RemoveServer, 2, "{[{Voter id1 addr1x}]}"},
+	{singleServer, RemoveServer, 2, "[id1 at addr1x (Voter)]"},
 	// RemoveServer: was Voter.
-	{voterPair, RemoveServer, 2, "{[{Voter id1 addr1x}]}"},
+	{voterPair, RemoveServer, 2, "[id1 at addr1x (Voter)]"},
 	// RemoveServer: was Staging.
-	{oneOfEach, RemoveServer, 2, "{[{Voter id1 addr1x} {Nonvoter id3 addr3x}]}"},
+	{oneOfEach, RemoveServer, 2, "[id1 at addr1x (Voter), id3 at addr3x (Nonvoter)]"},
 	// RemoveServer: was Nonvoter.
-	{oneOfEach, RemoveServer, 3, "{[{Voter id1 addr1x} {Staging id2 addr2x}]}"},
+	{oneOfEach, RemoveServer, 3, "[id1 at addr1x (Voter), id2 at addr2x (Staging)]"},
 
 	// Promote: was missing.
-	{singleServer, Promote, 2, "{[{Voter id1 addr1x}]}"},
+	{singleServer, Promote, 2, "[id1 at addr1x (Voter)]"},
 	// Promote: was Voter.
-	{singleServer, Promote, 1, "{[{Voter id1 addr1x}]}"},
+	{singleServer, Promote, 1, "[id1 at addr1x (Voter)]"},
 	// Promote: was Staging.
-	{oneOfEach, Promote, 2, "{[{Voter id1 addr1x} {Voter id2 addr2x} {Nonvoter id3 addr3x}]}"},
+	{oneOfEach, Promote, 2, "[id1 at addr1x (Voter), id2 at addr2x (Voter), id3 at addr3x (Nonvoter)]"},
 	// Promote: was Nonvoter.
-	{oneOfEach, Promote, 3, "{[{Voter id1 addr1x} {Staging id2 addr2x} {Nonvoter id3 addr3x}]}"},
+	{oneOfEach, Promote, 3, "[id1 at addr1x (Voter), id2 at addr2x (Staging), id3 at addr3x (Nonvoter)]"},
 }
 
 func TestMembership_nextMembership_table(t *testing.T) {
