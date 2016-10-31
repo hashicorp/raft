@@ -983,7 +983,7 @@ func (rpc *appendEntriesRPC) prepare(shared *peerShared, control peerControl) er
 	term, err := getTerm(rpc.req.PrevLogEntry)
 	if err != nil {
 		if err != errNeedsSnapshot {
-			shared.logger.Error("Failed to get log term",
+			shared.logger.Fatal("Failed to get log term",
 				"index", rpc.req.PrevLogEntry,
 				"error", err)
 		}
@@ -1008,9 +1008,8 @@ func (rpc *appendEntriesRPC) prepare(shared *peerShared, control peerControl) er
 			return errNeedsSnapshot
 		}
 		if err != nil {
-			shared.logger.Error("Failed to get log entry",
+			shared.logger.Fatal("Failed to get log entry",
 				"index", i, "error", err)
-			return err
 		}
 		rpc.req.Entries = append(rpc.req.Entries, &entry)
 	}

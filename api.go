@@ -523,8 +523,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	for index := snapshotIndex + 1; index <= lastLog.Index; index++ {
 		var entry Log
 		if err := r.logs.GetLog(index, &entry); err != nil {
-			r.logger.Error("Failed to get log", "index", index, "error", err)
-			panic(err)
+			r.logger.Fatal("Failed to get log", "index", index, "error", err)
 		}
 		r.processMembershipLogEntry(&entry)
 	}
