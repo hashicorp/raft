@@ -960,7 +960,7 @@ func (s *Stats) Strings() []struct{ K, V string } {
 		{"fsm_pending", toString(uint64(s.FSMPending))},
 		{"last_snapshot_index", toString(uint64(s.LastSnapshotIndex))},
 		{"last_snapshot_term", toString(uint64(s.LastSnapshotTerm))},
-		{"latest_membership", fmt.Sprintf("%+v", s.LatestMembership.Servers)},
+		{"latest_membership", fmt.Sprintf("%v", s.LatestMembership)},
 		{"latest_membership_index", toString(uint64(s.LatestMembershipIndex))},
 		{"last_contact", lastContact},
 		{"num_peers", toString(uint64(s.NumPeers))},
