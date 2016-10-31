@@ -130,15 +130,25 @@ func (v *raftFormatter) formatDefault(writer io.Writer, level int, msg string, a
 		writer.Write([]byte(fmt.Sprintf("(%s) ", v.tag)))
 	}
 
-	// This is a little jank because the depth depends on the internals of
-	// the logxi library, but it's only used during unit tests.
+	// This is a little jank, but it's only used during unit tests.
 	if v.withLine {
-		_, file, line, ok := runtime.Caller(4)
-		if !ok {
-			file = "???"
-			line = 0
+		file := "???"
+		line := 0
+		depth := 0
+		for {
+			var ok bool
+			_, file, line, ok = runtime.Caller(depth)
+			if ok {
+				if strings.Contains(file, "/logxi/") ||
+					strings.HasSuffix(file, "/raft/logger.go") {
+					depth++
+					continue
+				}
+				file = path.Base(file)
+			}
+			break
 		}
-		writer.Write([]byte(fmt.Sprintf("%s:%d ", path.Base(file), line)))
+		writer.Write([]byte(fmt.Sprintf("%s:%d ", file, line)))
 	}
 
 	if v.module != "" {
