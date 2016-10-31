@@ -130,6 +130,7 @@ func makePeerTesting(t *testing.T, tp *TestingPeer) *TestingPeer {
 		tp.goRoutines,
 		tp.localTrans, // give it localTrans so that it can talk to peerTrans
 		tp.localAddr,
+		ProtocolVersionMax,
 		tp.controlCh,
 		tp.progressCh,
 		tp.options)

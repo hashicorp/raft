@@ -436,8 +436,8 @@ func (r *raftServer) updatePeers() {
 			r.logger.Info("Added peer, starting replication",
 				"id", server.ID, "address", server.Address)
 			controlCh := startPeer(server.ID, server.Address, r.logger, r.logs, r.snapshots,
-				r.goRoutines, r.trans, r.localAddr, r.peerProgressCh, peerOptions{
-					protocolVersion:   r.conf.ProtocolVersion,
+				r.goRoutines, r.trans, r.localAddr, ProtocolVersionMax,
+				r.peerProgressCh, peerOptions{
 					maxAppendEntries:  uint64(r.conf.MaxAppendEntries),
 					heartbeatInterval: r.conf.HeartbeatTimeout / 5,
 				})
