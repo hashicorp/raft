@@ -260,7 +260,6 @@ func nextMembership(current Membership, currentIndex Index, change membershipCha
 	membership := current.Clone()
 	switch change.command {
 	case AddStaging:
-		// TODO: barf on new address?
 		newServer := Server{
 			// TODO: This should add the server as Staging, to be automatically
 			// promoted to Voter later. However, the promoton to Voter is not yet
@@ -275,11 +274,11 @@ func nextMembership(current Membership, currentIndex Index, change membershipCha
 		found := false
 		for i, server := range membership.Servers {
 			if server.ID == change.serverID {
-				if server.Suffrage == Voter {
-					membership.Servers[i].Address = change.serverAddress
-				} else {
-					membership.Servers[i] = newServer
+				if server.Address != change.serverAddress {
+					return Membership{}, fmt.Errorf("May not change address of server %v (was %v, given %v)",
+						server.ID, server.Address, change.serverAddress)
 				}
+				membership.Servers[i].Suffrage = Voter
 				found = true
 				break
 			}
@@ -294,12 +293,11 @@ func nextMembership(current Membership, currentIndex Index, change membershipCha
 			Address:  change.serverAddress,
 		}
 		found := false
-		for i, server := range membership.Servers {
+		for _, server := range membership.Servers {
 			if server.ID == change.serverID {
-				if server.Suffrage != Nonvoter {
-					membership.Servers[i].Address = change.serverAddress
-				} else {
-					membership.Servers[i] = newServer
+				if server.Address != change.serverAddress {
+					return Membership{}, fmt.Errorf("May not change address of server %v (was %v, given %v)",
+						server.ID, server.Address, change.serverAddress)
 				}
 				found = true
 				break

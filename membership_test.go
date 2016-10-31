@@ -121,7 +121,7 @@ var singleServer = Membership{
 		Server{
 			Suffrage: Voter,
 			ID:       ServerID("id1"),
-			Address:  ServerAddress("addr1x"),
+			Address:  ServerAddress("addr1"),
 		},
 	},
 }
@@ -131,17 +131,17 @@ var oneOfEach = Membership{
 		Server{
 			Suffrage: Voter,
 			ID:       ServerID("id1"),
-			Address:  ServerAddress("addr1x"),
+			Address:  ServerAddress("addr1"),
 		},
 		Server{
 			Suffrage: Staging,
 			ID:       ServerID("id2"),
-			Address:  ServerAddress("addr2x"),
+			Address:  ServerAddress("addr2"),
 		},
 		Server{
 			Suffrage: Nonvoter,
 			ID:       ServerID("id3"),
-			Address:  ServerAddress("addr3x"),
+			Address:  ServerAddress("addr3"),
 		},
 	},
 }
@@ -151,12 +151,12 @@ var voterPair = Membership{
 		Server{
 			Suffrage: Voter,
 			ID:       ServerID("id1"),
-			Address:  ServerAddress("addr1x"),
+			Address:  ServerAddress("addr1"),
 		},
 		Server{
 			Suffrage: Voter,
 			ID:       ServerID("id2"),
-			Address:  ServerAddress("addr2x"),
+			Address:  ServerAddress("addr2"),
 		},
 	},
 }
@@ -169,49 +169,49 @@ var nextMembershipTests = []struct {
 }{
 	// AddStaging: was missing.
 	{Membership{}, AddStaging, 1, "[id1 at addr1 (Voter)]"},
-	{singleServer, AddStaging, 2, "[id1 at addr1x (Voter), id2 at addr2 (Voter)]"},
+	{singleServer, AddStaging, 2, "[id1 at addr1 (Voter), id2 at addr2 (Voter)]"},
 	// AddStaging: was Voter.
 	{singleServer, AddStaging, 1, "[id1 at addr1 (Voter)]"},
 	// AddStaging: was Staging.
-	{oneOfEach, AddStaging, 2, "[id1 at addr1x (Voter), id2 at addr2 (Voter), id3 at addr3x (Nonvoter)]"},
+	{oneOfEach, AddStaging, 2, "[id1 at addr1 (Voter), id2 at addr2 (Voter), id3 at addr3 (Nonvoter)]"},
 	// AddStaging: was Nonvoter.
-	{oneOfEach, AddStaging, 3, "[id1 at addr1x (Voter), id2 at addr2x (Staging), id3 at addr3 (Voter)]"},
+	{oneOfEach, AddStaging, 3, "[id1 at addr1 (Voter), id2 at addr2 (Staging), id3 at addr3 (Voter)]"},
 
 	// AddNonvoter: was missing.
-	{singleServer, AddNonvoter, 2, "[id1 at addr1x (Voter), id2 at addr2 (Nonvoter)]"},
+	{singleServer, AddNonvoter, 2, "[id1 at addr1 (Voter), id2 at addr2 (Nonvoter)]"},
 	// AddNonvoter: was Voter.
 	{singleServer, AddNonvoter, 1, "[id1 at addr1 (Voter)]"},
 	// AddNonvoter: was Staging.
-	{oneOfEach, AddNonvoter, 2, "[id1 at addr1x (Voter), id2 at addr2 (Staging), id3 at addr3x (Nonvoter)]"},
+	{oneOfEach, AddNonvoter, 2, "[id1 at addr1 (Voter), id2 at addr2 (Staging), id3 at addr3 (Nonvoter)]"},
 	// AddNonvoter: was Nonvoter.
-	{oneOfEach, AddNonvoter, 3, "[id1 at addr1x (Voter), id2 at addr2x (Staging), id3 at addr3 (Nonvoter)]"},
+	{oneOfEach, AddNonvoter, 3, "[id1 at addr1 (Voter), id2 at addr2 (Staging), id3 at addr3 (Nonvoter)]"},
 
 	// DemoteVoter: was missing.
-	{singleServer, DemoteVoter, 2, "[id1 at addr1x (Voter)]"},
+	{singleServer, DemoteVoter, 2, "[id1 at addr1 (Voter)]"},
 	// DemoteVoter: was Voter.
-	{voterPair, DemoteVoter, 2, "[id1 at addr1x (Voter), id2 at addr2x (Nonvoter)]"},
+	{voterPair, DemoteVoter, 2, "[id1 at addr1 (Voter), id2 at addr2 (Nonvoter)]"},
 	// DemoteVoter: was Staging.
-	{oneOfEach, DemoteVoter, 2, "[id1 at addr1x (Voter), id2 at addr2x (Nonvoter), id3 at addr3x (Nonvoter)]"},
+	{oneOfEach, DemoteVoter, 2, "[id1 at addr1 (Voter), id2 at addr2 (Nonvoter), id3 at addr3 (Nonvoter)]"},
 	// DemoteVoter: was Nonvoter.
-	{oneOfEach, DemoteVoter, 3, "[id1 at addr1x (Voter), id2 at addr2x (Staging), id3 at addr3x (Nonvoter)]"},
+	{oneOfEach, DemoteVoter, 3, "[id1 at addr1 (Voter), id2 at addr2 (Staging), id3 at addr3 (Nonvoter)]"},
 
 	// RemoveServer: was missing.
-	{singleServer, RemoveServer, 2, "[id1 at addr1x (Voter)]"},
+	{singleServer, RemoveServer, 2, "[id1 at addr1 (Voter)]"},
 	// RemoveServer: was Voter.
-	{voterPair, RemoveServer, 2, "[id1 at addr1x (Voter)]"},
+	{voterPair, RemoveServer, 2, "[id1 at addr1 (Voter)]"},
 	// RemoveServer: was Staging.
-	{oneOfEach, RemoveServer, 2, "[id1 at addr1x (Voter), id3 at addr3x (Nonvoter)]"},
+	{oneOfEach, RemoveServer, 2, "[id1 at addr1 (Voter), id3 at addr3 (Nonvoter)]"},
 	// RemoveServer: was Nonvoter.
-	{oneOfEach, RemoveServer, 3, "[id1 at addr1x (Voter), id2 at addr2x (Staging)]"},
+	{oneOfEach, RemoveServer, 3, "[id1 at addr1 (Voter), id2 at addr2 (Staging)]"},
 
 	// Promote: was missing.
-	{singleServer, Promote, 2, "[id1 at addr1x (Voter)]"},
+	{singleServer, Promote, 2, "[id1 at addr1 (Voter)]"},
 	// Promote: was Voter.
-	{singleServer, Promote, 1, "[id1 at addr1x (Voter)]"},
+	{singleServer, Promote, 1, "[id1 at addr1 (Voter)]"},
 	// Promote: was Staging.
-	{oneOfEach, Promote, 2, "[id1 at addr1x (Voter), id2 at addr2x (Voter), id3 at addr3x (Nonvoter)]"},
+	{oneOfEach, Promote, 2, "[id1 at addr1 (Voter), id2 at addr2 (Voter), id3 at addr3 (Nonvoter)]"},
 	// Promote: was Nonvoter.
-	{oneOfEach, Promote, 3, "[id1 at addr1x (Voter), id2 at addr2x (Staging), id3 at addr3x (Nonvoter)]"},
+	{oneOfEach, Promote, 3, "[id1 at addr1 (Voter), id2 at addr2 (Staging), id3 at addr3 (Nonvoter)]"},
 }
 
 func TestMembership_nextMembership_table(t *testing.T) {
@@ -268,6 +268,30 @@ func TestMembership_nextMembership_prevIndex(t *testing.T) {
 	_, err = nextMembership(singleServer, 2, req)
 	if err != nil {
 		t.Fatalf("nextMembership should have succeeded, got %v", err)
+	}
+}
+
+func TestMembership_nextMembership_changeAddress_addVoter(t *testing.T) {
+	req := membershipChangeRequest{
+		command:       AddNonvoter,
+		serverID:      ServerID("id1"),
+		serverAddress: ServerAddress("addr1x"),
+	}
+	_, err := nextMembership(singleServer, 1, req)
+	if err == nil || !strings.Contains(err.Error(), "May not change address") {
+		t.Fatalf("nextMembership should have failed for attempting to change address")
+	}
+}
+
+func TestMembership_nextMembership_changeAddress_addNonvoter(t *testing.T) {
+	req := membershipChangeRequest{
+		command:       AddNonvoter,
+		serverID:      ServerID("id2"),
+		serverAddress: ServerAddress("addr2x"),
+	}
+	_, err := nextMembership(voterPair, 1, req)
+	if err == nil || !strings.Contains(err.Error(), "May not change address") {
+		t.Fatalf("nextMembership should have failed for attempting to change address")
 	}
 }
 
