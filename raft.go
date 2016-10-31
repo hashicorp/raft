@@ -605,6 +605,9 @@ func (r *raftServer) leaderLoop() {
 }
 
 func (r *raftServer) updateCommitIndex(oldCommitIndex, commitIndex Index) {
+	r.logger.Debug("New commit index",
+		"old_index", oldCommitIndex,
+		"new_index", commitIndex)
 	stepDown := false
 	r.commitIndex = commitIndex
 	// Process the newly committed entries
@@ -688,7 +691,9 @@ func (r *raftServer) computeCandidateProgress() {
 				}
 			}
 		case peer.progress.term < r.currentTerm:
-			votes = append(votes, 0)
+			if hasVote(r.memberships.latest, peerID) {
+				votes = append(votes, 0)
+			}
 		}
 	}
 	if quorumGeq(votes) == 1 {
@@ -719,8 +724,10 @@ func (r *raftServer) computeLeaderProgress() {
 				matchIndexes = append(matchIndexes, uint64(peer.progress.matchIndex))
 			}
 		case peer.progress.term < r.currentTerm:
-			verifiedCounters = append(verifiedCounters, 0)
-			matchIndexes = append(matchIndexes, 0)
+			if hasVote(r.memberships.latest, peerID) {
+				verifiedCounters = append(verifiedCounters, 0)
+				matchIndexes = append(matchIndexes, 0)
+			}
 		}
 	}
 	verifiedCounter := quorumGeq(verifiedCounters)

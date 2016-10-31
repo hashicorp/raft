@@ -1,6 +1,9 @@
 package raft
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Membership changes follow the single-server algorithm described in Diego
 // Ongaro's PhD dissertation. The Membership struct defines a cluster membership
@@ -83,6 +86,15 @@ type Server struct {
 // These entries are appended to the log during membership changes.
 type Membership struct {
 	Servers []Server
+}
+
+func (m Membership) String() string {
+	vec := make([]string, 0, len(m.Servers))
+	for _, server := range m.Servers {
+		vec = append(vec, fmt.Sprintf("%s at %s (%s)",
+			server.ID, server.Address, server.Suffrage))
+	}
+	return fmt.Sprintf("[%s]", strings.Join(vec, ", "))
 }
 
 // Clone makes a deep copy of a Membership.
