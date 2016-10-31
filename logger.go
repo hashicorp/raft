@@ -19,6 +19,10 @@ const (
 	styleJSON
 )
 
+// logLock is used to synchronize access to the formatter across all log
+// instances.
+var logLock sync.Mutex
+
 // DefaultStdLogger returns a Logger that logs to the supplied writer using the
 // defaults for logger (this is often a fallback way to get a logger inside the
 // library when one isn't supplied by the caller).
@@ -59,7 +63,6 @@ func setLevelFormatter(logger log.Logger, level int, formatter log.Formatter) lo
 // for style customization.
 func createRaftFormatter(tag string, withLine bool) log.Formatter {
 	ret := &raftFormatter{
-		Mutex:    &sync.Mutex{},
 		tag:      tag,
 		withLine: withLine,
 	}
@@ -76,9 +79,9 @@ func createRaftFormatter(tag string, withLine bool) log.Formatter {
 	return ret
 }
 
-// raftFormatter is a thread-safe formatter.
+// raftFormatter is a thread-safe formatter that synchronizes across all
+// instances so we properly render logs with different prefixes.
 type raftFormatter struct {
-	*sync.Mutex
 	style    int
 	module   string
 	tag      string
@@ -87,8 +90,8 @@ type raftFormatter struct {
 
 // Format preps a log message for the logger.
 func (v *raftFormatter) Format(writer io.Writer, level int, msg string, args []interface{}) {
-	v.Lock()
-	defer v.Unlock()
+	logLock.Lock()
+	defer logLock.Unlock()
 	switch v.style {
 	case styleJSON:
 		v.formatJSON(writer, level, msg, args)
