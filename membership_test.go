@@ -271,9 +271,9 @@ func TestMembership_nextMembership_prevIndex(t *testing.T) {
 	}
 }
 
-func TestMembership_nextMembership_changeAddress_addVoter(t *testing.T) {
+func TestMembership_nextMembership_changeAddress_addStaging(t *testing.T) {
 	req := membershipChangeRequest{
-		command:       AddNonvoter,
+		command:       AddStaging,
 		serverID:      ServerID("id1"),
 		serverAddress: ServerAddress("addr1x"),
 	}
