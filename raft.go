@@ -239,7 +239,8 @@ func (r *raftServer) liveBootstrap(membership Membership) error {
 	// Make the configuration live.
 	var entry Log
 	if err := r.logs.GetLog(1, &entry); err != nil {
-		panic(err)
+		r.logger.Fatal("Could not read live-bootstrapped membership entry",
+			"error", err)
 	}
 	r.currentTerm = 1
 	r.persistCurrentTerm()
@@ -435,8 +436,8 @@ func (r *raftServer) updatePeers() {
 			r.logger.Info("Added peer, starting replication",
 				"id", server.ID, "address", server.Address)
 			controlCh := startPeer(server.ID, server.Address, r.logger, r.logs, r.snapshots,
-				r.goRoutines, r.trans, r.localAddr, r.peerProgressCh, peerOptions{
-					protocolVersion:   r.conf.ProtocolVersion,
+				r.goRoutines, r.trans, r.localAddr, ProtocolVersionMax,
+				r.peerProgressCh, peerOptions{
 					maxAppendEntries:  uint64(r.conf.MaxAppendEntries),
 					heartbeatInterval: r.conf.HeartbeatTimeout / 5,
 				})
@@ -863,12 +864,7 @@ func (r *raftServer) dispatchLogs(applyLogs []*logFuture) {
 
 	// Write the log entry locally
 	if err := r.logs.StoreLogs(logs); err != nil {
-		r.logger.Error("Failed to commit logs", "error", err)
-		for _, applyLog := range applyLogs {
-			applyLog.respond(err)
-		}
-		r.stepDown()
-		return
+		r.logger.Fatal("Failed to store log entries", "error", err)
 	}
 
 	// Update the last log since it's on disk now
@@ -904,9 +900,8 @@ func (r *raftServer) processLogs(index Index, future *logFuture) {
 		} else {
 			l := new(Log)
 			if err := r.logs.GetLog(idx, l); err != nil {
-				r.logger.Error("Failed to get log",
+				r.logger.Fatal("Failed to get log entry",
 					"index", idx, "error", err)
-				panic(err)
 			}
 			r.processLog(l, nil)
 		}
@@ -1040,11 +1035,17 @@ func (r *raftServer) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		} else {
 			var prevLog Log
 			if err := r.logs.GetLog(a.PrevLogEntry, &prevLog); err != nil {
-				r.logger.Warn("Failed to get previous log entry",
+				if err == ErrLogNotFound {
+					r.logger.Warn("Failed to get previous log entry",
+						"prev_index", a.PrevLogEntry,
+						"last_index", lastIdx,
+						"error", err)
+					return
+				}
+				r.logger.Fatal("Failed to get previous log entry",
 					"prev_index", a.PrevLogEntry,
 					"last_index", lastIdx,
 					"error", err)
-				return
 			}
 			prevLogTerm = prevLog.Term
 		}
@@ -1071,16 +1072,14 @@ func (r *raftServer) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 			}
 			var storeEntry Log
 			if err := r.logs.GetLog(entry.Index, &storeEntry); err != nil {
-				r.logger.Warn("Failed to get log entry",
+				r.logger.Fatal("Failed to get log entry",
 					"index", entry.Index, "error", err)
-				return
 			}
 			if entry.Term != storeEntry.Term {
 				r.logger.Warn("Clearing log suffix",
 					"from_index", entry.Index, "to_index", lastLogIdx)
 				if err := r.logs.DeleteRange(entry.Index, lastLogIdx); err != nil {
-					r.logger.Error("Failed to clear log suffix", "error", err)
-					return
+					r.logger.Fatal("Failed to clear log suffix", "error", err)
 				}
 				if entry.Index <= r.memberships.latestIndex {
 					r.memberships.latest = r.memberships.committed
@@ -1095,10 +1094,7 @@ func (r *raftServer) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		if n := len(newEntries); n > 0 {
 			// Append the new entries
 			if err := r.logs.StoreLogs(newEntries); err != nil {
-				r.logger.Error("Failed to append to logs", "error", err)
-				// TODO: leaving r.getLastLog() in the wrong
-				// state if there was a truncation above
-				return
+				r.logger.Fatal("Failed to append to logs", "error", err)
 			}
 
 			// Handle any new configuration changes

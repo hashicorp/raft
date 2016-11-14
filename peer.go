@@ -13,9 +13,6 @@ import (
 
 // Settings controlling Peer behavior, as passed to startPeer().
 type peerOptions struct {
-	// Version number sent in request headers.
-	protocolVersion ProtocolVersion
-
 	// No more than this many entries will be sent in one AppendEntries request.
 	maxAppendEntries uint64
 
@@ -69,6 +66,9 @@ type peerShared struct {
 
 	// Network address of the remote server (constant).
 	peerAddr ServerAddress
+
+	// Version number sent in request headers (constant).
+	protocolVersion ProtocolVersion
 
 	// Helper goroutines send fully prepared RPC requests onto requestCh.
 	// The main Peer goroutine validates each request against the latest
@@ -278,11 +278,12 @@ func startPeer(serverID ServerID,
 	goRoutines *waitGroup,
 	trans Transport,
 	localAddr ServerAddress,
+	protocolVersion ProtocolVersion,
 	progressCh chan<- peerProgress,
 	options peerOptions) chan<- peerControl {
 	controlCh := make(chan peerControl)
 	p := makePeerInternal(serverID, serverAddress, logger, logs, snapshots,
-		goRoutines, trans, localAddr, controlCh, progressCh, options)
+		goRoutines, trans, localAddr, protocolVersion, controlCh, progressCh, options)
 	p.shared.goRoutines.spawn(p.selectLoop)
 	return controlCh
 }
@@ -296,15 +297,13 @@ func makePeerInternal(serverID ServerID,
 	goRoutines *waitGroup,
 	trans Transport,
 	localAddr ServerAddress,
+	protocolVersion ProtocolVersion,
 	controlCh <-chan peerControl,
 	progressCh chan<- peerProgress,
 	options peerOptions) *peerState {
 
 	if logger == nil {
 		logger = DefaultStdLogger(os.Stderr)
-	}
-	if options.protocolVersion == 0 {
-		options.protocolVersion = ProtocolVersionMax
 	}
 	if options.maxAppendEntries == 0 {
 		options.maxAppendEntries = 1000
@@ -329,6 +328,7 @@ func makePeerInternal(serverID ServerID,
 			peerAddr:           serverAddress,
 			trans:              trans,
 			localAddr:          localAddr,
+			protocolVersion:    protocolVersion,
 			logger:             logger,
 			logs:               logs,
 			snapshots:          snapshots,
@@ -758,7 +758,7 @@ func makeRequestVoteRPC(p *peerState) peerRPC {
 	return &requestVoteRPC{
 		start: time.Now(),
 		req: RequestVoteRequest{
-			RPCHeader:    RPCHeader{p.shared.options.protocolVersion},
+			RPCHeader:    RPCHeader{p.shared.protocolVersion},
 			Term:         p.control.term,
 			Candidate:    p.shared.trans.EncodePeer(p.shared.localAddr),
 			LastLogIndex: p.control.lastIndex,
@@ -869,7 +869,7 @@ func makeHeartbeatRPC(p *peerState) peerRPC {
 	rpc := &appendEntriesRPC{
 		start: start,
 		req: &AppendEntriesRequest{
-			RPCHeader: RPCHeader{p.shared.options.protocolVersion},
+			RPCHeader: RPCHeader{p.shared.protocolVersion},
 			Term:      p.control.term,
 			Leader:    p.shared.trans.EncodePeer(p.shared.localAddr),
 
@@ -927,7 +927,7 @@ func makeAppendEntriesRPC(p *peerState) peerRPC {
 	return &appendEntriesRPC{
 		start: time.Now(),
 		req: &AppendEntriesRequest{
-			RPCHeader:         RPCHeader{p.shared.options.protocolVersion},
+			RPCHeader:         RPCHeader{p.shared.protocolVersion},
 			Term:              p.control.term,
 			Leader:            p.shared.trans.EncodePeer(p.shared.localAddr),
 			PrevLogEntry:      p.leader.nextIndex - 1,
@@ -983,7 +983,7 @@ func (rpc *appendEntriesRPC) prepare(shared *peerShared, control peerControl) er
 	term, err := getTerm(rpc.req.PrevLogEntry)
 	if err != nil {
 		if err != errNeedsSnapshot {
-			shared.logger.Error("Failed to get log term",
+			shared.logger.Fatal("Failed to get log term",
 				"index", rpc.req.PrevLogEntry,
 				"error", err)
 		}
@@ -1008,9 +1008,8 @@ func (rpc *appendEntriesRPC) prepare(shared *peerShared, control peerControl) er
 			return errNeedsSnapshot
 		}
 		if err != nil {
-			shared.logger.Error("Failed to get log entry",
+			shared.logger.Fatal("Failed to get log entry",
 				"index", i, "error", err)
-			return err
 		}
 		rpc.req.Entries = append(rpc.req.Entries, &entry)
 	}
@@ -1258,7 +1257,7 @@ func (rpc *installSnapshotRPC) prepare(shared *peerShared, control peerControl) 
 
 	// Fill in the request.
 	rpc.req = InstallSnapshotRequest{
-		RPCHeader:          RPCHeader{shared.options.protocolVersion},
+		RPCHeader:          RPCHeader{shared.protocolVersion},
 		SnapshotVersion:    meta.Version,
 		Term:               control.term,
 		Leader:             shared.trans.EncodePeer(shared.localAddr),
