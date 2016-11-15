@@ -322,7 +322,10 @@ func (r *raftServer) runLeader() {
 	metrics.IncrCounter([]string{"raft", "state", "leader"}, 1)
 
 	// Notify that we are the leader
-	asyncNotifyBool(r.leaderCh, true)
+	select {
+	case r.leaderCh <- true:
+	default:
+	}
 
 	// Push to the notify channel if given
 	if notify := r.conf.NotifyCh; notify != nil {
@@ -378,7 +381,10 @@ func (r *raftServer) runLeader() {
 		}
 
 		// Notify that we are not the leader
-		asyncNotifyBool(r.leaderCh, false)
+		select {
+		case r.leaderCh <- false:
+		default:
+		}
 
 		// Push to the notify channel if given
 		if notify := r.conf.NotifyCh; notify != nil {
