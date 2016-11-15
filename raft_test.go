@@ -179,10 +179,9 @@ func (c *cluster) Close() {
 }
 
 // WaitEventChan returns a channel which will signal if an observation is made
-// or a timeout occurs. It is possible to set a filter to look for specific
-// observations. Setting timeout to 0 means that it will wait forever until a
-// non-filtered observation is made.
-func (c *cluster) WaitEventChan(filter func(interface{}) bool, timeout time.Duration) <-chan struct{} {
+// or a timeout occurs. Setting timeout to 0 means that it will wait forever
+// until an observation is made.
+func (c *cluster) WaitEventChan(timeout time.Duration) <-chan struct{} {
 	ch := make(chan struct{})
 	go func() {
 		defer close(ch)
@@ -195,10 +194,8 @@ func (c *cluster) WaitEventChan(filter func(interface{}) bool, timeout time.Dura
 			case <-timeoutCh:
 				return
 
-			case o, ok := <-c.observationCh:
-				if !ok || filter == nil || filter(o) {
-					return
-				}
+			case <-c.observationCh:
+				return
 			}
 		}
 	}()
@@ -206,15 +203,14 @@ func (c *cluster) WaitEventChan(filter func(interface{}) bool, timeout time.Dura
 }
 
 // WaitEvent waits until an observation is made, a timeout occurs, or a test
-// failure is signaled. It is possible to set a filter to look for specific
-// observations. Setting timeout to 0 means that it will wait forever until a
-// non-filtered observation is made or a test failure is signaled.
-func (c *cluster) WaitEvent(filter func(interface{}) bool, timeout time.Duration) {
+// failure is signaled. Setting timeout to 0 means that it will wait forever
+// until an observation is made or a test failure is signaled.
+func (c *cluster) WaitEvent(timeout time.Duration) {
 	select {
 	case <-c.failedCh:
 		c.t.FailNow()
 
-	case <-c.WaitEventChan(filter, timeout):
+	case <-c.WaitEventChan(timeout):
 	}
 }
 
@@ -225,7 +221,7 @@ func (c *cluster) WaitForReplication(fsmLength int) {
 
 CHECK:
 	for {
-		ch := c.WaitEventChan(nil, commitTimeout)
+		ch := c.WaitEventChan(commitTimeout)
 		select {
 		case <-c.failedCh:
 			c.t.FailNow()
@@ -319,18 +315,6 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 			timer.Reset(timeout)
 		}
 
-		// Filter will wake up whenever we observe a RequestVote.
-		filter := func(ob interface{}) bool {
-			switch ob.(type) {
-			case RaftState:
-				return true
-			case RequestVoteRequest:
-				return true
-			default:
-				return false
-			}
-		}
-
 		select {
 		case <-c.failedCh:
 			c.t.FailNow()
@@ -338,7 +322,7 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 		case <-limitCh:
 			c.FailNowf("Timeout waiting for stable %s state", s)
 
-		case <-c.WaitEventChan(filter, 0):
+		case <-c.WaitEventChan(0):
 			c.logger.Debug("Resetting stability timeout")
 
 		case t, ok := <-timer.C:
@@ -505,7 +489,7 @@ CHECK:
 
 WAIT:
 	first.Unlock()
-	c.WaitEvent(nil, commitTimeout)
+	c.WaitEvent(commitTimeout)
 	goto CHECK
 }
 
@@ -544,7 +528,7 @@ CHECK:
 	return
 
 WAIT:
-	c.WaitEvent(nil, commitTimeout)
+	c.WaitEvent(commitTimeout)
 	goto CHECK
 }
 
@@ -964,7 +948,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
 	var newLead *Raft
 	for time.Now().Before(limit) && newLead == nil {
-		c.WaitEvent(nil, commitTimeout)
+		c.WaitEvent(commitTimeout)
 		leaders := c.GetInState(Leader)
 		if len(leaders) == 1 && leaders[0] != leader {
 			newLead = leaders[0]
@@ -1171,7 +1155,7 @@ func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 		if atomic.LoadInt32(&didTimeout) != 0 {
 			return
 		}
-		c.WaitEvent(nil, c.propagateTimeout)
+		c.WaitEvent(c.propagateTimeout)
 	}
 	c.FailNowf("Timeout waiting to detect apply timeouts")
 }
@@ -1217,7 +1201,7 @@ func TestRaft_RemoveFollower(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
-		c.WaitEvent(nil, commitTimeout)
+		c.WaitEvent(commitTimeout)
 		followers = c.GetInState(Follower)
 	}
 	if len(followers) != 2 {
@@ -1255,7 +1239,7 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
-		c.WaitEvent(nil, commitTimeout)
+		c.WaitEvent(commitTimeout)
 		followers = c.GetInState(Follower)
 	}
 	if len(followers) != 2 {
@@ -1813,7 +1797,7 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
-		c.WaitEvent(nil, commitTimeout)
+		c.WaitEvent(commitTimeout)
 		followers = c.GetInState(Follower)
 	}
 	if len(followers) != 2 {
@@ -1843,7 +1827,7 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	limit = time.Now().Add(c.longstopTimeout)
 	var leaders []*Raft
 	for time.Now().Before(limit) && len(leaders) != 1 {
-		c.WaitEvent(nil, commitTimeout)
+		c.WaitEvent(commitTimeout)
 		leaders, _ = c.pollState(Leader)
 	}
 	if len(leaders) != 1 {
@@ -1890,7 +1874,7 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 1 {
-		c.WaitEvent(nil, commitTimeout)
+		c.WaitEvent(commitTimeout)
 		followers = c.GetInState(Follower)
 	}
 	if len(followers) != 1 {
@@ -2047,7 +2031,7 @@ func TestRaft_VerifyLeader_ParitalConnect(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
-		c.WaitEvent(nil, commitTimeout)
+		c.WaitEvent(commitTimeout)
 		followers = c.GetInState(Follower)
 	}
 	if len(followers) != 2 {
