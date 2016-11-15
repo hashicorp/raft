@@ -53,6 +53,10 @@ type Raft struct {
 	// Tracks running goroutines
 	goRoutines *waitGroup
 
+	// protocolVersion is used to transition between different versions of the
+	// library. See comments in config.go for more details.
+	protocolVersion ProtocolVersion
+
 	// This will be going away eventually.
 	server *raftServer
 }
@@ -83,7 +87,11 @@ type apiChannels struct {
 	// the main thread.
 	bootstrapCh chan *bootstrapFuture
 
-	// Shutdown channel to exit, protected to prevent concurrent exits
+	// leaderCh is used to notify the application of leadership changes. See
+	// Raft.LeaderCh().
+	leaderCh chan bool
+
+	// Shutdown channel to exit. Use ensureClosed() in case of repeated calls.
 	shutdownCh chan struct{}
 }
 
@@ -138,9 +146,6 @@ type raftServer struct {
 
 	// Leader is the current cluster leader
 	leader ServerAddress
-
-	// leaderCh is used to notify of leadership changes
-	leaderCh chan bool
 
 	// leaderState used only while state is leader
 	leaderState leaderState
@@ -422,9 +427,11 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 			membershipsCh:      make(chan *membershipsFuture, 8),
 			statsCh:            make(chan *statsFuture, 8),
 			bootstrapCh:        make(chan *bootstrapFuture),
+			leaderCh:           make(chan bool),
 			shutdownCh:         make(chan struct{}),
 		},
-		goRoutines: &waitGroup{},
+		goRoutines:      &waitGroup{},
+		protocolVersion: conf.ProtocolVersion,
 	}
 	server, err := newRaftServer(conf, fsm, logs, stable, snaps, trans, api.channels, api.goRoutines)
 	if err != nil {
@@ -495,7 +502,6 @@ func newRaftServer(conf *Config, fsm FSM, logs LogStore, stable StableStore, sna
 		fsmCommitCh:     make(chan commitTuple, 128),
 		fsmRestoreCh:    make(chan *restoreFuture),
 		fsmSnapshotCh:   make(chan *reqSnapshotFuture),
-		leaderCh:        make(chan bool),
 		localID:         localID,
 		localAddr:       localAddr,
 		logger:          logger,
@@ -733,7 +739,7 @@ func (r *Raft) GetMembership() MembershipFuture {
 // AddPeer (deprecated) is used to add a new peer into the cluster. This must be
 // run on the leader or it will fail. Use AddVoter/AddNonvoter instead.
 func (r *Raft) AddPeer(peer ServerAddress) Future {
-	if r.server.protocolVersion > 2 {
+	if r.protocolVersion > 2 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
@@ -750,7 +756,7 @@ func (r *Raft) AddPeer(peer ServerAddress) Future {
 // to occur. This must be run on the leader or it will fail.
 // Use RemoveServer instead.
 func (r *Raft) RemovePeer(peer ServerAddress) Future {
-	if r.server.protocolVersion > 2 {
+	if r.protocolVersion > 2 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
@@ -770,7 +776,7 @@ func (r *Raft) RemovePeer(peer ServerAddress) Future {
 // If nonzero, timeout is how long this server should wait before the
 // configuration change log entry is appended.
 func (r *Raft) AddVoter(id ServerID, address ServerAddress, prevIndex Index, timeout time.Duration) IndexFuture {
-	if r.server.protocolVersion < 2 {
+	if r.protocolVersion < 2 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
@@ -788,7 +794,7 @@ func (r *Raft) AddVoter(id ServerID, address ServerAddress, prevIndex Index, tim
 // a staging server or voter, this does nothing. This must be run on the leader
 // or it will fail. For prevIndex and timeout, see AddVoter.
 func (r *Raft) AddNonvoter(id ServerID, address ServerAddress, prevIndex Index, timeout time.Duration) IndexFuture {
-	if r.server.protocolVersion < 3 {
+	if r.protocolVersion < 3 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
@@ -804,7 +810,7 @@ func (r *Raft) AddNonvoter(id ServerID, address ServerAddress, prevIndex Index, 
 // leader is being removed, it will cause a new election to occur. This must be
 // run on the leader or it will fail. For prevIndex and timeout, see AddVoter.
 func (r *Raft) RemoveServer(id ServerID, prevIndex Index, timeout time.Duration) IndexFuture {
-	if r.server.protocolVersion < 2 {
+	if r.protocolVersion < 2 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
@@ -821,7 +827,7 @@ func (r *Raft) RemoveServer(id ServerID, prevIndex Index, timeout time.Duration)
 // does nothing. This must be run on the leader or it will fail. For prevIndex
 // and timeout, see AddVoter.
 func (r *Raft) DemoteVoter(id ServerID, prevIndex Index, timeout time.Duration) IndexFuture {
-	if r.server.protocolVersion < 3 {
+	if r.protocolVersion < 3 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
@@ -859,33 +865,34 @@ func (r *Raft) Snapshot() Future {
 // the leader, and false if we lose it. The channel is not buffered,
 // and does not block on writes.
 func (r *Raft) LeaderCh() <-chan bool {
-	return r.server.leaderCh
+	return r.channels.leaderCh
 }
 
 // String returns a string representation of this Raft node.
 func (r *Raft) String() string {
 	future := r.Stats()
 	err := future.Error()
-	var state string
 	switch err {
 	case ErrRaftShutdown:
-		state = "shutdown"
+		return "Node has been shutdown"
 	case nil:
-		state = future.Stats().State.String()
+		stats := future.Stats()
+		return fmt.Sprintf("Node at %s [%v]",
+			stats.ServerAddress,
+			stats.State)
 	default:
-		state = "unknown"
+		return fmt.Sprintf("Node unknown [err: %v]", err)
 	}
-	return fmt.Sprintf("Node at %s [%v]",
-		r.server.localAddr,
-		state)
 }
 
 type Stats struct {
-	State        RaftState
-	Term         Term
-	LastLogIndex Index
-	LastLogTerm  Term
-	CommitIndex  Index
+	ServerID      ServerID
+	ServerAddress ServerAddress
+	State         RaftState
+	Term          Term
+	LastLogIndex  Index
+	LastLogTerm   Term
+	CommitIndex   Index
 	// AppliedIndex is the last index applied to the FSM. This is generally
 	// lagging behind the last index, especially for indexes that are persisted but
 	// have not yet been considered committed by the leader. NOTE - this reflects
@@ -933,6 +940,8 @@ func (s *Stats) Strings() []struct{ K, V string } {
 		lastContact = fmt.Sprintf("%v", time.Now().Sub(s.LastContact))
 	}
 	return []struct{ K, V string }{
+		{"server_id", string(s.ServerID)},
+		{"server_address", string(s.ServerAddress)},
 		{"state", s.State.String()},
 		{"term", toString(uint64(s.Term))},
 		{"last_log_index", toString(uint64(s.LastLogIndex))},

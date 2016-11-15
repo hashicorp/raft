@@ -323,7 +323,7 @@ func (r *raftServer) runLeader() {
 
 	// Notify that we are the leader
 	select {
-	case r.leaderCh <- true:
+	case r.api.leaderCh <- true:
 	default:
 	}
 
@@ -382,7 +382,7 @@ func (r *raftServer) runLeader() {
 
 		// Notify that we are not the leader
 		select {
-		case r.leaderCh <- false:
+		case r.api.leaderCh <- false:
 		default:
 		}
 
@@ -1425,6 +1425,8 @@ func (r *raftServer) stats() *Stats {
 	lastLogIndex, lastLogTerm := r.shared.getLastLog()
 	lastSnapIndex, lastSnapTerm := r.shared.getLastSnapshot()
 	s := &Stats{
+		ServerID:           r.localID,
+		ServerAddress:      r.localAddr,
 		State:              r.state,
 		Term:               r.currentTerm,
 		LastLogIndex:       lastLogIndex,
