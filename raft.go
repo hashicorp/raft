@@ -635,11 +635,11 @@ func (r *raftServer) updateCommitIndex(oldCommitIndex, commitIndex Index) {
 	if stepDown {
 		if r.conf.ShutdownOnRemove {
 			r.logger.Info("Removed ourself, shutting down")
-			r.Shutdown()
+			ensureClosed(r.api.shutdownCh)
 		} else {
 			r.logger.Info("Removed ourself, transitioning to follower")
-			r.stepDown()
 		}
+		r.stepDown()
 	}
 
 	r.updatePeers()

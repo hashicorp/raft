@@ -50,9 +50,8 @@ var (
 type Raft struct {
 	channels *apiChannels
 
-	// Shutdown channel to exit, protected to prevent concurrent exits
-	shutdown     bool
-	shutdownLock sync.Mutex
+	// Tracks running goroutines
+	goRoutines *waitGroup
 
 	// This will be going away eventually.
 	server *raftServer
@@ -94,9 +93,6 @@ type raftServer struct {
 
 	// Tracks running goroutines
 	goRoutines *waitGroup
-
-	// TODO(ongaro): clean this up
-	Shutdown func()
 
 	// protocolVersion is used to inter-operate with Raft servers running
 	// different versions of the library. See comments in config.go for more
@@ -540,12 +536,18 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	r.goRoutines.spawn(r.run)
 	r.goRoutines.spawn(r.runFSM)
 	r.goRoutines.spawn(r.runSnapshots)
+	if closeable, ok := trans.(WithClose); ok {
+		go func() {
+			r.goRoutines.waitShutdown()
+			closeable.Close()
+		}()
+	}
 
 	api := &Raft{
-		channels: r.api,
-		server:   r,
+		channels:   r.api,
+		goRoutines: r.goRoutines,
+		server:     r,
 	}
-	r.Shutdown = func() { api.Shutdown() }
 	return api, nil
 }
 
@@ -825,17 +827,8 @@ func (r *Raft) DemoteVoter(id ServerID, prevIndex Index, timeout time.Duration) 
 // This is not a graceful operation. Provides a future that
 // can be used to block until all background routines have exited.
 func (r *Raft) Shutdown() Future {
-	r.shutdownLock.Lock()
-	defer r.shutdownLock.Unlock()
-
-	if !r.shutdown {
-		close(r.channels.shutdownCh)
-		r.shutdown = true
-		return &shutdownFuture{r}
-	}
-
-	// avoid closing transport twice
-	return &shutdownFuture{nil}
+	ensureClosed(r.channels.shutdownCh)
+	return &shutdownFuture{r}
 }
 
 // Snapshot is used to manually force Raft to take a snapshot.

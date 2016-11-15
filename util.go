@@ -126,3 +126,15 @@ func (wg *waitGroup) spawn(f func()) {
 func (wg *waitGroup) waitShutdown() {
 	wg.group.Wait()
 }
+
+// Exactly like close() but permits closing a channel multiple times. Useful to
+// send a shutdown signal, regardless of whether shutdown has already started.
+func ensureClosed(ch chan struct{}) {
+	defer func() {
+		err := recover()
+		if err != nil && err.(error).Error() != "close of closed channel" {
+			panic(err)
+		}
+	}()
+	close(ch)
+}

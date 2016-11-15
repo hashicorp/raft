@@ -108,3 +108,16 @@ func TestBackoff(t *testing.T) {
 		}
 	}
 }
+
+func TestEnsureClosed(t *testing.T) {
+	ch := make(chan struct{})
+	ensureClosed(ch)
+	ensureClosed(ch)
+	ensureClosed(ch)
+	select {
+	case <-ch:
+		// ok
+	default:
+		t.Errorf("Not closed")
+	}
+}
