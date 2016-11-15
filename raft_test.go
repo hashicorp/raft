@@ -96,7 +96,7 @@ type cluster struct {
 	trans            []LoopbackTransport
 	rafts            []*Raft
 	t                *testing.T
-	observationCh    chan Observation
+	observationCh    chan observation
 	conf             *Config
 	propagateTimeout time.Duration
 	longstopTimeout  time.Duration
@@ -182,7 +182,7 @@ func (c *cluster) Close() {
 // or a timeout occurs. It is possible to set a filter to look for specific
 // observations. Setting timeout to 0 means that it will wait forever until a
 // non-filtered observation is made.
-func (c *cluster) WaitEventChan(filter FilterFn, timeout time.Duration) <-chan struct{} {
+func (c *cluster) WaitEventChan(filter filterFn, timeout time.Duration) <-chan struct{} {
 	ch := make(chan struct{})
 	go func() {
 		defer close(ch)
@@ -209,7 +209,7 @@ func (c *cluster) WaitEventChan(filter FilterFn, timeout time.Duration) <-chan s
 // failure is signaled. It is possible to set a filter to look for specific
 // observations. Setting timeout to 0 means that it will wait forever until a
 // non-filtered observation is made or a test failure is signaled.
-func (c *cluster) WaitEvent(filter FilterFn, timeout time.Duration) {
+func (c *cluster) WaitEvent(filter filterFn, timeout time.Duration) {
 	select {
 	case <-c.failedCh:
 		c.t.FailNow()
@@ -320,7 +320,7 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 		}
 
 		// Filter will wake up whenever we observe a RequestVote.
-		filter := func(ob *Observation) bool {
+		filter := func(ob *observation) bool {
 			switch ob.Data.(type) {
 			case RaftState:
 				return true
@@ -558,7 +558,7 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
 	}
 
 	c := &cluster{
-		observationCh: make(chan Observation, 1024),
+		observationCh: make(chan observation, 1024),
 		conf:          conf,
 		// Propagation takes a maximum of 2 heartbeat timeouts (time to
 		// get a new heartbeat that would cause a commit) plus a bit.
@@ -626,7 +626,7 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
 			c.FailNowf("NewRaft failed: %v", err)
 		}
 
-		raft.RegisterObserver(NewObserver(c.observationCh, false, nil))
+		raft.registerObserver(newObserver(c.observationCh, false, nil))
 		if err != nil {
 			c.FailNowf("RegisterObserver failed: %v", err)
 		}

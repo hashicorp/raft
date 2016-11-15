@@ -5,7 +5,7 @@ import (
 )
 
 // Observation is sent along the given channel to observers when an event occurs.
-type Observation struct {
+type observation struct {
 	// TODO: removed Raft holds the Raft instance generating the observation.
 	// Data holds observation-specific data. Possible types are
 	// *RequestVoteRequest and RaftState.
@@ -19,12 +19,12 @@ var nextObserverID uint64
 // FilterFn is a function that can be registered in order to filter observations.
 // The function reports whether the observation should be included - if
 // it returns false, the observation will be filtered out.
-type FilterFn func(o *Observation) bool
+type filterFn func(o *observation) bool
 
 // Observer describes what to do with a given observation.
-type Observer struct {
+type observer struct {
 	// channel receives observations.
-	channel chan Observation
+	channel chan observation
 
 	// blocking, if true, will cause Raft to block when sending an observation
 	// to this observer. This should generally be set to false.
@@ -32,7 +32,7 @@ type Observer struct {
 
 	// filter will be called to determine if an observation should be sent to
 	// the channel.
-	filter FilterFn
+	filter filterFn
 
 	// id is the ID of this observer in the Raft map.
 	id uint64
@@ -49,8 +49,8 @@ type Observer struct {
 //
 // If blocking is true, the observer will block when it can't
 // send on the channel, otherwise it may discard events.
-func NewObserver(channel chan Observation, blocking bool, filter FilterFn) *Observer {
-	return &Observer{
+func newObserver(channel chan observation, blocking bool, filter filterFn) *observer {
+	return &observer{
 		channel:  channel,
 		blocking: blocking,
 		filter:   filter,
@@ -59,24 +59,24 @@ func NewObserver(channel chan Observation, blocking bool, filter FilterFn) *Obse
 }
 
 // GetNumObserved returns the number of observations.
-func (or *Observer) GetNumObserved() uint64 {
+func (or *observer) GetNumObserved() uint64 {
 	return atomic.LoadUint64(&or.numObserved)
 }
 
 // GetNumDropped returns the number of dropped observations due to blocking.
-func (or *Observer) GetNumDropped() uint64 {
+func (or *observer) GetNumDropped() uint64 {
 	return atomic.LoadUint64(&or.numDropped)
 }
 
 // RegisterObserver registers a new observer.
-func (r *Raft) RegisterObserver(or *Observer) {
+func (r *Raft) registerObserver(or *observer) {
 	r.server.observersLock.Lock()
 	defer r.server.observersLock.Unlock()
 	r.server.observers[or.id] = or
 }
 
 // DeregisterObserver deregisters an observer.
-func (r *Raft) DeregisterObserver(or *Observer) {
+func (r *Raft) deregisterObserver(or *observer) {
 	r.server.observersLock.Lock()
 	defer r.server.observersLock.Unlock()
 	delete(r.server.observers, or.id)
@@ -92,7 +92,7 @@ func (r *raftServer) observe(o interface{}) {
 	for _, or := range r.observers {
 		// It's wasteful to do this in the loop, but for the common case
 		// where there are no observers we won't create any objects.
-		ob := Observation{Data: o}
+		ob := observation{Data: o}
 		if or.filter != nil && !or.filter(&ob) {
 			continue
 		}
