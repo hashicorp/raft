@@ -254,6 +254,38 @@ func (c *cluster) getTerm(r *Raft) Term {
 	return fut.Stats().Term
 }
 
+func (c *cluster) getState(r *Raft) RaftState {
+	fut := r.Stats()
+	err := fut.Error()
+	if err == ErrRaftShutdown {
+		return Follower
+	} else if err != nil {
+		c.FailNowf("failed to get stats: %v", err)
+	}
+	return fut.Stats().State
+}
+
+func (c *cluster) getLastIndex(r *Raft) Index {
+	stats := c.getStats(r)
+	if stats.LastLogIndex > stats.LastSnapshotIndex {
+		return stats.LastLogIndex
+	}
+	return stats.LastSnapshotIndex
+}
+
+func (c *cluster) getLeader(r *Raft) ServerAddress {
+	return c.getStats(r).LastLeader
+}
+
+func (c *cluster) getStats(r *Raft) *Stats {
+	fut := r.Stats()
+	err := fut.Error()
+	if err != nil {
+		c.FailNowf("failed to get stats: %v", err)
+	}
+	return fut.Stats()
+}
+
 // pollState takes a snapshot of the state of the cluster. This might not be
 // stable, so use GetInState() to apply some additional checks when waiting
 // for the cluster to achieve a particular state.
@@ -261,7 +293,7 @@ func (c *cluster) pollState(s RaftState) ([]*Raft, Term) {
 	var highestTerm Term
 	in := make([]*Raft, 0, 1)
 	for _, r := range c.rafts {
-		if r.State() == s {
+		if c.getState(r) == s {
 			in = append(in, r)
 		}
 		term := c.getTerm(r)
@@ -430,7 +462,7 @@ func (c *cluster) EnsureLeader(t *testing.T, expect ServerAddress) {
 	// think the leader is correct
 	fail := false
 	for _, r := range c.rafts {
-		leader := ServerAddress(r.Leader())
+		leader := c.getLeader(r)
 		if leader != expect {
 			if leader == "" {
 				leader = "[none]"
@@ -879,7 +911,7 @@ func TestRaft_SingleNode(t *testing.T) {
 	}
 
 	// Should be leader
-	if s := raft.State(); s != Leader {
+	if s := c.getState(raft); s != Leader {
 		c.FailNowf("expected leader: %v", s)
 	}
 
@@ -1028,7 +1060,7 @@ func TestRaft_BehindFollower(t *testing.T) {
 	}
 
 	// Check that we have a non zero last contact
-	if behind.LastContact().IsZero() {
+	if c.getStats(behind).LastContact.IsZero() {
 		c.FailNowf("expected previous contact")
 	}
 
@@ -1270,7 +1302,7 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	}
 
 	// Old leader should be shutdown
-	if leader.State() != Shutdown {
+	if leader.Stats().Error() != ErrRaftShutdown {
 		c.FailNowf("old leader should be shutdown")
 	}
 }
@@ -1321,7 +1353,7 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	}
 
 	// Old leader should be a follower.
-	if leader.State() != Follower {
+	if c.getState(leader) != Follower {
 		c.FailNowf("leader should be follower")
 	}
 
@@ -1856,8 +1888,8 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	}
 
 	// Should be a follower now.
-	if follower.State() != Follower {
-		c.FailNowf("bad state: %v", follower.State())
+	if s := c.getState(follower); s != Follower {
+		c.FailNowf("bad state: %v", s)
 	}
 }
 
@@ -1897,7 +1929,7 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	}
 
 	// Ensure the last contact of the leader is non-zero
-	if leader.LastContact().IsZero() {
+	if c.getStats(leader).LastContact.IsZero() {
 		c.FailNowf("expected non-zero contact time")
 	}
 
@@ -1907,19 +1939,19 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	}
 
 	// Verify no further contact
-	last := follower.LastContact()
+	last := c.getStats(follower).LastContact
 	time.Sleep(c.propagateTimeout)
 
 	// Check that last contact has not changed
-	if last != follower.LastContact() {
+	if last != c.getStats(follower).LastContact {
 		c.FailNowf("unexpected further contact")
 	}
 
 	// Ensure both have cleared their leader
-	if l := leader.Leader(); l != "" {
+	if l := c.getLeader(leader); l != "" {
 		c.FailNowf("bad: %v", l)
 	}
-	if l := follower.Leader(); l != "" {
+	if l := c.getLeader(follower); l != "" {
 		c.FailNowf("bad: %v", l)
 	}
 }
@@ -2013,7 +2045,7 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	}
 
 	// Ensure the known leader is cleared
-	if l := leader.Leader(); l != "" {
+	if l := c.getLeader(leader); l != "" {
 		c.FailNowf("bad: %v", l)
 	}
 }
@@ -2071,7 +2103,7 @@ func TestRaft_StartAsLeader(t *testing.T) {
 	}
 
 	// Should be leader
-	if s := raft.State(); s != Leader {
+	if s := c.getState(raft); s != Leader {
 		c.FailNowf("expected leader: %v", s)
 	}
 
@@ -2139,7 +2171,7 @@ func TestRaft_Voting(t *testing.T) {
 		RPCHeader:    ldr.server.getRPCHeader(),
 		Term:         c.getTerm(ldr) + 10,
 		Candidate:    ldrT.EncodePeer(ldr.server.localAddr),
-		LastLogIndex: ldr.LastIndex(),
+		LastLogIndex: c.getLastIndex(ldr),
 		LastLogTerm:  c.getTerm(ldr),
 	}
 	// a follower that thinks there's a leader should vote for that leader.
@@ -2173,7 +2205,7 @@ func TestRaft_ProtocolVersion_RejectRPC(t *testing.T) {
 		},
 		Term:         c.getTerm(ldr) + 10,
 		Candidate:    ldrT.EncodePeer(ldr.server.localAddr),
-		LastLogIndex: ldr.LastIndex(),
+		LastLogIndex: c.getLastIndex(ldr),
 		LastLogTerm:  c.getTerm(ldr),
 	}
 

@@ -96,13 +96,6 @@ type leaderState struct {
 	verifyBatches []verifyBatch
 }
 
-// setLeader is used to modify the current leader of the cluster
-func (r *raftServer) setLeader(leader ServerAddress) {
-	r.leaderLock.Lock()
-	r.leader = leader
-	r.leaderLock.Unlock()
-}
-
 // requestMembershipChange is a helper for the functions that make
 // membership change requests. 'req' describes the change. For timeout,
 // see AddVoter.
@@ -132,14 +125,14 @@ func (r *raftServer) run() {
 		select {
 		case <-r.api.shutdownCh:
 			// Clear the leader to prevent forwarding
-			r.setLeader("")
+			r.leader = ""
 			r.shutdownPeers()
 			return
 		default:
 		}
 
 		// Enter into a sub-FSM
-		switch r.shared.getState() {
+		switch r.state {
 		case Follower:
 			r.runFollower()
 		case Candidate:
@@ -153,7 +146,7 @@ func (r *raftServer) run() {
 // runFollower runs the FSM for a follower.
 func (r *raftServer) runFollower() {
 	didWarn := false
-	r.logger.Info("Entering Follower state", "leader", r.getLeader())
+	r.logger.Info("Entering Follower state", "leader", r.leader)
 	metrics.IncrCounter([]string{"raft", "state", "follower"}, 1)
 	heartbeatTimer := randomTimeout(r.conf.HeartbeatTimeout)
 	for {
@@ -189,14 +182,13 @@ func (r *raftServer) runFollower() {
 			heartbeatTimer = randomTimeout(r.conf.HeartbeatTimeout)
 
 			// Check if we have had a successful contact
-			lastContact := r.getLastContact()
-			if time.Now().Sub(lastContact) < r.conf.HeartbeatTimeout {
+			if time.Now().Sub(r.lastContact) < r.conf.HeartbeatTimeout {
 				continue
 			}
 
 			// Heartbeat failed! Transition to the candidate state
-			lastLeader := r.getLeader()
-			r.setLeader("")
+			lastLeader := r.leader
+			r.leader = ""
 
 			if r.memberships.latestIndex == 0 {
 				if !didWarn {
@@ -212,7 +204,7 @@ func (r *raftServer) runFollower() {
 			} else {
 				r.logger.Warn("Heartbeat timeout reached, starting election",
 					"last_leader", lastLeader, "term", r.currentTerm,
-					"last_contact", lastContact)
+					"last_contact", r.lastContact)
 				metrics.IncrCounter([]string{"raft", "transition", "heartbeat_timeout"}, 1)
 				r.setState(Candidate)
 				r.updatePeers()
@@ -275,7 +267,7 @@ func (r *raftServer) runCandidate() {
 	// Ask peers to vote
 	r.updatePeers()
 
-	for r.shared.getState() == Candidate {
+	for r.state == Candidate {
 		select {
 		case rpc := <-r.rpcCh:
 			r.processRPC(rpc)
@@ -355,7 +347,7 @@ func (r *raftServer) runLeader() {
 		// reporting a last contact time from before we were the
 		// leader. Otherwise, to a client it would seem our data
 		// is extremely stale.
-		r.setLastContact()
+		r.lastContact = time.Now()
 
 		// Stop replication
 		r.updatePeers()
@@ -380,11 +372,9 @@ func (r *raftServer) runLeader() {
 		// If we are stepping down for some reason, no known leader.
 		// We may have stepped down due to an RPC call, which would
 		// provide the leader, so we cannot always blank this out.
-		r.leaderLock.Lock()
 		if r.leader == r.localAddr {
 			r.leader = ""
 		}
-		r.leaderLock.Unlock()
 
 		// Notify that we are not the leader
 		asyncNotifyBool(r.leaderCh, false)
@@ -451,7 +441,7 @@ func (r *raftServer) updatePeers() {
 	// Send new control information and stop Peer goroutines that need stopping
 	lastIndex, lastTerm := r.shared.getLastEntry()
 	for serverID, peer := range r.peers {
-		role := r.shared.getState()
+		role := r.state
 		if role == Shutdown {
 			// Shutdown must be the last control signal sent to the Peer, so we mask
 			// it here and send it later in shutdownPeers().
@@ -528,7 +518,7 @@ func (r *raftServer) leaderLoop() {
 	stepDown := false
 
 	lease := time.After(r.conf.LeaderLeaseTimeout)
-	for r.shared.getState() == Leader {
+	for r.state == Leader {
 		select {
 		case rpc := <-r.rpcCh:
 			r.processRPC(rpc)
@@ -700,7 +690,7 @@ func (r *raftServer) computeCandidateProgress() {
 	if quorumGeq(votes) == 1 {
 		r.logger.Info("Election won", "tally", sum(votes))
 		r.setState(Leader)
-		r.setLeader(r.localAddr)
+		r.leader = r.localAddr
 		r.updatePeers()
 	}
 }
@@ -1021,8 +1011,8 @@ func (r *raftServer) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	}
 	// Save the current leader
 	r.stepDown()
-	r.setLeader(ServerAddress(r.trans.DecodePeer(a.Leader)))
-	defer r.setLastContact()
+	r.leader = r.trans.DecodePeer(a.Leader)
+	defer func() { r.lastContact = time.Now() }()
 
 	// Verify the last log entry
 	if a.PrevLogEntry > 0 {
@@ -1172,9 +1162,9 @@ func (r *raftServer) requestVote(rpc RPC, req *RequestVoteRequest) {
 
 	// Check if we have an existing leader [who's not the candidate]
 	candidate := r.trans.DecodePeer(req.Candidate)
-	if leader := r.getLeader(); leader != "" && leader != candidate {
+	if r.leader != "" && r.leader != candidate {
 		r.logger.Warn("Rejecting vote request since we have a leader",
-			"candidate", candidate, "leader", leader)
+			"candidate", candidate, "leader", r.leader)
 		return
 	}
 
@@ -1241,7 +1231,7 @@ func (r *raftServer) requestVote(rpc RPC, req *RequestVoteRequest) {
 	}
 
 	resp.Granted = true
-	r.setLastContact()
+	r.lastContact = time.Now()
 	return
 }
 
@@ -1280,8 +1270,8 @@ func (r *raftServer) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	}
 	// Save the current leader
 	r.stepDown()
-	r.setLeader(ServerAddress(r.trans.DecodePeer(req.Leader)))
-	defer r.setLastContact()
+	r.leader = r.trans.DecodePeer(req.Leader)
+	defer func() { r.lastContact = time.Now() }()
 
 	// Create a new snapshot
 	var reqConfiguration Membership
@@ -1368,13 +1358,6 @@ func (r *raftServer) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	return
 }
 
-// setLastContact is used to set the last contact time to now
-func (r *raftServer) setLastContact() {
-	r.lastContactLock.Lock()
-	r.lastContact = time.Now()
-	r.lastContactLock.Unlock()
-}
-
 type voteResult struct {
 	RequestVoteResponse
 	voterID ServerID
@@ -1392,7 +1375,7 @@ func (r *raftServer) persistVote(term Term, candidate []byte) error {
 }
 
 func (r *raftServer) stepDown() {
-	if r.shared.getState() != Follower {
+	if r.state != Follower {
 		r.setState(Follower)
 		r.updatePeers()
 	}
@@ -1421,11 +1404,11 @@ func (r *raftServer) persistCurrentTerm() {
 // setState is used to update the current state. Any state
 // transition causes the known leader to be cleared. This means
 // that leader should be set only after updating the state.
-// The caller must call updatePeers() after changing the term.
+// The caller must call updatePeers() after changing the state.
 func (r *raftServer) setState(state RaftState) {
-	r.setLeader("")
-	oldState := r.shared.getState()
-	r.shared.setState(state)
+	r.leader = ""
+	oldState := r.state
+	r.state = state
 	if oldState != state {
 		r.observe(state)
 	}
@@ -1437,7 +1420,7 @@ func (r *raftServer) stats() *Stats {
 	lastLogIndex, lastLogTerm := r.shared.getLastLog()
 	lastSnapIndex, lastSnapTerm := r.shared.getLastSnapshot()
 	s := &Stats{
-		State:              r.shared.getState(),
+		State:              r.state,
 		Term:               r.currentTerm,
 		LastLogIndex:       lastLogIndex,
 		LastLogTerm:        lastLogTerm,
@@ -1446,7 +1429,8 @@ func (r *raftServer) stats() *Stats {
 		FSMPending:         len(r.fsmCommitCh),
 		LastSnapshotIndex:  lastSnapIndex,
 		LastSnapshotTerm:   lastSnapTerm,
-		LastContact:        r.getLastContact(),
+		LastContact:        r.lastContact,
+		LastLeader:         r.leader,
 		ProtocolVersion:    r.protocolVersion,
 		ProtocolVersionMin: ProtocolVersionMin,
 		ProtocolVersionMax: ProtocolVersionMax,

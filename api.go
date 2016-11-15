@@ -116,6 +116,9 @@ type raftServer struct {
 	// after updating it, invoke persistCurrentTerm().
 	currentTerm Term
 
+	// The current state (follower, candidate, leader).
+	state RaftState
+
 	api *apiChannels
 
 	// Configuration provided at Raft initialization
@@ -135,12 +138,10 @@ type raftServer struct {
 
 	// lastContact is the last time we had contact from the
 	// leader node. This can be used to gauge staleness.
-	lastContact     time.Time
-	lastContactLock sync.RWMutex
+	lastContact time.Time
 
 	// Leader is the current cluster leader
-	leader     ServerAddress
-	leaderLock sync.RWMutex
+	leader ServerAddress
 
 	// leaderCh is used to notify of leadership changes
 	leaderCh chan bool
@@ -504,7 +505,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	// for testing purposes.
 	if conf.StartAsLeader {
 		r.setState(Leader)
-		r.setLeader(r.localAddr)
+		r.leader = r.localAddr
 	}
 
 	// Restore the current term and the last log.
@@ -623,20 +624,6 @@ func (r *Raft) BootstrapCluster(membership Membership) Future {
 	case r.channels.bootstrapCh <- bootstrapReq:
 		return bootstrapReq
 	}
-}
-
-// Leader is used to return the current leader of the cluster.
-// It may return empty string if there is no current leader
-// or the leader is unknown.
-func (r *Raft) Leader() ServerAddress {
-	return r.server.getLeader()
-}
-
-func (r *raftServer) getLeader() ServerAddress {
-	r.leaderLock.RLock()
-	leader := r.leader
-	r.leaderLock.RUnlock()
-	return leader
 }
 
 // Apply is used to apply a command to the FSM in a highly consistent
@@ -844,7 +831,7 @@ func (r *Raft) Shutdown() Future {
 	if !r.shutdown {
 		close(r.channels.shutdownCh)
 		r.shutdown = true
-		r.server.setState(Shutdown)
+		r.server.setState(Shutdown) // TODO: this has a race condition on leader
 		return &shutdownFuture{r}
 	}
 
@@ -866,11 +853,6 @@ func (r *Raft) Snapshot() Future {
 
 }
 
-// State is used to return the current raft state.
-func (r *Raft) State() RaftState {
-	return r.server.shared.getState()
-}
-
 // LeaderCh is used to get a channel which delivers signals on
 // acquiring or losing leadership. It sends true if we become
 // the leader, and false if we lose it. The channel is not buffered,
@@ -881,22 +863,20 @@ func (r *Raft) LeaderCh() <-chan bool {
 
 // String returns a string representation of this Raft node.
 func (r *Raft) String() string {
+	future := r.Stats()
+	err := future.Error()
+	var state string
+	switch err {
+	case ErrRaftShutdown:
+		state = "shutdown"
+	case nil:
+		state = future.Stats().State.String()
+	default:
+		state = "unknown"
+	}
 	return fmt.Sprintf("Node at %s [%v]",
 		r.server.localAddr,
-		r.server.shared.getState())
-}
-
-// LastContact returns the time of last contact by a leader.
-// This only makes sense if we are currently a follower.
-func (r *Raft) LastContact() time.Time {
-	return r.server.getLastContact()
-}
-
-func (r *raftServer) getLastContact() time.Time {
-	r.lastContactLock.RLock()
-	last := r.lastContact
-	r.lastContactLock.RUnlock()
-	return last
+		state)
 }
 
 type Stats struct {
@@ -919,6 +899,9 @@ type Stats struct {
 	LatestMembership      Membership
 	LatestMembershipIndex Index
 	LastContact           time.Time
+	// The current leader of the cluster. Empty if there is no current leader or
+	// the leader is unknown.
+	LastLeader ServerAddress
 	// numPeers is the number of other voting servers in the cluster, not
 	// including this node. If this node isn't part of the configuration then this
 	// will be 0.
@@ -961,6 +944,7 @@ func (s *Stats) Strings() []struct{ K, V string } {
 		{"latest_membership", fmt.Sprintf("%v", s.LatestMembership)},
 		{"latest_membership_index", toString(uint64(s.LatestMembershipIndex))},
 		{"last_contact", lastContact},
+		{"last_leader", string(s.LastLeader)},
 		{"num_peers", toString(uint64(s.NumPeers))},
 		{"protocol_version", toString(uint64(s.ProtocolVersion))},
 		{"protocol_version_min", toString(uint64(s.ProtocolVersionMin))},
@@ -990,10 +974,4 @@ func (r *Raft) Stats() StatsFuture {
 	case r.channels.statsCh <- statsReq:
 	}
 	return statsReq
-}
-
-// LastIndex returns the last index in stable storage,
-// either from the last log or from the last snapshot.
-func (r *Raft) LastIndex() Index {
-	return r.server.shared.getLastIndex()
 }

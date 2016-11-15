@@ -47,3 +47,14 @@ func TestAPI_Stats_membershipFormatting(t *testing.T) {
 			exp, membership)
 	}
 }
+
+func TestAPI_String(t *testing.T) {
+	c := MakeCluster(1, t, nil)
+	defer c.Close()
+	expected := fmt.Sprintf("Node at %v [Follower]", c.rafts[0].server.localAddr)
+	actual := c.rafts[0].String()
+	if expected != actual {
+		c.Failf("Raft not stringified correctly. Expected: '%s', got: '%s'",
+			expected, actual)
+	}
+}
