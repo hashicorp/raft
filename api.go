@@ -831,7 +831,6 @@ func (r *Raft) Shutdown() Future {
 	if !r.shutdown {
 		close(r.channels.shutdownCh)
 		r.shutdown = true
-		r.server.setState(Shutdown) // TODO: this has a race condition on leader
 		return &shutdownFuture{r}
 	}
 

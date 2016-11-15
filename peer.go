@@ -100,12 +100,14 @@ type peerControl struct {
 	term Term
 
 	// If role is Follower, do nothing. If role is Candidate, request votes. If
-	// role is Leader, send log entries and snapshots. If role is Shutdown, exit
-	// immediately. Note that raft.go may mask the server's actual role if this
-	// peer does not have a vote. For example, it may claim to be a Follower when
-	// it's actually a Candidate, if there's no reason to request a vote from this
-	// peer.
+	// role is Leader, send log entries and snapshots. Note that raft.go may mask
+	// the server's actual role if this peer does not have a vote. For example, it
+	// may claim to be a Follower when it's actually a Candidate, if there's no
+	// reason to request a vote from this peer.
 	role RaftState
+
+	// If shutdown is true, exit immediately.
+	shutdown bool
 
 	// Incremented whenever this should send a ping to the peer immediately. The
 	// response to that ping will set the same value in verifiedCounter.
@@ -395,7 +397,7 @@ func (p *peerState) checkInvariants() error {
 // selectLoop is a long-running routine that sends RPCs to a single remote
 // server.
 func (p *peerState) selectLoop() {
-	for p.control.role != Shutdown {
+	for !p.control.shutdown {
 		if err := p.checkInvariants(); err != nil {
 			p.shared.logger.Error("Peer invariant violated",
 				"id", p.shared.peerID,
@@ -581,9 +583,6 @@ func (p *peerState) issueWork() (didSomething bool) {
 	}
 
 	switch p.control.role {
-	case Shutdown:
-		// do nothing
-
 	case Follower:
 		// do nothing
 

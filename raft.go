@@ -125,6 +125,7 @@ func (r *raftServer) run() {
 		select {
 		case <-r.api.shutdownCh:
 			// Clear the leader to prevent forwarding
+			r.state = Follower
 			r.leader = ""
 			r.shutdownPeers()
 			return
@@ -442,18 +443,14 @@ func (r *raftServer) updatePeers() {
 	lastIndex, lastTerm := r.shared.getLastEntry()
 	for serverID, peer := range r.peers {
 		role := r.state
-		if role == Shutdown {
-			// Shutdown must be the last control signal sent to the Peer, so we mask
-			// it here and send it later in shutdownPeers().
-			role = Follower
-		}
+		shutdown := false
 		verifyCounter := r.verifyCounter
 		server, ok := inConfig[serverID]
 		if !ok {
 			r.logger.Info("Removed peer, stopping communication",
 				"id", serverID, "address", server.Address)
 			delete(r.peers, serverID)
-			role = Shutdown
+			shutdown = true
 		} else {
 			if server.Suffrage != Voter {
 				if role == Candidate {
@@ -465,6 +462,7 @@ func (r *raftServer) updatePeers() {
 		control := peerControl{
 			term:          r.currentTerm,
 			role:          role,
+			shutdown:      shutdown,
 			verifyCounter: verifyCounter,
 			lastIndex:     lastIndex,
 			lastTerm:      lastTerm,
@@ -477,8 +475,9 @@ func (r *raftServer) updatePeers() {
 // shutdownPeers instructs all peers to exit immediately.
 func (r *raftServer) shutdownPeers() {
 	control := peerControl{
-		term: r.currentTerm,
-		role: Shutdown,
+		term:     r.currentTerm,
+		role:     Follower,
+		shutdown: true,
 	}
 	for serverID, peer := range r.peers {
 		r.logger.Info("Shutting down communication with peer", "id", serverID)
