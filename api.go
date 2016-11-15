@@ -413,6 +413,29 @@ func HasExistingState(logs LogStore, stable StableStore, snaps SnapshotStore) (b
 // old state, such as snapshots, logs, peers, etc, all those will be restored
 // when creating the Raft node.
 func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps SnapshotStore, trans Transport) (*Raft, error) {
+	api := &Raft{
+		channels: &apiChannels{
+			applyCh:            make(chan *logFuture),
+			membershipChangeCh: make(chan *membershipChangeFuture),
+			snapshotCh:         make(chan *snapshotFuture),
+			verifyCh:           make(chan *verifyFuture, 64),
+			membershipsCh:      make(chan *membershipsFuture, 8),
+			statsCh:            make(chan *statsFuture, 8),
+			bootstrapCh:        make(chan *bootstrapFuture),
+			shutdownCh:         make(chan struct{}),
+		},
+		goRoutines: &waitGroup{},
+	}
+	server, err := newRaftServer(conf, fsm, logs, stable, snaps, trans, api.channels, api.goRoutines)
+	if err != nil {
+		return nil, err
+	}
+	api.server = server
+	return api, nil
+}
+
+func newRaftServer(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps SnapshotStore, trans Transport,
+	channels *apiChannels, goRoutines *waitGroup) (*raftServer, error) {
 	// Validate the configuration.
 	if err := ValidateConfig(conf); err != nil {
 		return nil, err
@@ -466,33 +489,24 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		protocolVersion: protocolVersion,
 		peerProgressCh:  make(chan peerProgress),
 		peers:           make(map[ServerID]*raftPeer),
-		api: &apiChannels{
-			applyCh:            make(chan *logFuture),
-			membershipChangeCh: make(chan *membershipChangeFuture),
-			snapshotCh:         make(chan *snapshotFuture),
-			verifyCh:           make(chan *verifyFuture, 64),
-			membershipsCh:      make(chan *membershipsFuture, 8),
-			statsCh:            make(chan *statsFuture, 8),
-			bootstrapCh:        make(chan *bootstrapFuture),
-			shutdownCh:         make(chan struct{}),
-		},
-		conf:          *conf,
-		fsm:           fsm,
-		fsmCommitCh:   make(chan commitTuple, 128),
-		fsmRestoreCh:  make(chan *restoreFuture),
-		fsmSnapshotCh: make(chan *reqSnapshotFuture),
-		leaderCh:      make(chan bool),
-		localID:       localID,
-		localAddr:     localAddr,
-		logger:        logger,
-		logs:          logs,
-		memberships:   memberships{},
-		rpcCh:         trans.Consumer(),
-		snapshots:     snaps,
-		stable:        stable,
-		trans:         trans,
+		api:             channels,
+		conf:            *conf,
+		fsm:             fsm,
+		fsmCommitCh:     make(chan commitTuple, 128),
+		fsmRestoreCh:    make(chan *restoreFuture),
+		fsmSnapshotCh:   make(chan *reqSnapshotFuture),
+		leaderCh:        make(chan bool),
+		localID:         localID,
+		localAddr:       localAddr,
+		logger:          logger,
+		logs:            logs,
+		memberships:     memberships{},
+		rpcCh:           trans.Consumer(),
+		snapshots:       snaps,
+		stable:          stable,
+		trans:           trans,
+		goRoutines:      goRoutines,
 	}
-	r.goRoutines = &waitGroup{}
 
 	// Initialize as a follower.
 	r.setState(Follower)
@@ -543,12 +557,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		}()
 	}
 
-	api := &Raft{
-		channels:   r.api,
-		goRoutines: r.goRoutines,
-		server:     r,
-	}
-	return api, nil
+	return r, nil
 }
 
 // restoreSnapshot attempts to restore the latest snapshots, and fails if none
