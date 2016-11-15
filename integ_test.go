@@ -265,8 +265,8 @@ func TestRaft_Integ(t *testing.T) {
 	}
 
 	// Remove the old nodes
-	NoErr(WaitFuture(leader.raft.RemoveServer(rm1.raft.server.localID, 0, 0), t), t)
-	NoErr(WaitFuture(leader.raft.RemoveServer(rm2.raft.server.localID, 0, 0), t), t)
+	NoErr(WaitFuture(leader.raft.RemoveServer(rm1.raft.serverInternals.localID, 0, 0), t), t)
+	NoErr(WaitFuture(leader.raft.RemoveServer(rm2.raft.serverInternals.localID, 0, 0), t), t)
 
 	// Shoot the leader
 	env1.Release()

@@ -57,8 +57,8 @@ type Raft struct {
 	// library. See comments in config.go for more details.
 	protocolVersion ProtocolVersion
 
-	// This will be going away eventually.
-	server *raftServer
+	// This is used from unit tests to get at internals.
+	serverInternals *raftServer
 }
 
 type apiChannels struct {
@@ -437,7 +437,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	if err != nil {
 		return nil, err
 	}
-	api.server = server
+	api.serverInternals = server
 	return api, nil
 }
 

@@ -41,7 +41,7 @@ func TestAPI_Stats_membershipFormatting(t *testing.T) {
 		}
 	}
 	exp := fmt.Sprintf("[%v at %v (Voter), S2 at s2-addr (Nonvoter)]",
-		c.rafts[0].server.localID, c.rafts[0].server.localAddr)
+		s.ServerID, s.ServerAddress)
 	if membership != exp {
 		c.Failf("membership not stringified correctly. Expected: '%s', got: '%s'",
 			exp, membership)
@@ -51,7 +51,8 @@ func TestAPI_Stats_membershipFormatting(t *testing.T) {
 func TestAPI_String(t *testing.T) {
 	c := MakeCluster(1, t, nil)
 	defer c.Close()
-	expected := fmt.Sprintf("Node at %v [Follower]", c.rafts[0].server.localAddr)
+	expected := fmt.Sprintf("Node at %v [Follower]",
+		c.rafts[0].serverInternals.localAddr)
 	actual := c.rafts[0].String()
 	if expected != actual {
 		c.Failf("Raft not stringified correctly. Expected: '%s', got: '%s'",
