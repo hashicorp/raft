@@ -179,8 +179,8 @@ type raftServer struct {
 
 	// List of observers and the mutex that protects them. The observers list
 	// is indexed by an artificial ID which is used for deregistration.
-	observersLock sync.RWMutex
-	observers     map[uint64]*observer
+	observerLock sync.RWMutex
+	observer     chan<- interface{}
 
 	// A monotonically increasing counter used for verifying the leader is current.
 	verifyCounter uint64
@@ -494,7 +494,6 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		snapshots:     snaps,
 		stable:        stable,
 		trans:         trans,
-		observers:     make(map[uint64]*observer),
 	}
 	r.goRoutines = &waitGroup{}
 
