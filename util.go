@@ -132,9 +132,20 @@ func (wg *waitGroup) waitShutdown() {
 func ensureClosed(ch chan struct{}) {
 	defer func() {
 		err := recover()
-		if err != nil && err.(error).Error() != "close of closed channel" {
-			panic(err)
+		if err == nil {
+			return
 		}
+		switch err := err.(type) {
+		case error: // go 1.7
+			if err.Error() == "close of closed channel" {
+				return
+			}
+		case string: // go 1.6
+			if err == "close of closed channel" {
+				return
+			}
+		}
+		panic(err)
 	}()
 	close(ch)
 }
