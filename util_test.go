@@ -109,7 +109,7 @@ func TestBackoff(t *testing.T) {
 	}
 }
 
-func TestEnsureClosed(t *testing.T) {
+func TestEnsureClosed_basic(t *testing.T) {
 	ch := make(chan struct{})
 	ensureClosed(ch)
 	ensureClosed(ch)
@@ -120,4 +120,13 @@ func TestEnsureClosed(t *testing.T) {
 	default:
 		t.Errorf("Not closed")
 	}
+}
+
+func TestEnsureClosed_panicOnNil(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Errorf("ensureClosed(nil) should panic but didn't")
+		}
+	}()
+	ensureClosed(nil)
 }
