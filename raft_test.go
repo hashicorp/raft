@@ -96,7 +96,7 @@ type cluster struct {
 	trans            []LoopbackTransport
 	rafts            []*Raft
 	t                *testing.T
-	observationCh    chan Observation
+	observationCh    chan interface{}
 	conf             *Config
 	propagateTimeout time.Duration
 	longstopTimeout  time.Duration
@@ -179,10 +179,9 @@ func (c *cluster) Close() {
 }
 
 // WaitEventChan returns a channel which will signal if an observation is made
-// or a timeout occurs. It is possible to set a filter to look for specific
-// observations. Setting timeout to 0 means that it will wait forever until a
-// non-filtered observation is made.
-func (c *cluster) WaitEventChan(filter FilterFn, timeout time.Duration) <-chan struct{} {
+// or a timeout occurs. Setting timeout to 0 means that it will wait forever
+// until an observation is made.
+func (c *cluster) WaitEventChan(timeout time.Duration) <-chan struct{} {
 	ch := make(chan struct{})
 	go func() {
 		defer close(ch)
@@ -195,10 +194,8 @@ func (c *cluster) WaitEventChan(filter FilterFn, timeout time.Duration) <-chan s
 			case <-timeoutCh:
 				return
 
-			case o, ok := <-c.observationCh:
-				if !ok || filter == nil || filter(&o) {
-					return
-				}
+			case <-c.observationCh:
+				return
 			}
 		}
 	}()
@@ -206,15 +203,14 @@ func (c *cluster) WaitEventChan(filter FilterFn, timeout time.Duration) <-chan s
 }
 
 // WaitEvent waits until an observation is made, a timeout occurs, or a test
-// failure is signaled. It is possible to set a filter to look for specific
-// observations. Setting timeout to 0 means that it will wait forever until a
-// non-filtered observation is made or a test failure is signaled.
-func (c *cluster) WaitEvent(filter FilterFn, timeout time.Duration) {
+// failure is signaled. Setting timeout to 0 means that it will wait forever
+// until an observation is made or a test failure is signaled.
+func (c *cluster) WaitEvent(timeout time.Duration) {
 	select {
 	case <-c.failedCh:
 		c.t.FailNow()
 
-	case <-c.WaitEventChan(filter, timeout):
+	case <-c.WaitEventChan(timeout):
 	}
 }
 
@@ -225,7 +221,7 @@ func (c *cluster) WaitForReplication(fsmLength int) {
 
 CHECK:
 	for {
-		ch := c.WaitEventChan(nil, commitTimeout)
+		ch := c.WaitEventChan(commitTimeout)
 		select {
 		case <-c.failedCh:
 			c.t.FailNow()
@@ -251,11 +247,43 @@ func (c *cluster) getTerm(r *Raft) Term {
 	fut := r.Stats()
 	err := fut.Error()
 	if err == ErrRaftShutdown {
-		return r.server.currentTerm
+		return r.serverInternals.currentTerm
 	} else if err != nil {
 		c.FailNowf("failed to get stats: %v", err)
 	}
 	return fut.Stats().Term
+}
+
+func (c *cluster) getState(r *Raft) RaftState {
+	fut := r.Stats()
+	err := fut.Error()
+	if err == ErrRaftShutdown {
+		return Follower
+	} else if err != nil {
+		c.FailNowf("failed to get stats: %v", err)
+	}
+	return fut.Stats().State
+}
+
+func (c *cluster) getLastIndex(r *Raft) Index {
+	stats := c.getStats(r)
+	if stats.LastLogIndex > stats.LastSnapshotIndex {
+		return stats.LastLogIndex
+	}
+	return stats.LastSnapshotIndex
+}
+
+func (c *cluster) getLeader(r *Raft) ServerAddress {
+	return c.getStats(r).LastLeader
+}
+
+func (c *cluster) getStats(r *Raft) *Stats {
+	fut := r.Stats()
+	err := fut.Error()
+	if err != nil {
+		c.FailNowf("failed to get stats: %v", err)
+	}
+	return fut.Stats()
 }
 
 // pollState takes a snapshot of the state of the cluster. This might not be
@@ -265,7 +293,7 @@ func (c *cluster) pollState(s RaftState) ([]*Raft, Term) {
 	var highestTerm Term
 	in := make([]*Raft, 0, 1)
 	for _, r := range c.rafts {
-		if r.State() == s {
+		if c.getState(r) == s {
 			in = append(in, r)
 		}
 		term := c.getTerm(r)
@@ -319,18 +347,6 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 			timer.Reset(timeout)
 		}
 
-		// Filter will wake up whenever we observe a RequestVote.
-		filter := func(ob *Observation) bool {
-			switch ob.Data.(type) {
-			case RaftState:
-				return true
-			case RequestVoteRequest:
-				return true
-			default:
-				return false
-			}
-		}
-
 		select {
 		case <-c.failedCh:
 			c.t.FailNow()
@@ -338,7 +354,7 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 		case <-limitCh:
 			c.FailNowf("Timeout waiting for stable %s state", s)
 
-		case <-c.WaitEventChan(filter, 0):
+		case <-c.WaitEventChan(0):
 			c.logger.Debug("Resetting stability timeout")
 
 		case t, ok := <-timer.C:
@@ -446,7 +462,7 @@ func (c *cluster) EnsureLeader(t *testing.T, expect ServerAddress) {
 	// think the leader is correct
 	fail := false
 	for _, r := range c.rafts {
-		leader := ServerAddress(r.Leader())
+		leader := c.getLeader(r)
 		if leader != expect {
 			if leader == "" {
 				leader = "[none]"
@@ -505,7 +521,7 @@ CHECK:
 
 WAIT:
 	first.Unlock()
-	c.WaitEvent(nil, commitTimeout)
+	c.WaitEvent(commitTimeout)
 	goto CHECK
 }
 
@@ -544,7 +560,7 @@ CHECK:
 	return
 
 WAIT:
-	c.WaitEvent(nil, commitTimeout)
+	c.WaitEvent(commitTimeout)
 	goto CHECK
 }
 
@@ -558,7 +574,7 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
 	}
 
 	c := &cluster{
-		observationCh: make(chan Observation, 1024),
+		observationCh: make(chan interface{}, 1024),
 		conf:          conf,
 		// Propagation takes a maximum of 2 heartbeat timeouts (time to
 		// get a new heartbeat that would cause a commit) plus a bit.
@@ -626,7 +642,7 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
 			c.FailNowf("NewRaft failed: %v", err)
 		}
 
-		raft.RegisterObserver(NewObserver(c.observationCh, false, nil))
+		raft.serverInternals.registerObserver(c.observationCh)
 		if err != nil {
 			c.FailNowf("RegisterObserver failed: %v", err)
 		}
@@ -696,8 +712,8 @@ func TestRaft_LiveBootstrap(t *testing.T) {
 	membership := Membership{}
 	for _, r := range c.rafts {
 		server := Server{
-			ID:      r.server.localID,
-			Address: r.server.localAddr,
+			ID:      r.serverInternals.localID,
+			Address: r.serverInternals.localAddr,
 		}
 		membership.Servers = append(membership.Servers, server)
 	}
@@ -711,7 +727,7 @@ func TestRaft_LiveBootstrap(t *testing.T) {
 	// Should be one leader.
 	c.Followers()
 	leader := c.Leader()
-	c.EnsureLeader(t, leader.server.localAddr)
+	c.EnsureLeader(t, leader.serverInternals.localAddr)
 
 	// Should be able to apply.
 	future := leader.Apply([]byte("test"), commitTimeout)
@@ -731,7 +747,7 @@ func TestRaft_RecoverCluster_NoState(t *testing.T) {
 	c := MakeClusterNoBootstrap(1, t, nil)
 	defer c.Close()
 
-	r := c.rafts[0].server
+	r := c.rafts[0].serverInternals
 	membership := Membership{
 		Servers: []Server{{
 			ID:      r.localID,
@@ -782,7 +798,7 @@ func TestRaft_RecoverCluster(t *testing.T) {
 		// Recover the cluster. We need to replace the transport and we
 		// replace the FSM so no state can carry over.
 		for i, r := range c.rafts {
-			r := r.server
+			r := r.serverInternals
 			before, err := r.snapshots.List()
 			if err != nil {
 				c.FailNowf("snapshot list err: %v", err)
@@ -821,14 +837,14 @@ func TestRaft_RecoverCluster(t *testing.T) {
 				c.FailNowf("new raft err: %v", err)
 			}
 			c.rafts[i] = r2
-			c.trans[i] = r2.server.trans.(*InmemTransport)
-			c.fsms[i] = r2.server.fsm.(*MockFSM)
+			c.trans[i] = r2.serverInternals.trans.(*InmemTransport)
+			c.fsms[i] = r2.serverInternals.fsm.(*MockFSM)
 		}
 		c.FullyConnect()
 		time.Sleep(c.propagateTimeout)
 
 		// Let things settle and make sure we recovered.
-		c.EnsureLeader(t, c.Leader().server.localAddr)
+		c.EnsureLeader(t, c.Leader().serverInternals.localAddr)
 		c.EnsureSame(t)
 		c.EnsureSamePeers(t)
 	}
@@ -846,7 +862,7 @@ func TestRaft_HasExistingState(t *testing.T) {
 	c1 := MakeClusterNoBootstrap(1, t, nil)
 
 	// Make sure the initial state is clean.
-	r := c1.rafts[0].server
+	r := c1.rafts[0].serverInternals
 	hasState, err := HasExistingState(r.logs, r.stable, r.snapshots)
 	if err != nil || hasState {
 		c.FailNowf("should not have any existing state, %v", err)
@@ -869,7 +885,7 @@ func TestRaft_HasExistingState(t *testing.T) {
 	c.EnsureSamePeers(t)
 
 	// Ensure one leader.
-	c.EnsureLeader(t, c.Leader().server.localAddr)
+	c.EnsureLeader(t, c.Leader().serverInternals.localAddr)
 
 	// Make sure it's not clean.
 	hasState, err = HasExistingState(r.logs, r.stable, r.snapshots)
@@ -895,7 +911,7 @@ func TestRaft_SingleNode(t *testing.T) {
 	}
 
 	// Should be leader
-	if s := raft.State(); s != Leader {
+	if s := c.getState(raft); s != Leader {
 		c.FailNowf("expected leader: %v", s)
 	}
 
@@ -929,7 +945,7 @@ func TestRaft_TripleNode(t *testing.T) {
 	// Should be one leader
 	c.Followers()
 	leader := c.Leader()
-	c.EnsureLeader(t, leader.server.localAddr)
+	c.EnsureLeader(t, leader.serverInternals.localAddr)
 
 	// Should be able to apply
 	future := leader.Apply([]byte("test"), commitTimeout)
@@ -958,13 +974,13 @@ func TestRaft_LeaderFail(t *testing.T) {
 	// Disconnect the leader now
 	t.Logf("[INFO] Disconnecting %v", leader)
 	leaderTerm := c.getTerm(leader)
-	c.Disconnect(leader.server.localAddr)
+	c.Disconnect(leader.serverInternals.localAddr)
 
 	// Wait for new leader
 	limit := time.Now().Add(c.longstopTimeout)
 	var newLead *Raft
 	for time.Now().Before(limit) && newLead == nil {
-		c.WaitEvent(nil, commitTimeout)
+		c.WaitEvent(commitTimeout)
 		leaders := c.GetInState(Leader)
 		if len(leaders) == 1 && leaders[0] != leader {
 			newLead = leaders[0]
@@ -1028,7 +1044,7 @@ func TestRaft_BehindFollower(t *testing.T) {
 	leader := c.Leader()
 	followers := c.Followers()
 	behind := followers[0]
-	c.Disconnect(behind.server.localAddr)
+	c.Disconnect(behind.serverInternals.localAddr)
 
 	// Commit a lot of things
 	var future Future
@@ -1044,7 +1060,7 @@ func TestRaft_BehindFollower(t *testing.T) {
 	}
 
 	// Check that we have a non zero last contact
-	if behind.LastContact().IsZero() {
+	if c.getStats(behind).LastContact.IsZero() {
 		c.FailNowf("expected previous contact")
 	}
 
@@ -1056,7 +1072,7 @@ func TestRaft_BehindFollower(t *testing.T) {
 
 	// Ensure one leader
 	leader = c.Leader()
-	c.EnsureLeader(t, leader.server.localAddr)
+	c.EnsureLeader(t, leader.serverInternals.localAddr)
 }
 
 func TestRaft_ApplyNonLeader(t *testing.T) {
@@ -1171,7 +1187,7 @@ func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 		if atomic.LoadInt32(&didTimeout) != 0 {
 			return
 		}
-		c.WaitEvent(nil, c.propagateTimeout)
+		c.WaitEvent(c.propagateTimeout)
 	}
 	c.FailNowf("Timeout waiting to detect apply timeouts")
 }
@@ -1189,14 +1205,14 @@ func TestRaft_JoinNode(t *testing.T) {
 	c.FullyConnect()
 
 	// Join the new node in
-	r := c1.rafts[0].server
+	r := c1.rafts[0].serverInternals
 	future := c.Leader().AddVoter(r.localID, r.localAddr, 0, 0)
 	if err := future.Error(); err != nil {
 		c.FailNowf("err: %v", err)
 	}
 
 	// Ensure one leader
-	c.EnsureLeader(t, c.Leader().server.localAddr)
+	c.EnsureLeader(t, c.Leader().serverInternals.localAddr)
 
 	// Check the FSMs
 	c.EnsureSame(t)
@@ -1217,7 +1233,7 @@ func TestRaft_RemoveFollower(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
-		c.WaitEvent(nil, commitTimeout)
+		c.WaitEvent(commitTimeout)
 		followers = c.GetInState(Follower)
 	}
 	if len(followers) != 2 {
@@ -1226,7 +1242,7 @@ func TestRaft_RemoveFollower(t *testing.T) {
 
 	// Remove a follower
 	follower := followers[0]
-	future := leader.RemoveServer(follower.server.localID, 0, 0)
+	future := leader.RemoveServer(follower.serverInternals.localID, 0, 0)
 	if err := future.Error(); err != nil {
 		c.FailNowf("err: %v", err)
 	}
@@ -1255,7 +1271,7 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
-		c.WaitEvent(nil, commitTimeout)
+		c.WaitEvent(commitTimeout)
 		followers = c.GetInState(Follower)
 	}
 	if len(followers) != 2 {
@@ -1263,7 +1279,7 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	}
 
 	// Remove the leader
-	f := leader.RemoveServer(leader.server.localID, 0, 0)
+	f := leader.RemoveServer(leader.serverInternals.localID, 0, 0)
 
 	// Wait for the future to complete
 	if f.Error() != nil {
@@ -1286,7 +1302,7 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	}
 
 	// Old leader should be shutdown
-	if leader.State() != Shutdown {
+	if leader.Stats().Error() != ErrRaftShutdown {
 		c.FailNowf("old leader should be shutdown")
 	}
 }
@@ -1305,7 +1321,7 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	// Remove the leader
 	for i := byte(0); i < 100; i++ {
 		if i == 80 {
-			removeFuture := leader.RemoveServer(leader.server.localID, 0, 0)
+			removeFuture := leader.RemoveServer(leader.serverInternals.localID, 0, 0)
 			if err := removeFuture.Error(); err != nil {
 				c.FailNowf("err: %v, remove leader failed", err)
 			}
@@ -1332,12 +1348,12 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	if len(membership.Servers) != 2 {
 		c.FailNowf("too many peers")
 	}
-	if hasVote(membership, leader.server.localID) {
+	if hasVote(membership, leader.serverInternals.localID) {
 		c.FailNowf("old leader should no longer have a vote")
 	}
 
 	// Old leader should be a follower.
-	if leader.State() != Follower {
+	if c.getState(leader) != Follower {
 		c.FailNowf("leader should be follower")
 	}
 
@@ -1346,7 +1362,7 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	if len(membership.Servers) != 2 {
 		c.FailNowf("too many peers")
 	}
-	if hasVote(membership, leader.server.localID) {
+	if hasVote(membership, leader.serverInternals.localID) {
 		c.FailNowf("old leader should no longer have a vote")
 	}
 
@@ -1383,12 +1399,12 @@ func TestRaft_RemoveFollower_SplitCluster(t *testing.T) {
 		c.FailNowf("Expected 3 followers, got %d", len(followers))
 	}
 	c.Partition([]ServerAddress{
-		followers[0].server.localAddr,
-		followers[1].server.localAddr,
+		followers[0].serverInternals.localAddr,
+		followers[1].serverInternals.localAddr,
 	})
 
 	// Try to remove the remaining follower that was left with the leader.
-	future := leader.RemoveServer(followers[2].server.localID, 0, 0)
+	future := leader.RemoveServer(followers[2].serverInternals.localID, 0, 0)
 	if err := future.Error(); err == nil {
 		c.FailNowf("Should not have been able to make peer change")
 	}
@@ -1416,8 +1432,8 @@ func TestRaft_AddKnownPeer(t *testing.T) {
 	startingConfig, startingConfigIdx := getCommittedMembership(c, leader)
 
 	// Add a follower
-	future := leader.AddVoter(followers[0].server.localID,
-		followers[0].server.localAddr, 0, 0)
+	future := leader.AddVoter(followers[0].serverInternals.localID,
+		followers[0].serverInternals.localAddr, 0, 0)
 	if err := future.Error(); err != nil {
 		c.FailNowf("AddVoter() err: %v", err)
 	}
@@ -1485,14 +1501,15 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 	}
 
 	// Check for snapshot
-	snaps, _ := leader.server.snapshots.List()
+	snaps, _ := leader.serverInternals.snapshots.List()
 	if len(snaps) != 1 {
 		c.FailNowf("should have a snapshot")
 	}
 	snap := snaps[0]
 
 	// Logs should be trimmed
-	if idx, _ := leader.server.logs.FirstIndex(); idx != snap.Index-Index(conf.TrailingLogs)+1 {
+	idx, _ := leader.serverInternals.logs.FirstIndex()
+	if idx != snap.Index-Index(conf.TrailingLogs)+1 {
 		c.FailNowf("should trim logs to %d: but is %d", snap.Index-Index(conf.TrailingLogs)+1, idx)
 	}
 
@@ -1503,7 +1520,7 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 	}
 
 	// Restart the Raft
-	r := leader.server
+	r := leader.serverInternals
 	// Can't just reuse the old transport as it will be closed
 	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
 	r2, err := NewRaft(&r.conf, r.fsm, r.logs, r.stable, r.snapshots, trans2)
@@ -1578,9 +1595,9 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 
 	// Gather the new peer address list.
 	var peers []string
-	peers = append(peers, fmt.Sprintf("%q", leader.server.trans.LocalAddr()))
+	peers = append(peers, fmt.Sprintf("%q", leader.serverInternals.trans.LocalAddr()))
 	for _, sec := range c2.rafts {
-		peers = append(peers, fmt.Sprintf("%q", sec.server.trans.LocalAddr()))
+		peers = append(peers, fmt.Sprintf("%q", sec.serverInternals.trans.LocalAddr()))
 	}
 	content := []byte(fmt.Sprintf("[%s]", strings.Join(peers, ",")))
 
@@ -1598,7 +1615,7 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	if err != nil {
 		c.FailNowf("err: %v", err)
 	}
-	r := leader.server
+	r := leader.serverInternals
 	if err := RecoverCluster(&r.conf, &MockFSM{}, r.logs, r.stable,
 		r.snapshots, r.trans, configuration); err != nil {
 		c.FailNowf("err: %v", err)
@@ -1613,8 +1630,8 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	}
 	c.rafts[0] = r2
 	c2.rafts = append(c2.rafts, r2)
-	c2.trans = append(c2.trans, r2.server.trans.(*InmemTransport))
-	c2.fsms = append(c2.fsms, r2.server.fsm.(*MockFSM))
+	c2.trans = append(c2.trans, r2.serverInternals.trans.(*InmemTransport))
+	c2.fsms = append(c2.fsms, r2.serverInternals.fsm.(*MockFSM))
 	c2.FullyConnect()
 
 	// Wait a while.
@@ -1664,7 +1681,7 @@ func TestRaft_AutoSnapshot(t *testing.T) {
 	time.Sleep(c.propagateTimeout)
 
 	// Check for snapshot
-	if snaps, _ := leader.server.snapshots.List(); len(snaps) == 0 {
+	if snaps, _ := leader.serverInternals.snapshots.List(); len(snaps) == 0 {
 		c.FailNowf("should have a snapshot")
 	}
 }
@@ -1709,7 +1726,7 @@ func TestRaft_SendSnapshotFollower(t *testing.T) {
 	followers := c.Followers()
 	leader := c.Leader()
 	behind := followers[0]
-	c.Disconnect(behind.server.localAddr)
+	c.Disconnect(behind.serverInternals.localAddr)
 
 	// Commit a lot of things
 	var future Future
@@ -1752,7 +1769,7 @@ func TestRaft_SendSnapshotAndLogsFollower(t *testing.T) {
 	followers := c.Followers()
 	leader := c.Leader()
 	behind := followers[0]
-	c.Disconnect(behind.server.localAddr)
+	c.Disconnect(behind.serverInternals.localAddr)
 
 	// Commit a lot of things
 	c.logger.Info("Committing 100 entries")
@@ -1813,7 +1830,7 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
-		c.WaitEvent(nil, commitTimeout)
+		c.WaitEvent(commitTimeout)
 		followers = c.GetInState(Follower)
 	}
 	if len(followers) != 2 {
@@ -1822,7 +1839,7 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 
 	// Remove a follower.
 	follower := followers[0]
-	future := leader.RemoveServer(follower.server.localID, 0, 0)
+	future := leader.RemoveServer(follower.serverInternals.localID, 0, 0)
 	if err := future.Error(); err != nil {
 		c.FailNowf("err: %v", err)
 	}
@@ -1843,7 +1860,7 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	limit = time.Now().Add(c.longstopTimeout)
 	var leaders []*Raft
 	for time.Now().Before(limit) && len(leaders) != 1 {
-		c.WaitEvent(nil, commitTimeout)
+		c.WaitEvent(commitTimeout)
 		leaders, _ = c.pollState(Leader)
 	}
 	if len(leaders) != 1 {
@@ -1854,8 +1871,8 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	// Rejoin. The follower will have a higher term than the leader,
 	// this will cause the leader to step down, and a new round of elections
 	// to take place. We should eventually re-stabilize.
-	future = leader.AddVoter(follower.server.localID,
-		follower.server.localAddr, 0, 0)
+	future = leader.AddVoter(follower.serverInternals.localID,
+		follower.serverInternals.localAddr, 0, 0)
 	if err := future.Error(); err != nil && err != ErrLeadershipLost {
 		c.FailNowf("err: %v", err)
 	}
@@ -1872,8 +1889,8 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	}
 
 	// Should be a follower now.
-	if follower.State() != Follower {
-		c.FailNowf("bad state: %v", follower.State())
+	if s := c.getState(follower); s != Follower {
+		c.FailNowf("bad state: %v", s)
 	}
 }
 
@@ -1890,7 +1907,7 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 1 {
-		c.WaitEvent(nil, commitTimeout)
+		c.WaitEvent(commitTimeout)
 		followers = c.GetInState(Follower)
 	}
 	if len(followers) != 1 {
@@ -1900,7 +1917,7 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	// Disconnect the follower now
 	follower := followers[0]
 	t.Logf("[INFO] Disconnecting %v", follower)
-	c.Disconnect(follower.server.localAddr)
+	c.Disconnect(follower.serverInternals.localAddr)
 
 	// Watch the leaderCh
 	select {
@@ -1913,7 +1930,7 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	}
 
 	// Ensure the last contact of the leader is non-zero
-	if leader.LastContact().IsZero() {
+	if c.getStats(leader).LastContact.IsZero() {
 		c.FailNowf("expected non-zero contact time")
 	}
 
@@ -1923,19 +1940,19 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	}
 
 	// Verify no further contact
-	last := follower.LastContact()
+	last := c.getStats(follower).LastContact
 	time.Sleep(c.propagateTimeout)
 
 	// Check that last contact has not changed
-	if last != follower.LastContact() {
+	if last != c.getStats(follower).LastContact {
 		c.FailNowf("unexpected further contact")
 	}
 
 	// Ensure both have cleared their leader
-	if l := leader.Leader(); l != "" {
+	if l := c.getLeader(leader); l != "" {
 		c.FailNowf("bad: %v", l)
 	}
-	if l := follower.Leader(); l != "" {
+	if l := c.getLeader(follower); l != "" {
 		c.FailNowf("bad: %v", l)
 	}
 }
@@ -2017,7 +2034,7 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	followers := c.Followers()
 
 	// Force follower to different term
-	follower := followers[0].server
+	follower := followers[0].serverInternals
 	follower.currentTerm += 1 // thread unsafe
 
 	// Verify we are leader
@@ -2029,7 +2046,7 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	}
 
 	// Ensure the known leader is cleared
-	if l := leader.Leader(); l != "" {
+	if l := c.getLeader(leader); l != "" {
 		c.FailNowf("bad: %v", l)
 	}
 }
@@ -2047,7 +2064,7 @@ func TestRaft_VerifyLeader_ParitalConnect(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
-		c.WaitEvent(nil, commitTimeout)
+		c.WaitEvent(commitTimeout)
 		followers = c.GetInState(Follower)
 	}
 	if len(followers) != 2 {
@@ -2055,7 +2072,7 @@ func TestRaft_VerifyLeader_ParitalConnect(t *testing.T) {
 	}
 
 	// Force partial disconnect
-	follower := followers[0].server
+	follower := followers[0].serverInternals
 	t.Logf("[INFO] Disconnecting %v", follower)
 	c.Disconnect(follower.localAddr)
 
@@ -2087,7 +2104,7 @@ func TestRaft_StartAsLeader(t *testing.T) {
 	}
 
 	// Should be leader
-	if s := raft.State(); s != Leader {
+	if s := c.getState(raft); s != Leader {
 		c.FailNowf("expected leader: %v", s)
 	}
 
@@ -2152,23 +2169,23 @@ func TestRaft_Voting(t *testing.T) {
 	ldrT := c.trans[c.IndexOf(ldr)]
 
 	reqVote := RequestVoteRequest{
-		RPCHeader:    ldr.server.getRPCHeader(),
+		RPCHeader:    ldr.serverInternals.getRPCHeader(),
 		Term:         c.getTerm(ldr) + 10,
-		Candidate:    ldrT.EncodePeer(ldr.server.localAddr),
-		LastLogIndex: ldr.LastIndex(),
+		Candidate:    ldrT.EncodePeer(ldr.serverInternals.localAddr),
+		LastLogIndex: c.getLastIndex(ldr),
 		LastLogTerm:  c.getTerm(ldr),
 	}
 	// a follower that thinks there's a leader should vote for that leader.
 	var resp RequestVoteResponse
-	if err := ldrT.RequestVote(followers[0].server.localAddr, &reqVote, &resp); err != nil {
+	if err := ldrT.RequestVote(followers[0].serverInternals.localAddr, &reqVote, &resp); err != nil {
 		c.FailNowf("RequestVote RPC failed %v", err)
 	}
 	if !resp.Granted {
 		c.FailNowf("expected vote to be granted, but wasn't %+v", resp)
 	}
 	// a follow that thinks there's a leader shouldn't vote for a different candidate
-	reqVote.Candidate = ldrT.EncodePeer(followers[0].server.localAddr)
-	if err := ldrT.RequestVote(followers[1].server.localAddr, &reqVote, &resp); err != nil {
+	reqVote.Candidate = ldrT.EncodePeer(followers[0].serverInternals.localAddr)
+	if err := ldrT.RequestVote(followers[1].serverInternals.localAddr, &reqVote, &resp); err != nil {
 		c.FailNowf("RequestVote RPC failed %v", err)
 	}
 	if resp.Granted {
@@ -2188,21 +2205,21 @@ func TestRaft_ProtocolVersion_RejectRPC(t *testing.T) {
 			ProtocolVersion: ProtocolVersionMax + 1,
 		},
 		Term:         c.getTerm(ldr) + 10,
-		Candidate:    ldrT.EncodePeer(ldr.server.localAddr),
-		LastLogIndex: ldr.LastIndex(),
+		Candidate:    ldrT.EncodePeer(ldr.serverInternals.localAddr),
+		LastLogIndex: c.getLastIndex(ldr),
 		LastLogTerm:  c.getTerm(ldr),
 	}
 
 	// Reject a message from a future version we don't understand.
 	var resp RequestVoteResponse
-	err := ldrT.RequestVote(followers[0].server.localAddr, &reqVote, &resp)
+	err := ldrT.RequestVote(followers[0].serverInternals.localAddr, &reqVote, &resp)
 	if err == nil || !strings.Contains(err.Error(), "protocol version") {
 		c.FailNowf("expected RPC to get rejected: %v", err)
 	}
 
 	// Reject a message that's too old.
-	reqVote.RPCHeader.ProtocolVersion = followers[0].server.protocolVersion - 2
-	err = ldrT.RequestVote(followers[0].server.localAddr, &reqVote, &resp)
+	reqVote.RPCHeader.ProtocolVersion = followers[0].protocolVersion - 2
+	err = ldrT.RequestVote(followers[0].serverInternals.localAddr, &reqVote, &resp)
 	if err == nil || !strings.Contains(err.Error(), "protocol version") {
 		c.FailNowf("expected RPC to get rejected: %v", err)
 	}
@@ -2226,28 +2243,28 @@ func TestRaft_ProtocolVersion_Upgrade_1_2(t *testing.T) {
 
 	// Make sure the new ID-based operations aren't supported in the old
 	// protocol.
-	future := c.Leader().AddNonvoter(c1.rafts[0].server.localID,
-		c1.rafts[0].server.localAddr, 0, 1*time.Second)
+	future := c.Leader().AddNonvoter(c1.rafts[0].serverInternals.localID,
+		c1.rafts[0].serverInternals.localAddr, 0, 1*time.Second)
 	if err := future.Error(); err != ErrUnsupportedProtocol {
 		c.FailNowf("err: %v", err)
 	}
-	future = c.Leader().DemoteVoter(c1.rafts[0].server.localID, 0, 1*time.Second)
+	future = c.Leader().DemoteVoter(c1.rafts[0].serverInternals.localID, 0, 1*time.Second)
 	if err := future.Error(); err != ErrUnsupportedProtocol {
 		c.FailNowf("err: %v", err)
 	}
 
 	// Now do the join using the old address-based API.
-	if future := c.Leader().AddPeer(c1.rafts[0].server.localAddr); future.Error() != nil {
+	if future := c.Leader().AddPeer(c1.rafts[0].serverInternals.localAddr); future.Error() != nil {
 		c.FailNowf("err: %v", future.Error())
 	}
 
 	// Sanity check the cluster.
 	c.EnsureSame(t)
 	c.EnsureSamePeers(t)
-	c.EnsureLeader(t, c.Leader().server.localAddr)
+	c.EnsureLeader(t, c.Leader().serverInternals.localAddr)
 
 	// Now do the remove using the old address-based API.
-	if future := c.Leader().RemovePeer(c1.rafts[0].server.localAddr); future.Error() != nil {
+	if future := c.Leader().RemovePeer(c1.rafts[0].serverInternals.localAddr); future.Error() != nil {
 		c.FailNowf("err: %v", future.Error())
 	}
 }
@@ -2258,7 +2275,7 @@ func TestRaft_ProtocolVersion_Upgrade_2_3(t *testing.T) {
 	conf.ProtocolVersion = 2
 	c := MakeCluster(2, t, conf)
 	defer c.Close()
-	oldAddr := c.Followers()[0].server.localAddr
+	oldAddr := c.Followers()[0].serverInternals.localAddr
 
 	// Set up another server speaking protocol version 3.
 	conf = inmemConfig(t)
@@ -2270,8 +2287,8 @@ func TestRaft_ProtocolVersion_Upgrade_2_3(t *testing.T) {
 	c.FullyConnect()
 
 	// Use the new ID-based API to add the server with its ID.
-	future := c.Leader().AddVoter(c1.rafts[0].server.localID,
-		c1.rafts[0].server.localAddr, 0, 1*time.Second)
+	future := c.Leader().AddVoter(c1.rafts[0].serverInternals.localID,
+		c1.rafts[0].serverInternals.localAddr, 0, 1*time.Second)
 	if err := future.Error(); err != nil {
 		c.FailNowf("err: %v", err)
 	}
@@ -2279,7 +2296,7 @@ func TestRaft_ProtocolVersion_Upgrade_2_3(t *testing.T) {
 	// Sanity check the cluster.
 	c.EnsureSame(t)
 	c.EnsureSamePeers(t)
-	c.EnsureLeader(t, c.Leader().server.localAddr)
+	c.EnsureLeader(t, c.Leader().serverInternals.localAddr)
 
 	// Remove an old server using the old address-based API.
 	if future := c.Leader().RemovePeer(oldAddr); future.Error() != nil {

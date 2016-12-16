@@ -144,13 +144,7 @@ type shutdownFuture struct {
 }
 
 func (s *shutdownFuture) Error() error {
-	if s.raft == nil {
-		return nil
-	}
-	s.raft.server.goRoutines.waitShutdown()
-	if closeable, ok := s.raft.server.trans.(WithClose); ok {
-		closeable.Close()
-	}
+	s.raft.goRoutines.waitShutdown()
 	return nil
 }
 

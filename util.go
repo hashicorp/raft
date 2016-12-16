@@ -68,35 +68,6 @@ func generateUUID() string {
 		buf[10:16])
 }
 
-// asyncNotifyCh is used to do an async channel send
-// to a single channel without blocking.
-func asyncNotifyCh(ch chan struct{}) {
-	select {
-	case ch <- struct{}{}:
-	default:
-	}
-}
-
-// drainNotifyCh empties out a single-item notification channel without
-// blocking, and returns whether it received anything.
-func drainNotifyCh(ch chan struct{}) bool {
-	select {
-	case <-ch:
-		return true
-	default:
-		return false
-	}
-}
-
-// asyncNotifyBool is used to do an async notification
-// on a bool channel.
-func asyncNotifyBool(ch chan bool, v bool) {
-	select {
-	case ch <- v:
-	default:
-	}
-}
-
 // Decode reverses the encode operation on a byte slice input.
 func decodeMsgPack(buf []byte, out interface{}) error {
 	r := bytes.NewBuffer(buf)
@@ -154,4 +125,27 @@ func (wg *waitGroup) spawn(f func()) {
 
 func (wg *waitGroup) waitShutdown() {
 	wg.group.Wait()
+}
+
+// Exactly like close() but permits closing a channel multiple times. Useful to
+// send a shutdown signal, regardless of whether shutdown has already started.
+func ensureClosed(ch chan struct{}) {
+	defer func() {
+		err := recover()
+		if err == nil {
+			return
+		}
+		switch err := err.(type) {
+		case error: // go 1.7
+			if err.Error() == "close of closed channel" {
+				return
+			}
+		case string: // go 1.6
+			if err == "close of closed channel" {
+				return
+			}
+		}
+		panic(err)
+	}()
+	close(ch)
 }

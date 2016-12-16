@@ -101,21 +101,33 @@ func MakeRaft(t *testing.T, conf *Config, bootstrap bool) *RaftEnv {
 
 func WaitFor(env *RaftEnv, state RaftState) error {
 	limit := time.Now().Add(200 * time.Millisecond)
-	for env.raft.State() != state {
+	for {
+		future := env.raft.Stats()
+		err := future.Error()
+		if err != nil {
+			return fmt.Errorf("failed to get state, %v", err)
+		}
+		if future.Stats().State == state {
+			return nil
+		}
 		if time.Now().Before(limit) {
 			time.Sleep(10 * time.Millisecond)
 		} else {
 			return fmt.Errorf("failed to transition to state %v", state)
 		}
 	}
-	return nil
 }
 
 func WaitForAny(state RaftState, envs []*RaftEnv) (*RaftEnv, error) {
 	limit := time.Now().Add(200 * time.Millisecond)
 CHECK:
 	for _, env := range envs {
-		if env.raft.State() == state {
+		future := env.raft.Stats()
+		err := future.Error()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get state, %v", err)
+		}
+		if future.Stats().State == state {
 			return env, nil
 		}
 	}
@@ -253,8 +265,8 @@ func TestRaft_Integ(t *testing.T) {
 	}
 
 	// Remove the old nodes
-	NoErr(WaitFuture(leader.raft.RemoveServer(rm1.raft.server.localID, 0, 0), t), t)
-	NoErr(WaitFuture(leader.raft.RemoveServer(rm2.raft.server.localID, 0, 0), t), t)
+	NoErr(WaitFuture(leader.raft.RemoveServer(rm1.raft.serverInternals.localID, 0, 0), t), t)
+	NoErr(WaitFuture(leader.raft.RemoveServer(rm2.raft.serverInternals.localID, 0, 0), t), t)
 
 	// Shoot the leader
 	env1.Release()

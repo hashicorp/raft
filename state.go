@@ -1,12 +1,8 @@
 package raft
 
-import (
-	"sync"
-	"sync/atomic"
-)
+import "sync"
 
-// RaftState captures the state of a Raft node: Follower, Candidate, Leader,
-// or Shutdown.
+// RaftState captures the state of a Raft node: Follower, Candidate, or Leader.
 type RaftState uint32
 
 const (
@@ -18,9 +14,6 @@ const (
 
 	// Leader is one of the valid states of a Raft node.
 	Leader
-
-	// Shutdown is the terminal state of a Raft node.
-	Shutdown
 )
 
 func (s RaftState) String() string {
@@ -31,8 +24,6 @@ func (s RaftState) String() string {
 		return "Candidate"
 	case Leader:
 		return "Leader"
-	case Shutdown:
-		return "Shutdown"
 	default:
 		return "Unknown"
 	}
@@ -52,19 +43,6 @@ type raftShared struct {
 	// Cache the latest log from LogStore
 	lastLogIndex Index
 	lastLogTerm  Term
-
-	// The current state
-	state RaftState
-}
-
-func (r *raftShared) getState() RaftState {
-	stateAddr := (*uint32)(&r.state)
-	return RaftState(atomic.LoadUint32(stateAddr))
-}
-
-func (r *raftShared) setState(s RaftState) {
-	stateAddr := (*uint32)(&r.state)
-	atomic.StoreUint32(stateAddr, uint32(s))
 }
 
 func (r *raftShared) getLastLog() (index Index, term Term) {
