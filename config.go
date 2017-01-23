@@ -115,6 +115,14 @@ const (
 	SnapshotVersionMax                 = 1
 )
 
+// getSnapshotVersion returns the snapshot version that should be used when
+// creating snapshots, given the protocol version in use.
+func getSnapshotVersion(protocolVersion ProtocolVersion) SnapshotVersion {
+	// Right now we only have two versions and they are backwards compatible
+	// so we don't need to look at the protocol version.
+	return 1
+}
+
 // Config provides any necessary configuration for the Raft server.
 type Config struct {
 	// ProtocolVersion allows a Raft server to inter-operate with older
