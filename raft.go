@@ -43,18 +43,19 @@ var (
 	ErrCantBootstrap = errors.New("bootstrap only works on new clusters")
 )
 
-// This struct belongs to api.go in the implementation.
 type Raft struct {
+	// channels are used to plumb futures into the Raft server in order to
+	// perform actions via the public interfaces.
 	channels *apiChannels
 
-	// Tracks running goroutines
+	// goRoutines tracks running goroutines.
 	goRoutines *waitGroup
 
 	// protocolVersion is used to transition between different versions of the
 	// library. See comments in config.go for more details.
 	protocolVersion ProtocolVersion
 
-	// This is used from unit tests to get at internals.
+	// serverInternals is used from unit tests to get at internals.
 	serverInternals *raftServer
 }
 
