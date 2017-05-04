@@ -39,7 +39,7 @@ func ReadPeersJSON(path string) (Membership, error) {
 		}
 	}
 
-	// We should only ingest valid configurations.
+	// We should only ingest valid memberships.
 	if err := membership.check(); err != nil {
 		return Membership{}, err
 	}
@@ -59,25 +59,25 @@ type configEntry struct {
 	NonVoter bool `json:"non_voter"`
 }
 
-// ReadConfigJSON reads a new-style peers.json and returns a configuration
+// ReadConfigJSON reads a new-style peers.json and returns a membership
 // structure. This can be used to perform manual recovery when running protocol
 // versions that use server IDs.
-func ReadConfigJSON(path string) (Configuration, error) {
+func ReadConfigJSON(path string) (Membership, error) {
 	// Read in the file.
 	buf, err := ioutil.ReadFile(path)
 	if err != nil {
-		return Configuration{}, err
+		return Membership{}, err
 	}
 
 	// Parse it as JSON.
 	var peers []configEntry
 	dec := json.NewDecoder(bytes.NewReader(buf))
 	if err := dec.Decode(&peers); err != nil {
-		return Configuration{}, err
+		return Membership{}, err
 	}
 
-	// Map it into the new-style configuration structure.
-	var configuration Configuration
+	// Map it into the new-style membership structure.
+	var membership Membership
 	for _, peer := range peers {
 		suffrage := Voter
 		if peer.NonVoter {
@@ -88,12 +88,12 @@ func ReadConfigJSON(path string) (Configuration, error) {
 			ID:       peer.ID,
 			Address:  peer.Address,
 		}
-		configuration.Servers = append(configuration.Servers, server)
+		membership.Servers = append(membership.Servers, server)
 	}
 
-	// We should only ingest valid configurations.
-	if err := checkConfiguration(configuration); err != nil {
-		return Configuration{}, err
+	// We should only ingest valid memberships.
+	if err := membership.check(); err != nil {
+		return Membership{}, err
 	}
-	return configuration, nil
+	return membership, nil
 }

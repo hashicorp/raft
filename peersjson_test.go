@@ -103,12 +103,12 @@ func TestPeersJSON_ReadConfigJSON(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 
-	configuration, err := ReadConfigJSON(peers)
+	membership, err := ReadConfigJSON(peers)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
 
-	expected := Configuration{
+	expected := Membership{
 		Servers: []Server{
 			Server{
 				Suffrage: Voter,
@@ -127,7 +127,7 @@ func TestPeersJSON_ReadConfigJSON(t *testing.T) {
 			},
 		},
 	}
-	if !reflect.DeepEqual(configuration, expected) {
-		t.Fatalf("bad configuration: %+v != %+v", configuration, expected)
+	if !reflect.DeepEqual(membership, expected) {
+		t.Fatalf("bad configuration: %+v != %+v", membership, expected)
 	}
 }
