@@ -16,7 +16,7 @@ type Future interface {
 	Error() error
 }
 
-// ApplyFuture is used for Apply() and can returns the FSM response.
+// ApplyFuture is used for Apply() and may return the FSM response.
 type ApplyFuture interface {
 	Future
 
