@@ -1566,7 +1566,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	}
 
 	// Check that we received it all
-	if n != req.Size {
+	if req.Size != -1 && n != req.Size {
 		sink.Cancel()
 		r.logger.Printf("[ERR] raft: Failed to receive whole snapshot: %d / %d", n, req.Size)
 		rpcErr = fmt.Errorf("short read")

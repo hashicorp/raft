@@ -87,6 +87,11 @@ type StreamLayer interface {
 	Dial(address string, timeout time.Duration) (net.Conn, error)
 }
 
+type HalfClosableConn interface {
+	net.Conn
+	CloseWrite() error
+}
+
 type netConn struct {
 	target string
 	conn   net.Conn
@@ -331,13 +336,24 @@ func (n *NetworkTransport) InstallSnapshot(target string, args *InstallSnapshotR
 	}
 
 	// Stream the state
-	if _, err = io.Copy(conn.w, data); err != nil {
+	nBytes, err := io.Copy(conn.w, data)
+	n.logger.Printf("[INFO] Sent %d bytes of snapshot data", nBytes)
+
+	if err != nil {
 		return err
 	}
 
 	// Flush
 	if err = conn.w.Flush(); err != nil {
 		return err
+	}
+
+	if halfClosableConn, ok := conn.conn.(HalfClosableConn); ok {
+		// Close the writing half of the connection to indicate all data is sent
+		err = halfClosableConn.CloseWrite()
+		if err != nil {
+			return err
+		}
 	}
 
 	// Decode the response, do not return conn
@@ -440,7 +456,11 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 			return err
 		}
 		rpc.Command = &req
-		rpc.Reader = io.LimitReader(r, req.Size)
+		if req.Size == -1 {
+			rpc.Reader = r
+		} else {
+			rpc.Reader = io.LimitReader(r, req.Size)
+		}
 
 	default:
 		return fmt.Errorf("unknown rpc type %d", rpcType)
