@@ -283,6 +283,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 		LastLogTerm:        meta.Term,
 		Peers:              meta.Peers,
 		Size:               meta.Size,
+		EstimatedSize:      meta.EstimatedSize,
 		Configuration:      encodeConfiguration(meta.Configuration),
 		ConfigurationIndex: meta.ConfigurationIndex,
 	}

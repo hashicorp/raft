@@ -754,7 +754,7 @@ func (r *Raft) restoreUserSnapshot(meta *SnapshotMeta, reader io.Reader) error {
 		sink.Cancel()
 		return fmt.Errorf("failed to write snapshot: %v", err)
 	}
-	if n != meta.Size {
+	if n != meta.Size && meta.Size != -1 {
 		sink.Cancel()
 		return fmt.Errorf("failed to write snapshot, size didn't match (%d != %d)", n, meta.Size)
 	}
@@ -1296,7 +1296,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	}
 
 	// Check that we received it all
-	if n != req.Size {
+	if req.Size != -1 && n != req.Size {
 		sink.Cancel()
 		r.logger.Printf("[ERR] raft: Failed to receive whole snapshot: %d / %d", n, req.Size)
 		rpcErr = fmt.Errorf("short read")

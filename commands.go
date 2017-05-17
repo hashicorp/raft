@@ -129,6 +129,9 @@ type InstallSnapshotRequest struct {
 
 	// Size of the snapshot
 	Size int64
+	// EstimatedSize is used to calculate the timeout on the transfer if size
+	// is unknown, i.e. -1
+	EstimatedSize int64
 }
 
 // See WithRPCHeader.

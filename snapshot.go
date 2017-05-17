@@ -33,6 +33,9 @@ type SnapshotMeta struct {
 
 	// Size is the size of the snapshot in bytes.
 	Size int64
+	// EstimatedSize is the estimated size of the snapshot in bytes if the
+	// precise size is not available.
+	EstimatedSize int64
 }
 
 // SnapshotStore interface is used to allow for flexible implementations
