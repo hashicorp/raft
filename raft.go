@@ -1534,6 +1534,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 
 	// Ignore an older term
 	if req.Term < r.getCurrentTerm() {
+		r.logger.Printf("[INFO] raft: Ignoring installSnapshot request with older term of %d vs currentTerm %d", req.Term, r.getCurrentTerm())
 		return
 	}
 
