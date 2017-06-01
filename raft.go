@@ -476,8 +476,9 @@ func (r *Raft) LastContact() time.Time {
 // "last_snapshot_index", "last_snapshot_term", "num_peers" and
 // "last_contact".
 //
-// The value of "state" is a numerical value representing a
-// RaftState const.
+// The value of "state" is the string representation of the
+// RaftState const. This can be "Follower", "Candidate", 
+// "Leader" or "Shutdown".
 //
 // The value of "last_contact" is either "never" if there
 // has been no contact with a leader, "0" if the node is in the
