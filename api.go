@@ -914,8 +914,9 @@ func (r *Raft) LastContact() time.Time {
 // "last_snapshot_index", "last_snapshot_term",
 // "latest_configuration", "last_contact", and "num_peers".
 //
-// The value of "state" is a numerical value representing a
-// RaftState const.
+// The value of "state" is the string representation of the
+// RaftState const. This can be "Follower", "Candidate",
+// "Leader" or "Shutdown".
 //
 // The value of "latest_configuration" is a string which contains
 // the id of each server, its suffrage status, and its address.
