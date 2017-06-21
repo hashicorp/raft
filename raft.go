@@ -1923,3 +1923,9 @@ func (r *Raft) restoreSnapshot() error {
 	}
 	return nil
 }
+
+// StepDown instructs a leader to voluntarily step down, reentering election cycle.
+// Note that the node may yet win elections again
+func (r *Raft) StepDown() {
+	asyncNotifyCh(r.leaderState.stepDown)
+}
