@@ -72,6 +72,12 @@ type Config struct {
 	// never be used except for testing purposes, as it can cause a split-brain.
 	StartAsLeader bool
 
+	// NeverLeader instructs this Raft node to never become the leader. This
+	// configuration may be applied on up-to quorum-1 nodes.
+	// For example, on a 3-node cluster, quorum is 2 and NeverLeader may only be applied on 1 node.
+	// On a 5-node cluster, quorum is 3 and NeverLeader may only be applied on 2 node.
+	NeverLeader bool
+
 	// NotifyCh is used to provide a channel that will be notified of leadership
 	// changes. Raft will block writing to this channel, so it should either be
 	// buffered or aggressively consumed.
@@ -131,6 +137,12 @@ func ValidateConfig(config *Config) error {
 	}
 	if config.ElectionTimeout < config.HeartbeatTimeout {
 		return fmt.Errorf("Election timeout must be equal or greater than Heartbeat Timeout")
+	}
+	if config.StartAsLeader && config.NeverLeader {
+		return fmt.Errorf("StartAsLeader and NeverLeader are mutually exclusive")
+	}
+	if config.EnableSingleNode && config.NeverLeader {
+		return fmt.Errorf("EnableSingleNode and NeverLeader are mutually exclusive")
 	}
 	return nil
 }
