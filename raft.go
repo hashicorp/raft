@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/armon/go-metrics"
@@ -153,6 +154,10 @@ type Raft struct {
 	// is indexed by an artificial ID which is used for deregistration.
 	observersLock sync.RWMutex
 	observers     map[uint64]*Observer
+
+	// suspendLeadership is a hint for Raft to not become a leader. This flag is bound by time, and can be used
+	// to control the identity of the leader in a (stable) group
+	suspendLeadership int64
 }
 
 // NewRaft is used to construct a new Raft node. It takes a configuration, as well
@@ -679,6 +684,10 @@ func (r *Raft) runFollower() {
 					didWarn = true
 				}
 			} else {
+				if atomic.LoadInt64(&r.suspendLeadership) == 1 {
+					r.logger.Printf(`[WARN] raft: Heartbeat timeout from %q reached, but leadership suspended. Will not enter Candidate mode`, lastLeader)
+					return
+				}
 				r.logger.Printf(`[WARN] raft: Heartbeat timeout from %q reached, starting election`, lastLeader)
 
 				metrics.IncrCounter([]string{"raft", "transition", "heartbeat_timeout"}, 1)
@@ -1921,5 +1930,15 @@ func (r *Raft) restoreSnapshot() error {
 	if len(snapshots) > 0 {
 		return fmt.Errorf("failed to load any existing snapshots")
 	}
+	return nil
+}
+
+// SuspendLeading instructs the node to not attempt becoming a leader in the
+// following duration.
+func (r *Raft) SuspendLeading(duration time.Duration) error {
+	atomic.StoreInt64(&r.suspendLeadership, 1)
+	go time.AfterFunc(duration, func() {
+		atomic.StoreInt64(&r.suspendLeadership, 0)
+	})
 	return nil
 }
