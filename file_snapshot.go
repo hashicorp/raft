@@ -240,11 +240,7 @@ func (f *FileSnapshotStore) getSnapshots() ([]*fileSnapshotMeta, error) {
 		// Ignore any temporary snapshots
 		dirName := snap.Name()
 		if strings.HasSuffix(dirName, tmpSuffix) {
-			f.logger.Printf("[WARN] snapshot: Found temporary snapshot: %v, deleting..", dirName)
-			path := filepath.Join(f.path, dirName)
-			if err := os.RemoveAll(path); err != nil {
-				f.logger.Printf("[ERR] snapshot: Failed to delete temporary snapshot %v: %v", path, err)
-			}
+			f.logger.Printf("[WARN] snapshot: Found temporary snapshot: %v", dirName)
 			continue
 		}
 
@@ -388,6 +384,11 @@ func (s *FileSnapshotSink) Close() error {
 	// Close the open handles
 	if err := s.finalize(); err != nil {
 		s.logger.Printf("[ERR] snapshot: Failed to finalize snapshot: %v", err)
+		s.logger.Printf("[INFO] snapshot: Deleting temporary files...")
+		if delErr := os.RemoveAll(s.dir); delErr != nil {
+			s.logger.Printf("[ERR] snapshot: Failed to delete temporary snapshot at path %v: %v", s.dir, err)
+			return delErr
+		}
 		return err
 	}
 
