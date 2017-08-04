@@ -408,6 +408,7 @@ func (s *FileSnapshotSink) Close() error {
 
 	// fsync the parent directory, to sync directory edits to disk
 	parentFH, err := os.Open(s.parentDir)
+	defer parentFH.Close()
 	if err != nil {
 		s.logger.Printf("[ERR] snapshot: Failed to open snapshot parent directory %v, error: %v", s.parentDir, err)
 		return err
@@ -415,11 +416,6 @@ func (s *FileSnapshotSink) Close() error {
 
 	if err = parentFH.Sync(); err != nil {
 		s.logger.Printf("[ERR] snapshot: Failed syncing parent directory %v, error: %v", s.parentDir, err)
-		return err
-	}
-
-	if err = parentFH.Close(); err != nil {
-		s.logger.Printf("[ERR] snapshot: Failed closing parent directory %v, error: %v", s.parentDir, err)
 		return err
 	}
 
