@@ -84,7 +84,7 @@ func TestTransport_AppendEntries(t *testing.T) {
 		trans2.Connect(addr1, trans1)
 
 		var out AppendEntriesResponse
-		if err := trans2.AppendEntries(trans1.LocalAddr(), &args, &out); err != nil {
+		if err := trans2.AppendEntries("id1", trans1.LocalAddr(), &args, &out); err != nil {
 			t.Fatalf("err: %v", err)
 		}
 
@@ -147,7 +147,7 @@ func TestTransport_AppendEntriesPipeline(t *testing.T) {
 		trans1.Connect(addr2, trans2)
 		trans2.Connect(addr1, trans1)
 
-		pipeline, err := trans2.AppendEntriesPipeline(trans1.LocalAddr())
+		pipeline, err := trans2.AppendEntriesPipeline("id1", trans1.LocalAddr())
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
@@ -217,7 +217,7 @@ func TestTransport_RequestVote(t *testing.T) {
 		trans2.Connect(addr1, trans1)
 
 		var out RequestVoteResponse
-		if err := trans2.RequestVote(trans1.LocalAddr(), &args, &out); err != nil {
+		if err := trans2.RequestVote("id1", trans1.LocalAddr(), &args, &out); err != nil {
 			t.Fatalf("err: %v", err)
 		}
 
@@ -285,7 +285,7 @@ func TestTransport_InstallSnapshot(t *testing.T) {
 		buf := bytes.NewBuffer([]byte("0123456789"))
 
 		var out InstallSnapshotResponse
-		if err := trans2.InstallSnapshot(trans1.LocalAddr(), &args, &out, buf); err != nil {
+		if err := trans2.InstallSnapshot("id1", trans1.LocalAddr(), &args, &out, buf); err != nil {
 			t.Fatalf("err: %v", err)
 		}
 
@@ -302,7 +302,7 @@ func TestTransport_EncodeDecode(t *testing.T) {
 		defer trans1.Close()
 
 		local := trans1.LocalAddr()
-		enc := trans1.EncodePeer(local)
+		enc := trans1.EncodePeer("aaaa", local)
 		dec := trans1.DecodePeer(enc)
 
 		if dec != local {

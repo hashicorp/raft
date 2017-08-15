@@ -492,8 +492,25 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		}
 		r.processConfigurationLogEntry(&entry)
 	}
+
 	r.logger.Printf("[INFO] raft: Initial configuration (index=%d): %+v",
 		r.configurations.latestIndex, r.configurations.latest.Servers)
+
+	mismatchedIP := false
+	// Fix IP address mismatches between processConfiguration log entries and this server's address
+	for index, server := range r.configurations.latest.Servers {
+		if server.ID == localID && server.Address != localAddr {
+			r.logger.Printf("[INFO] raft: Fixing IP address of server from %v to %v", server.Address, localAddr)
+			r.configurations.latest.Servers[index] = Server{server.Suffrage, server.ID, localAddr}
+			mismatchedIP = true
+			break
+		}
+	}
+
+	if mismatchedIP {
+		r.logger.Printf("[INFO] raft: Configuration after IP address fixes (index=%d): %+v",
+			r.configurations.latestIndex, r.configurations.latest.Servers)
+	}
 
 	// Setup a heartbeat fast-path to avoid head-of-line
 	// blocking where possible. It MUST be safe for this

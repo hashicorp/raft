@@ -47,6 +47,35 @@ func NewTCPTransportWithLogger(
 	})
 }
 
+// NewTCPTransportWithLogger returns a NetworkTransport that is built on top of
+// a TCP streaming transport layer, using a default logger and the address provider
+func NewTCPTransportWithAddressProvider(
+	bindAddr string,
+	advertise net.Addr,
+	maxPool int,
+	timeout time.Duration,
+	addrProvider ServerAddressProvider,
+) (*NetworkTransport, error) {
+	return newTCPTransport(bindAddr, advertise, maxPool, timeout, func(stream StreamLayer) *NetworkTransport {
+		return NewNetworkTransportWithServerAddressProvider(stream, maxPool, timeout, addrProvider)
+	})
+}
+
+// NewTCPTransportWithLogger returns a NetworkTransport that is built on top of
+// a TCP streaming transport layer, with the supplied Logger and address provider
+func NewTCPTransportWithLoggerAndAddressProvider(
+	bindAddr string,
+	advertise net.Addr,
+	maxPool int,
+	timeout time.Duration,
+	logger *log.Logger,
+	addrProvider ServerAddressProvider,
+) (*NetworkTransport, error) {
+	return newTCPTransport(bindAddr, advertise, maxPool, timeout, func(stream StreamLayer) *NetworkTransport {
+		return NewNetworkTransportWithLoggerAndServerAddressProvider(stream, maxPool, timeout, logger, addrProvider)
+	})
+}
+
 func newTCPTransport(bindAddr string,
 	advertise net.Addr,
 	maxPool int,
