@@ -28,7 +28,7 @@ func NewTCPTransport(
 	timeout time.Duration,
 	logOutput io.Writer,
 ) (*NetworkTransport, error) {
-	return newTCPTransport(bindAddr, advertise, maxPool, timeout, func(stream StreamLayer) *NetworkTransport {
+	return newTCPTransport(bindAddr, advertise, func(stream StreamLayer) *NetworkTransport {
 		return NewNetworkTransport(stream, maxPool, timeout, logOutput)
 	})
 }
@@ -42,44 +42,26 @@ func NewTCPTransportWithLogger(
 	timeout time.Duration,
 	logger *log.Logger,
 ) (*NetworkTransport, error) {
-	return newTCPTransport(bindAddr, advertise, maxPool, timeout, func(stream StreamLayer) *NetworkTransport {
+	return newTCPTransport(bindAddr, advertise, func(stream StreamLayer) *NetworkTransport {
 		return NewNetworkTransportWithLogger(stream, maxPool, timeout, logger)
 	})
 }
 
 // NewTCPTransportWithLogger returns a NetworkTransport that is built on top of
 // a TCP streaming transport layer, using a default logger and the address provider
-func NewTCPTransportWithAddressProvider(
+func NewTCPTransportWithConfig(
 	bindAddr string,
 	advertise net.Addr,
-	maxPool int,
-	timeout time.Duration,
-	addrProvider ServerAddressProvider,
+	config *NetworkTransportConfig,
 ) (*NetworkTransport, error) {
-	return newTCPTransport(bindAddr, advertise, maxPool, timeout, func(stream StreamLayer) *NetworkTransport {
-		return NewNetworkTransportWithServerAddressProvider(stream, maxPool, timeout, addrProvider)
-	})
-}
-
-// NewTCPTransportWithLogger returns a NetworkTransport that is built on top of
-// a TCP streaming transport layer, with the supplied Logger and address provider
-func NewTCPTransportWithLoggerAndAddressProvider(
-	bindAddr string,
-	advertise net.Addr,
-	maxPool int,
-	timeout time.Duration,
-	logger *log.Logger,
-	addrProvider ServerAddressProvider,
-) (*NetworkTransport, error) {
-	return newTCPTransport(bindAddr, advertise, maxPool, timeout, func(stream StreamLayer) *NetworkTransport {
-		return NewNetworkTransportWithLoggerAndServerAddressProvider(stream, maxPool, timeout, logger, addrProvider)
+	return newTCPTransport(bindAddr, advertise, func(stream StreamLayer) *NetworkTransport {
+		config.Stream = stream
+		return NewNetworkTransportWithConfig(config)
 	})
 }
 
 func newTCPTransport(bindAddr string,
 	advertise net.Addr,
-	maxPool int,
-	timeout time.Duration,
 	transportCreator func(stream StreamLayer) *NetworkTransport) (*NetworkTransport, error) {
 	// Try to bind
 	list, err := net.Listen("tcp", bindAddr)

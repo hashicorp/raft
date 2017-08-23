@@ -391,7 +391,8 @@ func TestNetworkTransport_EncodeDecode(t *testing.T) {
 
 func TestNetworkTransport_EncodeDecode_AddressProvider(t *testing.T) {
 	addressOverride := "127.0.0.1:11111"
-	trans1, err := NewTCPTransportWithLoggerAndAddressProvider("127.0.0.1:0", nil, 2, time.Second, newTestLogger(t), &testAddrProvider{addressOverride})
+	config := &NetworkTransportConfig{MaxPool: 2, Timeout: time.Second, Logger: newTestLogger(t), ServerAddressProvider: &testAddrProvider{addressOverride}}
+	trans1, err := NewTCPTransportWithConfig("127.0.0.1:0", nil, config)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -495,7 +496,8 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 
 func makeTransport(t *testing.T, useAddrProvider bool, addressOverride string) (*NetworkTransport, error) {
 	if useAddrProvider {
-		return NewTCPTransportWithLoggerAndAddressProvider("127.0.0.1:0", nil, 3, time.Second, newTestLogger(t), &testAddrProvider{addressOverride})
+		config := &NetworkTransportConfig{MaxPool: 2, Timeout: time.Second, Logger: newTestLogger(t), ServerAddressProvider: &testAddrProvider{addressOverride}}
+		return NewTCPTransportWithConfig("127.0.0.1:0", nil, config)
 	}
 	return NewTCPTransportWithLogger("127.0.0.1:0", nil, 2, time.Second, newTestLogger(t))
 }
