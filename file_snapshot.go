@@ -11,11 +11,10 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+        "runtime"
 	"sort"
 	"strings"
 	"time"
-
-	"runtime"
 
 	log "github.com/mgutz/logxi/v1"
 )
