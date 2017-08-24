@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"runtime"
+
 	log "github.com/mgutz/logxi/v1"
 )
 
@@ -411,17 +413,18 @@ func (s *FileSnapshotSink) Close() error {
 		return err
 	}
 
-	// fsync the parent directory, to sync directory edits to disk
-	parentFH, err := os.Open(s.parentDir)
-	defer parentFH.Close()
-	if err != nil {
-		s.logger.Error("snapshot: Failed to open snapshot parent directory %v, error: %v", s.parentDir, err)
-		return err
-	}
+	if runtime.GOOS != "windows" { //skipping fsync for directory entry edits on Windows, only needed for *nix systems
+		parentFH, err := os.Open(s.parentDir)
+		defer parentFH.Close()
+		if err != nil {
+			s.logger.Error("snapshot: Failed to open snapshot parent directory %v, error: %v", s.parentDir, err)
+			return err
+		}
 
-	if err = parentFH.Sync(); err != nil {
-		s.logger.Error("[ERR] snapshot: Failed syncing parent directory %v, error: %v", s.parentDir, err)
-		return err
+		if err = parentFH.Sync(); err != nil {
+			s.logger.Error("snapshot: Failed syncing parent directory %v, error: %v", s.parentDir, err)
+			return err
+		}
 	}
 
 	// Reap any old snapshots
