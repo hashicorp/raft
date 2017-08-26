@@ -679,6 +679,10 @@ func (r *Raft) runFollower() {
 					didWarn = true
 				}
 			} else {
+				if r.conf.NeverLeader {
+					r.logger.Printf(`[WARN] raft: Heartbeat timeout from %q reached, but NeverLeader specified. Will not enter Candidate mode`, lastLeader)
+					return
+				}
 				r.logger.Printf(`[WARN] raft: Heartbeat timeout from %q reached, starting election`, lastLeader)
 
 				metrics.IncrCounter([]string{"raft", "transition", "heartbeat_timeout"}, 1)
