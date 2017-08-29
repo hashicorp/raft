@@ -87,7 +87,7 @@ func TestNetworkTransport_AppendEntries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
-
+		defer trans1.Close()
 		rpcCh := trans1.Consumer()
 
 		// Make the RPC request
@@ -133,6 +133,7 @@ func TestNetworkTransport_AppendEntries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
+		defer trans2.Close()
 
 		var out AppendEntriesResponse
 		if err := trans2.AppendEntries("id1", trans1.LocalAddr(), &args, &out); err != nil {
@@ -144,8 +145,6 @@ func TestNetworkTransport_AppendEntries(t *testing.T) {
 			t.Fatalf("command mismatch: %#v %#v", resp, out)
 		}
 
-		trans2.Close()
-		trans1.Close()
 	}
 }
 
@@ -157,7 +156,7 @@ func TestNetworkTransport_AppendEntriesPipeline(t *testing.T) {
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
-
+		defer trans1.Close()
 		rpcCh := trans1.Consumer()
 
 		// Make the RPC request
@@ -204,7 +203,7 @@ func TestNetworkTransport_AppendEntriesPipeline(t *testing.T) {
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
-
+		defer trans2.Close()
 		pipeline, err := trans2.AppendEntriesPipeline("id1", trans1.LocalAddr())
 		if err != nil {
 			t.Fatalf("err: %v", err)
@@ -230,8 +229,7 @@ func TestNetworkTransport_AppendEntriesPipeline(t *testing.T) {
 			}
 		}
 		pipeline.Close()
-		trans2.Close()
-		trans1.Close()
+
 	}
 }
 
@@ -243,7 +241,7 @@ func TestNetworkTransport_RequestVote(t *testing.T) {
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
-
+		defer trans1.Close()
 		rpcCh := trans1.Consumer()
 
 		// Make the RPC request
@@ -280,7 +278,7 @@ func TestNetworkTransport_RequestVote(t *testing.T) {
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
-
+		defer trans2.Close()
 		var out RequestVoteResponse
 		if err := trans2.RequestVote("id1", trans1.LocalAddr(), &args, &out); err != nil {
 			t.Fatalf("err: %v", err)
@@ -290,9 +288,6 @@ func TestNetworkTransport_RequestVote(t *testing.T) {
 		if !reflect.DeepEqual(resp, out) {
 			t.Fatalf("command mismatch: %#v %#v", resp, out)
 		}
-
-		trans2.Close()
-		trans1.Close()
 
 	}
 }
@@ -305,7 +300,7 @@ func TestNetworkTransport_InstallSnapshot(t *testing.T) {
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
-
+		defer trans1.Close()
 		rpcCh := trans1.Consumer()
 
 		// Make the RPC request
@@ -353,7 +348,7 @@ func TestNetworkTransport_InstallSnapshot(t *testing.T) {
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
-
+		defer trans2.Close()
 		// Create a buffer
 		buf := bytes.NewBuffer([]byte("0123456789"))
 
@@ -367,8 +362,6 @@ func TestNetworkTransport_InstallSnapshot(t *testing.T) {
 			t.Fatalf("command mismatch: %#v %#v", resp, out)
 		}
 
-		trans2.Close()
-		trans1.Close()
 	}
 }
 

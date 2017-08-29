@@ -80,6 +80,12 @@ type NetworkTransport struct {
 	TimeoutScale int
 }
 
+// NetworkTransportConfig encapsulates configuration for the network transport layer.
+// This includes the dialer, logger, listener and server address provider.
+// MaxPool controls how many connections we will pool. The
+// timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
+// the timeout by (SnapshotSize / TimeoutScale). The ServerAddressProvider is used to
+// override the target address when establishing a connection to invoke an RPC
 type NetworkTransportConfig struct {
 	ServerAddressProvider ServerAddressProvider
 	Logger                *log.Logger
@@ -126,46 +132,7 @@ type netPipeline struct {
 	shutdownLock sync.Mutex
 }
 
-// NewNetworkTransport creates a new network transport with the given dialer
-// and listener. The maxPool controls how many connections we will pool. The
-// timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
-// the timeout by (SnapshotSize / TimeoutScale).
-func NewNetworkTransport(
-	stream StreamLayer,
-	maxPool int,
-	timeout time.Duration,
-	logOutput io.Writer,
-) *NetworkTransport {
-	if logOutput == nil {
-		logOutput = os.Stderr
-	}
-	logger := log.New(logOutput, "", log.LstdFlags)
-	config := &NetworkTransportConfig{Stream: stream, MaxPool: maxPool, Timeout: timeout, Logger: logger}
-	return NewNetworkTransportWithConfig(config)
-}
-
-// NewNetworkTransportWithLogger creates a new network transport with the given dialer
-// and listener. The maxPool controls how many connections we will pool. The
-// timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
-// the timeout by (SnapshotSize / TimeoutScale).
-func NewNetworkTransportWithLogger(
-	stream StreamLayer,
-	maxPool int,
-	timeout time.Duration,
-	logger *log.Logger,
-) *NetworkTransport {
-	if logger == nil {
-		logger = log.New(os.Stderr, "", log.LstdFlags)
-	}
-	config := &NetworkTransportConfig{Stream: stream, MaxPool: maxPool, Timeout: timeout, Logger: logger}
-	return NewNetworkTransportWithConfig(config)
-}
-
-// NewNetworkTransportWithServerAddressProvider creates a new network transport with the given config
-// struct that encapsulates dialer, listener and server address provider. The maxPool controls how many connections we will pool. The
-// timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
-// the timeout by (SnapshotSize / TimeoutScale). The ServerAddressProvider is used to
-// override the target address when establishing a connection to invoke an RPC
+// NewNetworkTransportWithConfig creates a new network transport with the given config struct
 func NewNetworkTransportWithConfig(
 	config *NetworkTransportConfig,
 ) *NetworkTransport {
@@ -185,6 +152,38 @@ func NewNetworkTransportWithConfig(
 	}
 	go trans.listen()
 	return trans
+}
+
+// NewNetworkTransport creates a new network transport with the given dialer
+// and listener. The maxPool controls how many connections we will pool. The
+// timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
+// the timeout by (SnapshotSize / TimeoutScale).
+func NewNetworkTransport(
+	stream StreamLayer,
+	maxPool int,
+	timeout time.Duration,
+	logOutput io.Writer,
+) *NetworkTransport {
+	if logOutput == nil {
+		logOutput = os.Stderr
+	}
+	logger := log.New(logOutput, "", log.LstdFlags)
+	config := &NetworkTransportConfig{Stream: stream, MaxPool: maxPool, Timeout: timeout, Logger: logger}
+	return NewNetworkTransportWithConfig(config)
+}
+
+// NewNetworkTransportWithLogger creates a new network transport with the given logger, dialer
+// and listener. The maxPool controls how many connections we will pool. The
+// timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
+// the timeout by (SnapshotSize / TimeoutScale).
+func NewNetworkTransportWithLogger(
+	stream StreamLayer,
+	maxPool int,
+	timeout time.Duration,
+	logger *log.Logger,
+) *NetworkTransport {
+	config := &NetworkTransportConfig{Stream: stream, MaxPool: maxPool, Timeout: timeout, Logger: logger}
+	return NewNetworkTransportWithConfig(config)
 }
 
 // SetHeartbeatHandler is used to setup a heartbeat handler
