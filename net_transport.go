@@ -95,7 +95,7 @@ type NetworkTransportConfig struct {
 }
 
 type ServerAddressProvider interface {
-	ServerAddr(id ServerID) ServerAddress
+	ServerAddr(id ServerID) (ServerAddress, error)
 }
 
 // StreamLayer is used with the NetworkTransport to provide
@@ -247,13 +247,21 @@ func (n *NetworkTransport) getPooledConn(target ServerAddress) *netConn {
 
 // getConnFromAddressProvider returns a connection from the server address provider if available, or defaults to a connection using the target server address
 func (n *NetworkTransport) getConnFromAddressProvider(id ServerID, target ServerAddress) (*netConn, error) {
+	address := n.getProviderAddressOrFallback(id, target)
+	return n.getConn(address)
+}
+
+func (n *NetworkTransport) getProviderAddressOrFallback(id ServerID, target ServerAddress) ServerAddress {
 	if n.serverAddressProvider != nil {
-		serverAddressOverride := n.serverAddressProvider.ServerAddr(id)
-		if serverAddressOverride != "" {
-			return n.getConn(serverAddressOverride)
+		serverAddressOverride, err := n.serverAddressProvider.ServerAddr(id)
+		if err != nil {
+			n.logger.Printf("[WARN] Unable to get address for server id %v, got error:%v", id, err)
+			n.logger.Printf("[INFO] Using fallback address %v", target)
+		} else {
+			return serverAddressOverride
 		}
 	}
-	return n.getConn(target)
+	return target
 }
 
 // getConn is used to get a connection from the pool.
@@ -389,13 +397,8 @@ func (n *NetworkTransport) InstallSnapshot(id ServerID, target ServerAddress, ar
 
 // EncodePeer implements the Transport interface.
 func (n *NetworkTransport) EncodePeer(id ServerID, p ServerAddress) []byte {
-	if n.serverAddressProvider != nil {
-		serverAddressOverride := n.serverAddressProvider.ServerAddr(id)
-		if serverAddressOverride != "" {
-			return []byte(serverAddressOverride)
-		}
-	}
-	return []byte(p)
+	address := n.getProviderAddressOrFallback(id, p)
+	return []byte(address)
 }
 
 // DecodePeer implements the Transport interface.

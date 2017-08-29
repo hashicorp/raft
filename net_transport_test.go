@@ -12,8 +12,8 @@ type testAddrProvider struct {
 	addr string
 }
 
-func (t *testAddrProvider) ServerAddr(id ServerID) ServerAddress {
-	return ServerAddress(t.addr)
+func (t *testAddrProvider) ServerAddr(id ServerID) (ServerAddress, error) {
+	return ServerAddress(t.addr), nil
 }
 
 func TestNetworkTransport_StartStop(t *testing.T) {
