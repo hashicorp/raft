@@ -81,17 +81,21 @@ type NetworkTransport struct {
 }
 
 // NetworkTransportConfig encapsulates configuration for the network transport layer.
-// This includes the dialer, logger, listener and server address provider.
-// MaxPool controls how many connections we will pool. The
-// timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
-// the timeout by (SnapshotSize / TimeoutScale). The ServerAddressProvider is used to
-// override the target address when establishing a connection to invoke an RPC
 type NetworkTransportConfig struct {
+	// ServerAddressProvider is used to override the target address when establishing a connection to invoke an RPC
 	ServerAddressProvider ServerAddressProvider
-	Logger                *log.Logger
-	Stream                StreamLayer
-	MaxPool               int
-	Timeout               time.Duration
+
+	Logger *log.Logger
+
+	// Dialer
+	Stream StreamLayer
+
+	// MaxPool controls how many connections we will pool
+	MaxPool int
+
+	// Timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
+	// the timeout by (SnapshotSize / TimeoutScale).
+	Timeout time.Duration
 }
 
 type ServerAddressProvider interface {
@@ -255,8 +259,7 @@ func (n *NetworkTransport) getProviderAddressOrFallback(id ServerID, target Serv
 	if n.serverAddressProvider != nil {
 		serverAddressOverride, err := n.serverAddressProvider.ServerAddr(id)
 		if err != nil {
-			n.logger.Printf("[WARN] Unable to get address for server id %v, got error:%v", id, err)
-			n.logger.Printf("[INFO] Using fallback address %v", target)
+			n.logger.Printf("[WARN] Unable to get address for server id %v, got error:%v. Using fallback address", id, err, target)
 		} else {
 			return serverAddressOverride
 		}
