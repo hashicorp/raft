@@ -2264,21 +2264,21 @@ func TestRaft_Voting(t *testing.T) {
 	reqVote := RequestVoteRequest{
 		RPCHeader:    ldr.getRPCHeader(),
 		Term:         ldr.getCurrentTerm() + 10,
-		Candidate:    ldrT.EncodePeer(ldr.localAddr),
+		Candidate:    ldrT.EncodePeer(ldr.localID, ldr.localAddr),
 		LastLogIndex: ldr.LastIndex(),
 		LastLogTerm:  ldr.getCurrentTerm(),
 	}
 	// a follower that thinks there's a leader should vote for that leader.
 	var resp RequestVoteResponse
-	if err := ldrT.RequestVote(followers[0].localAddr, &reqVote, &resp); err != nil {
+	if err := ldrT.RequestVote(followers[0].localID, followers[0].localAddr, &reqVote, &resp); err != nil {
 		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
 	}
 	if !resp.Granted {
 		c.FailNowf("[ERR] expected vote to be granted, but wasn't %+v", resp)
 	}
 	// a follow that thinks there's a leader shouldn't vote for a different candidate
-	reqVote.Candidate = ldrT.EncodePeer(followers[0].localAddr)
-	if err := ldrT.RequestVote(followers[1].localAddr, &reqVote, &resp); err != nil {
+	reqVote.Candidate = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
+	if err := ldrT.RequestVote(followers[1].localID, followers[1].localAddr, &reqVote, &resp); err != nil {
 		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
 	}
 	if resp.Granted {
@@ -2298,21 +2298,21 @@ func TestRaft_ProtocolVersion_RejectRPC(t *testing.T) {
 			ProtocolVersion: ProtocolVersionMax + 1,
 		},
 		Term:         ldr.getCurrentTerm() + 10,
-		Candidate:    ldrT.EncodePeer(ldr.localAddr),
+		Candidate:    ldrT.EncodePeer(ldr.localID, ldr.localAddr),
 		LastLogIndex: ldr.LastIndex(),
 		LastLogTerm:  ldr.getCurrentTerm(),
 	}
 
 	// Reject a message from a future version we don't understand.
 	var resp RequestVoteResponse
-	err := ldrT.RequestVote(followers[0].localAddr, &reqVote, &resp)
+	err := ldrT.RequestVote(followers[0].localID, followers[0].localAddr, &reqVote, &resp)
 	if err == nil || !strings.Contains(err.Error(), "protocol version") {
 		c.FailNowf("[ERR] expected RPC to get rejected: %v", err)
 	}
 
 	// Reject a message that's too old.
 	reqVote.RPCHeader.ProtocolVersion = followers[0].protocolVersion - 2
-	err = ldrT.RequestVote(followers[0].localAddr, &reqVote, &resp)
+	err = ldrT.RequestVote(followers[0].localID, followers[0].localAddr, &reqVote, &resp)
 	if err == nil || !strings.Contains(err.Error(), "protocol version") {
 		c.FailNowf("[ERR] expected RPC to get rejected: %v", err)
 	}
