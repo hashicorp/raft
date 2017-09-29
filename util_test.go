@@ -1,7 +1,6 @@
 package raft
 
 import (
-	"reflect"
 	"regexp"
 	"testing"
 	"time"
@@ -77,55 +76,6 @@ func TestGenerateUUID(t *testing.T) {
 		if !matched || err != nil {
 			t.Fatalf("expected match %s %v %s", id, matched, err)
 		}
-	}
-}
-
-func TestExcludePeer(t *testing.T) {
-	peers := []string{NewInmemAddr(), NewInmemAddr(), NewInmemAddr()}
-	peer := peers[2]
-
-	after := ExcludePeer(peers, peer)
-	if len(after) != 2 {
-		t.Fatalf("Bad length")
-	}
-	if after[0] == peer || after[1] == peer {
-		t.Fatalf("should not contain peer")
-	}
-}
-
-func TestPeerContained(t *testing.T) {
-	peers := []string{NewInmemAddr(), NewInmemAddr(), NewInmemAddr()}
-
-	if !PeerContained(peers, peers[2]) {
-		t.Fatalf("Expect contained")
-	}
-	if PeerContained(peers, NewInmemAddr()) {
-		t.Fatalf("unexpected contained")
-	}
-}
-
-func TestAddUniquePeer(t *testing.T) {
-	peers := []string{NewInmemAddr(), NewInmemAddr(), NewInmemAddr()}
-	after := AddUniquePeer(peers, peers[2])
-	if !reflect.DeepEqual(after, peers) {
-		t.Fatalf("unexpected append")
-	}
-	after = AddUniquePeer(peers, NewInmemAddr())
-	if len(after) != 4 {
-		t.Fatalf("expected append")
-	}
-}
-
-func TestEncodeDecodePeers(t *testing.T) {
-	peers := []string{NewInmemAddr(), NewInmemAddr(), NewInmemAddr()}
-	_, trans := NewInmemTransport("")
-
-	// Try to encode/decode
-	buf := encodePeers(peers, trans)
-	decoded := decodePeers(buf, trans)
-
-	if !reflect.DeepEqual(peers, decoded) {
-		t.Fatalf("mismatch %v %v", peers, decoded)
 	}
 }
 

@@ -140,7 +140,13 @@ func snapshotName(term, index uint64) string {
 }
 
 // Create is used to start a new snapshot
-func (f *FileSnapshotStore) Create(index, term uint64, peers []byte) (SnapshotSink, error) {
+func (f *FileSnapshotStore) Create(version SnapshotVersion, index, term uint64,
+	configuration Configuration, configurationIndex uint64, trans Transport) (SnapshotSink, error) {
+	// We only support version 1 snapshots at this time.
+	if version != 1 {
+		return nil, fmt.Errorf("unsupported snapshot version %d", version)
+	}
+
 	// Create a new path
 	name := snapshotName(term, index)
 	path := filepath.Join(f.path, name+tmpSuffix)
@@ -160,10 +166,13 @@ func (f *FileSnapshotStore) Create(index, term uint64, peers []byte) (SnapshotSi
 		parentDir: f.path,
 		meta: fileSnapshotMeta{
 			SnapshotMeta: SnapshotMeta{
-				ID:    name,
-				Index: index,
-				Term:  term,
-				Peers: peers,
+				Version:            version,
+				ID:                 name,
+				Index:              index,
+				Term:               term,
+				Peers:              encodePeers(configuration, trans),
+				Configuration:      configuration,
+				ConfigurationIndex: configurationIndex,
 			},
 			CRC: nil,
 		},
@@ -242,6 +251,12 @@ func (f *FileSnapshotStore) getSnapshots() ([]*fileSnapshotMeta, error) {
 		meta, err := f.readMeta(dirName)
 		if err != nil {
 			f.logger.Printf("[WARN] snapshot: Failed to read metadata for %v: %v", dirName, err)
+			continue
+		}
+
+		// Make sure we can understand this version.
+		if meta.Version < SnapshotVersionMin || meta.Version > SnapshotVersionMax {
+			f.logger.Printf("[WARN] snapshot: Snapshot version for %v not supported: %d", dirName, meta.Version)
 			continue
 		}
 
@@ -373,7 +388,7 @@ func (s *FileSnapshotSink) Close() error {
 	if err := s.finalize(); err != nil {
 		s.logger.Printf("[ERR] snapshot: Failed to finalize snapshot: %v", err)
 		if delErr := os.RemoveAll(s.dir); delErr != nil {
-			s.logger.Printf("[ERR] snapshot: Failed to delete temporary snapshot at path %v: %v", s.dir, delErr)
+			s.logger.Printf("[ERR] snapshot: Failed to delete temporary snapshot directory at path %v: %v", s.dir, delErr)
 			return delErr
 		}
 		return err
