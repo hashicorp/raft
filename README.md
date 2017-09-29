@@ -32,6 +32,16 @@ A pure Go backend using [BoltDB](https://github.com/boltdb/bolt) is also availab
 [raft-boltdb](https://github.com/hashicorp/raft-boltdb). It can also be used as a `LogStore`
 and `StableStore`.
 
+## Tags 
+
+As of September 2017, Hashicorp will start using tags for this library to clearly indicate major version updates.
+
+v0.1.0 is a old stable version of the library with no breaking API changes. 
+
+v1.0.0 includes breaking API changes. Some highlights are : non voting servers, a new address provider abstraction in the transport layer, more resilient snapshots and more. 
+
+In general, always vendor your application's dependency on this library. 
+
 ## Protocol
 
 raft is based on ["Raft: In Search of an Understandable Consensus Algorithm"](https://ramcloud.stanford.edu/wiki/download/attachments/11370504/raft.pdf)
