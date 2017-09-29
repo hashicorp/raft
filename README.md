@@ -42,7 +42,7 @@ with no breaking API changes. This was in use by Consul prior to version 0.7.0.
 
 * v1.0.0 takes the changes that were staged in the library-v2-stage-one branch. This version
 manages server identities using a UUID, so introduces some breaking API changes. It also versions
-the Raft protcol, and requires some special steps when interoperating with Raft servers running
+the Raft protocol, and requires some special steps when interoperating with Raft servers running
 older versions of the library (see the detailed comment in config.go about version compatibility).
 You can reference https://github.com/hashicorp/consul/pull/2222 for an idea of what was required
 to port Consul to these new interfaces.
