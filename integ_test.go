@@ -89,6 +89,7 @@ func MakeRaft(t *testing.T, conf *Config, bootstrap bool) *RaftEnv {
 		store:    stable,
 		snapshot: snap,
 		fsm:      &MockFSM{},
+		logger:   log.New(&testLoggerAdapter{t: t}, "", log.Lmicroseconds),
 	}
 	trans, err := NewTCPTransport("127.0.0.1:0", nil, 2, time.Second, nil)
 	if err != nil {
