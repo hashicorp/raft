@@ -10,7 +10,7 @@ fi
 
 # Generate the tag.
 echo "==> Tagging version $VERSION..."
-git commit --allow-empty -a --gpg-sign=0A50EAFC -m "Release v$VERSION"
-git tag -a -m "Version $VERSION" -s -u 0A50EAFC "v${VERSION}" master
+git commit --allow-empty -a --gpg-sign=348FFC4C -m "Release v$VERSION"
+git tag -a -m "Version $VERSION" -s -u 348FFC4C "v${VERSION}" master
 
 exit 0
