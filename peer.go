@@ -118,5 +118,5 @@ func (j *JSONPeers) SetPeers(peers []string) error {
 	}
 
 	// Write out as JSON
-	return ioutil.WriteFile(j.path, buf.Bytes(), 0755)
+	return ioutil.WriteFile(j.path, buf.Bytes(), 0644)
 }
