@@ -9,13 +9,8 @@ type Observation struct {
 	// Raft holds the Raft instance generating the observation.
 	Raft *Raft
 	// Data holds observation-specific data. Possible types are
-	// *RequestVoteRequest, RaftState and LeaderObservation.
+	// *RequestVoteRequest and RaftState.
 	Data interface{}
-}
-
-// LeaderObservation is used in Observation.Data when leadership changes.
-type LeaderObservation struct {
-	Leader string
 }
 
 // nextObserverId is used to provide a unique ID for each observer to aid in

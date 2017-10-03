@@ -5,6 +5,7 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"reflect"
 	"runtime"
 	"testing"
 )
@@ -55,8 +56,8 @@ func TestFileSS_CreateSnapshotMissingParentDir(t *testing.T) {
 	}
 
 	os.RemoveAll(parent)
-	peers := []byte("all my lovely friends")
-	_, err = snap.Create(10, 3, peers)
+	_, trans := NewInmemTransport(NewInmemAddr())
+	_, err = snap.Create(SnapshotVersionMax, 10, 3, Configuration{}, 0, trans)
 	if err != nil {
 		t.Fatalf("should not fail when using non existing parent")
 	}
@@ -85,8 +86,14 @@ func TestFileSS_CreateSnapshot(t *testing.T) {
 	}
 
 	// Create a new sink
-	peers := []byte("all my lovely friends")
-	sink, err := snap.Create(10, 3, peers)
+	var configuration Configuration
+	configuration.Servers = append(configuration.Servers, Server{
+		Suffrage: Voter,
+		ID:       ServerID("my id"),
+		Address:  ServerAddress("over here"),
+	})
+	_, trans := NewInmemTransport(NewInmemAddr())
+	sink, err := snap.Create(SnapshotVersionMax, 10, 3, configuration, 2, trans)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -133,7 +140,10 @@ func TestFileSS_CreateSnapshot(t *testing.T) {
 	if latest.Term != 3 {
 		t.Fatalf("bad snapshot: %v", *latest)
 	}
-	if bytes.Compare(latest.Peers, peers) != 0 {
+	if !reflect.DeepEqual(latest.Configuration, configuration) {
+		t.Fatalf("bad snapshot: %v", *latest)
+	}
+	if latest.ConfigurationIndex != 2 {
 		t.Fatalf("bad snapshot: %v", *latest)
 	}
 	if latest.Size != 13 {
@@ -175,8 +185,8 @@ func TestFileSS_CancelSnapshot(t *testing.T) {
 	}
 
 	// Create a new sink
-	peers := []byte("all my lovely friends")
-	sink, err := snap.Create(10, 3, peers)
+	_, trans := NewInmemTransport(NewInmemAddr())
+	sink, err := snap.Create(SnapshotVersionMax, 10, 3, Configuration{}, 0, trans)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -210,12 +220,10 @@ func TestFileSS_Retention(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 
-	// Create a new sink
-	peers := []byte("all my lovely friends")
-
 	// Create a few snapshots
+	_, trans := NewInmemTransport(NewInmemAddr())
 	for i := 10; i < 15; i++ {
-		sink, err := snap.Create(uint64(i), 3, peers)
+		sink, err := snap.Create(SnapshotVersionMax, uint64(i), 3, Configuration{}, 0, trans)
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
@@ -304,9 +312,8 @@ func TestFileSS_Ordering(t *testing.T) {
 	}
 
 	// Create a new sink
-	peers := []byte("all my lovely friends")
-
-	sink, err := snap.Create(130350, 5, peers)
+	_, trans := NewInmemTransport(NewInmemAddr())
+	sink, err := snap.Create(SnapshotVersionMax, 130350, 5, Configuration{}, 0, trans)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -315,7 +322,7 @@ func TestFileSS_Ordering(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 
-	sink, err = snap.Create(204917, 36, peers)
+	sink, err = snap.Create(SnapshotVersionMax, 204917, 36, Configuration{}, 0, trans)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
