@@ -28,7 +28,6 @@ type RaftEnv struct {
 	fsm      *MockFSM
 	store    *InmemStore
 	snapshot *FileSnapshotStore
-	peers    *JSONPeers
 	trans    *NetworkTransport
 	raft     *Raft
 	logger   *log.Logger
@@ -53,20 +52,20 @@ func (r *RaftEnv) Shutdown() {
 
 // Restart will start a raft node that was previously Shutdown()
 func (r *RaftEnv) Restart(t *testing.T) {
-	trans, err := NewTCPTransport(r.raft.localAddr, nil, 2, time.Second, nil)
+	trans, err := NewTCPTransport(string(r.raft.localAddr), nil, 2, time.Second, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	r.trans = trans
 	r.logger.Printf("[INFO] Starting node at %v", trans.LocalAddr())
-	raft, err := NewRaft(r.conf, r.fsm, r.store, r.store, r.snapshot, r.peers, r.trans)
+	raft, err := NewRaft(r.conf, r.fsm, r.store, r.store, r.snapshot, r.trans)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	r.raft = raft
 }
 
-func MakeRaft(t *testing.T, conf *Config) *RaftEnv {
+func MakeRaft(t *testing.T, conf *Config, bootstrap bool) *RaftEnv {
 	// Set the config
 	if conf == nil {
 		conf = inmemConfig(t)
@@ -90,20 +89,30 @@ func MakeRaft(t *testing.T, conf *Config) *RaftEnv {
 		store:    stable,
 		snapshot: snap,
 		fsm:      &MockFSM{},
+		logger:   log.New(&testLoggerAdapter{t: t}, "", log.Lmicroseconds),
 	}
-
 	trans, err := NewTCPTransport("127.0.0.1:0", nil, 2, time.Second, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	env.logger = log.New(os.Stdout, trans.LocalAddr()+" :", log.Lmicroseconds)
+	env.logger = log.New(os.Stdout, string(trans.LocalAddr())+" :", log.Lmicroseconds)
 	env.trans = trans
 
-	env.peers = NewJSONPeers(dir, trans)
-
-	env.logger.Printf("[INFO] Starting node at %v", trans.LocalAddr())
+	if bootstrap {
+		var configuration Configuration
+		configuration.Servers = append(configuration.Servers, Server{
+			Suffrage: Voter,
+			ID:       conf.LocalID,
+			Address:  trans.LocalAddr(),
+		})
+		err = BootstrapCluster(conf, stable, stable, snap, trans, configuration)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+	}
+	log.Printf("[INFO] Starting node at %v", trans.LocalAddr())
 	conf.Logger = env.logger
-	raft, err := NewRaft(conf, env.fsm, stable, stable, snap, env.peers, trans)
+	raft, err := NewRaft(conf, env.fsm, stable, stable, snap, trans)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -200,7 +209,6 @@ func logBytes(i, sz int) []byte {
 		logBuffer.WriteByte('x')
 	}
 	return logBuffer.Bytes()
-
 }
 
 // Tests Raft by creating a cluster, growing it to 5 nodes while
@@ -208,20 +216,20 @@ func logBytes(i, sz int) []byte {
 func TestRaft_Integ(t *testing.T) {
 	CheckInteg(t)
 	conf := DefaultConfig()
+	conf.LocalID = ServerID("first")
 	conf.HeartbeatTimeout = 50 * time.Millisecond
 	conf.ElectionTimeout = 50 * time.Millisecond
 	conf.LeaderLeaseTimeout = 50 * time.Millisecond
 	conf.CommitTimeout = 5 * time.Millisecond
 	conf.SnapshotThreshold = 100
 	conf.TrailingLogs = 10
-	conf.EnableSingleNode = true
 
 	// Create a single node
-	env1 := MakeRaft(t, conf)
+	env1 := MakeRaft(t, conf, true)
 	NoErr(WaitFor(env1, Leader), t)
 
 	totalApplied := 0
-	applyAndWait := func(leader *RaftEnv, n int, sz int) {
+	applyAndWait := func(leader *RaftEnv, n, sz int) {
 		// Do some commits
 		var futures []ApplyFuture
 		for i := 0; i < n; i++ {
@@ -242,9 +250,10 @@ func TestRaft_Integ(t *testing.T) {
 	// Join a few nodes!
 	var envs []*RaftEnv
 	for i := 0; i < 4; i++ {
-		env := MakeRaft(t, conf)
+		conf.LocalID = ServerID(fmt.Sprintf("next-batch-%d", i))
+		env := MakeRaft(t, conf, false)
 		addr := env.trans.LocalAddr()
-		NoErr(WaitFuture(env1.raft.AddPeer(addr), t), t)
+		NoErr(WaitFuture(env1.raft.AddVoter(conf.LocalID, addr, 0, 0), t), t)
 		envs = append(envs, env)
 	}
 
@@ -255,7 +264,7 @@ func TestRaft_Integ(t *testing.T) {
 	// Do some more commits
 	applyAndWait(leader, 100, 10)
 
-	// snapshot the leader
+	// Snapshot the leader
 	NoErr(WaitFuture(leader.raft.Snapshot(), t), t)
 
 	CheckConsistent(append([]*RaftEnv{env1}, envs...), t)
@@ -305,15 +314,20 @@ func TestRaft_Integ(t *testing.T) {
 
 	// Join a few new nodes!
 	for i := 0; i < 2; i++ {
-		env := MakeRaft(t, conf)
+		conf.LocalID = ServerID(fmt.Sprintf("final-batch-%d", i))
+		env := MakeRaft(t, conf, false)
 		addr := env.trans.LocalAddr()
-		NoErr(WaitFuture(leader.raft.AddPeer(addr), t), t)
+		NoErr(WaitFuture(env1.raft.AddVoter(conf.LocalID, addr, 0, 0), t), t)
 		envs = append(envs, env)
 	}
 
+	// Wait for a leader
+	leader, err = WaitForAny(Leader, append([]*RaftEnv{env1}, envs...))
+	NoErr(err, t)
+
 	// Remove the old nodes
-	NoErr(WaitFuture(leader.raft.RemovePeer(rm1.raft.localAddr), t), t)
-	NoErr(WaitFuture(leader.raft.RemovePeer(rm2.raft.localAddr), t), t)
+	NoErr(WaitFuture(leader.raft.RemoveServer(rm1.raft.localID, 0, 0), t), t)
+	NoErr(WaitFuture(leader.raft.RemoveServer(rm2.raft.localID, 0, 0), t), t)
 
 	// Shoot the leader
 	env1.Release()

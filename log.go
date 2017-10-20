@@ -10,11 +10,15 @@ const (
 	// LogNoop is used to assert leadership.
 	LogNoop
 
-	// LogAddPeer is used to add a new peer.
-	LogAddPeer
+	// LogAddPeer is used to add a new peer. This should only be used with
+	// older protocol versions designed to be compatible with unversioned
+	// Raft servers. See comments in config.go for details.
+	LogAddPeerDeprecated
 
-	// LogRemovePeer is used to remove an existing peer.
-	LogRemovePeer
+	// LogRemovePeer is used to remove an existing peer. This should only be
+	// used with older protocol versions designed to be compatible with
+	// unversioned Raft servers. See comments in config.go for details.
+	LogRemovePeerDeprecated
 
 	// LogBarrier is used to ensure all preceding operations have been
 	// applied to the FSM. It is similar to LogNoop, but instead of returning
@@ -22,6 +26,11 @@ const (
 	// it is possible there are operations committed but not yet applied to
 	// the FSM.
 	LogBarrier
+
+	// LogConfiguration establishes a membership change configuration. It is
+	// created when a server is added, removed, promoted, etc. Only used
+	// when protocol version 1 or greater is in use.
+	LogConfiguration
 )
 
 // Log entries are replicated to all members of the Raft cluster
@@ -38,10 +47,6 @@ type Log struct {
 
 	// Data holds the log entry's type-specific data.
 	Data []byte
-
-	// peer is not exported since it is not transmitted, only used
-	// internally to construct the Data field.
-	peer string
 }
 
 // LogStore is used to provide an interface for storing
