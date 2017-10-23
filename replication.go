@@ -337,9 +337,13 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 	var resp AppendEntriesResponse
 	for {
 		// Wait for the next heartbeat interval or forced notify
+		interval := r.conf.HeartbeatInterval
+		if interval == 0 {
+			interval = r.conf.HeartbeatInterval / 10
+		}
 		select {
 		case <-s.notifyCh:
-		case <-randomTimeout(r.conf.HeartbeatTimeout / 10):
+		case <-time.After(interval):
 		case <-stopCh:
 			return
 		}

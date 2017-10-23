@@ -130,6 +130,11 @@ type Config struct {
 	// a leader before we attempt an election.
 	HeartbeatTimeout time.Duration
 
+	// HeartbeatInterval specifies the interval at which heartbeats should be
+	// sent to a follower. If this is set to 0 the interval will default to
+	// HeartbeatTimeout / 10.
+	HeartbeatInterval time.Duration
+
 	// ElectionTimeout specifies the time in candidate state without
 	// a leader before we attempt an election.
 	ElectionTimeout time.Duration
@@ -253,6 +258,9 @@ func ValidateConfig(config *Config) error {
 	}
 	if config.ElectionTimeout < config.HeartbeatTimeout {
 		return fmt.Errorf("Election timeout must be equal or greater than Heartbeat Timeout")
+	}
+	if config.HeartbeatTimeout < config.HeartbeatInterval*2 {
+		return fmt.Errorf("Heartbeat timeout should be at least twice as large as the heartbeat interval")
 	}
 	return nil
 }
