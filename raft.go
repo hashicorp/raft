@@ -1158,14 +1158,6 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 		resp.Peers = encodePeers(r.configurations.latest, r.trans)
 	}
 
-	// Check if we have an existing leader [who's not the candidate]
-	candidate := r.trans.DecodePeer(req.Candidate)
-	if leader := r.Leader(); leader != "" && leader != candidate {
-		r.logger.Printf("[WARN] raft: Rejecting vote request from %v since we have a leader: %v",
-			candidate, leader)
-		return
-	}
-
 	// Ignore an older term
 	if req.Term < r.getCurrentTerm() {
 		return
@@ -1190,6 +1182,8 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 		r.logger.Printf("[ERR] raft: Failed to get last vote candidate: %v", err)
 		return
 	}
+
+	candidate := r.trans.DecodePeer(req.Candidate)
 
 	// Check if we've voted in this election before
 	if lastVoteTerm == req.Term && lastVoteCandBytes != nil {
