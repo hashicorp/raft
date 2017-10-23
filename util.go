@@ -116,11 +116,13 @@ func encodeMsgPack(in interface{}) (*bytes.Buffer, error) {
 // backoff is used to compute an exponential backoff
 // duration. Base time is scaled by the current round,
 // up to some maximum scale factor.
-func backoff(base time.Duration, round, limit uint64) time.Duration {
-	power := min(round, limit)
-	for power > 2 {
+func backoff(base, max time.Duration, round uint64) time.Duration {
+	for round > 2 {
 		base *= 2
-		power--
+		round--
+		if base > max {
+			return max
+		}
 	}
 	return base
 }

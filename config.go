@@ -144,6 +144,10 @@ type Config struct {
 	// staggering, may be delayed as much as 2x this value.
 	CommitTimeout time.Duration
 
+	// MaximumBackoff specifies the maximum time between heartbeats from the
+	// leader to a follower when the follower is considered down by the leader.
+	MaximumBackoff time.Duration
+
 	// MaxAppendEntries controls the maximum number of append entries
 	// to send at once. We want to strike a balance between efficiency
 	// and avoiding waste if the follower is going to reject because of
@@ -206,6 +210,7 @@ func DefaultConfig() *Config {
 		ProtocolVersion:    ProtocolVersionMax,
 		HeartbeatTimeout:   1000 * time.Millisecond,
 		ElectionTimeout:    1000 * time.Millisecond,
+		MaximumBackoff:     5 * time.Second,
 		CommitTimeout:      50 * time.Millisecond,
 		MaxAppendEntries:   64,
 		ShutdownOnRemove:   true,

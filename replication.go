@@ -10,8 +10,7 @@ import (
 )
 
 const (
-	maxFailureScale = 12
-	failureWait     = 10 * time.Millisecond
+	failureWait = 10 * time.Millisecond
 )
 
 var (
@@ -169,7 +168,7 @@ START:
 	// Prevent an excessive retry rate on errors
 	if s.failures > 0 {
 		select {
-		case <-time.After(backoff(failureWait, s.failures, maxFailureScale)):
+		case <-time.After(backoff(failureWait, r.conf.MaximumBackoff, s.failures)):
 		case <-r.shutdownCh:
 		}
 	}
@@ -353,7 +352,7 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 			r.logger.Printf("[ERR] raft: Failed to heartbeat to %v: %v", s.peer.Address, err)
 			failures++
 			select {
-			case <-time.After(backoff(failureWait, failures, maxFailureScale)):
+			case <-time.After(backoff(failureWait, r.conf.MaximumBackoff, failures)):
 			case <-stopCh:
 			}
 		} else {
