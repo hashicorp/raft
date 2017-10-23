@@ -144,6 +144,8 @@ func (r *Raft) runFollower() {
 	r.logger.Printf("[INFO] raft: %v entering Follower state (Leader: %q)", r, r.Leader())
 	metrics.IncrCounter([]string{"raft", "state", "follower"}, 1)
 	heartbeatTimer := randomTimeout(r.conf.HeartbeatTimeout)
+	electionTimer := randomTimeout(r.conf.ElectionTimeout)
+
 	for {
 		select {
 		case rpc := <-r.rpcCh:
@@ -171,6 +173,20 @@ func (r *Raft) runFollower() {
 
 		case b := <-r.bootstrapCh:
 			b.respond(r.liveBootstrap(b.configuration))
+
+		case <-electionTimer:
+			electionTimer = randomTimeout(r.conf.ElectionTimeout)
+			if r.configurations.latestIndex == 0 {
+				if !didWarn {
+					r.logger.Printf("[WARN] raft: no known peers, aborting election")
+					didWarn = true
+				}
+			} else if r.Leader() == "" {
+				r.logger.Printf(`[WARN] raft: Election timeout reached while having no leader, starting election`)
+				metrics.IncrCounter([]string{"raft", "transition", "election_timeout"}, 1)
+				r.setState(Candidate)
+				return
+			}
 
 		case <-heartbeatTimer:
 			// Restart the heartbeat timer

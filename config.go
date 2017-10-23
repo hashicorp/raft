@@ -256,9 +256,6 @@ func ValidateConfig(config *Config) error {
 	if config.LeaderLeaseTimeout > config.HeartbeatTimeout {
 		return fmt.Errorf("Leader lease timeout cannot be larger than heartbeat timeout")
 	}
-	if config.ElectionTimeout < config.HeartbeatTimeout {
-		return fmt.Errorf("Election timeout must be equal or greater than Heartbeat Timeout")
-	}
 	if config.HeartbeatTimeout < config.HeartbeatInterval*2 {
 		return fmt.Errorf("Heartbeat timeout should be at least twice as large as the heartbeat interval")
 	}
