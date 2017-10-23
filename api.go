@@ -156,6 +156,11 @@ type Raft struct {
 	// is indexed by an artificial ID which is used for deregistration.
 	observersLock sync.RWMutex
 	observers     map[uint64]*Observer
+
+	// startedAt is used to store the time at which raft started running.
+	startedAt time.Time
+	// receivedRequestVote stores if the node has received a request to vote.
+	receivedRequestVote bool
 }
 
 // BootstrapCluster initializes a server's storage with the given cluster

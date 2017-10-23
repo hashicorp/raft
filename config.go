@@ -146,6 +146,8 @@ type Config struct {
 
 	// MaximumBackoff specifies the maximum time between heartbeats from the
 	// leader to a follower when the follower is considered down by the leader.
+	// Nodes that just started will wait twice this time before starting an
+	// election to give the current leader time to contact them.
 	MaximumBackoff time.Duration
 
 	// MaxAppendEntries controls the maximum number of append entries

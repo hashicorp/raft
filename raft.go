@@ -116,6 +116,7 @@ func (r *Raft) requestConfigChange(req configurationChangeRequest, timeout time.
 
 // run is a long running goroutine that runs the Raft FSM.
 func (r *Raft) run() {
+	r.startedAt = time.Now()
 	for {
 		// Check if we are doing a shutdown
 		select {
@@ -181,7 +182,7 @@ func (r *Raft) runFollower() {
 					r.logger.Printf("[WARN] raft: no known peers, aborting election")
 					didWarn = true
 				}
-			} else if r.Leader() == "" {
+			} else if r.canStartElection() {
 				r.logger.Printf(`[WARN] raft: Election timeout reached while having no leader, starting election`)
 				metrics.IncrCounter([]string{"raft", "transition", "election_timeout"}, 1)
 				r.setState(Candidate)
@@ -213,7 +214,7 @@ func (r *Raft) runFollower() {
 					r.logger.Printf("[WARN] raft: not part of stable configuration, aborting election")
 					didWarn = true
 				}
-			} else {
+			} else if r.canStartElection() {
 				r.logger.Printf(`[WARN] raft: Heartbeat timeout from %q reached, starting election`, lastLeader)
 				metrics.IncrCounter([]string{"raft", "transition", "heartbeat_timeout"}, 1)
 				r.setState(Candidate)
@@ -224,6 +225,39 @@ func (r *Raft) runFollower() {
 			return
 		}
 	}
+}
+
+// canStartElection is used to determine if a election can be started by this
+// node. The main things to check are if the node knows a leader and if the
+// node has given the current leader enough time to contact it.
+func (r *Raft) canStartElection() bool {
+	if r.Leader() != "" {
+		return false
+	}
+
+	// Has there been enough time since startup for a current leader to contact
+	// this node.
+	if time.Since(r.startedAt) > 2*r.conf.MaximumBackoff {
+		return true
+	}
+
+	// If the server is the only leader it doesn't have to wait for contact
+	if len(r.configurations.latest.Servers) == 1 {
+		return true
+	}
+
+	// If server has already been in contact with a leader it doesn't have to
+	// wait longer
+	if !r.LastContact().IsZero() {
+		return true
+	}
+
+	// if the node has received a request to vote it is allowed to send those
+	// as well.
+	if r.receivedRequestVote {
+		return true
+	}
+	return false
 }
 
 // liveBootstrap attempts to seed an initial configuration for the cluster. See
@@ -1156,6 +1190,8 @@ func (r *Raft) processConfigurationLogEntry(entry *Log) {
 func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "requestVote"}, time.Now())
 	r.observe(*req)
+
+	r.receivedRequestVote = true
 
 	// Setup a response
 	resp := &RequestVoteResponse{
