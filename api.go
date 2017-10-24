@@ -123,6 +123,11 @@ type Raft struct {
 	shutdownCh   chan struct{}
 	shutdownLock sync.Mutex
 
+	// Shutting down boolean to check if raft is shutting down, protected by a
+	// mutex.
+	shuttingDownLock sync.Mutex
+	shuttingDown     bool
+
 	// snapshots is used to store and retrieve snapshots
 	snapshots SnapshotStore
 
@@ -792,14 +797,16 @@ func (r *Raft) DemoteVoter(id ServerID, prevIndex uint64, timeout time.Duration)
 	}, timeout)
 }
 
-// Shutdown is used to stop the Raft background routines.
-// This is not a graceful operation. Provides a future that
+// Shutdown is used to stop the Raft background routines. If the node is the
+// leader it will signal the followers that it is shutting down. This way the
+// followers will start an immediate election. Provides a future that
 // can be used to block until all background routines have exited.
 func (r *Raft) Shutdown() Future {
 	r.shutdownLock.Lock()
 	defer r.shutdownLock.Unlock()
 
 	if !r.shutdown {
+		r.setShuttingDown()
 		close(r.shutdownCh)
 		r.shutdown = true
 		r.setState(Shutdown)

@@ -364,6 +364,25 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 	}
 }
 
+// shutdown is used to signal the followers that the leader is shutting down.
+// This way they don't have to wait for HeartbeatTimeout to start an election.
+func (r *Raft) sendShutdown(s *followerReplication) {
+	req := AppendEntriesRequest{
+		RPCHeader: r.getRPCHeader(),
+		Term:      s.currentTerm,
+		Leader:    r.trans.EncodePeer("", ""),
+	}
+	r.logger.Printf("[INFO] raft: Notifying %v that this node is shutting down", s.peer.Address)
+	var resp AppendEntriesResponse
+	start := time.Now()
+	if err := r.trans.AppendEntries(s.peer.ID, s.peer.Address, &req, &resp); err != nil {
+		r.logger.Printf("[ERR] raft: Failed to notify to %v that this node is shutting down: %v", s.peer.Address, err)
+	} else {
+		s.setLastContact()
+		metrics.MeasureSince([]string{"raft", "replication", "shutdown", string(s.peer.ID)}, start)
+	}
+}
+
 // pipelineReplicate is used when we have synchronized our state with the follower,
 // and want to switch to a higher performance pipeline mode of replication.
 // We only pipeline AppendEntries commands, and if we ever hit an error, we fall

@@ -92,6 +92,21 @@ func (r *Raft) setLeader(leader ServerAddress) {
 	r.leaderLock.Unlock()
 }
 
+// getShuttingDown is used to check if raft is in the process of shutting down
+func (r *Raft) getShuttingDown() bool {
+	r.shuttingDownLock.Lock()
+	shuttingDown := r.shuttingDown
+	r.shuttingDownLock.Unlock()
+	return shuttingDown
+}
+
+// setShuttingDown is used to make getShuttingDown return true after the call
+func (r *Raft) setShuttingDown() {
+	r.shuttingDownLock.Lock()
+	r.shuttingDown = true
+	r.shuttingDownLock.Unlock()
+}
+
 // requestConfigChange is a helper for the above functions that make
 // configuration change requests. 'req' describes the change. For timeout,
 // see AddVoter.
@@ -228,10 +243,18 @@ func (r *Raft) runFollower() {
 }
 
 // canStartElection is used to determine if a election can be started by this
-// node. The main things to check are if the node knows a leader and if the
-// node has given the current leader enough time to contact it.
+// node. The main things to check here are:
+// - Does the node already know a leader?
+// - Is the node shutting down?
+// - Has the node given the current leader enough time to contact it after
+//   being down?
 func (r *Raft) canStartElection() bool {
 	if r.Leader() != "" {
+		return false
+	}
+
+	// Don't start an election when the node is busy shutting down
+	if r.getShuttingDown() {
 		return false
 	}
 
@@ -660,6 +683,9 @@ func (r *Raft) leaderLoop() {
 			lease = time.After(checkInterval)
 
 		case <-r.shutdownCh:
+			for _, replState := range r.leaderState.replState {
+				r.sendShutdown(replState)
+			}
 			return
 		}
 	}
@@ -1056,17 +1082,23 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		return
 	}
 
-	// Increase the term if we see a newer one, also transition to follower
-	// if we ever get an appendEntries call
-	if a.Term > r.getCurrentTerm() || r.getState() != Follower {
-		// Ensure transition to follower
-		r.setState(Follower)
+	// Increase the term if we see a newer one
+	if a.Term > r.getCurrentTerm() {
 		r.setCurrentTerm(a.Term)
 		resp.Term = a.Term
 	}
 
+	// Ensure transition to follower
+	r.setState(Follower)
+
 	// Save the current leader
 	r.setLeader(ServerAddress(r.trans.DecodePeer(a.Leader)))
+	// If leader got unset by appendEntries it was a shutdown signal from the
+	// leader
+	if r.Leader() == "" {
+		r.logger.Printf("[INFO] raft: Leader has shut down")
+		return
+	}
 
 	// Verify the last log entry
 	if a.PrevLogEntry > 0 {
