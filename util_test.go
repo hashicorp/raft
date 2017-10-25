@@ -80,22 +80,27 @@ func TestGenerateUUID(t *testing.T) {
 }
 
 func TestBackoff(t *testing.T) {
-	b := backoff(10*time.Millisecond, 1, 8)
+	b := backoff(10*time.Millisecond, 640*time.Millisecond, 1)
 	if b != 10*time.Millisecond {
 		t.Fatalf("bad: %v", b)
 	}
 
-	b = backoff(20*time.Millisecond, 2, 8)
+	b = backoff(20*time.Millisecond, 640*time.Millisecond, 2)
 	if b != 20*time.Millisecond {
 		t.Fatalf("bad: %v", b)
 	}
 
-	b = backoff(10*time.Millisecond, 8, 8)
+	b = backoff(20*time.Millisecond, 640*time.Millisecond, 3)
+	if b != 40*time.Millisecond {
+		t.Fatalf("bad: %v", b)
+	}
+
+	b = backoff(10*time.Millisecond, 640*time.Millisecond, 8)
 	if b != 640*time.Millisecond {
 		t.Fatalf("bad: %v", b)
 	}
 
-	b = backoff(10*time.Millisecond, 9, 8)
+	b = backoff(10*time.Millisecond, 640*time.Millisecond, 8)
 	if b != 640*time.Millisecond {
 		t.Fatalf("bad: %v", b)
 	}
