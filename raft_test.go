@@ -75,6 +75,7 @@ func inmemConfig(t *testing.T) *Config {
 	conf.ElectionTimeout = 50 * time.Millisecond
 	conf.LeaderLeaseTimeout = 50 * time.Millisecond
 	conf.CommitTimeout = 5 * time.Millisecond
+	conf.MaximumBackoff = 0
 	conf.Logger = newTestLogger(t)
 	return conf
 }
