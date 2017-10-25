@@ -2254,35 +2254,237 @@ func TestRaft_NotifyCh(t *testing.T) {
 	}
 }
 
-func TestRaft_Voting(t *testing.T) {
-	c := MakeCluster(3, t, nil)
-	defer c.Close()
-	followers := c.Followers()
-	ldr := c.Leader()
-	ldrT := c.trans[c.IndexOf(ldr)]
+type voteCluster struct {
+	*cluster
+	leader     *Raft
+	candidate  *Raft
+	follower   *Raft
+	leaderT    LoopbackTransport
+	followerT  LoopbackTransport
+	candidateT LoopbackTransport
+	req        RequestVoteRequest
+}
 
-	reqVote := RequestVoteRequest{
-		RPCHeader:    ldr.getRPCHeader(),
-		Term:         ldr.getCurrentTerm() + 10,
-		Candidate:    ldrT.EncodePeer(ldr.localID, ldr.localAddr),
-		LastLogIndex: ldr.LastIndex(),
-		LastLogTerm:  ldr.getCurrentTerm(),
+func makeVoteCluster(t *testing.T) *voteCluster {
+	c := &voteCluster{}
+	c.cluster = MakeCluster(3, t, nil)
+	followers := c.Followers()
+	c.candidate = followers[0]
+	c.follower = followers[1]
+	c.leader = c.Leader()
+	c.leaderT = c.trans[c.IndexOf(c.leader)]
+	c.followerT = c.trans[c.IndexOf(c.follower)]
+	c.candidateT = c.trans[c.IndexOf(c.candidate)]
+	c.req = RequestVoteRequest{
+		RPCHeader:    c.candidate.getRPCHeader(),
+		Term:         c.candidate.getCurrentTerm() + 10,
+		Candidate:    c.candidateT.EncodePeer(c.candidate.localID, c.candidate.localAddr),
+		LastLogIndex: c.candidate.LastIndex(),
+		LastLogTerm:  c.candidate.getCurrentTerm(),
 	}
-	// a follower that thinks there's a leader should vote for that leader.
+	return c
+}
+
+func TestRaft_VoteForNodeWithNewerTerm(t *testing.T) {
+	c := makeVoteCluster(t)
+	defer c.Close()
+
+	// a follower that thinks there's a leader should vote for candidate if it is up to date
 	var resp RequestVoteResponse
-	if err := ldrT.RequestVote(followers[0].localID, followers[0].localAddr, &reqVote, &resp); err != nil {
+	c.logger.Println("[INFO] checking follower behaviour")
+	if err := c.candidateT.RequestVote(c.follower.localID, c.follower.localAddr, &c.req, &resp); err != nil {
 		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
 	}
 	if !resp.Granted {
 		c.FailNowf("[ERR] expected vote to be granted, but wasn't %+v", resp)
 	}
-	// a follow that thinks there's a leader shouldn't vote for a different candidate
-	reqVote.Candidate = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
-	if err := ldrT.RequestVote(followers[1].localID, followers[1].localAddr, &reqVote, &resp); err != nil {
+	if resp.Term != c.req.Term {
+		c.FailNowf("[ERR] term should have been %v, but was %+v", c.req.Term, resp.Term)
+	}
+
+	c.logger.Println("[INFO] checking leader behaviour")
+	// a leader should vote for candidate if it is up to date
+	if err := c.candidateT.RequestVote(c.leader.localID, c.leader.localAddr, &c.req, &resp); err != nil {
+		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
+	}
+	if !resp.Granted {
+		c.FailNowf("[ERR] expected vote to be granted, but wasn't %+v", resp)
+	}
+	if resp.Term != c.req.Term {
+		c.FailNowf("[ERR] term should have been %v, but was %+v", c.req.Term, resp.Term)
+	}
+}
+
+func TestRaft_VoteForNodeWithCurrentTerm(t *testing.T) {
+	c := makeVoteCluster(t)
+	defer c.Close()
+
+	term := c.leader.getCurrentTerm()
+
+	c.req.Term = term
+
+	// a follower that thinks there's a leader should not vote for candidate
+	// with a the same term and should stay faithful to its leader
+	c.logger.Println("[INFO] checking follower behaviour")
+	var resp RequestVoteResponse
+	if err := c.candidateT.RequestVote(c.follower.localID, c.follower.localAddr, &c.req, &resp); err != nil {
+		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
+	}
+	if resp.Granted {
+		c.FailNowf("[ERR] expected vote not to be granted, but was %v", resp)
+	}
+	if resp.Term != term {
+		c.FailNowf("[ERR] term should have been %v, but was %v", term, resp.Term)
+	}
+	if c.follower.Leader() != c.leader.localAddr {
+		c.FailNowf("[ERR] leader should be %v, but was %v", c.leader.localAddr, c.follower.Leader())
+	}
+
+	c.logger.Println("[INFO] checking leader behaviour")
+	// a leader should not vote for a candidate with the same term and should
+	// stay leader
+	if err := c.candidateT.RequestVote(c.leader.localID, c.leader.localAddr, &c.req, &resp); err != nil {
 		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
 	}
 	if resp.Granted {
 		c.FailNowf("[ERR] expected vote not to be granted, but was %+v", resp)
+	}
+	if resp.Term != term {
+		c.FailNowf("[ERR] term should have been %v, but was %v", term, resp.Term)
+	}
+	if c.leader.State() != Leader {
+		c.FailNowf("[ERR] state should be Leader, but was %v", c.leader.State())
+	}
+}
+
+func TestRaft_VoteForNodeWithPreviousTerm(t *testing.T) {
+	c := makeVoteCluster(t)
+	defer c.Close()
+
+	term := c.leader.getCurrentTerm()
+
+	c.req.Term = term - 1
+
+	// a follower that thinks there's a leader should not vote for candidate
+	// with a the same term and should stay faithful to its leader
+	c.logger.Println("[INFO] checking follower behaviour")
+	var resp RequestVoteResponse
+	if err := c.candidateT.RequestVote(c.follower.localID, c.follower.localAddr, &c.req, &resp); err != nil {
+		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
+	}
+	if resp.Granted {
+		c.FailNowf("[ERR] expected vote not to be granted, but was %v", resp)
+	}
+	if resp.Term != term {
+		c.FailNowf("[ERR] term should have been %v, but was %v", term, resp.Term)
+	}
+	if c.follower.Leader() != c.leader.localAddr {
+		c.FailNowf("[ERR] leader should be %v, but was %v", c.leader.localAddr, c.follower.Leader())
+	}
+
+	c.logger.Println("[INFO] checking leader behaviour")
+	// a leader should not vote for a candidate with the same term and should
+	// stay leader
+	if err := c.candidateT.RequestVote(c.leader.localID, c.leader.localAddr, &c.req, &resp); err != nil {
+		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
+	}
+	if resp.Granted {
+		c.FailNowf("[ERR] expected vote not to be granted, but was %+v", resp)
+	}
+	if resp.Term != term {
+		c.FailNowf("[ERR] term should have been %v, but was %v", term, resp.Term)
+	}
+	if c.leader.State() != Leader {
+		c.FailNowf("[ERR] state should be Leader, but was %v", c.leader.State())
+	}
+}
+
+func TestRaft_VoteForNodeWithPreviousIndex(t *testing.T) {
+	c := makeVoteCluster(t)
+	defer c.Close()
+
+	c.req.LastLogIndex--
+
+	// a follower that thinks there's a leader should not vote for candidate
+	// with a lower index, but should update its term and remove it's old
+	// leader
+	c.logger.Println("[INFO] checking follower behaviour")
+	var resp RequestVoteResponse
+	if err := c.candidateT.RequestVote(c.follower.localID, c.follower.localAddr, &c.req, &resp); err != nil {
+		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
+	}
+	if resp.Granted {
+		c.FailNowf("[ERR] expected vote not to be granted, but was %+v", resp)
+	}
+	if resp.Term != c.req.Term {
+		c.FailNowf("[ERR] term should have been %v, but was %v", c.req.Term, resp.Term)
+	}
+	if c.follower.Leader() != "" {
+		c.FailNowf("[ERR] leader should be empty, but was %v", c.follower.Leader())
+	}
+
+	c.logger.Println("[INFO] checking leader behaviour")
+	// a leader that thinks there's a leader should not vote for candidate
+	// with a lower index, but should update its term and change it's state to
+	// follower
+	if err := c.candidateT.RequestVote(c.leader.localID, c.leader.localAddr, &c.req, &resp); err != nil {
+		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
+	}
+	if resp.Granted {
+		c.FailNowf("[ERR] expected vote not to be granted, but was %+v", resp)
+	}
+	if resp.Term != c.req.Term {
+		c.FailNowf("[ERR] term should have been %v, but was %+v", c.req.Term, resp.Term)
+	}
+	if c.leader.Leader() != "" {
+		c.FailNowf("[ERR] leader should be empty, but was %v", c.leader.Leader())
+	}
+	if c.leader.State() != Follower {
+		c.FailNowf("[ERR] state should Follower, but was %v", c.leader.State())
+	}
+}
+
+func TestRaft_VoteForNodeWithPreviousLogTerm(t *testing.T) {
+	c := makeVoteCluster(t)
+	defer c.Close()
+
+	c.req.LastLogTerm--
+
+	// a follower that thinks there's a leader should not vote for candidate
+	// with a lower log term, but should update its term and remove it's old
+	// leader
+	c.logger.Println("[INFO] checking follower behaviour")
+	var resp RequestVoteResponse
+	if err := c.candidateT.RequestVote(c.follower.localID, c.follower.localAddr, &c.req, &resp); err != nil {
+		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
+	}
+	if resp.Granted {
+		c.FailNowf("[ERR] expected vote not to be granted, but was %+v", resp)
+	}
+	if resp.Term != c.req.Term {
+		c.FailNowf("[ERR] term should have been %v, but was %v", c.req.Term, resp.Term)
+	}
+	if c.follower.Leader() != "" {
+		c.FailNowf("[ERR] leader should be empty, but was %v", c.follower.Leader())
+	}
+
+	c.logger.Println("[INFO] checking leader behaviour")
+	// a leader should not vote for candidate with a lower log term, but should
+	// update its term and change it's state to follower
+	if err := c.candidateT.RequestVote(c.leader.localID, c.leader.localAddr, &c.req, &resp); err != nil {
+		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
+	}
+	if resp.Granted {
+		c.FailNowf("[ERR] expected vote not to be granted, but was %+v", resp)
+	}
+	if resp.Term != c.req.Term {
+		c.FailNowf("[ERR] term should have been %v, but was %+v", c.req.Term, resp.Term)
+	}
+	if c.leader.Leader() != "" {
+		c.FailNowf("[ERR] leader should be empty, but was %v", c.leader.Leader())
+	}
+	if c.leader.State() != Follower {
+		c.FailNowf("[ERR] state should Follower, but was %v", c.leader.State())
 	}
 }
 
