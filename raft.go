@@ -1269,25 +1269,31 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 
 	candidate := r.trans.DecodePeer(req.Candidate)
 
-	var candidateServer *Server
-	for _, server := range r.configurations.latest.Servers {
-		if server.Address == candidate {
-			candidateServer = &server
-			break
+	// Don't accept voting requests from unknown or non voting servers if
+	// there's an active configuration with more than 0 servers. If the
+	// configuration has 0 servers this node should help bootstrapping a
+	// cluster.
+	if len(r.configurations.latest.Servers) > 0 {
+		var candidateServer *Server
+		for _, server := range r.configurations.latest.Servers {
+			if server.Address == candidate {
+				candidateServer = &server
+				break
+			}
 		}
-	}
 
-	// If the candidate is not part of the latest configuration ignore its
-	// voting request
-	if candidateServer == nil {
-		r.logger.Printf("[WARN] raft: Rejecting vote request from %v, since it'not part of the configuration", candidate)
-		return
-	}
+		// If the candidate is not part of the latest configuration ignore its
+		// voting request
+		if candidateServer == nil {
+			r.logger.Printf("[WARN] raft: Rejecting vote request from %v, since it'not part of the configuration", candidate)
+			return
+		}
 
-	// If the candidate is not a voter, ignore its voting request
-	if candidateServer.Suffrage != Voter {
-		r.logger.Printf("[WARN] raft: Rejecting vote request from %v, since it's a non voting server", candidate)
-		return
+		// If the candidate is not a voter, ignore its voting request
+		if candidateServer.Suffrage != Voter {
+			r.logger.Printf("[WARN] raft: Rejecting vote request from %v, since it's a non voting server", candidate)
+			return
+		}
 	}
 
 	// Increase the term if we see a newer one
