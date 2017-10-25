@@ -246,6 +246,8 @@ func (r *Raft) runFollower() {
 // node. The main things to check here are:
 // - Does the node already know a leader?
 // - Is the node shutting down?
+// - Is the node part of the last cluster configuration?
+// - Is the node a voter in the last cluster configuration?
 // - Has the node given the current leader enough time to contact it after
 //   being down?
 func (r *Raft) canStartElection() bool {
@@ -255,6 +257,24 @@ func (r *Raft) canStartElection() bool {
 
 	// Don't start an election when the node is busy shutting down
 	if r.getShuttingDown() {
+		return false
+	}
+
+	var thisServer *Server
+	for _, server := range r.configurations.latest.Servers {
+		if server.ID == r.localID {
+			thisServer = &server
+			break
+		}
+	}
+
+	// If the node is not part of the cluster configuration it cannot start an election
+	if thisServer == nil {
+		return false
+	}
+
+	// If the node is not a voter it cannot start an election
+	if thisServer.Suffrage != Voter {
 		return false
 	}
 
