@@ -1109,7 +1109,9 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	}
 
 	// Ensure transition to follower
-	r.setState(Follower)
+	if r.getState() != Follower {
+		r.setState(Follower)
+	}
 
 	// Save the current leader
 	r.setLeader(ServerAddress(r.trans.DecodePeer(a.Leader)))
