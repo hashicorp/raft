@@ -346,6 +346,9 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 		case <-stopCh:
 			return
 		}
+		if r.getShuttingDown() {
+			return
+		}
 
 		start := time.Now()
 		if err := r.trans.AppendEntries(s.peer.ID, s.peer.Address, &req, &resp); err != nil {
