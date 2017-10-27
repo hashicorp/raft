@@ -381,6 +381,7 @@ func (r *Raft) sendShutdown(s *followerReplication) {
 	if err := r.trans.AppendEntries(s.peer.ID, s.peer.Address, &req, &resp); err != nil {
 		r.logger.Printf("[ERR] raft: Failed to notify to %v that this node is shutting down: %v", s.peer.Address, err)
 	} else {
+		r.logger.Printf("[INFO] raft: Successfully notified %v that this node is shutting down", s.peer.Address)
 		s.setLastContact()
 		metrics.MeasureSince([]string{"raft", "replication", "shutdown", string(s.peer.ID)}, start)
 	}
