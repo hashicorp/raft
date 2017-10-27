@@ -364,7 +364,7 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 	}
 }
 
-// shutdown is used to signal the followers that the leader is shutting down.
+// sendShutdown is used to signal the followers that the leader is shutting down.
 // This way they don't have to wait for HeartbeatTimeout to start an election.
 func (r *Raft) sendShutdown(s *followerReplication) {
 	req := AppendEntriesRequest{
