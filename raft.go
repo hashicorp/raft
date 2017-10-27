@@ -1120,6 +1120,9 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	// leader
 	if r.Leader() == "" {
 		r.logger.Printf("[INFO] raft: Leader has shut down")
+		// Increment current term, so queued appendEntries from leader that is
+		// shutting down are ignored.
+		r.setCurrentTerm(a.Term + 1)
 		return
 	}
 
