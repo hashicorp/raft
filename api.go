@@ -807,6 +807,19 @@ func (r *Raft) Shutdown() Future {
 
 	if !r.shutdown {
 		r.setShuttingDown()
+		if r.getState() == Leader {
+			r.logger.Println("[INFO] raft: Notifying followers that node is shutting down")
+			var group sync.WaitGroup
+			for _, replState := range r.leaderState.replState {
+				replStateReal := replState
+				group.Add(1)
+				go func() {
+					defer group.Done()
+					r.sendShutdown(replStateReal)
+				}()
+			}
+			group.Wait()
+		}
 		close(r.shutdownCh)
 		r.shutdown = true
 		r.setState(Shutdown)

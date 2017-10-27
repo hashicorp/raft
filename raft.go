@@ -703,9 +703,6 @@ func (r *Raft) leaderLoop() {
 			lease = time.After(checkInterval)
 
 		case <-r.shutdownCh:
-			for _, replState := range r.leaderState.replState {
-				r.sendShutdown(replState)
-			}
 			return
 		}
 	}
