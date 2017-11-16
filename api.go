@@ -279,12 +279,14 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 			// couldn't open any snapshots.
 			continue
 		}
-		defer source.Close()
 
 		if err := fsm.Restore(source); err != nil {
 			// Same here, skip and try the next one.
+			source.Close()
 			continue
 		}
+
+		source.Close()
 
 		snapshotIndex = snapshot.Index
 		snapshotTerm = snapshot.Term
