@@ -303,10 +303,13 @@ func TestTransport_EncodeDecode(t *testing.T) {
 
 		local := trans1.LocalAddr()
 		enc := trans1.EncodePeer("aaaa", local)
-		dec := trans1.DecodePeer(enc)
+		decID, decAddr := trans1.DecodePeer(enc)
 
-		if dec != local {
-			t.Fatalf("enc/dec fail: %v %v", dec, local)
+		if decID != "aaaa" {
+			t.Fatalf("enc/dec fail: %v %v", decID, "aaaa")
+		}
+		if decAddr != local {
+			t.Fatalf("enc/dec fail: %v %v", decAddr, local)
 		}
 	}
 }

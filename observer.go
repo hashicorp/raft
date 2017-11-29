@@ -15,7 +15,8 @@ type Observation struct {
 
 // LeaderObservation is used for the data when leadership changes.
 type LeaderObservation struct {
-	leader ServerAddress
+	leaderID      ServerID
+	leaderAddress ServerAddress
 }
 
 // nextObserverId is used to provide a unique ID for each observer to aid in

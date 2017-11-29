@@ -400,13 +400,40 @@ func (n *NetworkTransport) InstallSnapshot(id ServerID, target ServerAddress, ar
 
 // EncodePeer implements the Transport interface.
 func (n *NetworkTransport) EncodePeer(id ServerID, p ServerAddress) []byte {
-	address := n.getProviderAddressOrFallback(id, p)
-	return []byte(address)
+	addr := n.getProviderAddressOrFallback(id, p)
+	buf := make([]byte, 3, 3+len(id)+len(addr))
+	buf[0] = 1 // version marker
+	buf[1] = byte(len(id))
+	buf[2] = byte(len(addr))
+	buf = append(buf, id...)
+	buf = append(buf, addr...)
+	return buf
 }
 
 // DecodePeer implements the Transport interface.
-func (n *NetworkTransport) DecodePeer(buf []byte) ServerAddress {
-	return ServerAddress(buf)
+func (n *NetworkTransport) DecodePeer(buf []byte) (ServerID, ServerAddress) {
+	bufLen := len(buf)
+	if bufLen == 0 {
+		return ServerID(""), ServerAddress("")
+	}
+	if buf[0] != 1 {
+		// support old style peer encoding
+		return ServerID(buf), ServerAddress(buf)
+	}
+	if bufLen < 3 {
+		// invalid address
+		return ServerID(""), ServerAddress("")
+	}
+	var (
+		idLen            = int(buf[1])
+		addrLen          = int(buf[2])
+		expectedTotalLen = 3 + idLen + addrLen
+	)
+	if bufLen != expectedTotalLen {
+		// invalid address
+		return ServerID(""), ServerAddress("")
+	}
+	return ServerID(buf[3 : 3+idLen]), ServerAddress(buf[3+idLen:])
 }
 
 // listen is used to handling incoming connections.

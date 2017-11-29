@@ -375,10 +375,13 @@ func TestNetworkTransport_EncodeDecode(t *testing.T) {
 
 	local := trans1.LocalAddr()
 	enc := trans1.EncodePeer("id1", local)
-	dec := trans1.DecodePeer(enc)
+	decID, decAddr := trans1.DecodePeer(enc)
 
-	if dec != local {
-		t.Fatalf("enc/dec fail: %v %v", dec, local)
+	if decID != "id1" {
+		t.Fatalf("enc/dec fail: %v %v", decID, "id1")
+	}
+	if decAddr != local {
+		t.Fatalf("enc/dec fail: %v %v", decAddr, local)
 	}
 }
 
@@ -393,10 +396,13 @@ func TestNetworkTransport_EncodeDecode_AddressProvider(t *testing.T) {
 
 	local := trans1.LocalAddr()
 	enc := trans1.EncodePeer("id1", local)
-	dec := trans1.DecodePeer(enc)
+	decID, decAddr := trans1.DecodePeer(enc)
 
-	if dec != ServerAddress(addressOverride) {
-		t.Fatalf("enc/dec fail: %v %v", dec, addressOverride)
+	if decID != "id1" {
+		t.Fatalf("enc/dec fail: %v %v", decID, "id1")
+	}
+	if decAddr != ServerAddress(addressOverride) {
+		t.Fatalf("enc/dec fail: %v %v", decAddr, addressOverride)
 	}
 }
 

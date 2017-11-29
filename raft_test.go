@@ -462,15 +462,15 @@ func (c *cluster) EnsureLeader(t *testing.T, expect ServerAddress) {
 	// think the leader is correct
 	fail := false
 	for _, r := range c.rafts {
-		leader := ServerAddress(r.Leader())
-		if leader != expect {
-			if leader == "" {
-				leader = "[none]"
+		_, leaderAddr := r.Leader()
+		if leaderAddr != expect {
+			if leaderAddr == "" {
+				leaderAddr = "[none]"
 			}
 			if expect == "" {
-				c.logger.Printf("[ERR] Peer %s sees leader %v expected [none]", r, leader)
+				c.logger.Printf("[ERR] Peer %s sees leader %v expected [none]", r, leaderAddr)
 			} else {
-				c.logger.Printf("[ERR] Peer %s sees leader %v expected %v", r, leader, expect)
+				c.logger.Printf("[ERR] Peer %s sees leader %v expected %v", r, leaderAddr, expect)
 			}
 			fail = true
 		}
@@ -2044,11 +2044,11 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	}
 
 	// Ensure both have cleared their leader
-	if l := leader.Leader(); l != "" {
-		c.FailNowf("[ERR] bad: %v", l)
+	if id, addr := leader.Leader(); id != "" || addr != "" {
+		c.FailNowf("[ERR] bad: %v %v", id, addr)
 	}
-	if l := follower.Leader(); l != "" {
-		c.FailNowf("[ERR] bad: %v", l)
+	if id, addr := follower.Leader(); id != "" || addr != "" {
+		c.FailNowf("[ERR] bad: %v %v", id, addr)
 	}
 }
 
@@ -2139,8 +2139,8 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	}
 
 	// Ensure the known leader is cleared
-	if l := leader.Leader(); l != "" {
-		c.FailNowf("[ERR] bad: %v", l)
+	if id, addr := leader.Leader(); id != "" || addr != "" {
+		c.FailNowf("[ERR] bad: %v %v", id, addr)
 	}
 }
 

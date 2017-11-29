@@ -309,11 +309,11 @@ func decodePeers(buf []byte, trans Transport) Configuration {
 	// Deserialize each peer.
 	var servers []Server
 	for _, enc := range encPeers {
-		p := trans.DecodePeer(enc)
+		id, addr := trans.DecodePeer(enc)
 		servers = append(servers, Server{
 			Suffrage: Voter,
-			ID:       ServerID(p),
-			Address:  ServerAddress(p),
+			ID:       ServerID(id),
+			Address:  ServerAddress(addr),
 		})
 	}
 

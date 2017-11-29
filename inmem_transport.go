@@ -159,13 +159,40 @@ func (i *InmemTransport) makeRPC(target ServerAddress, args interface{}, r io.Re
 }
 
 // EncodePeer implements the Transport interface.
-func (i *InmemTransport) EncodePeer(id ServerID, p ServerAddress) []byte {
-	return []byte(p)
+func (i *InmemTransport) EncodePeer(id ServerID, addr ServerAddress) []byte {
+	buf := make([]byte, 3, 3+len(id)+len(addr))
+	buf[0] = 1 // version marker
+	buf[1] = byte(len(id))
+	buf[2] = byte(len(addr))
+	buf = append(buf, id...)
+	buf = append(buf, addr...)
+	return buf
 }
 
 // DecodePeer implements the Transport interface.
-func (i *InmemTransport) DecodePeer(buf []byte) ServerAddress {
-	return ServerAddress(buf)
+func (i *InmemTransport) DecodePeer(buf []byte) (ServerID, ServerAddress) {
+	bufLen := len(buf)
+	if bufLen == 0 {
+		return ServerID(""), ServerAddress("")
+	}
+	if buf[0] != 1 {
+		// support old style peer encoding
+		return ServerID(buf), ServerAddress(buf)
+	}
+	if bufLen < 3 {
+		// invalid address
+		return ServerID(""), ServerAddress("")
+	}
+	var (
+		idLen            = int(buf[1])
+		addrLen          = int(buf[2])
+		expectedTotalLen = 3 + idLen + addrLen
+	)
+	if bufLen != expectedTotalLen {
+		// invalid address
+		return ServerID(""), ServerAddress("")
+	}
+	return ServerID(buf[3 : 3+idLen]), ServerAddress(buf[3+idLen:])
 }
 
 // Connect is used to connect this transport to another transport for

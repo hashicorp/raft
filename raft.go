@@ -86,13 +86,13 @@ type leaderState struct {
 }
 
 // setLeader is used to modify the current leader of the cluster
-func (r *Raft) setLeader(leader ServerAddress) {
+func (r *Raft) setLeader(leaderID ServerID, leaderAddress ServerAddress) {
 	r.leaderLock.Lock()
-	oldLeader := r.leader
-	r.leader = leader
+	oldLeaderID, oldLeaderAddress := r.leaderID, r.leaderAddress
+	r.leaderID, r.leaderAddress = leaderID, leaderAddress
 	r.leaderLock.Unlock()
-	if oldLeader != leader {
-		r.observe(LeaderObservation{leader: leader})
+	if oldLeaderID != leaderID || oldLeaderAddress != leaderAddress {
+		r.observe(LeaderObservation{leaderID: leaderID, leaderAddress: leaderAddress})
 	}
 }
 
@@ -125,7 +125,7 @@ func (r *Raft) run() {
 		select {
 		case <-r.shutdownCh:
 			// Clear the leader to prevent forwarding
-			r.setLeader("")
+			r.setLeader("", "")
 			return
 		default:
 		}
@@ -145,7 +145,8 @@ func (r *Raft) run() {
 // runFollower runs the FSM for a follower.
 func (r *Raft) runFollower() {
 	didWarn := false
-	r.logger.Printf("[INFO] raft: %v entering Follower state (Leader: %q)", r, r.Leader())
+	leaderID, leaderAddress := r.Leader()
+	r.logger.Printf("[INFO] raft: %v entering Follower state (Leader: %q %q)", r, leaderID, leaderAddress)
 	metrics.IncrCounter([]string{"raft", "state", "follower"}, 1)
 	heartbeatTimer := randomTimeout(r.conf.HeartbeatTimeout)
 	for {
@@ -187,8 +188,8 @@ func (r *Raft) runFollower() {
 			}
 
 			// Heartbeat failed! Transition to the candidate state
-			lastLeader := r.Leader()
-			r.setLeader("")
+			lastLeaderID, lastLeaderAddr := r.Leader()
+			r.setLeader("", "")
 
 			if r.configurations.latestIndex == 0 {
 				if !didWarn {
@@ -202,7 +203,7 @@ func (r *Raft) runFollower() {
 					didWarn = true
 				}
 			} else {
-				r.logger.Printf(`[WARN] raft: Heartbeat timeout from %q reached, starting election`, lastLeader)
+				r.logger.Printf(`[WARN] raft: Heartbeat timeout from %q (%q) reached, starting election`, lastLeaderID, lastLeaderAddr)
 				metrics.IncrCounter([]string{"raft", "transition", "heartbeat_timeout"}, 1)
 				r.setState(Candidate)
 				return
@@ -276,7 +277,7 @@ func (r *Raft) runCandidate() {
 			if grantedVotes >= votesNeeded {
 				r.logger.Printf("[INFO] raft: Election won. Tally: %d", grantedVotes)
 				r.setState(Leader)
-				r.setLeader(r.localAddr)
+				r.setLeader(r.localID, r.localAddr)
 				return
 			}
 
@@ -378,8 +379,9 @@ func (r *Raft) runLeader() {
 		// We may have stepped down due to an RPC call, which would
 		// provide the leader, so we cannot always blank this out.
 		r.leaderLock.Lock()
-		if r.leader == r.localAddr {
-			r.leader = ""
+		if r.leaderAddress == r.localAddr && r.leaderID == r.localID {
+			r.leaderID = ""
+			r.leaderAddress = ""
 		}
 		r.leaderLock.Unlock()
 
@@ -1020,7 +1022,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	}
 
 	// Save the current leader
-	r.setLeader(ServerAddress(r.trans.DecodePeer(a.Leader)))
+	r.setLeader(r.trans.DecodePeer(a.Leader))
 
 	// Verify the last log entry
 	if a.PrevLogEntry > 0 {
@@ -1163,10 +1165,10 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	}
 
 	// Check if we have an existing leader [who's not the candidate]
-	candidate := r.trans.DecodePeer(req.Candidate)
-	if leader := r.Leader(); leader != "" && leader != candidate {
-		r.logger.Printf("[WARN] raft: Rejecting vote request from %v since we have a leader: %v",
-			candidate, leader)
+	candidateID, candidateAddr := r.trans.DecodePeer(req.Candidate)
+	if leaderID, leaderAddr := r.Leader(); leaderID != "" && !(leaderID == candidateID && leaderAddr == candidateAddr) {
+		r.logger.Printf("[WARN] raft: Rejecting vote request from %v (%s) since we have a leader: %v (%s)",
+			candidateID, candidateAddr, leaderID, leaderAddr)
 		return
 	}
 
@@ -1208,14 +1210,14 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// Reject if their term is older
 	lastIdx, lastTerm := r.getLastEntry()
 	if lastTerm > req.LastLogTerm {
-		r.logger.Printf("[WARN] raft: Rejecting vote request from %v since our last term is greater (%d, %d)",
-			candidate, lastTerm, req.LastLogTerm)
+		r.logger.Printf("[WARN] raft: Rejecting vote request from %v (%s) since our last term is greater (%d, %d)",
+			candidateID, candidateAddr, lastTerm, req.LastLogTerm)
 		return
 	}
 
 	if lastTerm == req.LastLogTerm && lastIdx > req.LastLogIndex {
-		r.logger.Printf("[WARN] raft: Rejecting vote request from %v since our last index is greater (%d, %d)",
-			candidate, lastIdx, req.LastLogIndex)
+		r.logger.Printf("[WARN] raft: Rejecting vote request from %v (%s) since our last index is greater (%d, %d)",
+			candidateID, candidateAddr, lastIdx, req.LastLogIndex)
 		return
 	}
 
@@ -1269,7 +1271,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	}
 
 	// Save the current leader
-	r.setLeader(ServerAddress(r.trans.DecodePeer(req.Leader)))
+	r.setLeader(r.trans.DecodePeer(req.Leader))
 
 	// Create a new snapshot
 	var reqConfiguration Configuration
@@ -1454,7 +1456,7 @@ func (r *Raft) setCurrentTerm(t uint64) {
 // transition causes the known leader to be cleared. This means
 // that leader should be set only after updating the state.
 func (r *Raft) setState(state RaftState) {
-	r.setLeader("")
+	r.setLeader("", "")
 	oldState := r.raftState.getState()
 	r.raftState.setState(state)
 	if oldState != state {
