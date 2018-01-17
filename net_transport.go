@@ -2,6 +2,7 @@ package raft
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -74,7 +75,8 @@ type NetworkTransport struct {
 	shutdownCh   chan struct{}
 	shutdownLock sync.Mutex
 
-	stream StreamLayer
+	stream       StreamLayer
+	streamCancel context.CancelFunc
 
 	timeout      time.Duration
 	TimeoutScale int
@@ -154,7 +156,11 @@ func NewNetworkTransportWithConfig(
 		TimeoutScale:          DefaultTimeoutScale,
 		serverAddressProvider: config.ServerAddressProvider,
 	}
-	go trans.listen()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	trans.streamCancel = cancel
+	go trans.listen(ctx)
+
 	return trans
 }
 
@@ -197,6 +203,28 @@ func (n *NetworkTransport) SetHeartbeatHandler(cb func(rpc RPC)) {
 	n.heartbeatFnLock.Lock()
 	defer n.heartbeatFnLock.Unlock()
 	n.heartbeatFn = cb
+}
+
+// UseStream re-initializes the stream layer
+func (n *NetworkTransport) UseStream(s StreamLayer) {
+	n.stream = s
+	ctx, cancel := context.WithCancel(context.Background())
+	n.streamCancel = cancel
+	go n.listen(ctx)
+}
+
+// CloseStream closes the current stream and existing connections. This
+// must be done before creating a new stream layer.
+func (n *NetworkTransport) CloseStream() {
+	n.connPoolLock.Lock()
+	defer n.connPoolLock.Unlock()
+	for _, e := range n.connPool {
+		for _, conn := range e {
+			conn.Release()
+		}
+	}
+
+	n.streamCancel()
 }
 
 // Close is used to stop the network transport.
@@ -410,10 +438,26 @@ func (n *NetworkTransport) DecodePeer(buf []byte) ServerAddress {
 }
 
 // listen is used to handling incoming connections.
-func (n *NetworkTransport) listen() {
+func (n *NetworkTransport) listen(ctx context.Context) {
 	for {
+		select {
+		case <-ctx.Done():
+			n.logger.Println("[INFO] raft-net: stream layer is closed")
+			return
+		default:
+		}
 		// Accept incoming connections
 		conn, err := n.stream.Accept()
+
+		// Check again whether the context has been cancelled, as Accept is
+		// blocking
+		select {
+		case <-ctx.Done():
+			n.logger.Println("[INFO] raft-net: stream layer is closed")
+			return
+		default:
+		}
+
 		if err != nil {
 			if n.IsShutdown() {
 				return
@@ -424,12 +468,12 @@ func (n *NetworkTransport) listen() {
 		n.logger.Printf("[DEBUG] raft-net: %v accepted connection from: %v", n.LocalAddr(), conn.RemoteAddr())
 
 		// Handle the connection in dedicated routine
-		go n.handleConn(conn)
+		go n.handleConn(ctx, conn)
 	}
 }
 
 // handleConn is used to handle an inbound connection for its lifespan.
-func (n *NetworkTransport) handleConn(conn net.Conn) {
+func (n *NetworkTransport) handleConn(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 	r := bufio.NewReader(conn)
 	w := bufio.NewWriter(conn)
@@ -437,6 +481,13 @@ func (n *NetworkTransport) handleConn(conn net.Conn) {
 	enc := codec.NewEncoder(w, &codec.MsgpackHandle{})
 
 	for {
+		select {
+		case <-ctx.Done():
+			n.logger.Println("[INFO] raft-net: stream layer is closed")
+			return
+		default:
+		}
+
 		if err := n.handleCommand(r, dec, enc); err != nil {
 			if err != io.EOF {
 				n.logger.Printf("[ERR] raft-net: Failed to decode incoming command: %v", err)

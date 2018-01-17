@@ -2,7 +2,9 @@ package raft
 
 import (
 	"bytes"
+	"net"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -14,6 +16,76 @@ type testAddrProvider struct {
 
 func (t *testAddrProvider) ServerAddr(id ServerID) (ServerAddress, error) {
 	return ServerAddress(t.addr), nil
+}
+
+func TestNetworkTransport_ReloadStream(t *testing.T) {
+	trans1, err := NewTCPTransportWithLogger("127.0.0.1:0", nil, 2, time.Second, newTestLogger(t))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	defer trans1.Close()
+	rpcCh := trans1.Consumer()
+
+	// Make the RPC request
+	args := RequestVoteRequest{
+		Term:         20,
+		Candidate:    []byte("butters"),
+		LastLogIndex: 100,
+		LastLogTerm:  19,
+	}
+	resp := RequestVoteResponse{
+		Term:    100,
+		Granted: false,
+	}
+
+	// Listen for a request
+	go func() {
+		select {
+		case rpc := <-rpcCh:
+			// Verify the command
+			req := rpc.Command.(*RequestVoteRequest)
+			if !reflect.DeepEqual(req, &args) {
+				t.Fatalf("command mismatch: %#v %#v", *req, args)
+			}
+			rpc.Respond(&resp, nil)
+		}
+	}()
+
+	// close existing stream connections (after they have been set up) and stop
+	// accepting new ones
+	trans1.CloseStream()
+
+	trans2, err := NewTCPTransportWithLogger("127.0.0.1:0", nil, 2, time.Second, newTestLogger(t))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	defer trans2.Close()
+
+	// Should fail as the stream layer for Transport 1 is closed
+	var out RequestVoteResponse
+	if err := trans2.RequestVote("id1", trans1.LocalAddr(), &args, &out); err == nil {
+		t.Fatalf("Should have received error after closing stream connections")
+	} else if !strings.Contains(err.Error(), "i/o timeout") {
+		t.Fatalf("Should have received an error indicating the connection is closed, instead got: %s", err.Error())
+	}
+
+	// reload connections by creating a new stream layer; start accepting new
+	// connections
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("err in creating new stream layer: %s", err.Error())
+	}
+	newStream := &TCPStreamLayer{
+		advertise: nil,
+		listener:  listener.(*net.TCPListener),
+	}
+	trans1.UseStream(newStream)
+
+	// Should succeed as transport 1 should now be accepting connections
+	var out2 RequestVoteResponse
+	if err := trans2.RequestVote("id1", trans1.LocalAddr(), &args, &out2); err != nil {
+		t.Fatalf("Should not have received an error after reloading stream connections")
+	}
 }
 
 func TestNetworkTransport_StartStop(t *testing.T) {
