@@ -2,9 +2,7 @@ package raft
 
 import (
 	"bytes"
-	"net"
 	"reflect"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,7 +16,8 @@ func (t *testAddrProvider) ServerAddr(id ServerID) (ServerAddress, error) {
 	return ServerAddress(t.addr), nil
 }
 
-func TestNetworkTransport_ReloadStream(t *testing.T) {
+func TestNetworkTransport_CloseStreams(t *testing.T) {
+	// Transport 1 is consumer
 	trans1, err := NewTCPTransportWithLogger("127.0.0.1:0", nil, 2, time.Second, newTestLogger(t))
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -27,64 +26,89 @@ func TestNetworkTransport_ReloadStream(t *testing.T) {
 	rpcCh := trans1.Consumer()
 
 	// Make the RPC request
-	args := RequestVoteRequest{
-		Term:         20,
-		Candidate:    []byte("butters"),
-		LastLogIndex: 100,
-		LastLogTerm:  19,
+	args := AppendEntriesRequest{
+		Term:         10,
+		Leader:       []byte("cartman"),
+		PrevLogEntry: 100,
+		PrevLogTerm:  4,
+		Entries: []*Log{
+			&Log{
+				Index: 101,
+				Term:  4,
+				Type:  LogNoop,
+			},
+		},
+		LeaderCommitIndex: 90,
 	}
-	resp := RequestVoteResponse{
-		Term:    100,
-		Granted: false,
+	resp := AppendEntriesResponse{
+		Term:    4,
+		LastLog: 90,
+		Success: true,
 	}
 
 	// Listen for a request
 	go func() {
-		select {
-		case rpc := <-rpcCh:
-			// Verify the command
-			req := rpc.Command.(*RequestVoteRequest)
-			if !reflect.DeepEqual(req, &args) {
-				t.Fatalf("command mismatch: %#v %#v", *req, args)
+		for {
+			select {
+			case rpc := <-rpcCh:
+				// Verify the command
+				req := rpc.Command.(*AppendEntriesRequest)
+				if !reflect.DeepEqual(req, &args) {
+					t.Fatalf("command mismatch: %#v %#v", *req, args)
+				}
+				rpc.Respond(&resp, nil)
+
+			case <-time.After(200 * time.Millisecond):
+				return
 			}
-			rpc.Respond(&resp, nil)
 		}
 	}()
 
-	// close existing stream connections (after they have been set up) and stop
-	// accepting new ones
-	trans1.CloseStream()
-
-	trans2, err := NewTCPTransportWithLogger("127.0.0.1:0", nil, 2, time.Second, newTestLogger(t))
+	// Transport 2 makes outbound request, 3 conn pool
+	trans2, err := NewTCPTransportWithLogger("127.0.0.1:0", nil, 3, time.Second, newTestLogger(t))
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	defer trans2.Close()
 
-	// Should fail as the stream layer for Transport 1 is closed
-	var out RequestVoteResponse
-	if err := trans2.RequestVote("id1", trans1.LocalAddr(), &args, &out); err == nil {
-		t.Fatalf("Should have received error after closing stream connections")
-	} else if !strings.Contains(err.Error(), "i/o timeout") {
-		t.Fatalf("Should have received an error indicating the connection is closed, instead got: %s", err.Error())
-	}
+	for i := 0; i < 2; i++ {
+		// Create wait group
+		wg := &sync.WaitGroup{}
+		wg.Add(5)
 
-	// reload connections by creating a new stream layer; start accepting new
-	// connections
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("err in creating new stream layer: %s", err.Error())
-	}
-	newStream := &TCPStreamLayer{
-		advertise: nil,
-		listener:  listener.(*net.TCPListener),
-	}
-	trans1.UseStream(newStream)
+		appendFunc := func() {
+			defer wg.Done()
+			var out AppendEntriesResponse
+			if err := trans2.AppendEntries("id1", trans1.LocalAddr(), &args, &out); err != nil {
+				t.Fatalf("err: %v", err)
+			}
 
-	// Should succeed as transport 1 should now be accepting connections
-	var out2 RequestVoteResponse
-	if err := trans2.RequestVote("id1", trans1.LocalAddr(), &args, &out2); err != nil {
-		t.Fatalf("Should not have received an error after reloading stream connections")
+			// Verify the response
+			if !reflect.DeepEqual(resp, out) {
+				t.Fatalf("command mismatch: %#v %#v", resp, out)
+			}
+		}
+
+		// Try to do parallel appends, should stress the conn pool
+		for i := 0; i < 5; i++ {
+			go appendFunc()
+		}
+
+		// Wait for the routines to finish
+		wg.Wait()
+
+		// Check the conn pool size
+		addr := trans1.LocalAddr()
+		if len(trans2.connPool[addr]) != 3 {
+			t.Fatalf("Expected 3 pooled conns!")
+		}
+
+		if i == 0 {
+			trans2.CloseStreams()
+			if len(trans2.connPool[addr]) != 0 {
+				t.Fatalf("Expected no pooled conns after closing streams!")
+			}
+		}
 	}
 }
 
@@ -302,6 +326,113 @@ func TestNetworkTransport_AppendEntriesPipeline(t *testing.T) {
 		}
 		pipeline.Close()
 
+	}
+}
+
+func TestNetworkTransport_AppendEntriesPipeline_CloseStreams(t *testing.T) {
+	// Transport 1 is consumer
+	trans1, err := makeTransport(t, true, "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	defer trans1.Close()
+	rpcCh := trans1.Consumer()
+
+	// Make the RPC request
+	args := AppendEntriesRequest{
+		Term:         10,
+		Leader:       []byte("cartman"),
+		PrevLogEntry: 100,
+		PrevLogTerm:  4,
+		Entries: []*Log{
+			&Log{
+				Index: 101,
+				Term:  4,
+				Type:  LogNoop,
+			},
+		},
+		LeaderCommitIndex: 90,
+	}
+	resp := AppendEntriesResponse{
+		Term:    4,
+		LastLog: 90,
+		Success: true,
+	}
+
+	shutdownCh := make(chan struct{})
+	defer close(shutdownCh)
+
+	// Listen for a request
+	go func() {
+		for {
+			select {
+			case rpc := <-rpcCh:
+				// Verify the command
+				req := rpc.Command.(*AppendEntriesRequest)
+				if !reflect.DeepEqual(req, &args) {
+					t.Fatalf("command mismatch: %#v %#v", *req, args)
+				}
+				rpc.Respond(&resp, nil)
+
+			case <-shutdownCh:
+				return
+			}
+		}
+	}()
+
+	// Transport 2 makes outbound request
+	trans2, err := makeTransport(t, true, string(trans1.LocalAddr()))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	defer trans2.Close()
+
+	for _, cancelStreams := range []bool{true, false} {
+		pipeline, err := trans2.AppendEntriesPipeline("id1", trans1.LocalAddr())
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+
+		for i := 0; i < 100; i++ {
+			// On the last one, close the streams on the transport one.
+			if cancelStreams && i == 10 {
+				trans1.CloseStreams()
+				time.Sleep(10 * time.Millisecond)
+			}
+
+			out := new(AppendEntriesResponse)
+			if _, err := pipeline.AppendEntries(&args, out); err != nil {
+				break
+			}
+		}
+
+		var futureErr error
+		respCh := pipeline.Consumer()
+	OUTER:
+		for i := 0; i < 100; i++ {
+			select {
+			case ready := <-respCh:
+				if err := ready.Error(); err != nil {
+					futureErr = err
+					break OUTER
+				}
+
+				// Verify the response
+				if !reflect.DeepEqual(&resp, ready.Response()) {
+					t.Fatalf("command mismatch: %#v %#v %v", &resp, ready.Response(), ready.Error())
+				}
+			case <-time.After(200 * time.Millisecond):
+				t.Fatalf("timeout when cancel streams is %v", cancelStreams)
+			}
+		}
+
+		if cancelStreams && futureErr == nil {
+			t.Fatalf("expected an error due to the streams being closed")
+		} else if !cancelStreams && futureErr != nil {
+			t.Fatalf("unexpected error: %v", futureErr)
+		}
+
+		pipeline.Close()
 	}
 }
 
@@ -555,7 +686,7 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 	// Check the conn pool size
 	addr := trans1.LocalAddr()
 	if len(trans2.connPool[addr]) != 3 {
-		t.Fatalf("Expected 2 pooled conns!")
+		t.Fatalf("Expected 3 pooled conns!")
 	}
 }
 

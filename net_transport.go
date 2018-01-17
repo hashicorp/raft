@@ -75,8 +75,12 @@ type NetworkTransport struct {
 	shutdownCh   chan struct{}
 	shutdownLock sync.Mutex
 
-	stream       StreamLayer
-	streamCancel context.CancelFunc
+	stream StreamLayer
+
+	// streamCtx is used to cancel existing connection handlers.
+	streamCtx     context.Context
+	streamCancel  context.CancelFunc
+	streamCtxLock sync.RWMutex
 
 	timeout      time.Duration
 	TimeoutScale int
@@ -157,9 +161,9 @@ func NewNetworkTransportWithConfig(
 		serverAddressProvider: config.ServerAddressProvider,
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	trans.streamCancel = cancel
-	go trans.listen(ctx)
+	// Create the connection context and then start our listener.
+	trans.setupStreamContext()
+	go trans.listen()
 
 	return trans
 }
@@ -196,6 +200,21 @@ func NewNetworkTransportWithLogger(
 	return NewNetworkTransportWithConfig(config)
 }
 
+// setupStreamContext is used to create a new stream context. This should be
+// called with the stream lock held.
+func (n *NetworkTransport) setupStreamContext() {
+	ctx, cancel := context.WithCancel(context.Background())
+	n.streamCtx = ctx
+	n.streamCancel = cancel
+}
+
+// getStreamContext is used retrieve the current stream context.
+func (n *NetworkTransport) getStreamContext() context.Context {
+	n.streamCtxLock.RLock()
+	defer n.streamCtxLock.RUnlock()
+	return n.streamCtx
+}
+
 // SetHeartbeatHandler is used to setup a heartbeat handler
 // as a fast-pass. This is to avoid head-of-line blocking from
 // disk IO.
@@ -205,26 +224,29 @@ func (n *NetworkTransport) SetHeartbeatHandler(cb func(rpc RPC)) {
 	n.heartbeatFn = cb
 }
 
-// UseStream re-initializes the stream layer
-func (n *NetworkTransport) UseStream(s StreamLayer) {
-	n.stream = s
-	ctx, cancel := context.WithCancel(context.Background())
-	n.streamCancel = cancel
-	go n.listen(ctx)
-}
-
-// CloseStream closes the current stream and existing connections. This
-// must be done before creating a new stream layer.
-func (n *NetworkTransport) CloseStream() {
+// CloseStreams closes the current streams.
+func (n *NetworkTransport) CloseStreams() {
 	n.connPoolLock.Lock()
 	defer n.connPoolLock.Unlock()
-	for _, e := range n.connPool {
+
+	// Close all the connections in the connection pool and then remove their
+	// entry.
+	for k, e := range n.connPool {
 		for _, conn := range e {
 			conn.Release()
 		}
+
+		delete(n.connPool, k)
 	}
 
+	// Cancel the existing connections and create a new context. Both these
+	// operations must always be done with the lock held otherwise we can create
+	// connection handlers that are holding a context that will never be
+	// cancelable.
+	n.streamCtxLock.Lock()
 	n.streamCancel()
+	n.setupStreamContext()
+	n.streamCtxLock.Unlock()
 }
 
 // Close is used to stop the network transport.
@@ -438,26 +460,10 @@ func (n *NetworkTransport) DecodePeer(buf []byte) ServerAddress {
 }
 
 // listen is used to handling incoming connections.
-func (n *NetworkTransport) listen(ctx context.Context) {
+func (n *NetworkTransport) listen() {
 	for {
-		select {
-		case <-ctx.Done():
-			n.logger.Println("[INFO] raft-net: stream layer is closed")
-			return
-		default:
-		}
 		// Accept incoming connections
 		conn, err := n.stream.Accept()
-
-		// Check again whether the context has been cancelled, as Accept is
-		// blocking
-		select {
-		case <-ctx.Done():
-			n.logger.Println("[INFO] raft-net: stream layer is closed")
-			return
-		default:
-		}
-
 		if err != nil {
 			if n.IsShutdown() {
 				return
@@ -468,12 +474,14 @@ func (n *NetworkTransport) listen(ctx context.Context) {
 		n.logger.Printf("[DEBUG] raft-net: %v accepted connection from: %v", n.LocalAddr(), conn.RemoteAddr())
 
 		// Handle the connection in dedicated routine
-		go n.handleConn(ctx, conn)
+		go n.handleConn(n.getStreamContext(), conn)
 	}
 }
 
-// handleConn is used to handle an inbound connection for its lifespan.
-func (n *NetworkTransport) handleConn(ctx context.Context, conn net.Conn) {
+// handleConn is used to handle an inbound connection for its lifespan. The
+// handler will exit when the passed context is cancelled or the connection is
+// closed.
+func (n *NetworkTransport) handleConn(connCtx context.Context, conn net.Conn) {
 	defer conn.Close()
 	r := bufio.NewReader(conn)
 	w := bufio.NewWriter(conn)
@@ -482,8 +490,8 @@ func (n *NetworkTransport) handleConn(ctx context.Context, conn net.Conn) {
 
 	for {
 		select {
-		case <-ctx.Done():
-			n.logger.Println("[INFO] raft-net: stream layer is closed")
+		case <-connCtx.Done():
+			n.logger.Println("[DEBUG] raft-net: stream layer is closed")
 			return
 		default:
 		}
