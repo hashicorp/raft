@@ -56,6 +56,11 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 				if !reflect.DeepEqual(req, &args) {
 					t.Fatalf("command mismatch: %#v %#v", *req, args)
 				}
+
+				// Artificially slow down the consumer so Transport 2 below will
+				// be forced to make use of the pool.
+				time.Sleep(5 * time.Millisecond)
+
 				rpc.Respond(&resp, nil)
 
 			case <-time.After(200 * time.Millisecond):
@@ -74,7 +79,7 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		// Create wait group
 		wg := &sync.WaitGroup{}
-		wg.Add(5)
+		wg.Add(9)
 
 		appendFunc := func() {
 			defer wg.Done()
@@ -90,7 +95,7 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 		}
 
 		// Try to do parallel appends, should stress the conn pool
-		for i := 0; i < 5; i++ {
+		for i := 0; i < 9; i++ {
 			go appendFunc()
 		}
 
@@ -99,8 +104,8 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 
 		// Check the conn pool size
 		addr := trans1.LocalAddr()
-		if len(trans2.connPool[addr]) != 3 {
-			t.Fatalf("Expected 3 pooled conns!")
+		if n := len(trans2.connPool[addr]); n != 3 {
+			t.Fatalf("Expected 3 pooled conns, but found %d!", n)
 		}
 
 		if i == 0 {
