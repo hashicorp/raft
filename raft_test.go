@@ -209,27 +209,28 @@ func (c *cluster) FailNowf(format string, args ...interface{}) {
 
 // Close shuts down the cluster and cleans up.
 func (c *cluster) Close() {
+	defer func() {
+		for _, d := range c.dirs {
+			os.RemoveAll(d)
+		}
+	}()
+
 	var futures []Future
 	for _, r := range c.rafts {
 		futures = append(futures, r.Shutdown())
 	}
 
-	// Wait for shutdown
-	limit := time.AfterFunc(c.longstopTimeout, func() {
-		// We can't FailNowf here, and c.Failf won't do anything if we
-		// hang, so panic.
-		panic("timed out waiting for shutdown")
-	})
-	defer limit.Stop()
-
-	for _, f := range futures {
-		if err := f.Error(); err != nil {
-			c.FailNowf("[ERR] shutdown future err: %v", err)
+	f := func() error {
+		for _, f := range futures {
+			if err := f.Error(); err != nil {
+				return err
+			}
 		}
+		return nil
 	}
-
-	for _, d := range c.dirs {
-		os.RemoveAll(d)
+	msg := "timed out waiting for shutdown"
+	if err := waitForError(c.t, f, c.longstopTimeout, msg); err != nil {
+		c.FailNowf("[ERR] shutdown future err: %v", err)
 	}
 }
 
