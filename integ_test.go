@@ -154,7 +154,7 @@ func WaitFuture(f Future, t testing.TB) error {
 		helper.Helper()
 	}
 	msg := "timeout waiting for future %v"
-	return waitForError(t, f.Error, 200*time.Millisecond, msg, f)
+	return waitForError(t, f.Error, 2*time.Second, msg, f)
 }
 
 func NoErr(err error, t testing.TB) {
@@ -248,6 +248,7 @@ func TestRaft_Integ(t *testing.T) {
 	applyAndWait(env1, 100, 10)
 
 	// Do a snapshot
+	t.Logf("Wait for snapshot")
 	NoErr(WaitFuture(env1.raft.Snapshot(), t), t)
 
 	// Join a few nodes!
