@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -110,6 +111,36 @@ func newTestLogger(t *testing.T) *log.Logger {
 
 func newTestLoggerWithPrefix(t *testing.T, prefix string) *log.Logger {
 	return log.New(&testLoggerAdapter{t: t, prefix: prefix}, "", log.Lmicroseconds)
+}
+
+// Interface for detecting support for testing.TB.Helper(), which was
+// introduced in Go 1.9.
+type testingHelper interface {
+	Helper()
+}
+
+// Wait for f() to return an error and then return it.
+//
+// If this doesn't happen withing 'timeout', print all current goroutines and
+// fail the test with the given message and arguments.
+func waitForError(t testing.TB, f func() error, timeout time.Duration, msg string, v ...interface{}) error {
+	if helper, ok := t.(testingHelper); ok {
+		helper.Helper()
+	}
+	errCh := make(chan error)
+	go func() {
+		errCh <- f()
+	}()
+	select {
+	case err := <-errCh:
+		return err
+	case <-time.After(timeout):
+		buf := make([]byte, 1<<16)
+		n := runtime.Stack(buf, true)
+		t.Logf("goroutines:\n%s", buf[:n])
+		t.Fatalf(msg, v...)
+		return nil
+	}
 }
 
 type cluster struct {

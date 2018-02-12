@@ -149,15 +149,18 @@ WAIT:
 	goto CHECK
 }
 
-func WaitFuture(f Future, t *testing.T) error {
-	timer := time.AfterFunc(200*time.Millisecond, func() {
-		panic(fmt.Errorf("timeout waiting for future %v", f))
-	})
-	defer timer.Stop()
-	return f.Error()
+func WaitFuture(f Future, t testing.TB) error {
+	if helper, ok := t.(testingHelper); ok {
+		helper.Helper()
+	}
+	msg := "timeout waiting for future %v"
+	return waitForError(t, f.Error, 200*time.Millisecond, msg, f)
 }
 
-func NoErr(err error, t *testing.T) {
+func NoErr(err error, t testing.TB) {
+	if helper, ok := t.(testingHelper); ok {
+		helper.Helper()
+	}
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
