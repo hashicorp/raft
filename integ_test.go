@@ -320,13 +320,14 @@ func TestRaft_Integ(t *testing.T) {
 		conf.LocalID = ServerID(fmt.Sprintf("final-batch-%d", i))
 		env := MakeRaft(t, conf, false)
 		addr := env.trans.LocalAddr()
-		NoErr(WaitFuture(env1.raft.AddVoter(conf.LocalID, addr, 0, 0), t), t)
+
+		// Wait for a leader
+		leader, err = WaitForAny(Leader, append([]*RaftEnv{env1}, envs...))
+		NoErr(err, t)
+
+		NoErr(WaitFuture(leader.raft.AddVoter(conf.LocalID, addr, 0, 0), t), t)
 		envs = append(envs, env)
 	}
-
-	// Wait for a leader
-	leader, err = WaitForAny(Leader, append([]*RaftEnv{env1}, envs...))
-	NoErr(err, t)
 
 	// Remove the old nodes
 	NoErr(WaitFuture(leader.raft.RemoveServer(rm1.raft.localID, 0, 0), t), t)
