@@ -152,9 +152,24 @@ func (r *Raft) takeSnapshot() (string, error) {
 	case <-r.shutdownCh:
 		return "", ErrRaftShutdown
 	}
-	if err := configReq.Error(); err != nil {
-		return "", err
+
+	// Wait for the future to complete, but abort if a shutdown happens in
+	// the meantime, and our configure request did not get processed
+	// despite it was successfully sent to the buffered configurationsCh
+	// above (see #268).
+	errorCh := make(chan error)
+	go func() {
+		errorCh <- configReq.Error()
+	}()
+	select {
+	case err := <-errorCh:
+		if err != nil {
+			return "", err
+		}
+	case <-r.shutdownCh:
+		return "", ErrRaftShutdown
 	}
+
 	committed := configReq.configurations.committed
 	committedIndex := configReq.configurations.committedIndex
 
