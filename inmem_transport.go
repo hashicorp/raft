@@ -76,16 +76,15 @@ func (i *InmemTransport) LocalAddr() ServerAddress {
 // AppendEntriesPipeline returns an interface that can be used to pipeline
 // AppendEntries requests.
 func (i *InmemTransport) AppendEntriesPipeline(id ServerID, target ServerAddress) (AppendPipeline, error) {
-	i.RLock()
+	i.Lock()
+	defer i.Unlock()
+
 	peer, ok := i.peers[target]
-	i.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("failed to connect to peer: %v", target)
 	}
 	pipeline := newInmemPipeline(i, peer, target)
-	i.Lock()
 	i.pipelines = append(i.pipelines, pipeline)
-	i.Unlock()
 	return pipeline, nil
 }
 
