@@ -279,7 +279,7 @@ func TestRaft_Integ(t *testing.T) {
 	// snapshot the leader [leaders log should be compacted past the disconnected follower log now]
 	NoErr(WaitFuture(leader.raft.Snapshot(), t), t)
 
-	// Unfortuantly we need to wait for the leader to start backing off RPCs to the down follower
+	// Unfortunately we need to wait for the leader to start backing off RPCs to the down follower
 	// such that when the follower comes back up it'll run an election before it gets an rpc from
 	// the leader
 	time.Sleep(time.Second * 5)
