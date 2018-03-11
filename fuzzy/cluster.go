@@ -365,7 +365,7 @@ func (c *cluster) VerifyLog(t *testing.T, applyCount uint64) {
 }
 
 // assertLogEntryEqual compares the 2 raft Log entries and reports any differences to the supplied testing.T instance
-// it return true if the 2 entrie are equal, false otherwise.
+// it return true if the 2 entries are equal, false otherwise.
 func assertLogEntryEqual(t *testing.T, node string, exp *raft.Log, act *raft.Log) bool {
 	res := true
 	if exp.Term != act.Term {
