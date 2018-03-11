@@ -1,13 +1,13 @@
 # Fuzzy Raft
 
 Inspired by http://colin-scott.github.io/blog/2015/10/07/fuzzing-raft-for-fun-and-profit/ this package 
-is a framework and set of test scenarios for testing the behavoir and correctness of the raft library
+is a framework and set of test scenarios for testing the behavior and correctness of the raft library
 under various conditions.
 
 ## Framework
 
 The framework allows you to construct multiple node raft clusters, connected by an instrumented transport 
-that allows a test to inject various transport level behavours to simulate various scenarios (e.g. you 
+that allows a test to inject various transport level behaviors to simulate various scenarios (e.g. you 
 can have your hook fail all transport calls to a particular node to simulate it being partitioned off 
 the network). There are helper classes to create and Apply well know sequences of test data, and to 
 examine the final state of the cluster, the nodes FSMs and the raft log. 
