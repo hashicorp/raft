@@ -115,7 +115,7 @@ type configurationChangeRequest struct {
 // prior one has been committed).
 //
 // One downside to storing just two configurations is that if you try to take a
-// snahpsot when your state machine hasn't yet applied the committedIndex, we
+// snapshot when your state machine hasn't yet applied the committedIndex, we
 // have no record of the configuration that would logically fit into that
 // snapshot. We disallow snapshots in that case now. An alternative approach,
 // which LogCabin uses, is to track every configuration change in the
