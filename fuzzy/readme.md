@@ -16,7 +16,7 @@ examine the final state of the cluster, the nodes FSMs and the raft log.
 
 The tests run with the standard go test framework, run with go test . [from this dir] or use make fuzz from
 the parent directory. As these tests are looking for timing and other edge cases, a pass from a single run
-itsn't enough, the tests needs running repeatedly to build up confidence.
+isn't enough, the tests needs running repeatedly to build up confidence.
 
 ## Test Scenarios
 
