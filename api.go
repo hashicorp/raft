@@ -50,6 +50,20 @@ var (
 	ErrCantBootstrap = errors.New("bootstrap only works on new clusters")
 )
 
+type Logger interface {
+	Fatal(args ...interface{})
+	Fatalf(format string, args ...interface{})
+	Fatalln(args ...interface{})
+
+	Panic(args ...interface{})
+	Panicf(format string, args ...interface{})
+	Panicln(args ...interface{})
+
+	Print(args ...interface{})
+	Printf(format string, args ...interface{})
+	Println(args ...interface{})
+}
+
 // Raft implements a Raft node.
 type Raft struct {
 	raftState
@@ -103,7 +117,7 @@ type Raft struct {
 	localAddr ServerAddress
 
 	// Used for our logging
-	logger *log.Logger
+	logger Logger
 
 	// LogStore provides durable storage for logs
 	logs LogStore
@@ -394,7 +408,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	}
 
 	// Ensure we have a LogOutput.
-	var logger *log.Logger
+	var logger Logger
 	if conf.Logger != nil {
 		logger = conf.Logger
 	} else {
