@@ -1226,7 +1226,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	}
 
 	resp.Granted = true
-	r.setLastContact()
+
 	return
 }
 
