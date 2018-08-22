@@ -169,7 +169,7 @@ func (c *cluster) Stop(t *testing.T, maxWait time.Duration) {
 }
 
 // WaitTilUptoDate blocks until all nodes in the cluster have gotten their
-// commitedIndex upto the Index from the last sucecssfull call to Apply
+// commitedIndex upto the Index from the last successful call to Apply
 func (c *cluster) WaitTilUptoDate(t *testing.T, maxWait time.Duration) {
 	idx := c.lastApplySuccess.Index()
 	start := time.Now()
@@ -365,7 +365,7 @@ func (c *cluster) VerifyLog(t *testing.T, applyCount uint64) {
 }
 
 // assertLogEntryEqual compares the 2 raft Log entries and reports any differences to the supplied testing.T instance
-// it return true if the 2 entrie are equal, false otherwise.
+// it return true if the 2 entries are equal, false otherwise.
 func assertLogEntryEqual(t *testing.T, node string, exp *raft.Log, act *raft.Log) bool {
 	res := true
 	if exp.Term != act.Term {

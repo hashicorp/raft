@@ -21,7 +21,7 @@ func newApplySource(seed string) *applySource {
 	return s
 }
 
-// reset this source back to its initial state, it'll generate the same sequence of data it initally did
+// reset this source back to its initial state, it'll generate the same sequence of data it initially did
 func (a *applySource) reset() {
 	a.rnd = rand.New(rand.NewSource(a.seed))
 }

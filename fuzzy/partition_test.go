@@ -43,7 +43,7 @@ func TestRaft_LeaderPartitions(t *testing.T) {
 
 type Partitioner struct {
 	verifier appendEntriesVerifier
-	lock     sync.RWMutex // protects partitoned / nextGroup
+	lock     sync.RWMutex // protects partitioned / nextGroup
 	// this is a map of node -> partition group, only nodes in the same partition group can communicate with each other
 	partitioned map[string]int
 	nextGroup   int
