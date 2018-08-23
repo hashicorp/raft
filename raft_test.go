@@ -2144,7 +2144,7 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	}
 }
 
-func TestRaft_VerifyLeader_ParitalConnect(t *testing.T) {
+func TestRaft_VerifyLeader_PartialConnect(t *testing.T) {
 	// Make a cluster
 	conf := inmemConfig(t)
 	c := MakeCluster(3, t, conf)

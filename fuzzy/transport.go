@@ -51,7 +51,7 @@ func (tc *transports) AddNode(n string, hooks TransportHooks) *transport {
 	return t
 }
 
-// TransportHooks allow a test to customize the behavour of the transport.
+// TransportHooks allow a test to customize the behavior of the transport.
 // [if you return an error from a PreXXX call, then the error is returned to the caller, and the RPC never made]
 type TransportHooks interface {
 	// PreRPC is called before every single RPC call from the transport
