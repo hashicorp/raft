@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"errors"
 	"sync"
 )
 
@@ -107,7 +108,7 @@ func (i *InmemStore) Get(key []byte) ([]byte, error) {
 	i.l.RLock()
 	defer i.l.RUnlock()
 	val := i.kv[string(key)]
-        if val == nil {
+	if val == nil {
 		return nil, errors.New("not found")
 	}
 	return val, nil
