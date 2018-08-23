@@ -158,6 +158,7 @@ func WaitFuture(f Future, t *testing.T) error {
 }
 
 func NoErr(err error, t *testing.T) {
+	t.Helper()
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
