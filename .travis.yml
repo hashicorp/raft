@@ -1,10 +1,8 @@
 language: go
 
 go:
-    # Disabled until https://github.com/armon/go-metrics/issues/59 is fixed
-    # - 1.6
-    - 1.8
     - 1.9
+    - "1.10"
     - tip
 
 install: make deps
