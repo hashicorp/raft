@@ -12,8 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hashicorp/go-msgpack/codec"
 	"github.com/hashicorp/raft"
+
+	"github.com/ugorji/go/codec"
 )
 
 var (
