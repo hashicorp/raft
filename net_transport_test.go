@@ -752,11 +752,11 @@ func TestNetworkTransport_ListenBackoff(t *testing.T) {
 
 	var numAccepts int32
 	var numLogs int32
-	countingWriter := testCountingWriter{t, &numAccepts}
+	countingWriter := testCountingWriter{t, &numLogs}
 	countingLogger := log.New(countingWriter, "test", log.LstdFlags)
 	transport := NetworkTransport{
 		logger: countingLogger,
-		stream: testCountingStreamLayer{&numLogs},
+		stream: testCountingStreamLayer{&numAccepts},
 		shutdownCh: make(chan struct{}),
 	}
 
