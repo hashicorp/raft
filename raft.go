@@ -83,6 +83,7 @@ type leaderState struct {
 	replState  map[ServerID]*followerReplication
 	notify     map[*verifyFuture]struct{}
 	stepDown   chan struct{}
+	transferCh chan struct{}
 }
 
 // setLeader is used to modify the current leader of the cluster
@@ -148,7 +149,7 @@ func (r *Raft) runFollower() {
 	r.logger.Info(fmt.Sprintf("%v entering Follower state (Leader: %q)", r, r.Leader()))
 	metrics.IncrCounter([]string{"raft", "state", "follower"}, 1)
 	heartbeatTimer := randomTimeout(r.conf.HeartbeatTimeout)
-	for {
+	for r.getState() == Follower {
 		select {
 		case rpc := <-r.rpcCh:
 			r.processRPC(rpc)
@@ -340,6 +341,7 @@ func (r *Raft) runLeader() {
 	r.leaderState.replState = make(map[ServerID]*followerReplication)
 	r.leaderState.notify = make(map[*verifyFuture]struct{})
 	r.leaderState.stepDown = make(chan struct{}, 1)
+	r.leaderState.transferCh = make(chan struct{}, 1)
 
 	// Cleanup state on step down
 	defer func() {
@@ -505,6 +507,27 @@ func (r *Raft) leaderLoop() {
 
 		case <-r.leaderState.stepDown:
 			r.setState(Follower)
+
+		case <-r.leaderState.transferCh:
+			s := r.pickTransferLeadershipTarget()
+			if s == nil {
+				r.logger.Printf("[WARN] raft: Tried to transition leadership, but didn't find a peer.")
+				continue
+			}
+			r.logger.Printf("[DEBUG] raft: picked %v to transition leadership to.", s)
+
+			// stop accepting requests
+			//  - kinda done by being here
+
+			// send logs to target
+			//  -
+
+			// send timeoutNow request
+			resp := TimeoutNowResponse{}
+			err := r.trans.TimeoutNow(s.ID, s.Address, &TimeoutNowRequest{RPCHeader: r.getRPCHeader()}, &resp)
+			if err != nil {
+				r.logger.Printf("[WARN] raft: Failed to make TimeoutNow RPC to %v: %v", s, err)
+			}
 
 		case <-r.leaderState.commitCh:
 			// Process the newly committed entries
@@ -981,6 +1004,8 @@ func (r *Raft) processRPC(rpc RPC) {
 		r.requestVote(rpc, cmd)
 	case *InstallSnapshotRequest:
 		r.installSnapshot(rpc, cmd)
+	case *TimeoutNowRequest:
+		r.timeoutNow(rpc, cmd)
 	default:
 		r.logger.Error(fmt.Sprintf("Got unexpected command: %#v", rpc.Command))
 		rpc.Respond(nil, fmt.Errorf("unexpected command"))
@@ -1483,4 +1508,31 @@ func (r *Raft) setState(state RaftState) {
 	if oldState != state {
 		r.observe(state)
 	}
+}
+
+func (r *Raft) pickTransferLeadershipTarget() *Server {
+	for _, server := range r.configurations.latest.Servers {
+		if server.ID != r.localID {
+			return &server
+		}
+	}
+	return nil
+}
+
+func (r *Raft) transitionLeadership() {
+	r.leaderState.transferCh <- struct{}{}
+}
+
+// checkRPCHeader houses logic about whether this instance of Raft can process
+// the given RPC message.
+func (r *Raft) timeoutNow(rpc RPC, req *TimeoutNowRequest) {
+	var rpcErr error
+	// Setup a response
+	resp := &TimeoutNowResponse{}
+	defer func() {
+		rpc.Respond(resp, rpcErr)
+	}()
+
+	r.setLeader("")
+	r.setState(Candidate)
 }

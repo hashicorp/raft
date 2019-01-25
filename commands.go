@@ -149,3 +149,23 @@ type InstallSnapshotResponse struct {
 func (r *InstallSnapshotResponse) GetRPCHeader() RPCHeader {
 	return r.RPCHeader
 }
+
+type TimeoutNowRequest struct {
+	RPCHeader
+
+	Term uint64
+}
+
+// See WithRPCHeader.
+func (r *TimeoutNowRequest) GetRPCHeader() RPCHeader {
+	return r.RPCHeader
+}
+
+type TimeoutNowResponse struct {
+	RPCHeader
+}
+
+// See WithRPCHeader.
+func (r *TimeoutNowResponse) GetRPCHeader() RPCHeader {
+	return r.RPCHeader
+}

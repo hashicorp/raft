@@ -2410,6 +2410,63 @@ func TestRaft_ProtocolVersion_Upgrade_2_3(t *testing.T) {
 	}
 }
 
+func TestRaft_TransferLeadership(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	oldLeader := string(c.Leader().localID)
+	c.Leader().TransitionLeadership()
+
+	// make sure the voting started
+	time.Sleep(50 * time.Millisecond)
+	newLeader := string(c.Leader().localID)
+	if oldLeader == newLeader {
+		t.Error("Leadership should have been transitioned to another peer.")
+	}
+}
+
+func TestRaft_TransferLeadershipWithOneNode(t *testing.T) {
+	c := MakeCluster(1, t, nil)
+	defer c.Close()
+
+	oldLeader := string(c.Leader().localID)
+	c.Leader().TransitionLeadership()
+
+	// make sure the voting started
+	time.Sleep(50 * time.Millisecond)
+	newLeader := string(c.Leader().localID)
+	t.Error()
+	if oldLeader != newLeader {
+		t.Error("Leadership should not have been transitioned to another peer.")
+	}
+}
+
+func TestRaft_TransferLeadershipWithAnotherDisconnectedNode(t *testing.T) {
+	c := MakeCluster(2, t, nil)
+	defer c.Close()
+
+	oldLeader := string(c.Leader().localID)
+
+	followers := c.GetInState(Follower)
+	if len(followers) != 1 {
+		c.FailNowf("[ERR] expected one followers but got: %v", followers)
+	}
+
+	// Force partial disconnect
+	follower := followers[0]
+	t.Logf("[INFO] Disconnecting %v", follower)
+	c.Disconnect(follower.localAddr)
+
+	c.Leader().TransitionLeadership()
+
+	// make sure the voting started
+	time.Sleep(50 * time.Millisecond)
+	newLeader := string(c.Leader().localID)
+	if oldLeader != newLeader {
+		t.Error("Leadership should not have been transitioned to another peer.")
+	}
+}
+
 // TODO: These are test cases we'd like to write for appendEntries().
 // Unfortunately, it's difficult to do so with the current way this file is
 // tested.
