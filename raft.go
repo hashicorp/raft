@@ -77,13 +77,13 @@ type commitTuple struct {
 
 // leaderState is state that is used while we are a leader.
 type leaderState struct {
-	commitCh   chan struct{}
-	commitment *commitment
-	inflight   *list.List // list of logFuture in log index order
-	replState  map[ServerID]*followerReplication
-	notify     map[*verifyFuture]struct{}
-	stepDown   chan struct{}
-	transferCh chan ServerID
+	commitCh                         chan struct{}
+	commitment                       *commitment
+	inflight                         *list.List // list of logFuture in log index order
+	replState                        map[ServerID]*followerReplication
+	notify                           map[*verifyFuture]struct{}
+	stepDown                         chan struct{}
+	transitionLeadershipInProgressTo *ServerID
 }
 
 // setLeader is used to modify the current leader of the cluster
@@ -167,6 +167,10 @@ func (r *Raft) runFollower() {
 			v.respond(ErrNotLeader)
 
 		case r := <-r.userRestoreCh:
+			// Reject any restores since we are not the leader
+			r.respond(ErrNotLeader)
+
+		case r := <-r.transitionLeadershipCh:
 			// Reject any restores since we are not the leader
 			r.respond(ErrNotLeader)
 
@@ -341,7 +345,6 @@ func (r *Raft) runLeader() {
 	r.leaderState.replState = make(map[ServerID]*followerReplication)
 	r.leaderState.notify = make(map[*verifyFuture]struct{})
 	r.leaderState.stepDown = make(chan struct{}, 1)
-	r.leaderState.transferCh = make(chan ServerID, 1)
 
 	// Cleanup state on step down
 	defer func() {
@@ -508,25 +511,27 @@ func (r *Raft) leaderLoop() {
 		case <-r.leaderState.stepDown:
 			r.setState(Follower)
 
-		case id := <-r.leaderState.transferCh:
-			s := r.lookupServer(id)
-			if s == nil {
-				r.logger.Printf("[WARN] raft: Tried to transition leadership, but didn't find a peer.")
-				continue
-			}
-
-			if replState, ok := r.leaderState.replState[s.ID]; ok {
+		case t := <-r.transitionLeadershipCh:
+			if replState, ok := r.leaderState.replState[t.ID]; !ok {
+				// TODO: is it ok to call it like that? prolly put message into chan
 				lastLogIdx, _ := r.getLastLog()
 				r.replicateTo(replState, lastLogIdx)
 			} else {
-				r.logger.Printf("[WARN] raft: Tried to transition leadership to %v, but couldn't send latest logs", s)
+				err := fmt.Errorf("tried to transition leadership to %v, but could not find replication state", t)
+				r.logger.Printf("[WARN] raft: %s", err)
+				t.respond(err)
 				continue
 			}
 
-			err := r.trans.TimeoutNow(s.ID, s.Address, &TimeoutNowRequest{RPCHeader: r.getRPCHeader()}, &TimeoutNowResponse{})
+			err := r.trans.TimeoutNow(t.ID, t.Address, &TimeoutNowRequest{RPCHeader: r.getRPCHeader()}, &TimeoutNowResponse{})
 			if err != nil {
-				r.logger.Printf("[WARN] raft: Failed to make TimeoutNow RPC to %v: %v", s, err)
+				err = fmt.Errorf("failed to make TimeoutNow RPC to %v: %v", t, err)
+				r.logger.Printf("[WARN] raft: %s", err)
+				t.respond(err)
+				continue
 			}
+			r.leaderState.transitionLeadershipInProgressTo = &t.ID
+			t.respond(nil)
 
 		case <-r.leaderState.commitCh:
 			// Process the newly committed entries
@@ -1527,8 +1532,19 @@ func (r *Raft) pickTransferLeadershipTarget() *Server {
 	return nil
 }
 
-func (r *Raft) transitionLeadership(id ServerID) {
-	r.leaderState.transferCh <- id
+func (r *Raft) transitionLeadership(id ServerID, address ServerAddress) TransitionLeadershipFuture {
+	future := &transitionLeadershipFuture{ID: id, Address: address}
+	future.init()
+
+	select {
+	case r.transitionLeadershipCh <- future:
+		return future
+	case <-r.shutdownCh:
+		return errorFuture{ErrRaftShutdown}
+	default:
+		return errorFuture{ErrEnqueueTimeout}
+	}
+	return future
 }
 
 // checkRPCHeader houses logic about whether this instance of Raft can process

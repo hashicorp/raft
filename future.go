@@ -58,6 +58,10 @@ type SnapshotFuture interface {
 	Open() (*SnapshotMeta, io.ReadCloser, error)
 }
 
+type TransitionLeadershipFuture interface {
+	Future
+}
+
 // errorFuture is used to return a static error.
 type errorFuture struct {
 	err error
@@ -228,6 +232,13 @@ type verifyFuture struct {
 }
 
 // configurationsFuture is used to retrieve the current configurations. This is
+type transitionLeadershipFuture struct {
+	deferError
+
+	ID      ServerID
+	Address ServerAddress
+}
+
 // used to allow safe access to this information outside of the main thread.
 type configurationsFuture struct {
 	deferError

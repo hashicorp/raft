@@ -49,10 +49,6 @@ var (
 	// ErrCantBootstrap is returned when attempt is made to bootstrap a
 	// cluster that already has state present.
 	ErrCantBootstrap = errors.New("bootstrap only works on new clusters")
-
-	// ErrNoTransitionLeadershipTarget is returned wher attempt is made to
-	// transition leadership but there is no peer to transition to.
-	ErrNoTransitionLeadershipTarget = errors.New("tried to transition leadership, but didn't find a peer")
 )
 
 // Raft implements a Raft node.
@@ -161,6 +157,8 @@ type Raft struct {
 	// is indexed by an artificial ID which is used for deregistration.
 	observersLock sync.RWMutex
 	observers     map[uint64]*Observer
+
+	transitionLeadershipCh chan *transitionLeadershipFuture
 }
 
 // BootstrapCluster initializes a server's storage with the given cluster
@@ -447,30 +445,31 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 
 	// Create Raft struct.
 	r := &Raft{
-		protocolVersion:       protocolVersion,
-		applyCh:               make(chan *logFuture),
-		conf:                  *conf,
-		fsm:                   fsm,
-		fsmMutateCh:           make(chan interface{}, 128),
-		fsmSnapshotCh:         make(chan *reqSnapshotFuture),
-		leaderCh:              make(chan bool),
-		localID:               localID,
-		localAddr:             localAddr,
-		logger:                logger,
-		logs:                  logs,
-		configurationChangeCh: make(chan *configurationChangeFuture),
-		configurations:        configurations{},
-		rpcCh:                 trans.Consumer(),
-		snapshots:             snaps,
-		userSnapshotCh:        make(chan *userSnapshotFuture),
-		userRestoreCh:         make(chan *userRestoreFuture),
-		shutdownCh:            make(chan struct{}),
-		stable:                stable,
-		trans:                 trans,
-		verifyCh:              make(chan *verifyFuture, 64),
-		configurationsCh:      make(chan *configurationsFuture, 8),
-		bootstrapCh:           make(chan *bootstrapFuture),
-		observers:             make(map[uint64]*Observer),
+		protocolVersion:        protocolVersion,
+		applyCh:                make(chan *logFuture),
+		conf:                   *conf,
+		fsm:                    fsm,
+		fsmMutateCh:            make(chan interface{}, 128),
+		fsmSnapshotCh:          make(chan *reqSnapshotFuture),
+		leaderCh:               make(chan bool),
+		localID:                localID,
+		localAddr:              localAddr,
+		logger:                 logger,
+		logs:                   logs,
+		configurationChangeCh:  make(chan *configurationChangeFuture),
+		configurations:         configurations{},
+		rpcCh:                  trans.Consumer(),
+		snapshots:              snaps,
+		userSnapshotCh:         make(chan *userSnapshotFuture),
+		userRestoreCh:          make(chan *userRestoreFuture),
+		shutdownCh:             make(chan struct{}),
+		stable:                 stable,
+		trans:                  trans,
+		verifyCh:               make(chan *verifyFuture, 64),
+		configurationsCh:       make(chan *configurationsFuture, 8),
+		bootstrapCh:            make(chan *bootstrapFuture),
+		observers:              make(map[uint64]*Observer),
+		transitionLeadershipCh: make(chan *transitionLeadershipFuture),
 	}
 
 	// Initialize as a follower.
@@ -1021,30 +1020,18 @@ func (r *Raft) TransitionLeadership() Future {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
-	if r.getState() != Leader {
-		return errorFuture{ErrNotLeader}
-	}
-
 	s := r.pickTransferLeadershipTarget()
 	if s == nil {
-		return errorFuture{ErrNoTransitionLeadershipTarget}
+		return errorFuture{errors.New("tried to transition leadership, but didn't find a peer")}
 	}
 
-	r.transitionLeadership(s.ID)
-
-	return nil
+	return r.transitionLeadership(s.ID, s.Address)
 }
 
-func (r *Raft) TransitionLeadershipToServer(id ServerID) Future {
+func (r *Raft) TransitionLeadershipToServer(id ServerID, address ServerAddress) Future {
 	if r.protocolVersion < 3 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
-	if r.getState() != Leader {
-		return errorFuture{ErrNotLeader}
-	}
-
-	r.transitionLeadership(id)
-
-	return nil
+	return r.transitionLeadership(id, address)
 }
