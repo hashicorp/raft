@@ -2410,6 +2410,37 @@ func TestRaft_ProtocolVersion_Upgrade_2_3(t *testing.T) {
 	}
 }
 
+func TestRaft_PickServer(t *testing.T) {
+	type variant struct {
+		servers  []Server
+		expected *Server
+	}
+	a := Server{ID: ServerID("a")}
+	b := Server{ID: ServerID("b")}
+	c := Server{ID: ServerID("c")}
+	r := Server{ID: ServerID("r")}
+	variants := []variant{
+		{servers: []Server{}, expected: nil},
+		{servers: []Server{a}, expected: &a},
+		{servers: []Server{a, b}, expected: &a},
+		{servers: []Server{c, b, a}, expected: &c},
+		{servers: []Server{r, a, b, c}, expected: &a},
+	}
+	for _, v := range variants {
+		r := Raft{localID: ServerID("r"), configurations: configurations{latest: Configuration{Servers: v.servers}}}
+		actual := r.pickServer()
+		if v.expected == nil && actual == nil {
+			continue
+		} else if v.expected == nil && actual != nil {
+			t.Errorf("actual: %v doesn't match expected: %v", actual, v.expected)
+		} else if actual == nil && v.expected != nil {
+			t.Errorf("actual: %v doesn't match expected: %v", actual, v.expected)
+		} else if actual.ID != v.expected.ID {
+			t.Errorf("actual: %v doesn't match expected: %v", actual.ID, v.expected.ID)
+		}
+	}
+}
+
 func TestRaft_TransferLeadership(t *testing.T) {
 	c := MakeCluster(3, t, nil)
 	defer c.Close()

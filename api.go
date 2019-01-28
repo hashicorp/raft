@@ -1020,7 +1020,7 @@ func (r *Raft) TransitionLeadership() Future {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
-	s := r.pickTransferLeadershipTarget()
+	s := r.pickServer()
 	if s == nil {
 		return errorFuture{errors.New("cannot find peer")}
 	}
