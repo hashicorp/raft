@@ -2438,6 +2438,32 @@ func TestRaft_TransferLeadershipWithOneNode(t *testing.T) {
 	}
 }
 
+func TestRaft_TransferLeadershipToInvalidID(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	future := c.Leader().TransitionLeadershipToServer(ServerID("abc"), ServerAddress("127.0.0.1"))
+	expected := "cannot find replication state"
+	if !strings.Contains(future.Error().Error(), expected) {
+		t.Errorf("transition leadership should err with: %s", expected)
+	}
+}
+
+func TestRaft_TransferLeadershipToInvalidAddress(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	follower := c.GetInState(Follower)[0]
+	future := c.Leader().TransitionLeadershipToServer(follower.localID, ServerAddress("127.0.0.1"))
+	if future.Error() == nil {
+		t.Error("transition leadership should err")
+	}
+	expected := "failed to make TimeoutNow RPC"
+	if !strings.Contains(future.Error().Error(), expected) {
+		t.Errorf("transition leadership should err with: %s", expected)
+	}
+}
+
 // TODO: These are test cases we'd like to write for appendEntries().
 // Unfortunately, it's difficult to do so with the current way this file is
 // tested.

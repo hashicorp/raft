@@ -512,12 +512,12 @@ func (r *Raft) leaderLoop() {
 			r.setState(Follower)
 
 		case t := <-r.transitionLeadershipCh:
-			if replState, ok := r.leaderState.replState[t.ID]; !ok {
+			if replState, ok := r.leaderState.replState[t.ID]; ok {
 				// TODO: is it ok to call it like that? prolly put message into chan
 				lastLogIdx, _ := r.getLastLog()
 				r.replicateTo(replState, lastLogIdx)
 			} else {
-				err := fmt.Errorf("tried to transition leadership to %v, but could not find replication state", t)
+				err := fmt.Errorf("cannot find replication state for %v", t)
 				r.logger.Printf("[WARN] raft: %s", err)
 				t.respond(err)
 				continue
@@ -1544,7 +1544,6 @@ func (r *Raft) transitionLeadership(id ServerID, address ServerAddress) Transiti
 	default:
 		return errorFuture{ErrEnqueueTimeout}
 	}
-	return future
 }
 
 // checkRPCHeader houses logic about whether this instance of Raft can process
