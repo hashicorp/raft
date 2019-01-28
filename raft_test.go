@@ -2432,38 +2432,9 @@ func TestRaft_TransferLeadershipWithOneNode(t *testing.T) {
 	oldLeader := string(c.Leader().localID)
 	c.Leader().TransitionLeadership()
 
-	// make sure the voting started
-	time.Sleep(50 * time.Millisecond)
-	newLeader := string(c.Leader().localID)
-	t.Error()
-	if oldLeader != newLeader {
-		t.Error("Leadership should not have been transitioned to another peer.")
-	}
-}
-
-func TestRaft_TransferLeadershipWithAnotherDisconnectedNode(t *testing.T) {
-	c := MakeCluster(2, t, nil)
-	defer c.Close()
-
-	oldLeader := string(c.Leader().localID)
-
-	followers := c.GetInState(Follower)
-	if len(followers) != 1 {
-		c.FailNowf("[ERR] expected one followers but got: %v", followers)
-	}
-
-	// Force partial disconnect
-	follower := followers[0]
-	t.Logf("[INFO] Disconnecting %v", follower)
-	c.Disconnect(follower.localAddr)
-
-	c.Leader().TransitionLeadership()
-
-	// make sure the voting started
-	time.Sleep(50 * time.Millisecond)
 	newLeader := string(c.Leader().localID)
 	if oldLeader != newLeader {
-		t.Error("Leadership should not have been transitioned to another peer.")
+		t.Error("There is only one server which shouldn't be able to transfer leadership and which needs to stay leader.")
 	}
 }
 

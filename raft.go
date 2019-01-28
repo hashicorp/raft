@@ -83,7 +83,7 @@ type leaderState struct {
 	replState  map[ServerID]*followerReplication
 	notify     map[*verifyFuture]struct{}
 	stepDown   chan struct{}
-	transferCh chan struct{}
+	transferCh chan ServerID
 }
 
 // setLeader is used to modify the current leader of the cluster
@@ -341,7 +341,7 @@ func (r *Raft) runLeader() {
 	r.leaderState.replState = make(map[ServerID]*followerReplication)
 	r.leaderState.notify = make(map[*verifyFuture]struct{})
 	r.leaderState.stepDown = make(chan struct{}, 1)
-	r.leaderState.transferCh = make(chan struct{}, 1)
+	r.leaderState.transferCh = make(chan ServerID, 1)
 
 	// Cleanup state on step down
 	defer func() {
@@ -508,23 +508,22 @@ func (r *Raft) leaderLoop() {
 		case <-r.leaderState.stepDown:
 			r.setState(Follower)
 
-		case <-r.leaderState.transferCh:
-			s := r.pickTransferLeadershipTarget()
+		case id := <-r.leaderState.transferCh:
+			s := r.lookupServer(id)
 			if s == nil {
 				r.logger.Printf("[WARN] raft: Tried to transition leadership, but didn't find a peer.")
 				continue
 			}
-			r.logger.Printf("[DEBUG] raft: picked %v to transition leadership to.", s)
 
-			// stop accepting requests
-			//  - kinda done by being here
+			if replState, ok := r.leaderState.replState[s.ID]; ok {
+				lastLogIdx, _ := r.getLastLog()
+				r.replicateTo(replState, lastLogIdx)
+			} else {
+				r.logger.Printf("[WARN] raft: Tried to transition leadership to %v, but couldn't send latest logs", s)
+				continue
+			}
 
-			// send logs to target
-			//  -
-
-			// send timeoutNow request
-			resp := TimeoutNowResponse{}
-			err := r.trans.TimeoutNow(s.ID, s.Address, &TimeoutNowRequest{RPCHeader: r.getRPCHeader()}, &resp)
+			err := r.trans.TimeoutNow(s.ID, s.Address, &TimeoutNowRequest{RPCHeader: r.getRPCHeader()}, &TimeoutNowResponse{})
 			if err != nil {
 				r.logger.Printf("[WARN] raft: Failed to make TimeoutNow RPC to %v: %v", s, err)
 			}
@@ -1510,6 +1509,15 @@ func (r *Raft) setState(state RaftState) {
 	}
 }
 
+func (r *Raft) lookupServer(id ServerID) *Server {
+	for _, server := range r.configurations.latest.Servers {
+		if server.ID != r.localID {
+			return &server
+		}
+	}
+	return nil
+}
+
 func (r *Raft) pickTransferLeadershipTarget() *Server {
 	for _, server := range r.configurations.latest.Servers {
 		if server.ID != r.localID {
@@ -1519,20 +1527,14 @@ func (r *Raft) pickTransferLeadershipTarget() *Server {
 	return nil
 }
 
-func (r *Raft) transitionLeadership() {
-	r.leaderState.transferCh <- struct{}{}
+func (r *Raft) transitionLeadership(id ServerID) {
+	r.leaderState.transferCh <- id
 }
 
 // checkRPCHeader houses logic about whether this instance of Raft can process
 // the given RPC message.
 func (r *Raft) timeoutNow(rpc RPC, req *TimeoutNowRequest) {
-	var rpcErr error
-	// Setup a response
-	resp := &TimeoutNowResponse{}
-	defer func() {
-		rpc.Respond(resp, rpcErr)
-	}()
-
 	r.setLeader("")
 	r.setState(Candidate)
+	rpc.Respond(&TimeoutNowResponse{}, nil)
 }

@@ -152,8 +152,6 @@ func (r *InstallSnapshotResponse) GetRPCHeader() RPCHeader {
 
 type TimeoutNowRequest struct {
 	RPCHeader
-
-	Term uint64
 }
 
 // See WithRPCHeader.
