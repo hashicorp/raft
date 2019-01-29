@@ -512,27 +512,31 @@ func (r *Raft) leaderLoop() {
 			r.setState(Follower)
 
 		case future := <-r.transitionLeadershipCh:
-			if s, ok := r.leaderState.replState[future.ID]; ok {
-				if s.nextIndex <= r.getLastIndex() {
-					r.logger.Printf("[DEBUG] raft: waiting for replication to catch up before sending TimeoutNow")
-					err := &deferError{}
-					err.init()
-					s.triggerDeferErrorCh <- err
-					if err.Error() != nil {
-						r.logger.Printf("[DEBUG] raft: replication failed: %v", err.Error())
-						continue
-					}
-				}
-				r.logger.Printf("[DEBUG] raft: sending TimeoutNow now because replication is up to date")
-				err := r.trans.TimeoutNow(future.ID, future.Address, &TimeoutNowRequest{RPCHeader: r.getRPCHeader()}, &TimeoutNowResponse{})
-				if err != nil {
-					err = fmt.Errorf("failed to make TimeoutNow RPC to %v: %v, aborting transition leadership", future, err)
-					r.logger.Printf("[WARN] raft: %s", err)
-					future.respond(err)
+			// TODO: do everything async
+
+			s, ok := r.leaderState.replState[future.ID]
+			if !ok {
+				err := fmt.Errorf("cannot find replication state for %v, aborting transition leadership", future)
+				r.logger.Printf("[WARN] raft: %s", err)
+				future.respond(err)
+				continue
+			}
+
+			if s.nextIndex <= r.getLastIndex() {
+				r.logger.Printf("[DEBUG] raft: waiting for replication to catch up before sending TimeoutNow")
+				err := &deferError{}
+				err.init()
+				s.triggerDeferErrorCh <- err
+				if err.Error() != nil {
+					r.logger.Printf("[DEBUG] raft: replication failed: %v", err.Error())
 					continue
 				}
-			} else {
-				err := fmt.Errorf("cannot find replication state for %v, aborting transition leadership", future)
+			}
+
+			r.logger.Printf("[DEBUG] raft: sending TimeoutNow now because replication is up to date")
+			err := r.trans.TimeoutNow(future.ID, future.Address, &TimeoutNowRequest{RPCHeader: r.getRPCHeader()}, &TimeoutNowResponse{})
+			if err != nil {
+				err = fmt.Errorf("failed to make TimeoutNow RPC to %v: %v, aborting transition leadership", future, err)
 				r.logger.Printf("[WARN] raft: %s", err)
 				future.respond(err)
 				continue
@@ -543,7 +547,7 @@ func (r *Raft) leaderLoop() {
 			go func() {
 				select {
 				case err := <-verify.errCh:
-					r.logger.Printf("[HANS] raft: resetting transition leadership: %s", err)
+					r.logger.Printf("[DEBUG] raft: resetting transition leadership: %s", err)
 					future.respond(nil)
 				case <-randomTimeout(r.conf.HeartbeatTimeout):
 					err := fmt.Errorf("timing out transition leadership")
