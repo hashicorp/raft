@@ -506,7 +506,6 @@ func (r *Raft) leaderLoop() {
 	for r.getState() == Leader {
 		select {
 		case rpc := <-r.rpcCh:
-			r.logger.Printf("[WARN] raft: received rpc: %+v", rpc)
 			r.processRPC(rpc)
 
 		case <-r.leaderState.stepDown:
@@ -1565,8 +1564,6 @@ func (r *Raft) transitionLeadership(id ServerID, address ServerAddress) Transiti
 	}
 }
 
-// checkRPCHeader houses logic about whether this instance of Raft can process
-// the given RPC message.
 func (r *Raft) timeoutNow(rpc RPC, req *TimeoutNowRequest) {
 	r.setLeader("")
 	r.setState(Candidate)
