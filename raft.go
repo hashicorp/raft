@@ -77,13 +77,12 @@ type commitTuple struct {
 
 // leaderState is state that is used while we are a leader.
 type leaderState struct {
-	commitCh                         chan struct{}
-	commitment                       *commitment
-	inflight                         *list.List // list of logFuture in log index order
-	replState                        map[ServerID]*followerReplication
-	notify                           map[*verifyFuture]struct{}
-	stepDown                         chan struct{}
-	transitionLeadershipInProgressTo *ServerID
+	commitCh   chan struct{}
+	commitment *commitment
+	inflight   *list.List // list of logFuture in log index order
+	replState  map[ServerID]*followerReplication
+	notify     map[*verifyFuture]struct{}
+	stepDown   chan struct{}
 }
 
 // setLeader is used to modify the current leader of the cluster
@@ -171,7 +170,7 @@ func (r *Raft) runFollower() {
 			r.respond(ErrNotLeader)
 
 		case r := <-r.transitionLeadershipCh:
-			// Reject any restores since we are not the leader
+			// Reject any operations since we are not the leader
 			r.respond(ErrNotLeader)
 
 		case c := <-r.configurationsCh:
@@ -441,16 +440,17 @@ func (r *Raft) startStopReplication() {
 		if _, ok := r.leaderState.replState[server.ID]; !ok {
 			r.logger.Info(fmt.Sprintf("Added peer %v, starting replication", server.ID))
 			s := &followerReplication{
-				peer:        server,
-				commitment:  r.leaderState.commitment,
-				stopCh:      make(chan uint64, 1),
-				triggerCh:   make(chan struct{}, 1),
-				currentTerm: r.getCurrentTerm(),
-				nextIndex:   lastIdx + 1,
-				lastContact: time.Now(),
-				notify:      make(map[*verifyFuture]struct{}),
-				notifyCh:    make(chan struct{}, 1),
-				stepDown:    r.leaderState.stepDown,
+				peer:                server,
+				commitment:          r.leaderState.commitment,
+				stopCh:              make(chan uint64, 1),
+				triggerCh:           make(chan struct{}, 1),
+				triggerDeferErrorCh: make(chan *deferError, 1),
+				currentTerm:         r.getCurrentTerm(),
+				nextIndex:           lastIdx + 1,
+				lastContact:         time.Now(),
+				notify:              make(map[*verifyFuture]struct{}),
+				notifyCh:            make(chan struct{}, 1),
+				stepDown:            r.leaderState.stepDown,
 			}
 			r.leaderState.replState[server.ID] = s
 			r.goFunc(func() { r.replicate(s) })
@@ -506,33 +506,52 @@ func (r *Raft) leaderLoop() {
 	for r.getState() == Leader {
 		select {
 		case rpc := <-r.rpcCh:
+			r.logger.Printf("[WARN] raft: received rpc: %+v", rpc)
 			r.processRPC(rpc)
 
 		case <-r.leaderState.stepDown:
 			r.setState(Follower)
 
-		case t := <-r.transitionLeadershipCh:
-			if replState, ok := r.leaderState.replState[t.ID]; ok {
-				// TODO: is it ok to call it like that? prolly put message into chan
-				lastLogIdx, _ := r.getLastLog()
-				r.replicateTo(replState, lastLogIdx)
+		case future := <-r.transitionLeadershipCh:
+			if s, ok := r.leaderState.replState[future.ID]; ok {
+				if s.nextIndex <= r.getLastIndex() {
+					r.logger.Printf("[DEBUG] raft: waiting for replication to catch up before sending TimeoutNow")
+					err := &deferError{}
+					err.init()
+					s.triggerDeferErrorCh <- err
+					if err.Error() != nil {
+						r.logger.Printf("[DEBUG] raft: replication failed: %v", err.Error())
+						continue
+					}
+				}
+				r.logger.Printf("[DEBUG] raft: sending TimeoutNow now because replication is up to date")
+				err := r.trans.TimeoutNow(future.ID, future.Address, &TimeoutNowRequest{RPCHeader: r.getRPCHeader()}, &TimeoutNowResponse{})
+				if err != nil {
+					err = fmt.Errorf("failed to make TimeoutNow RPC to %v: %v, aborting transition leadership", future, err)
+					r.logger.Printf("[WARN] raft: %s", err)
+					future.respond(err)
+					continue
+				}
 			} else {
-				err := fmt.Errorf("cannot find replication state for %v", t)
+				err := fmt.Errorf("cannot find replication state for %v, aborting transition leadership", future)
 				r.logger.Printf("[WARN] raft: %s", err)
-				t.respond(err)
+				future.respond(err)
 				continue
 			}
-
-			err := r.trans.TimeoutNow(t.ID, t.Address, &TimeoutNowRequest{RPCHeader: r.getRPCHeader()}, &TimeoutNowResponse{})
-			if err != nil {
-				err = fmt.Errorf("failed to make TimeoutNow RPC to %v: %v", t, err)
-				r.logger.Printf("[WARN] raft: %s", err)
-				t.respond(err)
-				continue
-			}
-			r.leaderState.transitionLeadershipInProgressTo = &t.ID
-			t.respond(nil)
-
+			verify := &verifyFuture{}
+			verify.init()
+			r.leaderState.notify[verify] = struct{}{}
+			go func() {
+				select {
+				case err := <-verify.errCh:
+					r.logger.Printf("[HANS] raft: resetting transition leadership: %s", err)
+					future.respond(nil)
+				case <-randomTimeout(r.conf.HeartbeatTimeout):
+					err := fmt.Errorf("timing out transition leadership")
+					r.logger.Printf("[WARN] raft: %s", err)
+					future.respond(err)
+				}
+			}()
 		case <-r.leaderState.commitCh:
 			// Process the newly committed entries
 			oldCommitIndex := r.getCommitIndex()

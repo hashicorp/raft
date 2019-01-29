@@ -2446,10 +2446,10 @@ func TestRaft_TransferLeadership(t *testing.T) {
 	defer c.Close()
 
 	oldLeader := string(c.Leader().localID)
-	c.Leader().TransitionLeadership()
-
-	// make sure the voting started
-	time.Sleep(50 * time.Millisecond)
+	err := c.Leader().TransitionLeadership()
+	if err.Error() != nil {
+		t.Fatalf("Didn't expect error: %v", err.Error())
+	}
 	newLeader := string(c.Leader().localID)
 	if oldLeader == newLeader {
 		t.Error("Leadership should have been transitioned to another peer.")
@@ -2460,12 +2460,11 @@ func TestRaft_TransferLeadershipWithOneNode(t *testing.T) {
 	c := MakeCluster(1, t, nil)
 	defer c.Close()
 
-	oldLeader := string(c.Leader().localID)
-	c.Leader().TransitionLeadership()
-
-	newLeader := string(c.Leader().localID)
-	if oldLeader != newLeader {
-		t.Error("There is only one server which shouldn't be able to transfer leadership and which needs to stay leader.")
+	future := c.Leader().TransitionLeadership()
+	expected := "cannot find peer"
+	actual := future.Error().Error()
+	if !strings.Contains(actual, expected) {
+		t.Errorf("transition leadership should err with: %s", expected)
 	}
 }
 
@@ -2475,7 +2474,8 @@ func TestRaft_TransferLeadershipToInvalidID(t *testing.T) {
 
 	future := c.Leader().TransitionLeadershipToServer(ServerID("abc"), ServerAddress("127.0.0.1"))
 	expected := "cannot find replication state"
-	if !strings.Contains(future.Error().Error(), expected) {
+	actual := future.Error().Error()
+	if !strings.Contains(actual, expected) {
 		t.Errorf("transition leadership should err with: %s", expected)
 	}
 }
@@ -2490,7 +2490,22 @@ func TestRaft_TransferLeadershipToInvalidAddress(t *testing.T) {
 		t.Error("transition leadership should err")
 	}
 	expected := "failed to make TimeoutNow RPC"
-	if !strings.Contains(future.Error().Error(), expected) {
+	actual := future.Error().Error()
+	if !strings.Contains(actual, expected) {
+		t.Errorf("transition leadership should err with: %s", expected)
+	}
+}
+
+func TestRaft_TransferLeadershipToUnresponsiveServer(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+	future := c.Leader().TransitionLeadership()
+	expected := "timing out transition leadership"
+	if future.Error() == nil {
+		t.Fatal("This is supposed to error")
+	}
+	actual := future.Error().Error()
+	if !strings.Contains(actual, expected) {
 		t.Errorf("transition leadership should err with: %s", expected)
 	}
 }

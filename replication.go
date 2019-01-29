@@ -40,8 +40,10 @@ type followerReplication struct {
 	// index; replication should be attempted with a best effort up through that
 	// index, before exiting.
 	stopCh chan uint64
+
 	// triggerCh is notified every time new entries are appended to the log.
-	triggerCh chan struct{}
+	triggerCh           chan struct{}
+	triggerDeferErrorCh chan *deferError
 
 	// currentTerm is the term of this leader, to be included in AppendEntries
 	// requests.
@@ -134,6 +136,14 @@ RPC:
 				r.replicateTo(s, maxIndex)
 			}
 			return
+		case deferErr := <-s.triggerDeferErrorCh:
+			lastLogIdx, _ := r.getLastLog()
+			shouldStop = r.replicateTo(s, lastLogIdx)
+			if !shouldStop {
+				deferErr.respond(nil)
+			} else {
+				deferErr.respond(fmt.Errorf("replication failed"))
+			}
 		case <-s.triggerCh:
 			lastLogIdx, _ := r.getLastLog()
 			shouldStop = r.replicateTo(s, lastLogIdx)
@@ -411,6 +421,14 @@ SEND:
 				r.pipelineSend(s, pipeline, &nextIndex, maxIndex)
 			}
 			break SEND
+		case deferErr := <-s.triggerDeferErrorCh:
+			lastLogIdx, _ := r.getLastLog()
+			shouldStop = r.pipelineSend(s, pipeline, &nextIndex, lastLogIdx)
+			if !shouldStop {
+				deferErr.respond(nil)
+			} else {
+				deferErr.respond(fmt.Errorf("replication failed"))
+			}
 		case <-s.triggerCh:
 			lastLogIdx, _ := r.getLastLog()
 			shouldStop = r.pipelineSend(s, pipeline, &nextIndex, lastLogIdx)
