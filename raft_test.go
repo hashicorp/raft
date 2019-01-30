@@ -2559,6 +2559,26 @@ func TestRaft_TransferLeadershipToBehindServer(t *testing.T) {
 	}
 }
 
+func TestRaft_TransferLeadershipToItself(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	l := c.Leader()
+
+	future := l.LeadershipTransferToServer(l.localID, l.localAddr)
+	if future.Error() == nil {
+		t.Fatalf("This is supposed to error")
+	}
+	if future.Error() == nil {
+		t.Fatal("leadership transfer should err")
+	}
+	expected := "cannot transfer leadership to itself"
+	actual := future.Error().Error()
+	if !strings.Contains(actual, expected) {
+		t.Errorf("leadership transfer should err with: %s", expected)
+	}
+}
+
 // TODO: These are test cases we'd like to write for appendEntries().
 // Unfortunately, it's difficult to do so with the current way this file is
 // tested.

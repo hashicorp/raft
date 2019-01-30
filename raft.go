@@ -1567,6 +1567,13 @@ func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress) Leadership
 	future := &leadershipTransferFuture{ID: id, Address: address}
 	future.init()
 
+	if id == r.localID {
+		err := fmt.Errorf("cannot transfer leadership to itself")
+		r.logger.Printf("[INFO] raft: %v", err)
+		future.respond(err)
+		return future
+	}
+
 	select {
 	case r.leadershipTransferCh <- future:
 		return future
