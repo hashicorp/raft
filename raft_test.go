@@ -2065,6 +2065,7 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	if l := follower.Leader(); l != "" {
 		c.FailNowf("[ERR] bad: %v", l)
 	}
+	t.Error()
 }
 
 func TestRaft_Barrier(t *testing.T) {
@@ -2530,14 +2531,6 @@ func TestRaft_TransferLeadershipToInvalidAddress(t *testing.T) {
 	}
 }
 
-func TestRaft_TransferLeadershipReplicationFails(t *testing.T) {
-	t.Skip("How do I simulate this?")
-}
-
-func TestRaft_TransferLeadershipToUnresponsiveServer(t *testing.T) {
-	t.Skip("How do I simulate this?")
-}
-
 func TestRaft_TransferLeadershipToBehindServer(t *testing.T) {
 	c := MakeCluster(3, t, nil)
 	defer c.Close()
@@ -2567,9 +2560,6 @@ func TestRaft_TransferLeadershipToItself(t *testing.T) {
 
 	future := l.LeadershipTransferToServer(l.localID, l.localAddr)
 	if future.Error() == nil {
-		t.Fatalf("This is supposed to error")
-	}
-	if future.Error() == nil {
 		t.Fatal("leadership transfer should err")
 	}
 	expected := "cannot transfer leadership to itself"
@@ -2577,6 +2567,35 @@ func TestRaft_TransferLeadershipToItself(t *testing.T) {
 	if !strings.Contains(actual, expected) {
 		t.Errorf("leadership transfer should err with: %s", expected)
 	}
+}
+
+func TestRaft_TransferLeadershipResetsLeaderLease(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	l := c.Leader()
+
+	l.leaderState.lease = time.After(1 * time.Second)
+	go func() {
+		select {
+		case <-l.leaderState.lease:
+			t.Log("lease was reset")
+		case <-time.After(100 * time.Millisecond):
+			t.Error("lease was not reset")
+		}
+	}()
+	future := l.LeadershipTransfer()
+	if future.Error() != nil {
+		t.Fatal("leadership transfer should not err")
+	}
+}
+
+func TestRaft_TransferLeadershipReplicationFails(t *testing.T) {
+	t.Skip("How do I test this?")
+}
+
+func TestRaft_TransferLeadershipToUnresponsiveServer(t *testing.T) {
+	t.Skip("How do I test this?")
 }
 
 // TODO: These are test cases we'd like to write for appendEntries().

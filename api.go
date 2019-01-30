@@ -1027,7 +1027,7 @@ func (r *Raft) LeadershipTransfer() Future {
 		return errorFuture{errors.New("cannot find peer")}
 	}
 
-	return r.leadershipTransfer(s.ID, s.Address)
+	return r.initiateLeadershipTransfer(s.ID, s.Address)
 }
 
 func (r *Raft) LeadershipTransferToServer(id ServerID, address ServerAddress) Future {
@@ -1035,5 +1035,5 @@ func (r *Raft) LeadershipTransferToServer(id ServerID, address ServerAddress) Fu
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
-	return r.leadershipTransfer(id, address)
+	return r.initiateLeadershipTransfer(id, address)
 }
