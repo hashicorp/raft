@@ -12,6 +12,7 @@ fuzz:
 deps:
 	go get -t -d -v ./...
 	echo $(DEPS) | xargs -n1 go get -d
+	go get github.com/stretchr/testify
 
 cov:
 	INTEG_TESTS=yes gocov test github.com/hashicorp/raft | gocov-html > /tmp/coverage.html
