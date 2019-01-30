@@ -2277,11 +2277,12 @@ func TestRaft_Voting(t *testing.T) {
 	ldrT := c.trans[c.IndexOf(ldr)]
 
 	reqVote := RequestVoteRequest{
-		RPCHeader:    ldr.getRPCHeader(),
-		Term:         ldr.getCurrentTerm() + 10,
-		Candidate:    ldrT.EncodePeer(ldr.localID, ldr.localAddr),
-		LastLogIndex: ldr.LastIndex(),
-		LastLogTerm:  ldr.getCurrentTerm(),
+		RPCHeader:                       ldr.getRPCHeader(),
+		Term:                            ldr.getCurrentTerm() + 10,
+		Candidate:                       ldrT.EncodePeer(ldr.localID, ldr.localAddr),
+		LastLogIndex:                    ldr.LastIndex(),
+		LastLogTerm:                     ldr.getCurrentTerm(),
+		TriggeredByTransitionLeadership: false,
 	}
 	// a follower that thinks there's a leader should vote for that leader.
 	var resp RequestVoteResponse
@@ -2291,13 +2292,23 @@ func TestRaft_Voting(t *testing.T) {
 	if !resp.Granted {
 		c.FailNowf("[ERR] expected vote to be granted, but wasn't %+v", resp)
 	}
-	// a follow that thinks there's a leader shouldn't vote for a different candidate
+	// a follower that thinks there's a leader shouldn't vote for a different candidate
 	reqVote.Candidate = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
 	if err := ldrT.RequestVote(followers[1].localID, followers[1].localAddr, &reqVote, &resp); err != nil {
 		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
 	}
 	if resp.Granted {
 		c.FailNowf("[ERR] expected vote not to be granted, but was %+v", resp)
+	}
+	// a follower that thinks there's a leader, but the request has the transition leadership flag, should
+	// vote for a different candidate
+	reqVote.TriggeredByTransitionLeadership = true
+	reqVote.Candidate = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
+	if err := ldrT.RequestVote(followers[1].localID, followers[1].localAddr, &reqVote, &resp); err != nil {
+		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
+	}
+	if !resp.Granted {
+		c.FailNowf("[ERR] expected vote to be granted, but wasn't %+v", resp)
 	}
 }
 
@@ -2472,6 +2483,21 @@ func TestRaft_TransferLeadershipWithOneNode(t *testing.T) {
 	}
 }
 
+func TestRaft_TransferLeadershipWithSevenNodes(t *testing.T) {
+	c := MakeCluster(7, t, nil)
+	defer c.Close()
+
+	oldLeader := c.Leader().localID
+	follower := c.GetInState(Follower)[0]
+	future := c.Leader().TransitionLeadershipToServer(follower.localID, follower.localAddr)
+	if future.Error() != nil {
+		t.Fatalf("Didn't expect error: %v", future.Error())
+	}
+	if oldLeader == c.Leader().localID {
+		t.Error("Leadership should have been transitioned to specified server.")
+	}
+}
+
 func TestRaft_TransferLeadershipToInvalidID(t *testing.T) {
 	c := MakeCluster(3, t, nil)
 	defer c.Close()
@@ -2506,33 +2532,30 @@ func TestRaft_TransferLeadershipToInvalidAddress(t *testing.T) {
 
 func TestRaft_TransferLeadershipReplicationFails(t *testing.T) {
 	t.Skip("How do I simulate this?")
-	c := MakeCluster(3, t, nil)
-	defer c.Close()
-
-	follower := c.GetInState(Follower)[0]
-	future := c.Leader().TransitionLeadershipToServer(follower.localID, follower.localAddr)
-	if future.Error() == nil {
-		t.Fatal("transition leadership should err")
-	}
-	expected := "replication failed"
-	actual := future.Error().Error()
-	if !strings.Contains(actual, expected) {
-		t.Errorf("transition leadership should err with: %s", expected)
-	}
 }
 
 func TestRaft_TransferLeadershipToUnresponsiveServer(t *testing.T) {
 	t.Skip("How do I simulate this?")
+}
+
+func TestRaft_TransferLeadershipToBehindServer(t *testing.T) {
 	c := MakeCluster(3, t, nil)
 	defer c.Close()
-	future := c.Leader().TransitionLeadership()
-	expected := "timing out transition leadership"
-	if future.Error() == nil {
-		t.Fatal("This is supposed to error")
+
+	l := c.Leader()
+	behind := c.GetInState(Follower)[0]
+
+	// Commit a lot of things
+	for i := 0; i < 1000; i++ {
+		l.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
 	}
-	actual := future.Error().Error()
-	if !strings.Contains(actual, expected) {
-		t.Errorf("transition leadership should err with: %s", expected)
+
+	future := l.TransitionLeadershipToServer(behind.localID, behind.localAddr)
+	if future.Error() != nil {
+		t.Fatalf("This is not supposed to error: %v", future.Error())
+	}
+	if c.Leader().localID != behind.localID {
+		t.Fatal("Behind server did not get leadership")
 	}
 }
 

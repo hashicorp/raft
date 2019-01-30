@@ -76,6 +76,8 @@ type RequestVoteRequest struct {
 	// Used to ensure safety
 	LastLogIndex uint64
 	LastLogTerm  uint64
+
+	TriggeredByTransitionLeadership bool
 }
 
 // See WithRPCHeader.
