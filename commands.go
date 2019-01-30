@@ -77,7 +77,7 @@ type RequestVoteRequest struct {
 	LastLogIndex uint64
 	LastLogTerm  uint64
 
-	TriggeredByTransitionLeadership bool
+	TriggeredByLeadershipTransfer bool
 }
 
 // See WithRPCHeader.

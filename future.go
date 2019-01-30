@@ -58,7 +58,7 @@ type SnapshotFuture interface {
 	Open() (*SnapshotMeta, io.ReadCloser, error)
 }
 
-type TransitionLeadershipFuture interface {
+type LeadershipTransferFuture interface {
 	Future
 }
 
@@ -232,7 +232,7 @@ type verifyFuture struct {
 }
 
 // configurationsFuture is used to retrieve the current configurations. This is
-type transitionLeadershipFuture struct {
+type leadershipTransferFuture struct {
 	deferError
 
 	ID      ServerID

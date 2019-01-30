@@ -97,7 +97,7 @@ type Raft struct {
 	// leaderState used only while state is leader
 	leaderState leaderState
 
-	candidateFromTransitionLeadership bool
+	candidateFromLeadershipTransfer bool
 
 	// Stores our local server ID, used to avoid sending RPCs to ourself
 	localID ServerID
@@ -160,7 +160,7 @@ type Raft struct {
 	observersLock sync.RWMutex
 	observers     map[uint64]*Observer
 
-	transitionLeadershipCh chan *transitionLeadershipFuture
+	leadershipTransferCh chan *leadershipTransferFuture
 }
 
 // BootstrapCluster initializes a server's storage with the given cluster
@@ -447,31 +447,31 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 
 	// Create Raft struct.
 	r := &Raft{
-		protocolVersion:        protocolVersion,
-		applyCh:                make(chan *logFuture),
-		conf:                   *conf,
-		fsm:                    fsm,
-		fsmMutateCh:            make(chan interface{}, 128),
-		fsmSnapshotCh:          make(chan *reqSnapshotFuture),
-		leaderCh:               make(chan bool),
-		localID:                localID,
-		localAddr:              localAddr,
-		logger:                 logger,
-		logs:                   logs,
-		configurationChangeCh:  make(chan *configurationChangeFuture),
-		configurations:         configurations{},
-		rpcCh:                  trans.Consumer(),
-		snapshots:              snaps,
-		userSnapshotCh:         make(chan *userSnapshotFuture),
-		userRestoreCh:          make(chan *userRestoreFuture),
-		shutdownCh:             make(chan struct{}),
-		stable:                 stable,
-		trans:                  trans,
-		verifyCh:               make(chan *verifyFuture, 64),
-		configurationsCh:       make(chan *configurationsFuture, 8),
-		bootstrapCh:            make(chan *bootstrapFuture),
-		observers:              make(map[uint64]*Observer),
-		transitionLeadershipCh: make(chan *transitionLeadershipFuture, 64),
+		protocolVersion:       protocolVersion,
+		applyCh:               make(chan *logFuture),
+		conf:                  *conf,
+		fsm:                   fsm,
+		fsmMutateCh:           make(chan interface{}, 128),
+		fsmSnapshotCh:         make(chan *reqSnapshotFuture),
+		leaderCh:              make(chan bool),
+		localID:               localID,
+		localAddr:             localAddr,
+		logger:                logger,
+		logs:                  logs,
+		configurationChangeCh: make(chan *configurationChangeFuture),
+		configurations:        configurations{},
+		rpcCh:                 trans.Consumer(),
+		snapshots:             snaps,
+		userSnapshotCh:        make(chan *userSnapshotFuture),
+		userRestoreCh:         make(chan *userRestoreFuture),
+		shutdownCh:            make(chan struct{}),
+		stable:                stable,
+		trans:                 trans,
+		verifyCh:              make(chan *verifyFuture, 64),
+		configurationsCh:      make(chan *configurationsFuture, 8),
+		bootstrapCh:           make(chan *bootstrapFuture),
+		observers:             make(map[uint64]*Observer),
+		leadershipTransferCh:  make(chan *leadershipTransferFuture, 64),
 	}
 
 	// Initialize as a follower.
@@ -1017,7 +1017,7 @@ func (r *Raft) AppliedIndex() uint64 {
 	return r.getLastApplied()
 }
 
-func (r *Raft) TransitionLeadership() Future {
+func (r *Raft) LeadershipTransfer() Future {
 	if r.protocolVersion < 3 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
@@ -1027,13 +1027,13 @@ func (r *Raft) TransitionLeadership() Future {
 		return errorFuture{errors.New("cannot find peer")}
 	}
 
-	return r.transitionLeadership(s.ID, s.Address)
+	return r.leadershipTransfer(s.ID, s.Address)
 }
 
-func (r *Raft) TransitionLeadershipToServer(id ServerID, address ServerAddress) Future {
+func (r *Raft) LeadershipTransferToServer(id ServerID, address ServerAddress) Future {
 	if r.protocolVersion < 3 {
 		return errorFuture{ErrUnsupportedProtocol}
 	}
 
-	return r.transitionLeadership(id, address)
+	return r.leadershipTransfer(id, address)
 }
