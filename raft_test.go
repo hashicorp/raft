@@ -2461,6 +2461,10 @@ func TestRaft_TransferLeadershipWithOneNode(t *testing.T) {
 	defer c.Close()
 
 	future := c.Leader().TransitionLeadership()
+	if future.Error() == nil {
+		t.Fatal("transition leadership should err")
+	}
+
 	expected := "cannot find peer"
 	actual := future.Error().Error()
 	if !strings.Contains(actual, expected) {
@@ -2473,6 +2477,10 @@ func TestRaft_TransferLeadershipToInvalidID(t *testing.T) {
 	defer c.Close()
 
 	future := c.Leader().TransitionLeadershipToServer(ServerID("abc"), ServerAddress("127.0.0.1"))
+	if future.Error() == nil {
+		t.Fatal("transition leadership should err")
+	}
+
 	expected := "cannot find replication state"
 	actual := future.Error().Error()
 	if !strings.Contains(actual, expected) {
@@ -2487,7 +2495,7 @@ func TestRaft_TransferLeadershipToInvalidAddress(t *testing.T) {
 	follower := c.GetInState(Follower)[0]
 	future := c.Leader().TransitionLeadershipToServer(follower.localID, ServerAddress("127.0.0.1"))
 	if future.Error() == nil {
-		t.Error("transition leadership should err")
+		t.Fatal("transition leadership should err")
 	}
 	expected := "failed to make TimeoutNow RPC"
 	actual := future.Error().Error()
@@ -2496,19 +2504,37 @@ func TestRaft_TransferLeadershipToInvalidAddress(t *testing.T) {
 	}
 }
 
-// func TestRaft_TransferLeadershipToUnresponsiveServer(t *testing.T) {
-// 	c := MakeCluster(3, t, nil)
-// 	defer c.Close()
-// 	future := c.Leader().TransitionLeadership()
-// 	expected := "timing out transition leadership"
-// 	if future.Error()== nil{
-// 		t.Fatal("This is supposed to error")
-// 	}
-// 	actual := future.Error().Error()
-// 	if !strings.Contains(actual, expected) {
-// 		t.Errorf("transition leadership should err with: %s", expected)
-// 	}
-// }
+func TestRaft_TransferLeadershipReplicationFails(t *testing.T) {
+	t.Skip("How do I simulate this?")
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	follower := c.GetInState(Follower)[0]
+	future := c.Leader().TransitionLeadershipToServer(follower.localID, follower.localAddr)
+	if future.Error() == nil {
+		t.Fatal("transition leadership should err")
+	}
+	expected := "replication failed"
+	actual := future.Error().Error()
+	if !strings.Contains(actual, expected) {
+		t.Errorf("transition leadership should err with: %s", expected)
+	}
+}
+
+func TestRaft_TransferLeadershipToUnresponsiveServer(t *testing.T) {
+	t.Skip("How do I simulate this?")
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+	future := c.Leader().TransitionLeadership()
+	expected := "timing out transition leadership"
+	if future.Error() == nil {
+		t.Fatal("This is supposed to error")
+	}
+	actual := future.Error().Error()
+	if !strings.Contains(actual, expected) {
+		t.Errorf("transition leadership should err with: %s", expected)
+	}
+}
 
 // TODO: These are test cases we'd like to write for appendEntries().
 // Unfortunately, it's difficult to do so with the current way this file is
