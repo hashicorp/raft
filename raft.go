@@ -709,6 +709,8 @@ func (r *Raft) verifyLeader(v *verifyFuture) {
 }
 
 func (r *Raft) leadershipTransfer(future *leadershipTransferFuture) {
+	r.leaderState.transferInProgress = true
+
 	s, ok := r.leaderState.replState[future.ID]
 	if !ok {
 		err := fmt.Errorf("cannot find replication state for %v, aborting leadership transfer", future)
@@ -730,7 +732,6 @@ func (r *Raft) leadershipTransfer(future *leadershipTransferFuture) {
 	}
 
 	r.leaderState.lease = time.After(0)
-	r.leaderState.transferInProgress = true
 
 	r.logger.Printf("[DEBUG] raft: sending TimeoutNow now because replication is up to date")
 	err := r.trans.TimeoutNow(future.ID, future.Address, &TimeoutNowRequest{RPCHeader: r.getRPCHeader()}, &TimeoutNowResponse{})
