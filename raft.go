@@ -1296,6 +1296,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// Increase the term if we see a newer one
 	if req.Term > r.getCurrentTerm() {
 		// Ensure transition to follower
+		r.logger.Printf("[DEBUG] raft: lost leadership because received a requestvote with newer term")
 		r.setState(Follower)
 		r.setCurrentTerm(req.Term)
 		resp.Term = req.Term

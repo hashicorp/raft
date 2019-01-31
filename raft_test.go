@@ -2569,27 +2569,6 @@ func TestRaft_LeadershipTransferToItself(t *testing.T) {
 	}
 }
 
-func TestRaft_LeadershipTransferResetsLeaderLease(t *testing.T) {
-	c := MakeCluster(3, t, nil)
-	defer c.Close()
-
-	l := c.Leader()
-
-	l.leaderState.lease = time.After(1 * time.Second)
-	go func() {
-		select {
-		case <-l.leaderState.lease:
-			t.Log("lease was reset")
-		case <-time.After(100 * time.Millisecond):
-			t.Error("lease was not reset")
-		}
-	}()
-	future := l.LeadershipTransfer()
-	if future.Error() != nil {
-		t.Fatal("leadership transfer should not err")
-	}
-}
-
 func TestRaft_LeadershipTransferLeaderRejectsClientRequests(t *testing.T) {
 	c := MakeCluster(3, t, nil)
 	defer c.Close()
@@ -2626,6 +2605,10 @@ func TestRaft_LeadershipTransferReplicationFails(t *testing.T) {
 }
 
 func TestRaft_LeadershipTransferToUnresponsiveServer(t *testing.T) {
+	t.Skip("How do I test this?")
+}
+
+func TestRaft_LeadershipTransferResetsLeaderLease(t *testing.T) {
 	t.Skip("How do I test this?")
 }
 
