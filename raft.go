@@ -723,7 +723,7 @@ func (r *Raft) leadershipTransfer(future *leadershipTransferFuture) {
 		err.init()
 		s.triggerDeferErrorCh <- err
 		if err.Error() != nil {
-			r.logger.Printf("[DEBUG] raft: replication failed: %v", err.Error())
+			r.logger.Printf("[DEBUG] raft: %v", err.Error())
 			future.respond(err.Error())
 			return
 		}
@@ -736,7 +736,7 @@ func (r *Raft) leadershipTransfer(future *leadershipTransferFuture) {
 	err := r.trans.TimeoutNow(future.ID, future.Address, &TimeoutNowRequest{RPCHeader: r.getRPCHeader()}, &TimeoutNowResponse{})
 	if err != nil {
 		err = fmt.Errorf("failed to make TimeoutNow RPC to %v: %v, aborting leadership transfer", future, err)
-		r.logger.Printf("[WARN] raft: %s", err)
+		r.logger.Printf("[DEBUG] raft: %s", err)
 		future.respond(err)
 		r.leaderState.transferInProgress = false
 		return
@@ -752,7 +752,7 @@ func (r *Raft) leadershipTransfer(future *leadershipTransferFuture) {
 			r.leaderState.transferInProgress = false
 		case <-randomTimeout(r.conf.HeartbeatTimeout):
 			err := fmt.Errorf("timing out leadership transfer")
-			r.logger.Printf("[WARN] raft: %s", err)
+			r.logger.Printf("[DEBUG] raft: %s", err)
 			future.respond(err)
 			r.leaderState.transferInProgress = false
 		}
