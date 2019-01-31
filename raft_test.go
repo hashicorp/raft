@@ -2453,7 +2453,7 @@ func TestRaft_PickServer(t *testing.T) {
 	}
 }
 
-func TestRaft_TransferLeadership(t *testing.T) {
+func TestRaft_LeadershipTransfer(t *testing.T) {
 	c := MakeCluster(3, t, nil)
 	defer c.Close()
 
@@ -2468,7 +2468,7 @@ func TestRaft_TransferLeadership(t *testing.T) {
 	}
 }
 
-func TestRaft_TransferLeadershipWithOneNode(t *testing.T) {
+func TestRaft_LeadershipTransferWithOneNode(t *testing.T) {
 	c := MakeCluster(1, t, nil)
 	defer c.Close()
 
@@ -2484,7 +2484,7 @@ func TestRaft_TransferLeadershipWithOneNode(t *testing.T) {
 	}
 }
 
-func TestRaft_TransferLeadershipWithSevenNodes(t *testing.T) {
+func TestRaft_LeadershipTransferWithSevenNodes(t *testing.T) {
 	c := MakeCluster(7, t, nil)
 	defer c.Close()
 
@@ -2499,7 +2499,7 @@ func TestRaft_TransferLeadershipWithSevenNodes(t *testing.T) {
 	}
 }
 
-func TestRaft_TransferLeadershipToInvalidID(t *testing.T) {
+func TestRaft_LeadershipTransferToInvalidID(t *testing.T) {
 	c := MakeCluster(3, t, nil)
 	defer c.Close()
 
@@ -2515,7 +2515,7 @@ func TestRaft_TransferLeadershipToInvalidID(t *testing.T) {
 	}
 }
 
-func TestRaft_TransferLeadershipToInvalidAddress(t *testing.T) {
+func TestRaft_LeadershipTransferToInvalidAddress(t *testing.T) {
 	c := MakeCluster(3, t, nil)
 	defer c.Close()
 
@@ -2531,7 +2531,7 @@ func TestRaft_TransferLeadershipToInvalidAddress(t *testing.T) {
 	}
 }
 
-func TestRaft_TransferLeadershipToBehindServer(t *testing.T) {
+func TestRaft_LeadershipTransferToBehindServer(t *testing.T) {
 	c := MakeCluster(3, t, nil)
 	defer c.Close()
 
@@ -2552,7 +2552,7 @@ func TestRaft_TransferLeadershipToBehindServer(t *testing.T) {
 	}
 }
 
-func TestRaft_TransferLeadershipToItself(t *testing.T) {
+func TestRaft_LeadershipTransferToItself(t *testing.T) {
 	c := MakeCluster(3, t, nil)
 	defer c.Close()
 
@@ -2569,7 +2569,7 @@ func TestRaft_TransferLeadershipToItself(t *testing.T) {
 	}
 }
 
-func TestRaft_TransferLeadershipResetsLeaderLease(t *testing.T) {
+func TestRaft_LeadershipTransferResetsLeaderLease(t *testing.T) {
 	c := MakeCluster(3, t, nil)
 	defer c.Close()
 
@@ -2590,11 +2590,42 @@ func TestRaft_TransferLeadershipResetsLeaderLease(t *testing.T) {
 	}
 }
 
-func TestRaft_TransferLeadershipReplicationFails(t *testing.T) {
+func TestRaft_LeadershipTransferLeaderRejectsClientRequests(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+	l := c.Leader()
+	l.leaderState.transferInProgress = true
+
+	// tests for API > protocol version 3 is missing here because leadership transfer
+	// is only available for protocol version >= 3
+	// TODO: is something missing here?
+	futures := []Future{
+		l.AddNonvoter(ServerID(""), ServerAddress(""), 0, 0),
+		l.AddVoter(ServerID(""), ServerAddress(""), 0, 0),
+		l.Apply([]byte("test"), 0),
+		l.Barrier(0),
+		l.DemoteVoter(ServerID(""), 0, 0),
+		l.GetConfiguration(),
+		l.LeadershipTransfer(),
+		l.LeadershipTransferToServer(ServerID(""), ServerAddress("")),
+		l.VerifyLeader(),
+
+		// the API is tested, but here we are making sure we reject any config change.
+		l.requestConfigChange(configurationChangeRequest{}, 0),
+	}
+
+	for _, f := range futures {
+		if f.Error() != ErrLeadershipTransferInProgress {
+			t.Errorf("should have errored with: %s, instead of %s", ErrLeadershipTransferInProgress, f.Error())
+		}
+	}
+}
+
+func TestRaft_LeadershipTransferReplicationFails(t *testing.T) {
 	t.Skip("How do I test this?")
 }
 
-func TestRaft_TransferLeadershipToUnresponsiveServer(t *testing.T) {
+func TestRaft_LeadershipTransferToUnresponsiveServer(t *testing.T) {
 	t.Skip("How do I test this?")
 }
 

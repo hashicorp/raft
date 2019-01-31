@@ -77,13 +77,14 @@ type commitTuple struct {
 
 // leaderState is state that is used while we are a leader.
 type leaderState struct {
-	commitCh   chan struct{}
-	commitment *commitment
-	inflight   *list.List // list of logFuture in log index order
-	replState  map[ServerID]*followerReplication
-	notify     map[*verifyFuture]struct{}
-	stepDown   chan struct{}
-	lease      <-chan time.Time
+	commitCh           chan struct{}
+	commitment         *commitment
+	inflight           *list.List // list of logFuture in log index order
+	replState          map[ServerID]*followerReplication
+	notify             map[*verifyFuture]struct{}
+	stepDown           chan struct{}
+	lease              <-chan time.Time
+	transferInProgress bool
 }
 
 // setLeader is used to modify the current leader of the cluster
@@ -348,6 +349,7 @@ func (r *Raft) runLeader() {
 	r.leaderState.notify = make(map[*verifyFuture]struct{})
 	r.leaderState.stepDown = make(chan struct{}, 1)
 	r.leaderState.lease = time.After(r.conf.LeaderLeaseTimeout)
+	r.leaderState.transferInProgress = false
 
 	// Cleanup state on step down
 	defer func() {
@@ -515,8 +517,13 @@ func (r *Raft) leaderLoop() {
 			r.setState(Follower)
 
 		case future := <-r.leadershipTransferCh:
-			// TODO: do everything async
+			if r.leaderState.transferInProgress {
+				r.logger.Printf("[DEBUG] raft: %s", ErrLeadershipTransferInProgress)
+				future.respond(ErrLeadershipTransferInProgress)
+				continue
+			}
 			r.leadershipTransfer(future)
+
 		case <-r.leaderState.commitCh:
 			// Process the newly committed entries
 			oldCommitIndex := r.getCommitIndex()
@@ -571,6 +578,11 @@ func (r *Raft) leaderLoop() {
 			}
 
 		case v := <-r.verifyCh:
+			if r.leaderState.transferInProgress {
+				r.logger.Printf("[DEBUG] raft: %s", ErrLeadershipTransferInProgress)
+				v.respond(ErrLeadershipTransferInProgress)
+				continue
+			}
 			if v.quorumSize == 0 {
 				// Just dispatched, start the verification
 				r.verifyLeader(v)
@@ -595,20 +607,40 @@ func (r *Raft) leaderLoop() {
 			}
 
 		case future := <-r.userRestoreCh:
+			if r.leaderState.transferInProgress {
+				r.logger.Printf("[DEBUG] raft: %s", ErrLeadershipTransferInProgress)
+				future.respond(ErrLeadershipTransferInProgress)
+				continue
+			}
 			err := r.restoreUserSnapshot(future.meta, future.reader)
 			future.respond(err)
 
-		case c := <-r.configurationsCh:
-			c.configurations = r.configurations.Clone()
-			c.respond(nil)
+		case future := <-r.configurationsCh:
+			if r.leaderState.transferInProgress {
+				r.logger.Printf("[DEBUG] raft: %s", ErrLeadershipTransferInProgress)
+				future.respond(ErrLeadershipTransferInProgress)
+				continue
+			}
+			future.configurations = r.configurations.Clone()
+			future.respond(nil)
 
 		case future := <-r.configurationChangeChIfStable():
+			if r.leaderState.transferInProgress {
+				r.logger.Printf("[DEBUG] raft: %s", ErrLeadershipTransferInProgress)
+				future.respond(ErrLeadershipTransferInProgress)
+				continue
+			}
 			r.appendConfigurationEntry(future)
 
 		case b := <-r.bootstrapCh:
 			b.respond(ErrCantBootstrap)
 
 		case newLog := <-r.applyCh:
+			if r.leaderState.transferInProgress {
+				r.logger.Printf("[DEBUG] raft: %s", ErrLeadershipTransferInProgress)
+				newLog.respond(ErrLeadershipTransferInProgress)
+				continue
+			}
 			// Group commit, gather all the ready commits
 			ready := []*logFuture{newLog}
 			for i := 0; i < r.conf.MaxAppendEntries; i++ {
@@ -698,6 +730,7 @@ func (r *Raft) leadershipTransfer(future *leadershipTransferFuture) {
 	}
 
 	r.leaderState.lease = time.After(0)
+	r.leaderState.transferInProgress = true
 
 	r.logger.Printf("[DEBUG] raft: sending TimeoutNow now because replication is up to date")
 	err := r.trans.TimeoutNow(future.ID, future.Address, &TimeoutNowRequest{RPCHeader: r.getRPCHeader()}, &TimeoutNowResponse{})
@@ -705,6 +738,7 @@ func (r *Raft) leadershipTransfer(future *leadershipTransferFuture) {
 		err = fmt.Errorf("failed to make TimeoutNow RPC to %v: %v, aborting leadership transfer", future, err)
 		r.logger.Printf("[WARN] raft: %s", err)
 		future.respond(err)
+		r.leaderState.transferInProgress = false
 		return
 	}
 	verify := &verifyFuture{}
@@ -715,10 +749,12 @@ func (r *Raft) leadershipTransfer(future *leadershipTransferFuture) {
 		case err := <-verify.errCh:
 			r.logger.Printf("[DEBUG] raft: resetting leadership transfer: %s", err)
 			future.respond(nil)
+			r.leaderState.transferInProgress = false
 		case <-randomTimeout(r.conf.HeartbeatTimeout):
 			err := fmt.Errorf("timing out leadership transfer")
 			r.logger.Printf("[WARN] raft: %s", err)
 			future.respond(err)
+			r.leaderState.transferInProgress = false
 		}
 	}()
 }

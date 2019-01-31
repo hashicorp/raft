@@ -49,6 +49,8 @@ var (
 	// ErrCantBootstrap is returned when attempt is made to bootstrap a
 	// cluster that already has state present.
 	ErrCantBootstrap = errors.New("bootstrap only works on new clusters")
+
+	ErrLeadershipTransferInProgress = errors.New("leadership transfer in progress")
 )
 
 // Raft implements a Raft node.
