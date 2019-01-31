@@ -2065,7 +2065,6 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	if l := follower.Leader(); l != "" {
 		c.FailNowf("[ERR] bad: %v", l)
 	}
-	t.Error()
 }
 
 func TestRaft_Barrier(t *testing.T) {
