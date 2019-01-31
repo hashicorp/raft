@@ -58,6 +58,8 @@ type SnapshotFuture interface {
 	Open() (*SnapshotMeta, io.ReadCloser, error)
 }
 
+// LeadershipTransferFuture is used for waiting on a user-triggered leadership
+// transfer to complete.
 type LeadershipTransferFuture interface {
 	Future
 }
@@ -231,6 +233,8 @@ type verifyFuture struct {
 	voteLock   sync.Mutex
 }
 
+// leadershipTransferFuture is used to track the progress of a leadership
+// transfer internally.
 type leadershipTransferFuture struct {
 	deferError
 

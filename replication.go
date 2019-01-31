@@ -42,7 +42,10 @@ type followerReplication struct {
 	stopCh chan uint64
 
 	// triggerCh is notified every time new entries are appended to the log.
-	triggerCh           chan struct{}
+	triggerCh chan struct{}
+
+	// triggerDeferErrorCh is used to provide a backchannel. By sending a
+	// deferErr, the sender can be notifed when the replication is done.
 	triggerDeferErrorCh chan *deferError
 
 	// currentTerm is the term of this leader, to be included in AppendEntries

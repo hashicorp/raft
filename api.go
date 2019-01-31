@@ -103,7 +103,8 @@ type Raft struct {
 
 	// candidateFromLeadershipTransfer is used to indicate that this server became
 	// candidate because the leader tries to transfer leadership. This flag is
-	// used in requestvote to express that a leadership transfer is going on.
+	// used in RequestVoteRequest to express that a leadership transfer is going
+	// on.
 	candidateFromLeadershipTransfer bool
 
 	// Stores our local server ID, used to avoid sending RPCs to ourself
@@ -1026,6 +1027,13 @@ func (r *Raft) AppliedIndex() uint64 {
 	return r.getLastApplied()
 }
 
+// LeadershipTransfer will transfer leadership to a server in the cluster.
+// This can only be called from the leader, or it will fail. The leader will
+// stop accepting client requests, make sure the target server is up to date and
+// starts the transfer with a TimeoutNow message. This message has the same
+// effect as if the election timeout on the on the target server fires. Since it
+// is unlikely that no other server is starting an election, it is very likely
+// that the target server is able to win the election.
 func (r *Raft) LeadershipTransfer() Future {
 	if r.protocolVersion < 3 {
 		return errorFuture{ErrUnsupportedProtocol}
@@ -1039,6 +1047,9 @@ func (r *Raft) LeadershipTransfer() Future {
 	return r.initiateLeadershipTransfer(s.ID, s.Address)
 }
 
+// LeadershipTransferToServer does the same as LeadershipTransfer but takes a
+// server in the arguments in case a leadership should be transitioned to a
+// specific server in the cluster.
 func (r *Raft) LeadershipTransferToServer(id ServerID, address ServerAddress) Future {
 	if r.protocolVersion < 3 {
 		return errorFuture{ErrUnsupportedProtocol}

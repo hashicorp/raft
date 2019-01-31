@@ -77,7 +77,10 @@ type RequestVoteRequest struct {
 	LastLogIndex uint64
 	LastLogTerm  uint64
 
-	TriggeredByLeadershipTransfer bool
+	// Used to indicate to peers if this vote was triggered by a leadership
+	// transfer. It is required for leadership transfer to work, because servers
+	// wouldn't vote otherwise if they are aware of an existing leader.
+	LeadershipTransfer bool
 }
 
 // See WithRPCHeader.
@@ -152,6 +155,8 @@ func (r *InstallSnapshotResponse) GetRPCHeader() RPCHeader {
 	return r.RPCHeader
 }
 
+// TimeoutNowRequest is the command used by a leader to signal another server to
+// start an election.
 type TimeoutNowRequest struct {
 	RPCHeader
 }
@@ -161,6 +166,7 @@ func (r *TimeoutNowRequest) GetRPCHeader() RPCHeader {
 	return r.RPCHeader
 }
 
+// TimeoutNowResponse is the response to TimeoutNowRequest.
 type TimeoutNowResponse struct {
 	RPCHeader
 }

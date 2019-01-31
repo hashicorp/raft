@@ -2277,12 +2277,12 @@ func TestRaft_Voting(t *testing.T) {
 	ldrT := c.trans[c.IndexOf(ldr)]
 
 	reqVote := RequestVoteRequest{
-		RPCHeader:                     ldr.getRPCHeader(),
-		Term:                          ldr.getCurrentTerm() + 10,
-		Candidate:                     ldrT.EncodePeer(ldr.localID, ldr.localAddr),
-		LastLogIndex:                  ldr.LastIndex(),
-		LastLogTerm:                   ldr.getCurrentTerm(),
-		TriggeredByLeadershipTransfer: false,
+		RPCHeader:          ldr.getRPCHeader(),
+		Term:               ldr.getCurrentTerm() + 10,
+		Candidate:          ldrT.EncodePeer(ldr.localID, ldr.localAddr),
+		LastLogIndex:       ldr.LastIndex(),
+		LastLogTerm:        ldr.getCurrentTerm(),
+		LeadershipTransfer: false,
 	}
 	// a follower that thinks there's a leader should vote for that leader.
 	var resp RequestVoteResponse
@@ -2302,7 +2302,7 @@ func TestRaft_Voting(t *testing.T) {
 	}
 	// a follower that thinks there's a leader, but the request has the leadership transfer flag, should
 	// vote for a different candidate
-	reqVote.TriggeredByLeadershipTransfer = true
+	reqVote.LeadershipTransfer = true
 	reqVote.Candidate = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
 	if err := ldrT.RequestVote(followers[1].localID, followers[1].localAddr, &reqVote, &resp); err != nil {
 		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
@@ -2572,7 +2572,7 @@ func TestRaft_LeadershipTransferLeaderRejectsClientRequests(t *testing.T) {
 	c := MakeCluster(3, t, nil)
 	defer c.Close()
 	l := c.Leader()
-	l.leaderState.transferInProgress = true
+	l.leaderState.leadershipTransferInProgress = true
 
 	// tests for API > protocol version 3 is missing here because leadership transfer
 	// is only available for protocol version >= 3

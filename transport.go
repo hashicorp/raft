@@ -59,6 +59,7 @@ type Transport interface {
 	// ignore the call, and push the heartbeat onto the Consumer channel.
 	SetHeartbeatHandler(cb func(rpc RPC))
 
+	// TimeoutNow is used to start a leadership transfer to the target node.
 	TimeoutNow(id ServerID, target ServerAddress, args *TimeoutNowRequest, resp *TimeoutNowResponse) error
 }
 
