@@ -231,7 +231,6 @@ type verifyFuture struct {
 	voteLock   sync.Mutex
 }
 
-// configurationsFuture is used to retrieve the current configurations. This is
 type leadershipTransferFuture struct {
 	deferError
 
@@ -239,6 +238,7 @@ type leadershipTransferFuture struct {
 	Address ServerAddress
 }
 
+// configurationsFuture is used to retrieve the current configurations. This is
 // used to allow safe access to this information outside of the main thread.
 type configurationsFuture struct {
 	deferError
