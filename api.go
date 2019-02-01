@@ -1032,7 +1032,7 @@ func (r *Raft) AppliedIndex() uint64 {
 // stop accepting client requests, make sure the target server is up to date and
 // starts the transfer with a TimeoutNow message. This message has the same
 // effect as if the election timeout on the on the target server fires. Since it
-// is unlikely that no other server is starting an election, it is very likely
+// is unlikely that another server is starting an election, it is very likely
 // that the target server is able to win the election.
 func (r *Raft) LeadershipTransfer() Future {
 	if r.protocolVersion < 3 {
