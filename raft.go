@@ -726,6 +726,7 @@ func (r *Raft) leadershipTransfer(future *leadershipTransferFuture) {
 	if !ok {
 		err := fmt.Errorf("cannot find replication state for %v, aborting leadership transfer", future)
 		r.logger.Printf("[DEBUG] raft: %v", err)
+		r.leaderState.leadershipTransferInProgress = false
 		future.respond(err)
 		return
 	}
@@ -737,6 +738,7 @@ func (r *Raft) leadershipTransfer(future *leadershipTransferFuture) {
 		s.triggerDeferErrorCh <- err
 		if err.Error() != nil {
 			r.logger.Printf("[DEBUG] raft: %v", err.Error())
+			r.leaderState.leadershipTransferInProgress = false
 			future.respond(err.Error())
 			return
 		}
@@ -761,13 +763,13 @@ func (r *Raft) leadershipTransfer(future *leadershipTransferFuture) {
 		select {
 		case err := <-verify.errCh:
 			r.logger.Printf("[DEBUG] raft: resetting leadership transfer: %s", err)
-			future.respond(nil)
 			r.leaderState.leadershipTransferInProgress = false
+			future.respond(nil)
 		case <-randomTimeout(r.conf.ElectionTimeout):
 			err := fmt.Errorf("timing out leadership transfer")
 			r.logger.Printf("[DEBUG] raft: %s", err)
-			future.respond(err)
 			r.leaderState.leadershipTransferInProgress = false
+			future.respond(err)
 		}
 	}()
 
@@ -778,8 +780,8 @@ func (r *Raft) leadershipTransfer(future *leadershipTransferFuture) {
 	if err != nil {
 		err = fmt.Errorf("failed to make TimeoutNow RPC to %v: %v, aborting leadership transfer", future, err)
 		r.logger.Printf("[DEBUG] raft: %s", err)
-		future.respond(err)
 		r.leaderState.leadershipTransferInProgress = false
+		future.respond(err)
 		return
 	}
 }
