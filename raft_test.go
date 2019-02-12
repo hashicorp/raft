@@ -2439,33 +2439,44 @@ func TestRaft_LeadershipTransferInProgress(t *testing.T) {
 	}
 }
 
+func pointerToString(s string) *string {
+	return &s
+}
+
 func TestRaft_LeadershipTransferPickServer(t *testing.T) {
 	type variant struct {
-		servers  []Server
-		expected *Server
+		lastLogIndex int
+		servers      map[string]uint64
+		expected     *string
 	}
-	a := Server{ID: ServerID("a")}
-	b := Server{ID: ServerID("b")}
-	c := Server{ID: ServerID("c")}
-	r := Server{ID: ServerID("r")}
+	leaderID := "z"
 	variants := []variant{
-		{servers: []Server{}, expected: nil},
-		{servers: []Server{a}, expected: &a},
-		{servers: []Server{a, b}, expected: &a},
-		{servers: []Server{c, b, a}, expected: &c},
-		{servers: []Server{r, a, b, c}, expected: &a},
+		{lastLogIndex: 10, servers: map[string]uint64{}, expected: nil},
+		{lastLogIndex: 10, servers: map[string]uint64{leaderID: 11, "a": 9}, expected: pointerToString("a")},
+		{lastLogIndex: 10, servers: map[string]uint64{leaderID: 11, "a": 9, "b": 8}, expected: pointerToString("a")},
+		{lastLogIndex: 10, servers: map[string]uint64{leaderID: 11, "c": 9, "b": 8, "a": 8}, expected: pointerToString("c")},
+		{lastLogIndex: 10, servers: map[string]uint64{leaderID: 11, "a": 7, "b": 11, "c": 8}, expected: pointerToString("b")},
 	}
-	for _, v := range variants {
-		r := Raft{localID: ServerID("r"), configurations: configurations{latest: Configuration{Servers: v.servers}}}
+	for i, v := range variants {
+		servers := []Server{}
+		replState := map[ServerID]*followerReplication{}
+		for id, idx := range v.servers {
+			servers = append(servers, Server{ID: ServerID(id)})
+			replState[ServerID(id)] = &followerReplication{nextIndex: idx}
+		}
+		r := Raft{leaderState: leaderState{}, localID: ServerID(leaderID), configurations: configurations{latest: Configuration{Servers: servers}}}
+		r.lastLogIndex = uint64(v.lastLogIndex)
+		r.leaderState.replState = replState
+
 		actual := r.pickServer()
 		if v.expected == nil && actual == nil {
 			continue
 		} else if v.expected == nil && actual != nil {
-			t.Errorf("actual: %v doesn't match expected: %v", actual, v.expected)
+			t.Errorf("case %d: actual: %v doesn't match expected: %v", i, actual, v.expected)
 		} else if actual == nil && v.expected != nil {
-			t.Errorf("actual: %v doesn't match expected: %v", actual, v.expected)
-		} else if actual.ID != v.expected.ID {
-			t.Errorf("actual: %v doesn't match expected: %v", actual.ID, v.expected.ID)
+			t.Errorf("case %d: actual: %v doesn't match expected: %v", i, actual, v.expected)
+		} else if string(actual.ID) != *v.expected {
+			t.Errorf("case %d: actual: %v doesn't match expected: %v", i, actual.ID, *v.expected)
 		}
 	}
 }

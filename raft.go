@@ -1646,14 +1646,30 @@ func (r *Raft) lookupServer(id ServerID) *Server {
 	return nil
 }
 
-// pickServer returns the first server that is not itself.
+// pickServer returns the follower that is most up to date.
 func (r *Raft) pickServer() *Server {
+	target := r.getLastIndex()
+	var pick *Server
+	var current uint64
 	for _, server := range r.configurations.latest.Servers {
-		if server.ID != r.localID {
+		if server.ID == r.localID {
+			continue
+		}
+		state, ok := r.leaderState.replState[server.ID]
+		if !ok {
+			continue
+		}
+		// return early if this server is up to date
+		if state.nextIndex > target {
 			return &server
 		}
+		if state.nextIndex > current {
+			current = state.nextIndex
+			tmp := server
+			pick = &tmp
+		}
 	}
-	return nil
+	return pick
 }
 
 // initiateLeadershipTransfer starts the leadership on the leader side, by
