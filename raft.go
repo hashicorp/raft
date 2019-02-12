@@ -529,8 +529,34 @@ func (r *Raft) leaderLoop() {
 				future.respond(ErrLeadershipTransferInProgress)
 				continue
 			}
-			r.leadershipTransfer(future)
 
+			// Track leadership status with the notify channel.
+			verify := &verifyFuture{}
+			verify.init()
+			r.leaderState.notify[verify] = struct{}{}
+			timeout := time.After(r.conf.ElectionTimeout)
+			stopCh := make(chan error, 1)
+			doneCh := make(chan error, 1)
+
+			go r.leadershipTransfer(future.ID, future.Address, stopCh, doneCh)
+			select {
+			case <-timeout:
+				err := fmt.Errorf("leadership transfer timeout")
+				r.logger.Printf("[DEBUG] raft: %v", err)
+				future.respond(err)
+				stopCh <- err
+				<-doneCh
+			case err := <-verify.errCh:
+				r.logger.Printf("[DEBUG] raft: %v", err)
+				stopCh <- err
+				future.respond(err)
+				<-doneCh
+			case err := <-doneCh:
+				if err != nil {
+					r.logger.Printf("[DEBUG] raft: %v", err)
+				}
+				future.respond(err)
+			}
 		case <-r.leaderState.commitCh:
 			// Process the newly committed entries
 			oldCommitIndex := r.getCommitIndex()
@@ -716,30 +742,32 @@ func (r *Raft) verifyLeader(v *verifyFuture) {
 }
 
 // leadershipTransfer is doing the heavy lifting for the leadership transfer.
-func (r *Raft) leadershipTransfer(future *leadershipTransferFuture) {
+func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress, stopCh, doneCh chan error) {
 
 	// Step 1: set this field which stops this leader from responding to any client requests.
 	r.leaderState.leadershipTransferInProgress = true
+	defer func() { r.leaderState.leadershipTransferInProgress = false }()
 
 	// Step 2: make sure the target server is up to date
-	s, ok := r.leaderState.replState[future.ID]
+	s, ok := r.leaderState.replState[id]
 	if !ok {
-		err := fmt.Errorf("cannot find replication state for %v, aborting leadership transfer", future)
-		r.logger.Printf("[DEBUG] raft: %v", err)
-		r.leaderState.leadershipTransferInProgress = false
-		future.respond(err)
+		err := fmt.Errorf("cannot find replication state for %v", id)
+		doneCh <- err
 		return
 	}
 
 	for s.nextIndex <= r.getLastIndex() {
-		r.logger.Printf("[DEBUG] raft: waiting for replication to catch up before sending TimeoutNow")
 		err := &deferError{}
 		err.init()
 		s.triggerDeferErrorCh <- err
-		if err.Error() != nil {
-			r.logger.Printf("[DEBUG] raft: %v", err.Error())
-			r.leaderState.leadershipTransferInProgress = false
-			future.respond(err.Error())
+		select {
+		case err := <-err.errCh:
+			if err != nil {
+				doneCh <- err
+				return
+			}
+		case <-stopCh:
+			doneCh <- nil
 			return
 		}
 	}
@@ -749,41 +777,13 @@ func (r *Raft) leadershipTransfer(future *leadershipTransferFuture) {
 	// this lease.
 	r.leaderState.lease = time.After(0)
 
-	// Track leadership status with the notify channel.
-	verify := &verifyFuture{}
-	verify.init()
-	r.leaderState.notify[verify] = struct{}{}
-
-	// When leadership is lost, the caller is being notified via the future. When
-	// leadership is not lost after an election timeout, the current leader
-	// resumes operation and continues as if nothing has happened. We are setting
-	// everything up here, although we yet have to send TimeoutNowRequest. This is
-	// being done so that we don't miss leadership loss.
-	go func() {
-		select {
-		case err := <-verify.errCh:
-			r.logger.Printf("[DEBUG] raft: resetting leadership transfer: %s", err)
-			r.leaderState.leadershipTransferInProgress = false
-			future.respond(nil)
-		case <-randomTimeout(r.conf.ElectionTimeout):
-			err := fmt.Errorf("timing out leadership transfer")
-			r.logger.Printf("[DEBUG] raft: %s", err)
-			r.leaderState.leadershipTransferInProgress = false
-			future.respond(err)
-		}
-	}()
-
-	// Step 4: send TimeoutNow message to target server. Technically the
-	// leadership transfer is done now from the point of view of the leader.
+	// Step 4: send TimeoutNow message to target server.
 	r.logger.Printf("[DEBUG] raft: sending TimeoutNow now because replication is up to date")
-	err := r.trans.TimeoutNow(future.ID, future.Address, &TimeoutNowRequest{RPCHeader: r.getRPCHeader()}, &TimeoutNowResponse{})
+	err := r.trans.TimeoutNow(id, address, &TimeoutNowRequest{RPCHeader: r.getRPCHeader()}, &TimeoutNowResponse{})
 	if err != nil {
-		err = fmt.Errorf("failed to make TimeoutNow RPC to %v: %v, aborting leadership transfer", future, err)
-		r.logger.Printf("[DEBUG] raft: %s", err)
-		r.leaderState.leadershipTransferInProgress = false
-		future.respond(err)
-		return
+		err = fmt.Errorf("failed to make TimeoutNow RPC to %v: %v", id, err)
 	}
+	doneCh <- err
 }
 
 // checkLeaderLease is used to check if we can contact a quorum of nodes

@@ -2584,17 +2584,22 @@ func TestRaft_LeadershipTransferLeaderRejectsClientRequests(t *testing.T) {
 		l.Barrier(0),
 		l.DemoteVoter(ServerID(""), 0, 0),
 		l.GetConfiguration(),
-		l.LeadershipTransfer(),
-		l.LeadershipTransferToServer(ServerID(""), ServerAddress("")),
 		l.VerifyLeader(),
 
 		// the API is tested, but here we are making sure we reject any config change.
-		l.requestConfigChange(configurationChangeRequest{}, 0),
+		l.requestConfigChange(configurationChangeRequest{}, 100*time.Millisecond),
+	}
+	futures = append(futures, l.LeadershipTransfer())
+	select {
+	case <-l.leadershipTransferCh:
+	default:
 	}
 
-	for _, f := range futures {
+	futures = append(futures, l.LeadershipTransferToServer(ServerID(""), ServerAddress("")))
+
+	for i, f := range futures {
 		if f.Error() != ErrLeadershipTransferInProgress {
-			t.Errorf("should have errored with: %s, instead of %s", ErrLeadershipTransferInProgress, f.Error())
+			t.Errorf("case %d: should have errored with: %s, instead of %s", i, ErrLeadershipTransferInProgress, f.Error())
 		}
 	}
 }

@@ -481,7 +481,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		configurationsCh:      make(chan *configurationsFuture, 8),
 		bootstrapCh:           make(chan *bootstrapFuture),
 		observers:             make(map[uint64]*Observer),
-		leadershipTransferCh:  make(chan *leadershipTransferFuture),
+		leadershipTransferCh:  make(chan *leadershipTransferFuture, 1),
 	}
 
 	// Initialize as a follower.
