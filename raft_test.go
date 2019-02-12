@@ -2421,7 +2421,25 @@ func TestRaft_ProtocolVersion_Upgrade_2_3(t *testing.T) {
 	}
 }
 
-func TestRaft_PickServer(t *testing.T) {
+func TestRaft_LeadershipTransferInProgress(t *testing.T) {
+	r := &Raft{leaderState: leaderState{}}
+	r.setupLeaderState()
+
+	if r.getLeadershipTransferInProgress() != false {
+		t.Errorf("should be true after setup")
+	}
+
+	r.setLeadershipTransferInProgress(true)
+	if r.getLeadershipTransferInProgress() != true {
+		t.Errorf("should be true because we set it before")
+	}
+	r.setLeadershipTransferInProgress(false)
+	if r.getLeadershipTransferInProgress() != false {
+		t.Errorf("should be false because we set it before")
+	}
+}
+
+func TestRaft_LeadershipTransferPickServer(t *testing.T) {
 	type variant struct {
 		servers  []Server
 		expected *Server
@@ -2572,7 +2590,7 @@ func TestRaft_LeadershipTransferLeaderRejectsClientRequests(t *testing.T) {
 	c := MakeCluster(3, t, nil)
 	defer c.Close()
 	l := c.Leader()
-	l.leaderState.leadershipTransferInProgress = true
+	l.setLeadershipTransferInProgress(true)
 
 	// tests for API > protocol version 3 is missing here because leadership transfer
 	// is only available for protocol version >= 3
