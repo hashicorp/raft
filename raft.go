@@ -802,7 +802,6 @@ func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress, stopCh, do
 	r.leaderState.lease = time.After(0)
 
 	// Step 4: send TimeoutNow message to target server.
-	r.logger.Printf("[DEBUG] raft: sending TimeoutNow now because replication is up to date")
 	err := r.trans.TimeoutNow(id, address, &TimeoutNowRequest{RPCHeader: r.getRPCHeader()}, &TimeoutNowResponse{})
 	if err != nil {
 		err = fmt.Errorf("failed to make TimeoutNow RPC to %v: %v", id, err)
