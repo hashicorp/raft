@@ -1035,7 +1035,10 @@ func (r *Raft) AppliedIndex() uint64 {
 // it is unlikely that another server is starting an election, it is very
 // likely that the target server is able to win the election.  Note that raft
 // protocol version 3 is not sufficient to use LeadershipTransfer. A recent
-// version of that library has to be used that includes this feature.
+// version of that library has to be used that includes this feature.  Using
+// transfer leadership is safe however in a cluster where not every node has
+// the latest version. If a follower cannot be promoted, it will fail
+// gracefully.
 func (r *Raft) LeadershipTransfer() Future {
 	if r.protocolVersion < 3 {
 		return errorFuture{ErrUnsupportedProtocol}
@@ -1053,7 +1056,9 @@ func (r *Raft) LeadershipTransfer() Future {
 // server in the arguments in case a leadership should be transitioned to a
 // specific server in the cluster.  Note that raft protocol version 3 is not
 // sufficient to use LeadershipTransfer. A recent version of that library has
-// to be used that includes this feature.
+// to be used that includes this feature. Using transfer leadership is safe
+// however in a cluster where not every node has the latest version. If a
+// follower cannot be promoted, it will fail gracefully.
 func (r *Raft) LeadershipTransferToServer(id ServerID, address ServerAddress) Future {
 	if r.protocolVersion < 3 {
 		return errorFuture{ErrUnsupportedProtocol}
