@@ -561,25 +561,28 @@ func (r *Raft) leaderLoop() {
 			stopCh := make(chan error, 1)
 			doneCh := make(chan error, 1)
 
-			go r.leadershipTransfer(future.ID, future.Address, stopCh, doneCh)
-			select {
-			case <-time.After(r.conf.ElectionTimeout):
-				err := fmt.Errorf("leadership transfer timeout")
-				r.logger.Printf("[DEBUG] raft: %v", err)
-				future.respond(err)
-				stopCh <- err
-				<-doneCh
-			case err := <-verify.errCh:
-				r.logger.Printf("[DEBUG] raft: %v", err)
-				stopCh <- err
-				future.respond(err)
-				<-doneCh
-			case err := <-doneCh:
-				if err != nil {
+			go func() {
+				select {
+				case <-time.After(r.conf.ElectionTimeout):
+					err := fmt.Errorf("leadership transfer timeout")
 					r.logger.Printf("[DEBUG] raft: %v", err)
+					future.respond(err)
+					stopCh <- err
+					<-doneCh
+				case err := <-verify.errCh:
+					r.logger.Printf("[DEBUG] raft: %v", err)
+					stopCh <- err
+					future.respond(err)
+					<-doneCh
+				case err := <-doneCh:
+					if err != nil {
+						r.logger.Printf("[DEBUG] raft: %v", err)
+					}
+					future.respond(err)
 				}
-				future.respond(err)
-			}
+			}()
+
+			go r.leadershipTransfer(future.ID, future.Address, stopCh, doneCh)
 		case <-r.leaderState.commitCh:
 			// Process the newly committed entries
 			oldCommitIndex := r.getCommitIndex()
@@ -766,6 +769,14 @@ func (r *Raft) verifyLeader(v *verifyFuture) {
 
 // leadershipTransfer is doing the heavy lifting for the leadership transfer.
 func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress, stopCh, doneCh chan error) {
+
+	// make sure we are not already stopped
+	select {
+	case err := <-stopCh:
+		doneCh <- err
+		return
+	default:
+	}
 
 	// Step 1: set this field which stops this leader from responding to any client requests.
 	r.setLeadershipTransferInProgress(true)
