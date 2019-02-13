@@ -2633,6 +2633,37 @@ func TestRaft_LeadershipTransferLeaderRejectsClientRequests(t *testing.T) {
 	}
 }
 
+func TestRaft_LeadershipTransferLeaderReplicationTimeout(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	l := c.Leader()
+	behind := c.GetInState(Follower)[0]
+
+	// Commit a lot of things, so that the timeout can kick in
+	for i := 0; i < 100; i++ {
+		l.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	// set ElectionTimeout really short because this is used to determine
+	// how long a transfer is allowed to take.
+	l.conf.ElectionTimeout = 1 * time.Nanosecond
+
+	future := l.LeadershipTransferToServer(behind.localID, behind.localAddr)
+	if future.Error() == nil {
+		t.Fatal("leadership transfer should err")
+	}
+	expected := "leadership transfer timeout"
+	actual := future.Error().Error()
+	if !strings.Contains(actual, expected) {
+		t.Errorf("leadership transfer should err with: %s", expected)
+	}
+}
+
+func TestRaft_LeadershipTransferLeaderLeadershipLossDuringTransfer(t *testing.T) {
+	t.Skip("How do I test this?")
+}
+
 func TestRaft_LeadershipTransferReplicationFails(t *testing.T) {
 	t.Skip("How do I test this?")
 }

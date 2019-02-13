@@ -558,13 +558,12 @@ func (r *Raft) leaderLoop() {
 			verify := &verifyFuture{}
 			verify.init()
 			r.leaderState.notify[verify] = struct{}{}
-			timeout := time.After(r.conf.ElectionTimeout)
 			stopCh := make(chan error, 1)
 			doneCh := make(chan error, 1)
 
 			go r.leadershipTransfer(future.ID, future.Address, stopCh, doneCh)
 			select {
-			case <-timeout:
+			case <-time.After(r.conf.ElectionTimeout):
 				err := fmt.Errorf("leadership transfer timeout")
 				r.logger.Printf("[DEBUG] raft: %v", err)
 				future.respond(err)
