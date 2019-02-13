@@ -806,12 +806,7 @@ func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress, stopCh, do
 		}
 	}
 
-	// Step 3: reset leader lease. Since a new leader might be choosen in a bit,
-	// we don't want this leader to have the right to answer read request based on
-	// this lease.
-	r.leaderState.lease = time.After(0)
-
-	// Step 4: send TimeoutNow message to target server.
+	// Step 3: send TimeoutNow message to target server.
 	err := r.trans.TimeoutNow(id, address, &TimeoutNowRequest{RPCHeader: r.getRPCHeader()}, &TimeoutNowResponse{})
 	if err != nil {
 		err = fmt.Errorf("failed to make TimeoutNow RPC to %v: %v", id, err)
