@@ -1029,11 +1029,13 @@ func (r *Raft) AppliedIndex() uint64 {
 
 // LeadershipTransfer will transfer leadership to a server in the cluster.
 // This can only be called from the leader, or it will fail. The leader will
-// stop accepting client requests, make sure the target server is up to date and
-// starts the transfer with a TimeoutNow message. This message has the same
-// effect as if the election timeout on the on the target server fires. Since it
-// is unlikely that another server is starting an election, it is very likely
-// that the target server is able to win the election.
+// stop accepting client requests, make sure the target server is up to date
+// and starts the transfer with a TimeoutNow message. This message has the same
+// effect as if the election timeout on the on the target server fires. Since
+// it is unlikely that another server is starting an election, it is very
+// likely that the target server is able to win the election.  Note that raft
+// protocol version 3 is not sufficient to use LeadershipTransfer. A recent
+// version of that library has to be used that includes this feature.
 func (r *Raft) LeadershipTransfer() Future {
 	if r.protocolVersion < 3 {
 		return errorFuture{ErrUnsupportedProtocol}
@@ -1049,7 +1051,9 @@ func (r *Raft) LeadershipTransfer() Future {
 
 // LeadershipTransferToServer does the same as LeadershipTransfer but takes a
 // server in the arguments in case a leadership should be transitioned to a
-// specific server in the cluster.
+// specific server in the cluster.  Note that raft protocol version 3 is not
+// sufficient to use LeadershipTransfer. A recent version of that library has
+// to be used that includes this feature.
 func (r *Raft) LeadershipTransferToServer(id ServerID, address ServerAddress) Future {
 	if r.protocolVersion < 3 {
 		return errorFuture{ErrUnsupportedProtocol}
