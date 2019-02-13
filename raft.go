@@ -78,6 +78,7 @@ type commitTuple struct {
 
 // leaderState is state that is used while we are a leader.
 type leaderState struct {
+	leadershipTransferInProgress int32 // indicates that a leadership transfer is in progress.
 	commitCh                     chan struct{}
 	commitment                   *commitment
 	inflight                     *list.List // list of logFuture in log index order
@@ -85,7 +86,6 @@ type leaderState struct {
 	notify                       map[*verifyFuture]struct{}
 	stepDown                     chan struct{}
 	lease                        <-chan time.Time
-	leadershipTransferInProgress *int32 // indicates that a leadership transfer is in progress.
 }
 
 // setLeader is used to modify the current leader of the cluster
@@ -332,17 +332,14 @@ func (r *Raft) runCandidate() {
 
 func (r *Raft) setLeadershipTransferInProgress(v bool) {
 	if v {
-		atomic.StoreInt32(r.leaderState.leadershipTransferInProgress, 1)
+		atomic.StoreInt32(&r.leaderState.leadershipTransferInProgress, 1)
 	} else {
-		atomic.StoreInt32(r.leaderState.leadershipTransferInProgress, 0)
+		atomic.StoreInt32(&r.leaderState.leadershipTransferInProgress, 0)
 	}
 }
 
 func (r *Raft) getLeadershipTransferInProgress() bool {
-	if r.leaderState.leadershipTransferInProgress == nil {
-		return false
-	}
-	v := atomic.LoadInt32(r.leaderState.leadershipTransferInProgress)
+	v := atomic.LoadInt32(&r.leaderState.leadershipTransferInProgress)
 	if v == 1 {
 		return true
 	}
@@ -359,8 +356,6 @@ func (r *Raft) setupLeaderState() {
 	r.leaderState.notify = make(map[*verifyFuture]struct{})
 	r.leaderState.stepDown = make(chan struct{}, 1)
 	r.leaderState.lease = time.After(r.conf.LeaderLeaseTimeout)
-	var zero int32
-	r.leaderState.leadershipTransferInProgress = &zero
 }
 
 // runLeader runs the FSM for a leader. Do the setup here and drop into
@@ -583,6 +578,7 @@ func (r *Raft) leaderLoop() {
 			}()
 
 			go r.leadershipTransfer(future.ID, future.Address, stopCh, doneCh)
+
 		case <-r.leaderState.commitCh:
 			// Process the newly committed entries
 			oldCommitIndex := r.getCommitIndex()
@@ -637,11 +633,6 @@ func (r *Raft) leaderLoop() {
 			}
 
 		case v := <-r.verifyCh:
-			if r.getLeadershipTransferInProgress() {
-				r.logger.Printf("[DEBUG] raft: %s", ErrLeadershipTransferInProgress)
-				v.respond(ErrLeadershipTransferInProgress)
-				continue
-			}
 			if v.quorumSize == 0 {
 				// Just dispatched, start the verification
 				r.verifyLeader(v)

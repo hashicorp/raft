@@ -2613,7 +2613,6 @@ func TestRaft_LeadershipTransferLeaderRejectsClientRequests(t *testing.T) {
 		l.Barrier(0),
 		l.DemoteVoter(ServerID(""), 0, 0),
 		l.GetConfiguration(),
-		l.VerifyLeader(),
 
 		// the API is tested, but here we are making sure we reject any config change.
 		l.requestConfigChange(configurationChangeRequest{}, 100*time.Millisecond),
