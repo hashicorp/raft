@@ -2640,7 +2640,7 @@ func TestRaft_LeadershipTransferLeaderReplicationTimeout(t *testing.T) {
 	behind := c.GetInState(Follower)[0]
 
 	// Commit a lot of things, so that the timeout can kick in
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 1000; i++ {
 		l.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
 	}
 
