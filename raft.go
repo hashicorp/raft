@@ -556,6 +556,12 @@ func (r *Raft) leaderLoop() {
 			stopCh := make(chan error, 1)
 			doneCh := make(chan error, 1)
 
+			// This is intentionally being setup outside of the
+			// leadershipTransfer function. Because the TimeoutNow
+			// call is blocking and there is no way to abort that
+			// in case eg the timer expires.
+			// The leadershipTransfer function is controlled with
+			// the stopCh and doneCh.
 			go func() {
 				select {
 				case <-time.After(r.conf.ElectionTimeout):
@@ -796,6 +802,15 @@ func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress, stopCh, do
 			return
 		}
 	}
+
+	// Step ?: the thesis describes in chap 6.4.1: Using clocks to reduce
+	// messaging for read-only queries. If this is implemented, the lease
+	// has to be reset as well, in case leadership is transferred. This
+	// implementation also has a lease, but it serves another purpose and
+	// doesn't need to be reset. The lease mechanism in our raft lib, is
+	// setup in a similar way to the one in the thesis, but in practice
+	// it's a timer that just tells the leader how often to check
+	// heartbeats are still coming in.
 
 	// Step 3: send TimeoutNow message to target server.
 	err := r.trans.TimeoutNow(id, address, &TimeoutNowRequest{RPCHeader: r.getRPCHeader()}, &TimeoutNowResponse{})
