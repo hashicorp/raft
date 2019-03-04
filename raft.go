@@ -550,7 +550,8 @@ func (r *Raft) leaderLoop() {
 			}
 			r.logger.Printf("[DEBUG] raft: starting leadership transfer to %s: %s", future.ID, future.Address)
 
-			// Track leadership status with the notify channel.
+			// When we are leaving leaderLoop, we are no longer
+			// leader, so we should stop transferring.
 			leftLeaderLoop := make(chan struct{})
 			defer func() { close(leftLeaderLoop) }()
 
