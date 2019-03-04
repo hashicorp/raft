@@ -548,6 +548,7 @@ func (r *Raft) leaderLoop() {
 				future.respond(ErrLeadershipTransferInProgress)
 				continue
 			}
+			r.logger.Printf("[DEBUG] raft: starting leadership transfer to %s: %s", future.ID, future.Address)
 
 			// Track leadership status with the notify channel.
 			leftLeaderLoop := make(chan struct{})
