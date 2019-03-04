@@ -2663,14 +2663,13 @@ func TestRaft_LeadershipTransferStopRightAway(t *testing.T) {
 	r := Raft{leaderState: leaderState{}}
 	r.setupLeaderState()
 
-	stop := make(chan error, 1)
-	done := make(chan error, 1)
-	expected := fmt.Errorf("already done")
-	stop <- expected
-	r.leadershipTransfer(ServerID("a"), ServerAddress(""), stop, done)
-	actual := <-done
-	if actual != expected {
-		t.Errorf("leadership transfer should err with: %s instead of: %s", expected, actual)
+	stopCh := make(chan struct{})
+	doneCh := make(chan error, 1)
+	close(stopCh)
+	r.leadershipTransfer(ServerID("a"), ServerAddress(""), stopCh, doneCh)
+	err := <-doneCh
+	if err != nil {
+		t.Errorf("leadership shouldn't have started, but instead it error with: %v", err)
 	}
 }
 

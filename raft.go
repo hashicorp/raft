@@ -550,10 +550,10 @@ func (r *Raft) leaderLoop() {
 			}
 
 			// Track leadership status with the notify channel.
-			verify := &verifyFuture{}
-			verify.init()
-			r.leaderState.notify[verify] = struct{}{}
-			stopCh := make(chan error, 1)
+			leftLeaderLoop := make(chan struct{})
+			defer func() { close(leftLeaderLoop) }()
+
+			stopCh := make(chan struct{})
 			doneCh := make(chan error, 1)
 
 			// This is intentionally being setup outside of the
@@ -565,15 +565,16 @@ func (r *Raft) leaderLoop() {
 			go func() {
 				select {
 				case <-time.After(r.conf.ElectionTimeout):
+					close(stopCh)
 					err := fmt.Errorf("leadership transfer timeout")
 					r.logger.Printf("[DEBUG] raft: %v", err)
 					future.respond(err)
-					stopCh <- err
 					<-doneCh
-				case err := <-verify.errCh:
+				case <-leftLeaderLoop:
+					close(stopCh)
+					err := fmt.Errorf("lost leadership during transfer (expected)")
 					r.logger.Printf("[DEBUG] raft: %v", err)
-					stopCh <- err
-					future.respond(err)
+					future.respond(nil)
 					<-doneCh
 				case err := <-doneCh:
 					if err != nil {
@@ -765,12 +766,12 @@ func (r *Raft) verifyLeader(v *verifyFuture) {
 }
 
 // leadershipTransfer is doing the heavy lifting for the leadership transfer.
-func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress, stopCh, doneCh chan error) {
+func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress, stopCh chan struct{}, doneCh chan error) {
 
 	// make sure we are not already stopped
 	select {
-	case err := <-stopCh:
-		doneCh <- err
+	case <-stopCh:
+		doneCh <- nil
 		return
 	default:
 	}
@@ -782,8 +783,7 @@ func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress, stopCh, do
 	// Step 2: make sure the target server is up to date
 	s, ok := r.leaderState.replState[id]
 	if !ok {
-		err := fmt.Errorf("cannot find replication state for %v", id)
-		doneCh <- err
+		doneCh <- fmt.Errorf("cannot find replication state for %v", id)
 		return
 	}
 
