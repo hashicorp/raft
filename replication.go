@@ -137,7 +137,8 @@ RPC:
 		case <-s.triggerCh:
 			lastLogIdx, _ := r.getLastLog()
 			shouldStop = r.replicateTo(s, lastLogIdx)
-		case <-randomTimeout(r.conf.CommitTimeout): // TODO: what is this?
+		// Check and update leaderCommit of followers
+		case <-randomTimeout(r.conf.CommitTimeout):
 			lastLogIdx, _ := r.getLastLog()
 			shouldStop = r.replicateTo(s, lastLogIdx)
 		}
