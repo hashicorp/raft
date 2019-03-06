@@ -137,7 +137,11 @@ RPC:
 		case <-s.triggerCh:
 			lastLogIdx, _ := r.getLastLog()
 			shouldStop = r.replicateTo(s, lastLogIdx)
-		// Check and update leaderCommit of followers
+		// This is _not_ our heartbeat mechanism but is to ensure
+		// followers quickly learn the leader's commit index when 
+		// raft commits stop flowing naturally. The actual heartbeats 
+		// can't do this to keep them unblocked by disk IO on the 
+		// follower. See https://github.com/hashicorp/raft/issues/282.
 		case <-randomTimeout(r.conf.CommitTimeout):
 			lastLogIdx, _ := r.getLastLog()
 			shouldStop = r.replicateTo(s, lastLogIdx)
