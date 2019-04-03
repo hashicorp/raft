@@ -1,6 +1,7 @@
 
 # UNRELEASED
-IMRPOVEMENTS
+
+IMPROVEMENTS
 
 * InMemTransport: Add timeout for sending a message [[GH-313](https://github.com/hashicorp/raft/pull/313)]
 * ensure 'make deps' downloads test dependencies like testify [[GH-310](https://github.com/hashicorp/raft/pull/310)]
