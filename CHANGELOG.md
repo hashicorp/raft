@@ -6,6 +6,7 @@ IMPROVEMENTS
 * InMemTransport: Add timeout for sending a message [[GH-313](https://github.com/hashicorp/raft/pull/313)]
 * ensure 'make deps' downloads test dependencies like testify [[GH-310](https://github.com/hashicorp/raft/pull/310)]
 * Clarifies function of CommitTimeout [[GH-309](https://github.com/hashicorp/raft/pull/309)]
+* Add additional metrics regarding log dispatching and committal [[GH-316](https://github.com/hashicorp/raft/pull/316)]
 
 
 # 1.0.0 (October 3rd, 2017)
