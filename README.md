@@ -105,3 +105,8 @@ In terms of performance, Raft is comparable to Paxos. Assuming stable leadership
 committing a log entry requires a single round trip to half of the cluster.
 Thus performance is bound by disk I/O and network latency.
 
+
+## Development and Testing
+
+Previously a fuzzy package existed as a subpackage in this repo but has since been moved to github.com/hashicorp/raft-fuzzy. This
+fuzzy testing framework for raft is a good way to test out changes being made within this library.
