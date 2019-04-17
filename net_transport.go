@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hashicorp/go-msgpack/codec"
+	"github.com/ugorji/go/codec"
 )
 
 const (
