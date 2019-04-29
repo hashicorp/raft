@@ -383,6 +383,18 @@ func HasExistingState(logs LogStore, stable StableStore, snaps SnapshotStore) (b
 	return false, nil
 }
 
+// GetConfig returns the latest configuration based on snapshots and logs,
+// without actually starting a Raft node. This can be useful to obtain the
+// server addresses to do validation before joining the network.
+func GetConfig(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps SnapshotStore, trans Transport) (Configuration, error) {
+	conf.NoBackgroundWork = true
+	r, err := NewRaft(conf, fsm, logs, stable, snaps, trans)
+	if err != nil {
+		return Configuration{}, err
+	}
+	return r.configurations.Clone().latest, nil
+}
+
 // NewRaft is used to construct a new Raft node. It takes a configuration, as well
 // as implementations of various interfaces that are required. If we have any
 // old state, such as snapshots, logs, peers, etc, all those will be restored
@@ -437,17 +449,17 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 
 	// Create Raft struct.
 	r := &Raft{
-		protocolVersion: protocolVersion,
-		applyCh:         make(chan *logFuture),
-		conf:            *conf,
-		fsm:             fsm,
-		fsmMutateCh:     make(chan interface{}, 128),
-		fsmSnapshotCh:   make(chan *reqSnapshotFuture),
-		leaderCh:        make(chan bool),
-		localID:         localID,
-		localAddr:       localAddr,
-		logger:          logger,
-		logs:            logs,
+		protocolVersion:       protocolVersion,
+		applyCh:               make(chan *logFuture),
+		conf:                  *conf,
+		fsm:                   fsm,
+		fsmMutateCh:           make(chan interface{}, 128),
+		fsmSnapshotCh:         make(chan *reqSnapshotFuture),
+		leaderCh:              make(chan bool),
+		localID:               localID,
+		localAddr:             localAddr,
+		logger:                logger,
+		logs:                  logs,
 		configurationChangeCh: make(chan *configurationChangeFuture),
 		configurations:        configurations{},
 		rpcCh:                 trans.Consumer(),

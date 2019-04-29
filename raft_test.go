@@ -2423,3 +2423,40 @@ func TestRaft_ProtocolVersion_Upgrade_2_3(t *testing.T) {
 //
 // Storage errors handled properly.
 // Commit index updated properly.
+
+func TestRaft_GetConfig(t *testing.T) {
+	c := MakeCluster(2, t, nil)
+	defer c.Close()
+
+	// Should be one leader
+	c.Followers()
+	leader := c.Leader()
+	c.EnsureLeader(t, leader.localAddr)
+
+	// Should be able to apply
+	future := leader.Apply([]byte("test"), c.conf.CommitTimeout)
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+	c.WaitForReplication(1)
+
+	// Get configuration via GetConfiguration of a running node
+	cfgf := c.rafts[0].GetConfiguration()
+	if err := cfgf.Error(); err != nil {
+		t.Fatal(err)
+	}
+	want := cfgf.Configuration()
+
+	// Obtain the same configuration via GetConfig
+	logs := c.stores[0]
+	store := c.stores[0]
+	snap := c.snaps[0]
+	trans := c.trans[0]
+	got, err := GetConfig(c.conf, c.fsms[0], logs, store, snap, trans)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("GetConfig result differs from GetConfiguration result: got %+v, want %+v", got, want)
+	}
+}
