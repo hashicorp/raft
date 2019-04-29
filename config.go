@@ -213,7 +213,7 @@ func DefaultConfig() *Config {
 		SnapshotInterval:   120 * time.Second,
 		SnapshotThreshold:  8192,
 		LeaderLeaseTimeout: 500 * time.Millisecond,
-		LogLevel:           "TRACE",
+		LogLevel:           "DEBUG",
 	}
 }
 
