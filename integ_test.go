@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/hashicorp/go-hclog"
 )
 
 // CheckInteg will skip a test if integration testing is not enabled.
@@ -30,7 +31,7 @@ type RaftEnv struct {
 	snapshot *FileSnapshotStore
 	trans    *NetworkTransport
 	raft     *Raft
-	logger   *log.Logger
+	logger   hclog.Logger
 }
 
 // Release shuts down and cleans up any stored data, its not restartable after this
@@ -42,7 +43,7 @@ func (r *RaftEnv) Release() {
 // Shutdown shuts down raft & transport, but keeps track of its data, its restartable
 // after a Shutdown() by calling Start()
 func (r *RaftEnv) Shutdown() {
-	r.logger.Printf("[WARN] Shutdown node at %v", r.raft.localAddr)
+	r.logger.Warn(fmt.Sprintf("Shutdown node at %v", r.raft.localAddr))
 	f := r.raft.Shutdown()
 	if err := f.Error(); err != nil {
 		panic(err)
@@ -57,7 +58,7 @@ func (r *RaftEnv) Restart(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	r.trans = trans
-	r.logger.Printf("[INFO] Starting node at %v", trans.LocalAddr())
+	r.logger.Info(fmt.Sprintf("Starting node at %v", trans.LocalAddr()))
 	raft, err := NewRaft(r.conf, r.fsm, r.store, r.store, r.snapshot, r.trans)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -89,13 +90,15 @@ func MakeRaft(t *testing.T, conf *Config, bootstrap bool) *RaftEnv {
 		store:    stable,
 		snapshot: snap,
 		fsm:      &MockFSM{},
-		logger:   log.New(&testLoggerAdapter{t: t}, "", log.Lmicroseconds),
 	}
 	trans, err := NewTCPTransport("127.0.0.1:0", nil, 2, time.Second, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	env.logger = log.New(os.Stdout, string(trans.LocalAddr())+" :", log.Lmicroseconds)
+
+	env.logger = hclog.New(&hclog.LoggerOptions{
+		Name: string(trans.LocalAddr()) + " :",
+	})
 	env.trans = trans
 
 	if bootstrap {
@@ -110,7 +113,7 @@ func MakeRaft(t *testing.T, conf *Config, bootstrap bool) *RaftEnv {
 			t.Fatalf("err: %v", err)
 		}
 	}
-	log.Printf("[INFO] Starting node at %v", trans.LocalAddr())
+	env.logger.Info(fmt.Sprintf("Starting node at %v", trans.LocalAddr()))
 	conf.Logger = env.logger
 	raft, err := NewRaft(conf, env.fsm, stable, stable, snap, trans)
 	if err != nil {
@@ -237,7 +240,7 @@ func TestRaft_Integ(t *testing.T) {
 		}
 		for _, f := range futures {
 			NoErr(WaitFuture(f, t), t)
-			leader.logger.Printf("[DEBUG] Applied at %d, size %d", f.Index(), sz)
+			leader.logger.Debug(fmt.Sprintf("Applied at %d, size %d", f.Index(), sz))
 		}
 		totalApplied += n
 	}
