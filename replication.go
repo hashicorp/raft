@@ -138,9 +138,9 @@ RPC:
 			lastLogIdx, _ := r.getLastLog()
 			shouldStop = r.replicateTo(s, lastLogIdx)
 		// This is _not_ our heartbeat mechanism but is to ensure
-		// followers quickly learn the leader's commit index when 
-		// raft commits stop flowing naturally. The actual heartbeats 
-		// can't do this to keep them unblocked by disk IO on the 
+		// followers quickly learn the leader's commit index when
+		// raft commits stop flowing naturally. The actual heartbeats
+		// can't do this to keep them unblocked by disk IO on the
 		// follower. See https://github.com/hashicorp/raft/issues/282.
 		case <-randomTimeout(r.conf.CommitTimeout):
 			lastLogIdx, _ := r.getLastLog()
@@ -163,7 +163,7 @@ PIPELINE:
 	// to standard mode on failure.
 	if err := r.pipelineReplicate(s); err != nil {
 		if err != ErrPipelineReplicationNotSupported {
-			r.logger.Printf("[ERR] raft: Failed to start pipeline replication to %s: %s", s.peer, err)
+			r.logger.Error(fmt.Sprintf("Failed to start pipeline replication to %s: %s", s.peer, err))
 		}
 	}
 	goto RPC
@@ -196,7 +196,7 @@ START:
 	// Make the RPC call
 	start = time.Now()
 	if err := r.trans.AppendEntries(s.peer.ID, s.peer.Address, &req, &resp); err != nil {
-		r.logger.Printf("[ERR] raft: Failed to AppendEntries to %v: %v", s.peer, err)
+		r.logger.Error(fmt.Sprintf("Failed to AppendEntries to %v: %v", s.peer, err))
 		s.failures++
 		return
 	}
@@ -226,7 +226,7 @@ START:
 		} else {
 			s.failures++
 		}
-		r.logger.Printf("[WARN] raft: AppendEntries to %v rejected, sending older logs (next: %d)", s.peer, s.nextIndex)
+		r.logger.Warn(fmt.Sprintf("AppendEntries to %v rejected, sending older logs (next: %d)", s.peer, s.nextIndex))
 	}
 
 CHECK_MORE:
@@ -253,7 +253,7 @@ SEND_SNAP:
 	if stop, err := r.sendLatestSnapshot(s); stop {
 		return true
 	} else if err != nil {
-		r.logger.Printf("[ERR] raft: Failed to send snapshot to %v: %v", s.peer, err)
+		r.logger.Error(fmt.Sprintf("Failed to send snapshot to %v: %v", s.peer, err))
 		return
 	}
 
@@ -267,7 +267,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	// Get the snapshots
 	snapshots, err := r.snapshots.List()
 	if err != nil {
-		r.logger.Printf("[ERR] raft: Failed to list snapshots: %v", err)
+		r.logger.Error(fmt.Sprintf("Failed to list snapshots: %v", err))
 		return false, err
 	}
 
@@ -280,7 +280,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	snapID := snapshots[0].ID
 	meta, snapshot, err := r.snapshots.Open(snapID)
 	if err != nil {
-		r.logger.Printf("[ERR] raft: Failed to open snapshot %v: %v", snapID, err)
+		r.logger.Error(fmt.Sprintf("Failed to open snapshot %v: %v", snapID, err))
 		return false, err
 	}
 	defer snapshot.Close()
@@ -303,7 +303,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	start := time.Now()
 	var resp InstallSnapshotResponse
 	if err := r.trans.InstallSnapshot(s.peer.ID, s.peer.Address, &req, &resp, snapshot); err != nil {
-		r.logger.Printf("[ERR] raft: Failed to install snapshot %v: %v", snapID, err)
+		r.logger.Error(fmt.Sprintf("Failed to install snapshot %v: %v", snapID, err))
 		s.failures++
 		return false, err
 	}
@@ -331,7 +331,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 		s.notifyAll(true)
 	} else {
 		s.failures++
-		r.logger.Printf("[WARN] raft: InstallSnapshot to %v rejected", s.peer)
+		r.logger.Warn(fmt.Sprintf("InstallSnapshot to %v rejected", s.peer))
 	}
 	return false, nil
 }
@@ -358,7 +358,7 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 
 		start := time.Now()
 		if err := r.trans.AppendEntries(s.peer.ID, s.peer.Address, &req, &resp); err != nil {
-			r.logger.Printf("[ERR] raft: Failed to heartbeat to %v: %v", s.peer.Address, err)
+			r.logger.Error(fmt.Sprintf("Failed to heartbeat to %v: %v", s.peer.Address, err))
 			failures++
 			select {
 			case <-time.After(backoff(failureWait, failures, maxFailureScale)):
@@ -386,8 +386,8 @@ func (r *Raft) pipelineReplicate(s *followerReplication) error {
 	defer pipeline.Close()
 
 	// Log start and stop of pipeline
-	r.logger.Printf("[INFO] raft: pipelining replication to peer %v", s.peer)
-	defer r.logger.Printf("[INFO] raft: aborting pipeline replication to peer %v", s.peer)
+	r.logger.Info(fmt.Sprintf("pipelining replication to peer %v", s.peer))
+	defer r.logger.Info(fmt.Sprintf("aborting pipeline replication to peer %v", s.peer))
 
 	// Create a shutdown and finish channel
 	stopCh := make(chan struct{})
@@ -440,7 +440,7 @@ func (r *Raft) pipelineSend(s *followerReplication, p AppendPipeline, nextIdx *u
 
 	// Pipeline the append entries
 	if _, err := p.AppendEntries(req, new(AppendEntriesResponse)); err != nil {
-		r.logger.Printf("[ERR] raft: Failed to pipeline AppendEntries to %v: %v", s.peer, err)
+		r.logger.Error(fmt.Sprintf("Failed to pipeline AppendEntries to %v: %v", s.peer, err))
 		return true
 	}
 
@@ -516,8 +516,7 @@ func (r *Raft) setPreviousLog(req *AppendEntriesRequest, nextIndex uint64) error
 	} else {
 		var l Log
 		if err := r.logs.GetLog(nextIndex-1, &l); err != nil {
-			r.logger.Printf("[ERR] raft: Failed to get log at index %d: %v",
-				nextIndex-1, err)
+			r.logger.Error(fmt.Sprintf("Failed to get log at index %d: %v", nextIndex-1, err))
 			return err
 		}
 
@@ -536,7 +535,7 @@ func (r *Raft) setNewLogs(req *AppendEntriesRequest, nextIndex, lastIndex uint64
 	for i := nextIndex; i <= maxIndex; i++ {
 		oldLog := new(Log)
 		if err := r.logs.GetLog(i, oldLog); err != nil {
-			r.logger.Printf("[ERR] raft: Failed to get log at index %d: %v", i, err)
+			r.logger.Error(fmt.Sprintf("Failed to get log at index %d: %v", i, err))
 			return err
 		}
 		req.Entries = append(req.Entries, oldLog)
@@ -552,7 +551,7 @@ func appendStats(peer string, start time.Time, logs float32) {
 
 // handleStaleTerm is used when a follower indicates that we have a stale term.
 func (r *Raft) handleStaleTerm(s *followerReplication) {
-	r.logger.Printf("[ERR] raft: peer %v has newer term, stopping replication", s.peer)
+	r.logger.Error(fmt.Sprintf("peer %v has newer term, stopping replication", s.peer))
 	s.notifyAll(false) // No longer leader
 	asyncNotifyCh(s.stepDown)
 }

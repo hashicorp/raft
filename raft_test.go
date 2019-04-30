@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-msgpack/codec"
 )
 
@@ -75,7 +76,7 @@ func inmemConfig(t *testing.T) *Config {
 	conf.ElectionTimeout = 50 * time.Millisecond
 	conf.LeaderLeaseTimeout = 50 * time.Millisecond
 	conf.CommitTimeout = 5 * time.Millisecond
-	conf.Logger = newTestLogger(t)
+	conf.Logger = newTestLeveledLogger(t)
 	return conf
 }
 
@@ -110,6 +111,20 @@ func newTestLogger(t *testing.T) *log.Logger {
 
 func newTestLoggerWithPrefix(t *testing.T, prefix string) *log.Logger {
 	return log.New(&testLoggerAdapter{t: t, prefix: prefix}, "", log.Lmicroseconds)
+}
+
+func newTestLeveledLogger(t *testing.T) hclog.Logger {
+	return hclog.New(&hclog.LoggerOptions{
+		Name:   "",
+		Output: &testLoggerAdapter{t: t},
+	})
+}
+
+func newTestLeveledLoggerWithPrefix(t *testing.T, prefix string) hclog.Logger {
+	return hclog.New(&hclog.LoggerOptions{
+		Name:   prefix,
+		Output: &testLoggerAdapter{t: t, prefix: prefix},
+	})
 }
 
 type cluster struct {
@@ -628,7 +643,7 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
 
 		peerConf := conf
 		peerConf.LocalID = configuration.Servers[i].ID
-		peerConf.Logger = newTestLoggerWithPrefix(t, string(configuration.Servers[i].ID))
+		peerConf.Logger = newTestLeveledLoggerWithPrefix(t, string(configuration.Servers[i].ID))
 
 		if bootstrap {
 			err := BootstrapCluster(peerConf, logs, store, snap, trans, configuration)

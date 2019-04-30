@@ -3,8 +3,9 @@ package raft
 import (
 	"fmt"
 	"io"
-	"log"
 	"time"
+
+	"github.com/hashicorp/go-hclog"
 )
 
 // These are the versions of the protocol (which includes RPC messages as
@@ -190,9 +191,13 @@ type Config struct {
 	// Defaults to os.Stderr.
 	LogOutput io.Writer
 
-	// Logger is a user-provided logger. If nil, a logger writing to LogOutput
-	// is used.
-	Logger *log.Logger
+	// LogLevel represents a log level. If a no matching string is specified,
+	// hclog.NoLevel is assumed.
+	LogLevel string
+
+	// Logger is a user-provided hc-log logger. If nil, a logger writing to
+	// LogOutput with LogLevel is used.
+	Logger hclog.Logger
 }
 
 // DefaultConfig returns a Config with usable defaults.
@@ -208,6 +213,7 @@ func DefaultConfig() *Config {
 		SnapshotInterval:   120 * time.Second,
 		SnapshotThreshold:  8192,
 		LeaderLeaseTimeout: 500 * time.Millisecond,
+		LogLevel:           "DEBUG",
 	}
 }
 
