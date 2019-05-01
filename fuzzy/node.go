@@ -21,14 +21,17 @@ type raftNode struct {
 }
 
 func newRaftNode(logger *log.Logger, tc *transports, h TransportHooks, nodes []string, name string) (*raftNode, error) {
-	datadir, err := resolveDirectory(fmt.Sprintf("data/%v", name), true)
+	var err error
+	var datadir string
+	datadir, err = resolveDirectory(fmt.Sprintf("data/%v", name), true)
 	if err != nil {
 		return nil, err
 	}
 	logger.Printf("[INFO] Creating new raft Node with data in dir %v", datadir)
-	ss, err := raft.NewFileSnapshotStoreWithLogger(datadir, 5, logger)
+	var ss *raft.FileSnapshotStore
+	ss, err = raft.NewFileSnapshotStoreWithLogger(datadir, 5, logger)
 	if err != nil {
-		return nil, fmt.Errorf("Unable to initialize snapshots %v\n", err.Error())
+		return nil, fmt.Errorf("unable to initialize snapshots %v", err.Error())
 	}
 	transport := tc.AddNode(name, h)
 
@@ -39,9 +42,10 @@ func newRaftNode(logger *log.Logger, tc *transports, h TransportHooks, nodes []s
 	config.ShutdownOnRemove = false
 	config.LocalID = raft.ServerID(name)
 
-	store, err := rdb.NewBoltStore(filepath.Join(datadir, "store.bolt"))
+	var store *rdb.BoltStore
+	store, err = rdb.NewBoltStore(filepath.Join(datadir, "store.bolt"))
 	if err != nil {
-		return nil, fmt.Errorf("Unable to initialize log %v\n", err.Error())
+		return nil, fmt.Errorf("unable to initialize log %v", err.Error())
 	}
 
 	if len(nodes) > 0 {
@@ -49,20 +53,21 @@ func newRaftNode(logger *log.Logger, tc *transports, h TransportHooks, nodes []s
 		for _, n := range nodes {
 			c = append(c, raft.Server{Suffrage: raft.Voter, ID: raft.ServerID(n), Address: raft.ServerAddress(n)})
 		}
-		configuration := raft.Configuration{c}
-		if err := raft.BootstrapCluster(config, store, store, ss, transport, configuration); err != nil {
+		configuration := raft.Configuration{Servers: c}
+		if err = raft.BootstrapCluster(config, store, store, ss, transport, configuration); err != nil {
 			return nil, err
 		}
 	}
 	fsm := &fuzzyFSM{}
-	raft, err := raft.NewRaft(config, fsm, store, store, ss, transport)
+	var r *raft.Raft
+	r, err = raft.NewRaft(config, fsm, store, store, ss, transport)
 	if err != nil {
 		return nil, err
 	}
 	n := raftNode{
 		transport: transport,
 		store:     store,
-		raft:      raft,
+		raft:      r,
 		fsm:       fsm,
 		log:       logger,
 		name:      name,

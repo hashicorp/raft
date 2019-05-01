@@ -453,7 +453,7 @@ OUTER:
 				t.Disconnect(a)
 			}
 		} else {
-			for a, _ := range near {
+			for a := range near {
 				t.Disconnect(a)
 			}
 		}
@@ -765,7 +765,7 @@ func TestRaft_RecoverCluster_NoState(t *testing.T) {
 	r := c.rafts[0]
 	configuration := Configuration{
 		Servers: []Server{
-			Server{
+			{
 				ID:      r.localID,
 				Address: r.localAddr,
 			},
@@ -782,6 +782,7 @@ func TestRaft_RecoverCluster(t *testing.T) {
 	// Run with different number of applies which will cover no snapshot and
 	// snapshot + log scenarios. By sweeping through the trailing logs value
 	// we will also hit the case where we have a snapshot only.
+	var err error
 	runRecover := func(applies int) {
 		conf := inmemConfig(t)
 		conf.TrailingLogs = 10
@@ -793,21 +794,21 @@ func TestRaft_RecoverCluster(t *testing.T) {
 		leader := c.Leader()
 		for i := 0; i < applies; i++ {
 			future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
-			if err := future.Error(); err != nil {
+			if err = future.Error(); err != nil {
 				c.FailNowf("[ERR] apply err: %v", err)
 			}
 		}
 
 		// Snap the configuration.
 		future := leader.GetConfiguration()
-		if err := future.Error(); err != nil {
+		if err = future.Error(); err != nil {
 			c.FailNowf("[ERR] get configuration err: %v", err)
 		}
 		configuration := future.Configuration()
 
 		// Shut down the cluster.
 		for _, sec := range c.rafts {
-			if err := sec.Shutdown().Error(); err != nil {
+			if err = sec.Shutdown().Error(); err != nil {
 				c.FailNowf("[ERR] shutdown err: %v", err)
 			}
 		}
@@ -815,28 +816,32 @@ func TestRaft_RecoverCluster(t *testing.T) {
 		// Recover the cluster. We need to replace the transport and we
 		// replace the FSM so no state can carry over.
 		for i, r := range c.rafts {
-			before, err := r.snapshots.List()
+			var before []*SnapshotMeta
+			before, err = r.snapshots.List()
 			if err != nil {
 				c.FailNowf("[ERR] snapshot list err: %v", err)
 			}
-			if err := RecoverCluster(&r.conf, &MockFSM{}, r.logs, r.stable,
+			if err = RecoverCluster(&r.conf, &MockFSM{}, r.logs, r.stable,
 				r.snapshots, r.trans, configuration); err != nil {
 				c.FailNowf("[ERR] recover err: %v", err)
 			}
 
 			// Make sure the recovery looks right.
-			after, err := r.snapshots.List()
+			var after []*SnapshotMeta
+			after, err = r.snapshots.List()
 			if err != nil {
 				c.FailNowf("[ERR] snapshot list err: %v", err)
 			}
 			if len(after) != len(before)+1 {
 				c.FailNowf("[ERR] expected a new snapshot, %d vs. %d", len(before), len(after))
 			}
-			first, err := r.logs.FirstIndex()
+			var first uint64
+			first, err = r.logs.FirstIndex()
 			if err != nil {
 				c.FailNowf("[ERR] first log index err: %v", err)
 			}
-			last, err := r.logs.LastIndex()
+			var last uint64
+			last, err = r.logs.LastIndex()
 			if err != nil {
 				c.FailNowf("[ERR] last log index err: %v", err)
 			}
@@ -848,7 +853,8 @@ func TestRaft_RecoverCluster(t *testing.T) {
 			// up the cluster state manually since this is an unusual
 			// operation.
 			_, trans := NewInmemTransport(r.localAddr)
-			r2, err := NewRaft(&r.conf, &MockFSM{}, r.logs, r.stable, r.snapshots, trans)
+			var r2 *Raft
+			r2, err = NewRaft(&r.conf, &MockFSM{}, r.logs, r.stable, r.snapshots, trans)
 			if err != nil {
 				c.FailNowf("[ERR] new raft err: %v", err)
 			}
@@ -870,6 +876,7 @@ func TestRaft_RecoverCluster(t *testing.T) {
 }
 
 func TestRaft_HasExistingState(t *testing.T) {
+	var err error
 	// Make a cluster.
 	c := MakeCluster(2, t, nil)
 	defer c.Close()
@@ -878,7 +885,8 @@ func TestRaft_HasExistingState(t *testing.T) {
 	c1 := MakeClusterNoBootstrap(1, t, nil)
 
 	// Make sure the initial state is clean.
-	hasState, err := HasExistingState(c1.rafts[0].logs, c1.rafts[0].stable, c1.rafts[0].snapshots)
+	var hasState bool
+	hasState, err = HasExistingState(c1.rafts[0].logs, c1.rafts[0].stable, c1.rafts[0].snapshots)
 	if err != nil || hasState {
 		c.FailNowf("[ERR] should not have any existing state, %v", err)
 	}
@@ -889,7 +897,7 @@ func TestRaft_HasExistingState(t *testing.T) {
 
 	// Join the new node in.
 	future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 0)
-	if err := future.Error(); err != nil {
+	if err = future.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 
@@ -1565,6 +1573,7 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 // up.
 
 func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
+	var err error
 	// Make the cluster.
 	conf := inmemConfig(t)
 	conf.ProtocolVersion = 1
@@ -1580,19 +1589,19 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	}
 
 	// Wait for the last future to apply
-	if err := future.Error(); err != nil {
+	if err = future.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 
 	// Take a snapshot.
 	snapFuture := leader.Snapshot()
-	if err := snapFuture.Error(); err != nil {
+	if err = snapFuture.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 
 	// Shutdown.
 	shutdown := leader.Shutdown()
-	if err := shutdown.Error(); err != nil {
+	if err = shutdown.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 
@@ -1603,7 +1612,7 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	// Kill the old cluster.
 	for _, sec := range c.rafts {
 		if sec != leader {
-			if err := sec.Shutdown().Error(); err != nil {
+			if err = sec.Shutdown().Error(); err != nil {
 				c.FailNowf("[ERR] shutdown err: %v", err)
 			}
 		}
@@ -1627,14 +1636,14 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	}
 	defer os.RemoveAll(base)
 	peersFile := filepath.Join(base, "peers.json")
-	if err := ioutil.WriteFile(peersFile, content, 0666); err != nil {
+	if err = ioutil.WriteFile(peersFile, content, 0666); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
 	configuration, err := ReadPeersJSON(peersFile)
 	if err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
-	if err := RecoverCluster(&r.conf, &MockFSM{}, r.logs, r.stable,
+	if err = RecoverCluster(&r.conf, &MockFSM{}, r.logs, r.stable,
 		r.snapshots, r.trans, configuration); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}

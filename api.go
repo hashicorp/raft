@@ -243,13 +243,14 @@ func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
 // the usual APIs in order to bring the cluster back into a known state.
 func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 	snaps SnapshotStore, trans Transport, configuration Configuration) error {
+	var err error
 	// Validate the Raft server config.
-	if err := ValidateConfig(conf); err != nil {
+	if err = ValidateConfig(conf); err != nil {
 		return err
 	}
 
 	// Sanity check the Raft peer configuration.
-	if err := checkConfiguration(configuration); err != nil {
+	if err = checkConfiguration(configuration); err != nil {
 		return err
 	}
 
@@ -258,7 +259,8 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 	// expect data to be there and it's not. By refusing, we force them
 	// to show intent to start a cluster fresh by explicitly doing a
 	// bootstrap, rather than quietly fire up a fresh cluster here.
-	hasState, err := HasExistingState(logs, stable, snaps)
+	var hasState bool
+	hasState, err = HasExistingState(logs, stable, snaps)
 	if err != nil {
 		return fmt.Errorf("failed to check for existing state: %v", err)
 	}
@@ -269,12 +271,14 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 	// Attempt to restore any snapshots we find, newest to oldest.
 	var snapshotIndex uint64
 	var snapshotTerm uint64
-	snapshots, err := snaps.List()
+	var snapshots []*SnapshotMeta
+	snapshots, err = snaps.List()
 	if err != nil {
 		return fmt.Errorf("failed to list snapshots: %v", err)
 	}
 	for _, snapshot := range snapshots {
-		_, source, err := snaps.Open(snapshot.ID)
+		var source io.ReadCloser
+		_, source, err = snaps.Open(snapshot.ID)
 		if err != nil {
 			// Skip this one and try the next. We will detect if we
 			// couldn't open any snapshots.
@@ -282,7 +286,7 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 		}
 		defer source.Close()
 
-		if err := fsm.Restore(source); err != nil {
+		if err = fsm.Restore(source); err != nil {
 			// Same here, skip and try the next one.
 			continue
 		}
@@ -301,13 +305,14 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 	lastTerm := snapshotTerm
 
 	// Apply any Raft log entries past the snapshot.
-	lastLogIndex, err := logs.LastIndex()
+	var lastLogIndex uint64
+	lastLogIndex, err = logs.LastIndex()
 	if err != nil {
 		return fmt.Errorf("failed to find last log: %v", err)
 	}
 	for index := snapshotIndex + 1; index <= lastLogIndex; index++ {
 		var entry Log
-		if err := logs.GetLog(index, &entry); err != nil {
+		if err = logs.GetLog(index, &entry); err != nil {
 			return fmt.Errorf("failed to get log at index %d: %v", index, err)
 		}
 		if entry.Type == LogCommand {
@@ -319,29 +324,32 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 
 	// Create a new snapshot, placing the configuration in as if it was
 	// committed at index 1.
-	snapshot, err := fsm.Snapshot()
+	var snapshot FSMSnapshot
+	snapshot, err = fsm.Snapshot()
 	if err != nil {
 		return fmt.Errorf("failed to snapshot FSM: %v", err)
 	}
 	version := getSnapshotVersion(conf.ProtocolVersion)
-	sink, err := snaps.Create(version, lastIndex, lastTerm, configuration, 1, trans)
+	var sink SnapshotSink
+	sink, err = snaps.Create(version, lastIndex, lastTerm, configuration, 1, trans)
 	if err != nil {
 		return fmt.Errorf("failed to create snapshot: %v", err)
 	}
-	if err := snapshot.Persist(sink); err != nil {
+	if err = snapshot.Persist(sink); err != nil {
 		return fmt.Errorf("failed to persist snapshot: %v", err)
 	}
-	if err := sink.Close(); err != nil {
+	if err = sink.Close(); err != nil {
 		return fmt.Errorf("failed to finalize snapshot: %v", err)
 	}
 
 	// Compact the log so that we don't get bad interference from any
 	// configuration change log entries that might be there.
-	firstLogIndex, err := logs.FirstIndex()
+	var firstLogIndex uint64
+	firstLogIndex, err = logs.FirstIndex()
 	if err != nil {
 		return fmt.Errorf("failed to get first log index: %v", err)
 	}
-	if err := logs.DeleteRange(firstLogIndex, lastLogIndex); err != nil {
+	if err = logs.DeleteRange(firstLogIndex, lastLogIndex); err != nil {
 		return fmt.Errorf("log compaction failed: %v", err)
 	}
 
@@ -443,17 +451,17 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 
 	// Create Raft struct.
 	r := &Raft{
-		protocolVersion: protocolVersion,
-		applyCh:         make(chan *logFuture),
-		conf:            *conf,
-		fsm:             fsm,
-		fsmMutateCh:     make(chan interface{}, 128),
-		fsmSnapshotCh:   make(chan *reqSnapshotFuture),
-		leaderCh:        make(chan bool),
-		localID:         localID,
-		localAddr:       localAddr,
-		logger:          logger,
-		logs:            logs,
+		protocolVersion:       protocolVersion,
+		applyCh:               make(chan *logFuture),
+		conf:                  *conf,
+		fsm:                   fsm,
+		fsmMutateCh:           make(chan interface{}, 128),
+		fsmSnapshotCh:         make(chan *reqSnapshotFuture),
+		leaderCh:              make(chan bool),
+		localID:               localID,
+		localAddr:             localAddr,
+		logger:                logger,
+		logs:                  logs,
 		configurationChangeCh: make(chan *configurationChangeFuture),
 		configurations:        configurations{},
 		rpcCh:                 trans.Consumer(),

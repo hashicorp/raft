@@ -12,7 +12,7 @@ linters:
   enable:
     - gofmt
     #- golint
-    #- govet
+    - govet
     #- varcheck
     #- typecheck
     #- gosimple

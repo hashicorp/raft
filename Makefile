@@ -1,5 +1,5 @@
 DEPS = $(go list -f '{{range .TestImports}}{{.}} {{end}}' ./...)
-
+ENV := $(shell go env GOPATH)
 test:
 	go test -timeout=60s .
 
@@ -18,7 +18,7 @@ lint:
 	golangci-lint run -c .golangci-lint.yml
 
 dep-linter:
-	curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s -- -b $(go env GOPATH)/bin latest
+    curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s -- -b $(ENV)/bin latest
 
 cov:
 	INTEG_TESTS=yes gocov test github.com/hashicorp/raft | gocov-html > /tmp/coverage.html
