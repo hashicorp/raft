@@ -450,6 +450,7 @@ func (r *Raft) startStopReplication() {
 			r.leaderState.replState[server.ID] = s
 			r.goFunc(func() { r.replicate(s) })
 			asyncNotifyCh(s.triggerCh)
+			r.observe(PeerObservation{Peer: server, Removed: false})
 		}
 	}
 
@@ -463,6 +464,7 @@ func (r *Raft) startStopReplication() {
 		repl.stopCh <- lastIdx
 		close(repl.stopCh)
 		delete(r.leaderState.replState, serverID)
+		r.observe(PeerObservation{Peer: repl.peer, Removed: true})
 	}
 }
 
