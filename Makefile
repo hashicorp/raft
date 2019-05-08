@@ -17,6 +17,9 @@ lint:
 	gofmt -s -w .
 	golangci-lint run -c .golangci-lint.yml
 
+lint-ci: 
+	golangci-lint run -c .golangci-lint.yml -disable=gofmt
+
 dep-linter:
     curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s -- -b $(ENV)/bin latest
 

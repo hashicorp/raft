@@ -76,8 +76,7 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	defer trans2.Close()
-	var i int
-	for i = 0; i < 2; i++ {
+	for i := 0; i < 2; i++ {
 		// Create wait group
 		wg := &sync.WaitGroup{}
 		wg.Add(5)
@@ -96,7 +95,7 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 		}
 
 		// Try to do parallel appends, should stress the conn pool
-		for i = 0; i < 5; i++ {
+		for j := 0; j < 5; j++ {
 			go appendFunc()
 		}
 
