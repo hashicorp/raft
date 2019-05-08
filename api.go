@@ -443,17 +443,17 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 
 	// Create Raft struct.
 	r := &Raft{
-		protocolVersion: protocolVersion,
-		applyCh:         make(chan *logFuture),
-		conf:            *conf,
-		fsm:             fsm,
-		fsmMutateCh:     make(chan interface{}, 128),
-		fsmSnapshotCh:   make(chan *reqSnapshotFuture),
-		leaderCh:        make(chan bool),
-		localID:         localID,
-		localAddr:       localAddr,
-		logger:          logger,
-		logs:            logs,
+		protocolVersion:       protocolVersion,
+		applyCh:               make(chan *logFuture),
+		conf:                  *conf,
+		fsm:                   fsm,
+		fsmMutateCh:           make(chan interface{}, 128),
+		fsmSnapshotCh:         make(chan *reqSnapshotFuture),
+		leaderCh:              make(chan bool),
+		localID:               localID,
+		localAddr:             localAddr,
+		logger:                logger,
+		logs:                  logs,
 		configurationChangeCh: make(chan *configurationChangeFuture),
 		configurations:        configurations{},
 		rpcCh:                 trans.Consumer(),
@@ -498,8 +498,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		}
 		r.processConfigurationLogEntry(&entry)
 	}
-	r.logger.Info(fmt.Sprintf("Initial configuration (index=%d): %+v",
-		r.configurations.latestIndex, r.configurations.latest.Servers))
+	r.logger.Info("Initial configuration", "index", r.configurations.latestIndex, "servers", r.configurations.latest.Servers)
 
 	// Setup a heartbeat fast-path to avoid head-of-line
 	// blocking where possible. It MUST be safe for this
@@ -538,7 +537,7 @@ func (r *Raft) restoreSnapshot() error {
 		}
 
 		// Log success
-		r.logger.Info(fmt.Sprintf("Restored from snapshot %v", snapshot.ID))
+		r.logger.Info("Restored from snapshot", "id", snapshot.ID))
 
 		// Update the lastApplied so we don't replay old logs
 		r.setLastApplied(snapshot.Index)
