@@ -1,0 +1,39 @@
+# Number of days of inactivity before an Issue becomes stale
+daysUntilStale: 60
+
+# Number of days of inactivity before an Issue with the stale label is closed.
+# Set to false to disable. If disabled, issues still need to be closed manually, but will remain marked as stale.
+daysUntilClose: 30
+
+# Issues with these labels will never be considered stale. Set to `[]` to disable
+# We don't close any issue that is an enhancement or confirmed bug, but issues
+# waiting for reproduction cases and questions tend to get outdated.
+exemptLabels:
+  - "enhancement"
+  - "bug"
+  - "thinking"
+  - "docs"
+
+# Label to use when marking as stale
+staleLabel: "waiting-reply"
+
+# Comment to post when marking as stale. Set to `false` to disable
+markComment: |
+  Hey there,
+  This issues hasn't had any activity for a while, so we're going to
+  automatically close it in 30 days. If you're still seeing this issue with the
+  latest version of Raft, please respond here and we'll keep it open and take
+  another look at this.
+  Thank you!
+
+# Comment to post when removing the stale label. Set to `false` to disable
+unmarkComment: false
+
+# Comment to post when closing a stale Issue. Set to `false` to disable
+closeComment: >
+  Hey there,
+  This issue has been automatically closed because there hasn't been any activity for a while.
+  Feel free to [open a new one](https://github.com/hashicorp/raft/issues/new) if you still experience this problem :+1:
+
+# Limit to only `issues`
+only: issues
