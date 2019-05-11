@@ -4,9 +4,7 @@ GO_VERSION  = $(shell go version)
 
 # Look for versions prior to 1.10 which have a different fmt output
 # and don't lint with gofmt against them.
-ifneq (,$(findstring go version go1.7, $(GO_VERSION)))
-	FMT=
-else ifneq (,$(findstring go version go1.8, $(GO_VERSION)))
+ifneq (,$(findstring go version go1.8, $(GO_VERSION)))
 	FMT=
 else ifneq (,$(findstring go version go1.9, $(GO_VERSION)))
 	FMT=
@@ -32,7 +30,7 @@ lint:
 	golangci-lint run -c .golangci-lint.yml $(FMT)
 
 dep-linter:
-	curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s -- -b $(ENV)/bin latest
+	curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s -- -b $(ENV)/bin v1.16.0
 
 cov:
 	INTEG_TESTS=yes gocov test github.com/hashicorp/raft | gocov-html > /tmp/coverage.html
