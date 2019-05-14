@@ -38,11 +38,6 @@ func TestRaft_FuzzyLeadershipTransfer(t *testing.T) {
 
 type LeadershipTransferMode int
 
-// const (
-// 	SlowSend LeadershipTransferMode = iota
-// 	SlowRecv
-// )
-
 type LeadershipTransfer struct {
 	verifier  appendEntriesVerifier
 	slowNodes map[string]bool
@@ -65,19 +60,10 @@ func (lt *LeadershipTransfer) nap() {
 }
 
 func (lt *LeadershipTransfer) PostRPC(src, target string, r *raft.RPC, res *raft.RPCResponse) error {
-	// if lt.mode == SlowRecv && lt.slowNodes[target] {
-	// 	_, ok := r.Command.(*raft.RequestVoteRequest)
-	// 	if ok {
-	// 		lt.nap()
-	// 	}
-	// }
 	return nil
 }
 
 func (lt *LeadershipTransfer) PreRequestVote(src, target string, v *raft.RequestVoteRequest) (*raft.RequestVoteResponse, error) {
-	// if lt.mode == SlowSend && lt.slowNodes[target] {
-	// 	lt.nap()
-	// }
 	return nil, nil
 }
 
