@@ -2674,22 +2674,6 @@ func TestRaft_LeadershipTransferStopRightAway(t *testing.T) {
 	}
 }
 
-func TestRaft_LeadershipTransferLeaderLeadershipLossDuringTransfer(t *testing.T) {
-	t.Skip("How do I test this?")
-}
-
-func TestRaft_LeadershipTransferReplicationFails(t *testing.T) {
-	t.Skip("How do I test this?")
-}
-
-func TestRaft_LeadershipTransferToUnresponsiveServer(t *testing.T) {
-	t.Skip("How do I test this?")
-}
-
-func TestRaft_LeadershipTransferResetsLeaderLease(t *testing.T) {
-	t.Skip("How do I test this?")
-}
-
 // TODO: These are test cases we'd like to write for appendEntries().
 // Unfortunately, it's difficult to do so with the current way this file is
 // tested.
