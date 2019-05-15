@@ -238,8 +238,8 @@ type verifyFuture struct {
 type leadershipTransferFuture struct {
 	deferError
 
-	ID      ServerID
-	Address ServerAddress
+	ID      *ServerID
+	Address *ServerAddress
 }
 
 // configurationsFuture is used to retrieve the current configurations. This is

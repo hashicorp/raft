@@ -373,6 +373,8 @@ func (r *Raft) runLeader() {
 		}
 	}
 
+	// setup leader state. This is only supposed to be accessed within the
+	// leaderloop.
 	r.setupLeaderState()
 
 	// Cleanup state on step down
@@ -547,7 +549,7 @@ func (r *Raft) leaderLoop() {
 				future.respond(ErrLeadershipTransferInProgress)
 				continue
 			}
-			r.logger.Printf("[DEBUG] raft: starting leadership transfer to %s: %s", future.ID, future.Address)
+			r.logger.Printf("[DEBUG] raft: starting leadership transfer to %v: %v", future.ID, future.Address)
 
 			// When we are leaving leaderLoop, we are no longer
 			// leader, so we should stop transferring.
@@ -585,7 +587,29 @@ func (r *Raft) leaderLoop() {
 				}
 			}()
 
-			go r.leadershipTransfer(future.ID, future.Address, stopCh, doneCh)
+			// leaderState.replState is accessed here before
+			// starting leadership asynchronously transfer because
+			// leaderState is only supposed to be accessed in the
+			// leaderloop.
+			id := future.ID
+			address := future.Address
+			if id == nil {
+				s := r.pickServer()
+				if s != nil {
+					id = &s.ID
+					address = &s.Address
+				} else {
+					doneCh <- fmt.Errorf("cannot find peer")
+					continue
+				}
+			}
+			state, ok := r.leaderState.replState[*id]
+			if !ok {
+				doneCh <- fmt.Errorf("cannot find replication state for %v", id)
+				continue
+			}
+
+			go r.leadershipTransfer(*id, *address, *state, stopCh, doneCh)
 
 		case <-r.leaderState.commitCh:
 			// Process the newly committed entries
@@ -767,7 +791,7 @@ func (r *Raft) verifyLeader(v *verifyFuture) {
 }
 
 // leadershipTransfer is doing the heavy lifting for the leadership transfer.
-func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress, stopCh chan struct{}, doneCh chan error) {
+func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress, repl followerReplication, stopCh chan struct{}, doneCh chan error) {
 
 	// make sure we are not already stopped
 	select {
@@ -781,17 +805,10 @@ func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress, stopCh cha
 	r.setLeadershipTransferInProgress(true)
 	defer func() { r.setLeadershipTransferInProgress(false) }()
 
-	// Step 2: make sure the target server is up to date
-	s, ok := r.leaderState.replState[id]
-	if !ok {
-		doneCh <- fmt.Errorf("cannot find replication state for %v", id)
-		return
-	}
-
-	for s.nextIndex <= r.getLastIndex() {
+	for repl.nextIndex <= r.getLastIndex() {
 		err := &deferError{}
 		err.init()
-		s.triggerDeferErrorCh <- err
+		repl.triggerDeferErrorCh <- err
 		select {
 		case err := <-err.errCh:
 			if err != nil {
@@ -1687,11 +1704,11 @@ func (r *Raft) pickServer() *Server {
 // initiateLeadershipTransfer starts the leadership on the leader side, by
 // sending a message to the leadershipTransferCh, to make sure it runs in the
 // mainloop.
-func (r *Raft) initiateLeadershipTransfer(id ServerID, address ServerAddress) LeadershipTransferFuture {
+func (r *Raft) initiateLeadershipTransfer(id *ServerID, address *ServerAddress) LeadershipTransferFuture {
 	future := &leadershipTransferFuture{ID: id, Address: address}
 	future.init()
 
-	if id == r.localID {
+	if id != nil && *id == r.localID {
 		err := fmt.Errorf("cannot transfer leadership to itself")
 		r.logger.Printf("[INFO] raft: %v", err)
 		future.respond(err)
