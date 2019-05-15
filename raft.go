@@ -545,11 +545,11 @@ func (r *Raft) leaderLoop() {
 
 		case future := <-r.leadershipTransferCh:
 			if r.getLeadershipTransferInProgress() {
-				r.logger.Printf("[DEBUG] raft: %s", ErrLeadershipTransferInProgress)
+				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
 				future.respond(ErrLeadershipTransferInProgress)
 				continue
 			}
-			r.logger.Printf("[DEBUG] raft: starting leadership transfer to %v: %v", future.ID, future.Address)
+			r.logger.Debug("starting leadership transfer to %v: %v", future.ID, future.Address)
 
 			// When we are leaving leaderLoop, we are no longer
 			// leader, so we should stop transferring.
@@ -570,18 +570,18 @@ func (r *Raft) leaderLoop() {
 				case <-time.After(r.conf.ElectionTimeout):
 					close(stopCh)
 					err := fmt.Errorf("leadership transfer timeout")
-					r.logger.Printf("[DEBUG] raft: %v", err)
+					r.logger.Debug(err.Error())
 					future.respond(err)
 					<-doneCh
 				case <-leftLeaderLoop:
 					close(stopCh)
 					err := fmt.Errorf("lost leadership during transfer (expected)")
-					r.logger.Printf("[DEBUG] raft: %v", err)
+					r.logger.Debug(err.Error())
 					future.respond(nil)
 					<-doneCh
 				case err := <-doneCh:
 					if err != nil {
-						r.logger.Printf("[DEBUG] raft: %v", err)
+						r.logger.Debug(err.Error())
 					}
 					future.respond(err)
 				}
@@ -690,7 +690,7 @@ func (r *Raft) leaderLoop() {
 
 		case future := <-r.userRestoreCh:
 			if r.getLeadershipTransferInProgress() {
-				r.logger.Printf("[DEBUG] raft: %s", ErrLeadershipTransferInProgress)
+				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
 				future.respond(ErrLeadershipTransferInProgress)
 				continue
 			}
@@ -699,7 +699,7 @@ func (r *Raft) leaderLoop() {
 
 		case future := <-r.configurationsCh:
 			if r.getLeadershipTransferInProgress() {
-				r.logger.Printf("[DEBUG] raft: %s", ErrLeadershipTransferInProgress)
+				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
 				future.respond(ErrLeadershipTransferInProgress)
 				continue
 			}
@@ -708,7 +708,7 @@ func (r *Raft) leaderLoop() {
 
 		case future := <-r.configurationChangeChIfStable():
 			if r.getLeadershipTransferInProgress() {
-				r.logger.Printf("[DEBUG] raft: %s", ErrLeadershipTransferInProgress)
+				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
 				future.respond(ErrLeadershipTransferInProgress)
 				continue
 			}
@@ -719,7 +719,7 @@ func (r *Raft) leaderLoop() {
 
 		case newLog := <-r.applyCh:
 			if r.getLeadershipTransferInProgress() {
-				r.logger.Printf("[DEBUG] raft: %s", ErrLeadershipTransferInProgress)
+				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
 				newLog.respond(ErrLeadershipTransferInProgress)
 				continue
 			}
@@ -1378,7 +1378,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// Increase the term if we see a newer one
 	if req.Term > r.getCurrentTerm() {
 		// Ensure transition to follower
-		r.logger.Printf("[DEBUG] raft: lost leadership because received a requestvote with newer term")
+		r.logger.Debug("lost leadership because received a requestvote with newer term")
 		r.setState(Follower)
 		r.setCurrentTerm(req.Term)
 		resp.Term = req.Term
@@ -1705,7 +1705,7 @@ func (r *Raft) initiateLeadershipTransfer(id *ServerID, address *ServerAddress) 
 
 	if id != nil && *id == r.localID {
 		err := fmt.Errorf("cannot transfer leadership to itself")
-		r.logger.Printf("[INFO] raft: %v", err)
+		r.logger.Info(err.Error())
 		future.respond(err)
 		return future
 	}
