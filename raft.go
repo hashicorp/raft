@@ -1677,7 +1677,6 @@ func (r *Raft) lookupServer(id ServerID) *Server {
 
 // pickServer returns the follower that is most up to date.
 func (r *Raft) pickServer() *Server {
-	target := r.getLastIndex()
 	var pick *Server
 	var current uint64
 	for _, server := range r.configurations.latest.Servers {
@@ -1687,10 +1686,6 @@ func (r *Raft) pickServer() *Server {
 		state, ok := r.leaderState.replState[server.ID]
 		if !ok {
 			continue
-		}
-		// return early if this server is up to date
-		if state.nextIndex > target {
-			return &server
 		}
 		if state.nextIndex > current {
 			current = state.nextIndex
