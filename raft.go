@@ -805,7 +805,7 @@ func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress, repl *foll
 	r.setLeadershipTransferInProgress(true)
 	defer func() { r.setLeadershipTransferInProgress(false) }()
 
-	for repl.nextIndex <= r.getLastIndex() {
+	for atomic.LoadUint64(&repl.nextIndex) <= r.getLastIndex() {
 		err := &deferError{}
 		err.init()
 		repl.triggerDeferErrorCh <- err
@@ -1688,8 +1688,9 @@ func (r *Raft) pickServer() *Server {
 		if !ok {
 			continue
 		}
-		if state.nextIndex > current {
-			current = state.nextIndex
+		nextIdx := atomic.LoadUint64(&state.nextIndex)
+		if nextIdx > current {
+			current = nextIdx
 			tmp := server
 			pick = &tmp
 		}

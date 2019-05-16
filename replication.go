@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/armon/go-metrics"
@@ -51,6 +52,7 @@ type followerReplication struct {
 	// currentTerm is the term of this leader, to be included in AppendEntries
 	// requests.
 	currentTerm uint64
+
 	// nextIndex is the index of the next log entry to send to the follower,
 	// which may fall past the end of the log.
 	nextIndex uint64
@@ -200,7 +202,7 @@ START:
 	}
 
 	// Setup the request
-	if err := r.setupAppendEntries(s, &req, s.nextIndex, lastIndex); err == ErrLogNotFound {
+	if err := r.setupAppendEntries(s, &req, atomic.LoadUint64(&s.nextIndex), lastIndex); err == ErrLogNotFound {
 		goto SEND_SNAP
 	} else if err != nil {
 		return
@@ -233,13 +235,13 @@ START:
 		s.failures = 0
 		s.allowPipeline = true
 	} else {
-		s.nextIndex = max(min(s.nextIndex-1, resp.LastLog+1), 1)
+		atomic.StoreUint64(&s.nextIndex, max(min(s.nextIndex-1, resp.LastLog+1), 1))
 		if resp.NoRetryBackoff {
 			s.failures = 0
 		} else {
 			s.failures++
 		}
-		r.logger.Warn(fmt.Sprintf("AppendEntries to %v rejected, sending older logs (next: %d)", s.peer, s.nextIndex))
+		r.logger.Warn(fmt.Sprintf("AppendEntries to %v rejected, sending older logs (next: %d)", s.peer, atomic.LoadUint64(&s.nextIndex)))
 	}
 
 CHECK_MORE:
@@ -255,7 +257,7 @@ CHECK_MORE:
 	}
 
 	// Check if there are more logs to replicate
-	if s.nextIndex <= lastIndex {
+	if atomic.LoadUint64(&s.nextIndex) <= lastIndex {
 		goto START
 	}
 	return
@@ -334,7 +336,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	// Check for success
 	if resp.Success {
 		// Update the indexes
-		s.nextIndex = meta.Index + 1
+		atomic.StoreUint64(&s.nextIndex, meta.Index+1)
 		s.commitment.match(s.peer.ID, meta.Index)
 
 		// Clear any failures
@@ -410,7 +412,7 @@ func (r *Raft) pipelineReplicate(s *followerReplication) error {
 	r.goFunc(func() { r.pipelineDecode(s, pipeline, stopCh, finishCh) })
 
 	// Start pipeline sends at the last good nextIndex
-	nextIndex := s.nextIndex
+	nextIndex := atomic.LoadUint64(&s.nextIndex)
 
 	shouldStop := false
 SEND:
@@ -468,7 +470,7 @@ func (r *Raft) pipelineSend(s *followerReplication, p AppendPipeline, nextIdx *u
 	// Increase the next send log to avoid re-sending old logs
 	if n := len(req.Entries); n > 0 {
 		last := req.Entries[n-1]
-		*nextIdx = last.Index + 1
+		atomic.StoreUint64(nextIdx, last.Index+1)
 	}
 	return false
 }
@@ -584,7 +586,7 @@ func updateLastAppended(s *followerReplication, req *AppendEntriesRequest) {
 	// Mark any inflight logs as committed
 	if logs := req.Entries; len(logs) > 0 {
 		last := logs[len(logs)-1]
-		s.nextIndex = last.Index + 1
+		atomic.StoreUint64(&s.nextIndex, last.Index+1)
 		s.commitment.match(s.peer.ID, last.Index)
 	}
 
