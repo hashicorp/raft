@@ -609,7 +609,7 @@ func (r *Raft) leaderLoop() {
 				continue
 			}
 
-			go r.leadershipTransfer(*id, *address, *state, stopCh, doneCh)
+			go r.leadershipTransfer(*id, *address, state, stopCh, doneCh)
 
 		case <-r.leaderState.commitCh:
 			// Process the newly committed entries
@@ -791,7 +791,7 @@ func (r *Raft) verifyLeader(v *verifyFuture) {
 }
 
 // leadershipTransfer is doing the heavy lifting for the leadership transfer.
-func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress, repl followerReplication, stopCh chan struct{}, doneCh chan error) {
+func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress, repl *followerReplication, stopCh chan struct{}, doneCh chan error) {
 
 	// make sure we are not already stopped
 	select {

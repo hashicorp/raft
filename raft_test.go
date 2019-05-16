@@ -2667,7 +2667,7 @@ func TestRaft_LeadershipTransferStopRightAway(t *testing.T) {
 	stopCh := make(chan struct{})
 	doneCh := make(chan error, 1)
 	close(stopCh)
-	r.leadershipTransfer(ServerID("a"), ServerAddress(""), followerReplication{}, stopCh, doneCh)
+	r.leadershipTransfer(ServerID("a"), ServerAddress(""), &followerReplication{}, stopCh, doneCh)
 	err := <-doneCh
 	if err != nil {
 		t.Errorf("leadership shouldn't have started, but instead it error with: %v", err)
