@@ -1675,7 +1675,8 @@ func (r *Raft) lookupServer(id ServerID) *Server {
 	return nil
 }
 
-// pickServer returns the follower that is most up to date.
+// pickServer returns the follower that is most up to date. Because it accesses
+// leaderstate, it should only be called from the leaderloop.
 func (r *Raft) pickServer() *Server {
 	var pick *Server
 	var current uint64
