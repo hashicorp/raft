@@ -588,7 +588,7 @@ func (r *Raft) leaderLoop() {
 			}()
 
 			// leaderState.replState is accessed here before
-			// starting leadership asynchronously transfer because
+			// starting leadership transfer asynchronously because
 			// leaderState is only supposed to be accessed in the
 			// leaderloop.
 			id := future.ID
