@@ -49,6 +49,10 @@ var (
 	// ErrCantBootstrap is returned when attempt is made to bootstrap a
 	// cluster that already has state present.
 	ErrCantBootstrap = errors.New("bootstrap only works on new clusters")
+
+	// ErrLeadershipTransferInProgress is returned when the leader is rejecting
+	// client requests because it is attempting to transfer leadership.
+	ErrLeadershipTransferInProgress = errors.New("leadership transfer in progress")
 )
 
 // Raft implements a Raft node.
@@ -96,6 +100,12 @@ type Raft struct {
 
 	// leaderState used only while state is leader
 	leaderState leaderState
+
+	// candidateFromLeadershipTransfer is used to indicate that this server became
+	// candidate because the leader tries to transfer leadership. This flag is
+	// used in RequestVoteRequest to express that a leadership transfer is going
+	// on.
+	candidateFromLeadershipTransfer bool
 
 	// Stores our local server ID, used to avoid sending RPCs to ourself
 	localID ServerID
@@ -157,6 +167,10 @@ type Raft struct {
 	// is indexed by an artificial ID which is used for deregistration.
 	observersLock sync.RWMutex
 	observers     map[uint64]*Observer
+
+	// leadershipTransferCh is used to start a leadership transfer from outside of
+	// the main thread.
+	leadershipTransferCh chan *leadershipTransferFuture
 }
 
 // BootstrapCluster initializes a server's storage with the given cluster
@@ -443,17 +457,17 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 
 	// Create Raft struct.
 	r := &Raft{
-		protocolVersion: protocolVersion,
-		applyCh:         make(chan *logFuture),
-		conf:            *conf,
-		fsm:             fsm,
-		fsmMutateCh:     make(chan interface{}, 128),
-		fsmSnapshotCh:   make(chan *reqSnapshotFuture),
-		leaderCh:        make(chan bool),
-		localID:         localID,
-		localAddr:       localAddr,
-		logger:          logger,
-		logs:            logs,
+		protocolVersion:       protocolVersion,
+		applyCh:               make(chan *logFuture),
+		conf:                  *conf,
+		fsm:                   fsm,
+		fsmMutateCh:           make(chan interface{}, 128),
+		fsmSnapshotCh:         make(chan *reqSnapshotFuture),
+		leaderCh:              make(chan bool),
+		localID:               localID,
+		localAddr:             localAddr,
+		logger:                logger,
+		logs:                  logs,
 		configurationChangeCh: make(chan *configurationChangeFuture),
 		configurations:        configurations{},
 		rpcCh:                 trans.Consumer(),
@@ -467,6 +481,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		configurationsCh:      make(chan *configurationsFuture, 8),
 		bootstrapCh:           make(chan *bootstrapFuture),
 		observers:             make(map[uint64]*Observer),
+		leadershipTransferCh:  make(chan *leadershipTransferFuture, 1),
 	}
 
 	// Initialize as a follower.
@@ -1010,4 +1025,39 @@ func (r *Raft) LastIndex() uint64 {
 // index.
 func (r *Raft) AppliedIndex() uint64 {
 	return r.getLastApplied()
+}
+
+// LeadershipTransfer will transfer leadership to a server in the cluster.
+// This can only be called from the leader, or it will fail. The leader will
+// stop accepting client requests, make sure the target server is up to date
+// and starts the transfer with a TimeoutNow message. This message has the same
+// effect as if the election timeout on the on the target server fires. Since
+// it is unlikely that another server is starting an election, it is very
+// likely that the target server is able to win the election.  Note that raft
+// protocol version 3 is not sufficient to use LeadershipTransfer. A recent
+// version of that library has to be used that includes this feature.  Using
+// transfer leadership is safe however in a cluster where not every node has
+// the latest version. If a follower cannot be promoted, it will fail
+// gracefully.
+func (r *Raft) LeadershipTransfer() Future {
+	if r.protocolVersion < 3 {
+		return errorFuture{ErrUnsupportedProtocol}
+	}
+
+	return r.initiateLeadershipTransfer(nil, nil)
+}
+
+// LeadershipTransferToServer does the same as LeadershipTransfer but takes a
+// server in the arguments in case a leadership should be transitioned to a
+// specific server in the cluster.  Note that raft protocol version 3 is not
+// sufficient to use LeadershipTransfer. A recent version of that library has
+// to be used that includes this feature. Using transfer leadership is safe
+// however in a cluster where not every node has the latest version. If a
+// follower cannot be promoted, it will fail gracefully.
+func (r *Raft) LeadershipTransferToServer(id ServerID, address ServerAddress) Future {
+	if r.protocolVersion < 3 {
+		return errorFuture{ErrUnsupportedProtocol}
+	}
+
+	return r.initiateLeadershipTransfer(&id, &address)
 }

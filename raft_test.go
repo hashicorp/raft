@@ -2277,11 +2277,12 @@ func TestRaft_Voting(t *testing.T) {
 	ldrT := c.trans[c.IndexOf(ldr)]
 
 	reqVote := RequestVoteRequest{
-		RPCHeader:    ldr.getRPCHeader(),
-		Term:         ldr.getCurrentTerm() + 10,
-		Candidate:    ldrT.EncodePeer(ldr.localID, ldr.localAddr),
-		LastLogIndex: ldr.LastIndex(),
-		LastLogTerm:  ldr.getCurrentTerm(),
+		RPCHeader:          ldr.getRPCHeader(),
+		Term:               ldr.getCurrentTerm() + 10,
+		Candidate:          ldrT.EncodePeer(ldr.localID, ldr.localAddr),
+		LastLogIndex:       ldr.LastIndex(),
+		LastLogTerm:        ldr.getCurrentTerm(),
+		LeadershipTransfer: false,
 	}
 	// a follower that thinks there's a leader should vote for that leader.
 	var resp RequestVoteResponse
@@ -2291,13 +2292,23 @@ func TestRaft_Voting(t *testing.T) {
 	if !resp.Granted {
 		c.FailNowf("[ERR] expected vote to be granted, but wasn't %+v", resp)
 	}
-	// a follow that thinks there's a leader shouldn't vote for a different candidate
+	// a follower that thinks there's a leader shouldn't vote for a different candidate
 	reqVote.Candidate = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
 	if err := ldrT.RequestVote(followers[1].localID, followers[1].localAddr, &reqVote, &resp); err != nil {
 		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
 	}
 	if resp.Granted {
 		c.FailNowf("[ERR] expected vote not to be granted, but was %+v", resp)
+	}
+	// a follower that thinks there's a leader, but the request has the leadership transfer flag, should
+	// vote for a different candidate
+	reqVote.LeadershipTransfer = true
+	reqVote.Candidate = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
+	if err := ldrT.RequestVote(followers[1].localID, followers[1].localAddr, &reqVote, &resp); err != nil {
+		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
+	}
+	if !resp.Granted {
+		c.FailNowf("[ERR] expected vote to be granted, but wasn't %+v", resp)
 	}
 }
 
@@ -2407,6 +2418,259 @@ func TestRaft_ProtocolVersion_Upgrade_2_3(t *testing.T) {
 	// Remove an old server using the old address-based API.
 	if future := c.Leader().RemovePeer(oldAddr); future.Error() != nil {
 		c.FailNowf("[ERR] err: %v", future.Error())
+	}
+}
+
+func TestRaft_LeadershipTransferInProgress(t *testing.T) {
+	r := &Raft{leaderState: leaderState{}}
+	r.setupLeaderState()
+
+	if r.getLeadershipTransferInProgress() != false {
+		t.Errorf("should be true after setup")
+	}
+
+	r.setLeadershipTransferInProgress(true)
+	if r.getLeadershipTransferInProgress() != true {
+		t.Errorf("should be true because we set it before")
+	}
+	r.setLeadershipTransferInProgress(false)
+	if r.getLeadershipTransferInProgress() != false {
+		t.Errorf("should be false because we set it before")
+	}
+}
+
+func pointerToString(s string) *string {
+	return &s
+}
+
+func TestRaft_LeadershipTransferPickServer(t *testing.T) {
+	type variant struct {
+		lastLogIndex int
+		servers      map[string]uint64
+		expected     *string
+	}
+	leaderID := "z"
+	variants := []variant{
+		{lastLogIndex: 10, servers: map[string]uint64{}, expected: nil},
+		{lastLogIndex: 10, servers: map[string]uint64{leaderID: 11, "a": 9}, expected: pointerToString("a")},
+		{lastLogIndex: 10, servers: map[string]uint64{leaderID: 11, "a": 9, "b": 8}, expected: pointerToString("a")},
+		{lastLogIndex: 10, servers: map[string]uint64{leaderID: 11, "c": 9, "b": 8, "a": 8}, expected: pointerToString("c")},
+		{lastLogIndex: 10, servers: map[string]uint64{leaderID: 11, "a": 7, "b": 11, "c": 8}, expected: pointerToString("b")},
+	}
+	for i, v := range variants {
+		servers := []Server{}
+		replState := map[ServerID]*followerReplication{}
+		for id, idx := range v.servers {
+			servers = append(servers, Server{ID: ServerID(id)})
+			replState[ServerID(id)] = &followerReplication{nextIndex: idx}
+		}
+		r := Raft{leaderState: leaderState{}, localID: ServerID(leaderID), configurations: configurations{latest: Configuration{Servers: servers}}}
+		r.lastLogIndex = uint64(v.lastLogIndex)
+		r.leaderState.replState = replState
+
+		actual := r.pickServer()
+		if v.expected == nil && actual == nil {
+			continue
+		} else if v.expected == nil && actual != nil {
+			t.Errorf("case %d: actual: %v doesn't match expected: %v", i, actual, v.expected)
+		} else if actual == nil && v.expected != nil {
+			t.Errorf("case %d: actual: %v doesn't match expected: %v", i, actual, v.expected)
+		} else if string(actual.ID) != *v.expected {
+			t.Errorf("case %d: actual: %v doesn't match expected: %v", i, actual.ID, *v.expected)
+		}
+	}
+}
+
+func TestRaft_LeadershipTransfer(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	oldLeader := string(c.Leader().localID)
+	err := c.Leader().LeadershipTransfer()
+	if err.Error() != nil {
+		t.Fatalf("Didn't expect error: %v", err.Error())
+	}
+	newLeader := string(c.Leader().localID)
+	if oldLeader == newLeader {
+		t.Error("Leadership should have been transitioned to another peer.")
+	}
+}
+
+func TestRaft_LeadershipTransferWithOneNode(t *testing.T) {
+	c := MakeCluster(1, t, nil)
+	defer c.Close()
+
+	future := c.Leader().LeadershipTransfer()
+	if future.Error() == nil {
+		t.Fatal("leadership transfer should err")
+	}
+
+	expected := "cannot find peer"
+	actual := future.Error().Error()
+	if !strings.Contains(actual, expected) {
+		t.Errorf("leadership transfer should err with: %s", expected)
+	}
+}
+
+func TestRaft_LeadershipTransferWithSevenNodes(t *testing.T) {
+	c := MakeCluster(7, t, nil)
+	defer c.Close()
+
+	oldLeader := c.Leader().localID
+	follower := c.GetInState(Follower)[0]
+	future := c.Leader().LeadershipTransferToServer(follower.localID, follower.localAddr)
+	if future.Error() != nil {
+		t.Fatalf("Didn't expect error: %v", future.Error())
+	}
+	if oldLeader == c.Leader().localID {
+		t.Error("Leadership should have been transitioned to specified server.")
+	}
+}
+
+func TestRaft_LeadershipTransferToInvalidID(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	future := c.Leader().LeadershipTransferToServer(ServerID("abc"), ServerAddress("127.0.0.1"))
+	if future.Error() == nil {
+		t.Fatal("leadership transfer should err")
+	}
+
+	expected := "cannot find replication state"
+	actual := future.Error().Error()
+	if !strings.Contains(actual, expected) {
+		t.Errorf("leadership transfer should err with: %s", expected)
+	}
+}
+
+func TestRaft_LeadershipTransferToInvalidAddress(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	follower := c.GetInState(Follower)[0]
+	future := c.Leader().LeadershipTransferToServer(follower.localID, ServerAddress("127.0.0.1"))
+	if future.Error() == nil {
+		t.Fatal("leadership transfer should err")
+	}
+	expected := "failed to make TimeoutNow RPC"
+	actual := future.Error().Error()
+	if !strings.Contains(actual, expected) {
+		t.Errorf("leadership transfer should err with: %s", expected)
+	}
+}
+
+func TestRaft_LeadershipTransferToBehindServer(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	l := c.Leader()
+	behind := c.GetInState(Follower)[0]
+
+	// Commit a lot of things
+	for i := 0; i < 1000; i++ {
+		l.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	future := l.LeadershipTransferToServer(behind.localID, behind.localAddr)
+	if future.Error() != nil {
+		t.Fatalf("This is not supposed to error: %v", future.Error())
+	}
+	if c.Leader().localID != behind.localID {
+		t.Fatal("Behind server did not get leadership")
+	}
+}
+
+func TestRaft_LeadershipTransferToItself(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	l := c.Leader()
+
+	future := l.LeadershipTransferToServer(l.localID, l.localAddr)
+	if future.Error() == nil {
+		t.Fatal("leadership transfer should err")
+	}
+	expected := "cannot transfer leadership to itself"
+	actual := future.Error().Error()
+	if !strings.Contains(actual, expected) {
+		t.Errorf("leadership transfer should err with: %s", expected)
+	}
+}
+
+func TestRaft_LeadershipTransferLeaderRejectsClientRequests(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+	l := c.Leader()
+	l.setLeadershipTransferInProgress(true)
+
+	// tests for API > protocol version 3 is missing here because leadership transfer
+	// is only available for protocol version >= 3
+	// TODO: is something missing here?
+	futures := []Future{
+		l.AddNonvoter(ServerID(""), ServerAddress(""), 0, 0),
+		l.AddVoter(ServerID(""), ServerAddress(""), 0, 0),
+		l.Apply([]byte("test"), 0),
+		l.Barrier(0),
+		l.DemoteVoter(ServerID(""), 0, 0),
+		l.GetConfiguration(),
+
+		// the API is tested, but here we are making sure we reject any config change.
+		l.requestConfigChange(configurationChangeRequest{}, 100*time.Millisecond),
+	}
+	futures = append(futures, l.LeadershipTransfer())
+	select {
+	case <-l.leadershipTransferCh:
+	default:
+	}
+
+	futures = append(futures, l.LeadershipTransferToServer(ServerID(""), ServerAddress("")))
+
+	for i, f := range futures {
+		if f.Error() != ErrLeadershipTransferInProgress {
+			t.Errorf("case %d: should have errored with: %s, instead of %s", i, ErrLeadershipTransferInProgress, f.Error())
+		}
+	}
+}
+
+func TestRaft_LeadershipTransferLeaderReplicationTimeout(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	l := c.Leader()
+	behind := c.GetInState(Follower)[0]
+
+	// Commit a lot of things, so that the timeout can kick in
+	for i := 0; i < 10000; i++ {
+		l.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	// set ElectionTimeout really short because this is used to determine
+	// how long a transfer is allowed to take.
+	l.conf.ElectionTimeout = 1 * time.Nanosecond
+
+	future := l.LeadershipTransferToServer(behind.localID, behind.localAddr)
+	if future.Error() == nil {
+		t.Log("This test is fishing for a replication timeout, but this is not guaranteed to happen.")
+	} else {
+		expected := "leadership transfer timeout"
+		actual := future.Error().Error()
+		if !strings.Contains(actual, expected) {
+			t.Errorf("leadership transfer should err with: %s", expected)
+		}
+	}
+}
+
+func TestRaft_LeadershipTransferStopRightAway(t *testing.T) {
+	r := Raft{leaderState: leaderState{}}
+	r.setupLeaderState()
+
+	stopCh := make(chan struct{})
+	doneCh := make(chan error, 1)
+	close(stopCh)
+	r.leadershipTransfer(ServerID("a"), ServerAddress(""), &followerReplication{}, stopCh, doneCh)
+	err := <-doneCh
+	if err != nil {
+		t.Errorf("leadership shouldn't have started, but instead it error with: %v", err)
 	}
 }
 

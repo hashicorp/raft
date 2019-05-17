@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"sync/atomic"
 	"time"
 
 	"github.com/armon/go-metrics"
@@ -77,12 +78,13 @@ type commitTuple struct {
 
 // leaderState is state that is used while we are a leader.
 type leaderState struct {
-	commitCh   chan struct{}
-	commitment *commitment
-	inflight   *list.List // list of logFuture in log index order
-	replState  map[ServerID]*followerReplication
-	notify     map[*verifyFuture]struct{}
-	stepDown   chan struct{}
+	leadershipTransferInProgress int32 // indicates that a leadership transfer is in progress.
+	commitCh                     chan struct{}
+	commitment                   *commitment
+	inflight                     *list.List // list of logFuture in log index order
+	replState                    map[ServerID]*followerReplication
+	notify                       map[*verifyFuture]struct{}
+	stepDown                     chan struct{}
 }
 
 // setLeader is used to modify the current leader of the cluster
@@ -148,7 +150,8 @@ func (r *Raft) runFollower() {
 	r.logger.Info(fmt.Sprintf("%v entering Follower state (Leader: %q)", r, r.Leader()))
 	metrics.IncrCounter([]string{"raft", "state", "follower"}, 1)
 	heartbeatTimer := randomTimeout(r.conf.HeartbeatTimeout)
-	for {
+
+	for r.getState() == Follower {
 		select {
 		case rpc := <-r.rpcCh:
 			r.processRPC(rpc)
@@ -167,6 +170,10 @@ func (r *Raft) runFollower() {
 
 		case r := <-r.userRestoreCh:
 			// Reject any restores since we are not the leader
+			r.respond(ErrNotLeader)
+
+		case r := <-r.leadershipTransferCh:
+			// Reject any operations since we are not the leader
 			r.respond(ErrNotLeader)
 
 		case c := <-r.configurationsCh:
@@ -243,6 +250,14 @@ func (r *Raft) runCandidate() {
 
 	// Start vote for us, and set a timeout
 	voteCh := r.electSelf()
+
+	// Make sure the leadership transfer flag is reset after each run. Having this
+	// flag will set the field LeadershipTransfer in a RequestVoteRequst to true,
+	// which will make other servers vote even though they have a leader already.
+	// It is important to reset that flag, because this priviledge could be abused
+	// otherwise.
+	defer func() { r.candidateFromLeadershipTransfer = false }()
+
 	electionTimer := randomTimeout(r.conf.ElectionTimeout)
 
 	// Tally the votes, need a simple majority
@@ -314,6 +329,33 @@ func (r *Raft) runCandidate() {
 	}
 }
 
+func (r *Raft) setLeadershipTransferInProgress(v bool) {
+	if v {
+		atomic.StoreInt32(&r.leaderState.leadershipTransferInProgress, 1)
+	} else {
+		atomic.StoreInt32(&r.leaderState.leadershipTransferInProgress, 0)
+	}
+}
+
+func (r *Raft) getLeadershipTransferInProgress() bool {
+	v := atomic.LoadInt32(&r.leaderState.leadershipTransferInProgress)
+	if v == 1 {
+		return true
+	}
+	return false
+}
+
+func (r *Raft) setupLeaderState() {
+	r.leaderState.commitCh = make(chan struct{}, 1)
+	r.leaderState.commitment = newCommitment(r.leaderState.commitCh,
+		r.configurations.latest,
+		r.getLastIndex()+1 /* first index that may be committed in this term */)
+	r.leaderState.inflight = list.New()
+	r.leaderState.replState = make(map[ServerID]*followerReplication)
+	r.leaderState.notify = make(map[*verifyFuture]struct{})
+	r.leaderState.stepDown = make(chan struct{}, 1)
+}
+
 // runLeader runs the FSM for a leader. Do the setup here and drop into
 // the leaderLoop for the hot loop.
 func (r *Raft) runLeader() {
@@ -331,15 +373,9 @@ func (r *Raft) runLeader() {
 		}
 	}
 
-	// Setup leader state
-	r.leaderState.commitCh = make(chan struct{}, 1)
-	r.leaderState.commitment = newCommitment(r.leaderState.commitCh,
-		r.configurations.latest,
-		r.getLastIndex()+1 /* first index that may be committed in this term */)
-	r.leaderState.inflight = list.New()
-	r.leaderState.replState = make(map[ServerID]*followerReplication)
-	r.leaderState.notify = make(map[*verifyFuture]struct{})
-	r.leaderState.stepDown = make(chan struct{}, 1)
+	// setup leader state. This is only supposed to be accessed within the
+	// leaderloop.
+	r.setupLeaderState()
 
 	// Cleanup state on step down
 	defer func() {
@@ -436,16 +472,17 @@ func (r *Raft) startStopReplication() {
 		if _, ok := r.leaderState.replState[server.ID]; !ok {
 			r.logger.Info(fmt.Sprintf("Added peer %v, starting replication", server.ID))
 			s := &followerReplication{
-				peer:        server,
-				commitment:  r.leaderState.commitment,
-				stopCh:      make(chan uint64, 1),
-				triggerCh:   make(chan struct{}, 1),
-				currentTerm: r.getCurrentTerm(),
-				nextIndex:   lastIdx + 1,
-				lastContact: time.Now(),
-				notify:      make(map[*verifyFuture]struct{}),
-				notifyCh:    make(chan struct{}, 1),
-				stepDown:    r.leaderState.stepDown,
+				peer:                server,
+				commitment:          r.leaderState.commitment,
+				stopCh:              make(chan uint64, 1),
+				triggerCh:           make(chan struct{}, 1),
+				triggerDeferErrorCh: make(chan *deferError, 1),
+				currentTerm:         r.getCurrentTerm(),
+				nextIndex:           lastIdx + 1,
+				lastContact:         time.Now(),
+				notify:              make(map[*verifyFuture]struct{}),
+				notifyCh:            make(chan struct{}, 1),
+				stepDown:            r.leaderState.stepDown,
 			}
 			r.leaderState.replState[server.ID] = s
 			r.goFunc(func() { r.replicate(s) })
@@ -496,8 +533,8 @@ func (r *Raft) leaderLoop() {
 	// only a single peer (ourself) and replicating to an undefined set
 	// of peers.
 	stepDown := false
-
 	lease := time.After(r.conf.LeaderLeaseTimeout)
+
 	for r.getState() == Leader {
 		select {
 		case rpc := <-r.rpcCh:
@@ -505,6 +542,74 @@ func (r *Raft) leaderLoop() {
 
 		case <-r.leaderState.stepDown:
 			r.setState(Follower)
+
+		case future := <-r.leadershipTransferCh:
+			if r.getLeadershipTransferInProgress() {
+				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
+				future.respond(ErrLeadershipTransferInProgress)
+				continue
+			}
+			r.logger.Debug("starting leadership transfer to %v: %v", future.ID, future.Address)
+
+			// When we are leaving leaderLoop, we are no longer
+			// leader, so we should stop transferring.
+			leftLeaderLoop := make(chan struct{})
+			defer func() { close(leftLeaderLoop) }()
+
+			stopCh := make(chan struct{})
+			doneCh := make(chan error, 1)
+
+			// This is intentionally being setup outside of the
+			// leadershipTransfer function. Because the TimeoutNow
+			// call is blocking and there is no way to abort that
+			// in case eg the timer expires.
+			// The leadershipTransfer function is controlled with
+			// the stopCh and doneCh.
+			go func() {
+				select {
+				case <-time.After(r.conf.ElectionTimeout):
+					close(stopCh)
+					err := fmt.Errorf("leadership transfer timeout")
+					r.logger.Debug(err.Error())
+					future.respond(err)
+					<-doneCh
+				case <-leftLeaderLoop:
+					close(stopCh)
+					err := fmt.Errorf("lost leadership during transfer (expected)")
+					r.logger.Debug(err.Error())
+					future.respond(nil)
+					<-doneCh
+				case err := <-doneCh:
+					if err != nil {
+						r.logger.Debug(err.Error())
+					}
+					future.respond(err)
+				}
+			}()
+
+			// leaderState.replState is accessed here before
+			// starting leadership transfer asynchronously because
+			// leaderState is only supposed to be accessed in the
+			// leaderloop.
+			id := future.ID
+			address := future.Address
+			if id == nil {
+				s := r.pickServer()
+				if s != nil {
+					id = &s.ID
+					address = &s.Address
+				} else {
+					doneCh <- fmt.Errorf("cannot find peer")
+					continue
+				}
+			}
+			state, ok := r.leaderState.replState[*id]
+			if !ok {
+				doneCh <- fmt.Errorf("cannot find replication state for %v", id)
+				continue
+			}
+
+			go r.leadershipTransfer(*id, *address, state, stopCh, doneCh)
 
 		case <-r.leaderState.commitCh:
 			// Process the newly committed entries
@@ -584,20 +689,40 @@ func (r *Raft) leaderLoop() {
 			}
 
 		case future := <-r.userRestoreCh:
+			if r.getLeadershipTransferInProgress() {
+				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
+				future.respond(ErrLeadershipTransferInProgress)
+				continue
+			}
 			err := r.restoreUserSnapshot(future.meta, future.reader)
 			future.respond(err)
 
-		case c := <-r.configurationsCh:
-			c.configurations = r.configurations.Clone()
-			c.respond(nil)
+		case future := <-r.configurationsCh:
+			if r.getLeadershipTransferInProgress() {
+				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
+				future.respond(ErrLeadershipTransferInProgress)
+				continue
+			}
+			future.configurations = r.configurations.Clone()
+			future.respond(nil)
 
 		case future := <-r.configurationChangeChIfStable():
+			if r.getLeadershipTransferInProgress() {
+				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
+				future.respond(ErrLeadershipTransferInProgress)
+				continue
+			}
 			r.appendConfigurationEntry(future)
 
 		case b := <-r.bootstrapCh:
 			b.respond(ErrCantBootstrap)
 
 		case newLog := <-r.applyCh:
+			if r.getLeadershipTransferInProgress() {
+				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
+				newLog.respond(ErrLeadershipTransferInProgress)
+				continue
+			}
 			// Group commit, gather all the ready commits
 			ready := []*logFuture{newLog}
 			for i := 0; i < r.conf.MaxAppendEntries; i++ {
@@ -663,6 +788,54 @@ func (r *Raft) verifyLeader(v *verifyFuture) {
 		repl.notifyLock.Unlock()
 		asyncNotifyCh(repl.notifyCh)
 	}
+}
+
+// leadershipTransfer is doing the heavy lifting for the leadership transfer.
+func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress, repl *followerReplication, stopCh chan struct{}, doneCh chan error) {
+
+	// make sure we are not already stopped
+	select {
+	case <-stopCh:
+		doneCh <- nil
+		return
+	default:
+	}
+
+	// Step 1: set this field which stops this leader from responding to any client requests.
+	r.setLeadershipTransferInProgress(true)
+	defer func() { r.setLeadershipTransferInProgress(false) }()
+
+	for atomic.LoadUint64(&repl.nextIndex) <= r.getLastIndex() {
+		err := &deferError{}
+		err.init()
+		repl.triggerDeferErrorCh <- err
+		select {
+		case err := <-err.errCh:
+			if err != nil {
+				doneCh <- err
+				return
+			}
+		case <-stopCh:
+			doneCh <- nil
+			return
+		}
+	}
+
+	// Step ?: the thesis describes in chap 6.4.1: Using clocks to reduce
+	// messaging for read-only queries. If this is implemented, the lease
+	// has to be reset as well, in case leadership is transferred. This
+	// implementation also has a lease, but it serves another purpose and
+	// doesn't need to be reset. The lease mechanism in our raft lib, is
+	// setup in a similar way to the one in the thesis, but in practice
+	// it's a timer that just tells the leader how often to check
+	// heartbeats are still coming in.
+
+	// Step 3: send TimeoutNow message to target server.
+	err := r.trans.TimeoutNow(id, address, &TimeoutNowRequest{RPCHeader: r.getRPCHeader()}, &TimeoutNowResponse{})
+	if err != nil {
+		err = fmt.Errorf("failed to make TimeoutNow RPC to %v: %v", id, err)
+	}
+	doneCh <- err
 }
 
 // checkLeaderLease is used to check if we can contact a quorum of nodes
@@ -981,6 +1154,8 @@ func (r *Raft) processRPC(rpc RPC) {
 		r.requestVote(rpc, cmd)
 	case *InstallSnapshotRequest:
 		r.installSnapshot(rpc, cmd)
+	case *TimeoutNowRequest:
+		r.timeoutNow(rpc, cmd)
 	default:
 		r.logger.Error(fmt.Sprintf("Got unexpected command: %#v", rpc.Command))
 		rpc.Respond(nil, fmt.Errorf("unexpected command"))
@@ -1184,9 +1359,12 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 		resp.Peers = encodePeers(r.configurations.latest, r.trans)
 	}
 
-	// Check if we have an existing leader [who's not the candidate]
+	// Check if we have an existing leader [who's not the candidate] and also
+	// check the LeadershipTransfer flag is set. Usually votes are rejected if
+	// there is a known leader. But if the leader initiated a leadership transfer,
+	// vote!
 	candidate := r.trans.DecodePeer(req.Candidate)
-	if leader := r.Leader(); leader != "" && leader != candidate {
+	if leader := r.Leader(); leader != "" && leader != candidate && !req.LeadershipTransfer {
 		r.logger.Warn(fmt.Sprintf("Rejecting vote request from %v since we have a leader: %v",
 			candidate, leader))
 		return
@@ -1200,6 +1378,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// Increase the term if we see a newer one
 	if req.Term > r.getCurrentTerm() {
 		// Ensure transition to follower
+		r.logger.Debug("lost leadership because received a requestvote with newer term")
 		r.setState(Follower)
 		r.setCurrentTerm(req.Term)
 		resp.Term = req.Term
@@ -1404,11 +1583,12 @@ func (r *Raft) electSelf() <-chan *voteResult {
 	// Construct the request
 	lastIdx, lastTerm := r.getLastEntry()
 	req := &RequestVoteRequest{
-		RPCHeader:    r.getRPCHeader(),
-		Term:         r.getCurrentTerm(),
-		Candidate:    r.trans.EncodePeer(r.localID, r.localAddr),
-		LastLogIndex: lastIdx,
-		LastLogTerm:  lastTerm,
+		RPCHeader:          r.getRPCHeader(),
+		Term:               r.getCurrentTerm(),
+		Candidate:          r.trans.EncodePeer(r.localID, r.localAddr),
+		LastLogIndex:       lastIdx,
+		LastLogTerm:        lastTerm,
+		LeadershipTransfer: r.candidateFromLeadershipTransfer,
 	}
 
 	// Construct a function to ask for a vote
@@ -1483,4 +1663,69 @@ func (r *Raft) setState(state RaftState) {
 	if oldState != state {
 		r.observe(state)
 	}
+}
+
+// LookupServer looks up a server by ServerID.
+func (r *Raft) lookupServer(id ServerID) *Server {
+	for _, server := range r.configurations.latest.Servers {
+		if server.ID != r.localID {
+			return &server
+		}
+	}
+	return nil
+}
+
+// pickServer returns the follower that is most up to date. Because it accesses
+// leaderstate, it should only be called from the leaderloop.
+func (r *Raft) pickServer() *Server {
+	var pick *Server
+	var current uint64
+	for _, server := range r.configurations.latest.Servers {
+		if server.ID == r.localID {
+			continue
+		}
+		state, ok := r.leaderState.replState[server.ID]
+		if !ok {
+			continue
+		}
+		nextIdx := atomic.LoadUint64(&state.nextIndex)
+		if nextIdx > current {
+			current = nextIdx
+			tmp := server
+			pick = &tmp
+		}
+	}
+	return pick
+}
+
+// initiateLeadershipTransfer starts the leadership on the leader side, by
+// sending a message to the leadershipTransferCh, to make sure it runs in the
+// mainloop.
+func (r *Raft) initiateLeadershipTransfer(id *ServerID, address *ServerAddress) LeadershipTransferFuture {
+	future := &leadershipTransferFuture{ID: id, Address: address}
+	future.init()
+
+	if id != nil && *id == r.localID {
+		err := fmt.Errorf("cannot transfer leadership to itself")
+		r.logger.Info(err.Error())
+		future.respond(err)
+		return future
+	}
+
+	select {
+	case r.leadershipTransferCh <- future:
+		return future
+	case <-r.shutdownCh:
+		return errorFuture{ErrRaftShutdown}
+	default:
+		return errorFuture{ErrEnqueueTimeout}
+	}
+}
+
+// timeoutNow is what happens when a server receives a TimeoutNowRequest.
+func (r *Raft) timeoutNow(rpc RPC, req *TimeoutNowRequest) {
+	r.setLeader("")
+	r.setState(Candidate)
+	r.candidateFromLeadershipTransfer = true
+	rpc.Respond(&TimeoutNowResponse{}, nil)
 }
