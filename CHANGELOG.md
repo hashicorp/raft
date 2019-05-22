@@ -1,3 +1,9 @@
+# UNRELEASED
+
+FEATURES
+
+* Add transfer leadership extension [[GH-306](https://github.com/hashicorp/raft/pull/306)]
+
 # 1.0.1 (April 12th, 2019)
 
 IMPROVEMENTS
