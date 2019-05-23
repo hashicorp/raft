@@ -934,7 +934,7 @@ func (r *Raft) LastContact() time.Time {
 // "last_snapshot_index", "last_snapshot_term",
 // "latest_configuration", "last_contact", and "num_peers".
 //
-// The value of "state" is a numeric constant representing one of 
+// The value of "state" is a numeric constant representing one of
 // the possible leadership states the node is in at any given time.
 // the possible states are: "Follower", "Candidate", "Leader", "Shutdown".
 //
