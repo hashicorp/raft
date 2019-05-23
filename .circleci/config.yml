@@ -62,9 +62,7 @@ jobs:
             - raft-modcache-v1-{{ checksum "go.mod" }}
 
       # run go tests with gotestsum
-      - run: |
-          PACKAGE_NAMES=$(go list ./... | grep -v github.com/hashicorp/raft/fuzzy)
-          gotestsum --format=short-verbose --junitfile $TEST_RESULTS_DIR/gotestsum-report.xml -- $PACKAGE_NAMES
+      - run: make ci.integ
       - store_test_results:
           path: /tmp/test-results
       - store_artifacts:
