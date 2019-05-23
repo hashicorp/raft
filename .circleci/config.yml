@@ -51,11 +51,12 @@ jobs:
         type: string
     docker:
       - image: << parameters.go-version >>
+    environment: *ENVIRONMENT
     steps:
       - checkout
       - run: mkdir -p $TEST_RESULTS_DIR
 
-      - restore_cache: # restore cache from dev-build job
+      - restore_cache: # restore cache
           keys:
             - raft-modcache-v1-{{ checksum "go.mod" }}
 
