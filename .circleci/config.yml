@@ -75,14 +75,17 @@ workflows:
     jobs:
       - go-fmt-and-vet
       - go-test:
+          name: test go1.10
           go-version: *GOLANG_1_10_IMAGE
           requires:
             - go-fmt-and-vet
       - go-test:
+          name: test go1.11
           go-version: *GOLANG_1_11_IMAGE
           requires:
             - go-fmt-and-vet
       - go-test:
+          name: test go1.12
           go-version: *GOLANG_1_12_IMAGE
           requires:
             - go-fmt-and-vet
