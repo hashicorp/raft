@@ -2,7 +2,6 @@ version: 2.1
 
 references:
   images:
-    go-1.10: &GOLANG_1_10_IMAGE circleci/golang:1.10
     go-1.11: &GOLANG_1_11_IMAGE circleci/golang:1.11
     go-1.12: &GOLANG_1_12_IMAGE circleci/golang:1.12
 
@@ -73,11 +72,6 @@ workflows:
   test-and-build:
     jobs:
       - go-fmt-and-vet
-      - go-test:
-          name: test go1.10
-          go-version: *GOLANG_1_10_IMAGE
-          requires:
-            - go-fmt-and-vet
       - go-test:
           name: test go1.11
           go-version: *GOLANG_1_11_IMAGE
