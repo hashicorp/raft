@@ -39,7 +39,9 @@ jobs:
               echo "$files"
               exit 1
             fi
-      - run: go vet ./...
+      - run: |
+          PACKAGE_NAMES=$(go list ./... | grep -v github.com/hashicorp/raft/fuzzy)
+          go vet $PACKAGE_NAMES
 
   go-test:
     description: Runs go tests
@@ -59,7 +61,7 @@ jobs:
 
       # run go tests with gotestsum
       - run: |
-          PACKAGE_NAMES=$(go list ./...)
+          PACKAGE_NAMES=$(go list ./... | grep -v github.com/hashicorp/raft/fuzzy)
           gotestsum --format=short-verbose --junitfile $TEST_RESULTS_DIR/gotestsum-report.xml -- $PACKAGE_NAMES
       - store_test_results:
           path: /tmp/test-results
