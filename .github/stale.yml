@@ -20,10 +20,9 @@ staleLabel: "waiting-reply"
 # Comment to post when marking as stale. Set to `false` to disable
 markComment: |
   Hey there,
-  This issues hasn't had any activity for a while, so we're going to
-  automatically close it in 30 days. If you're still seeing this issue with the
-  latest version of Raft, please respond here and we'll keep it open and take
-  another look at this.
+  We wanted to check in on this request since it has been inactive for 90 days. 
+  Are you having the same issue with the latest version of Raft? Have you reviewed the latest [godocs](https://godoc.org/github.com/hashicorp/raft)? 
+  If there is still no activity on this request in 30 days, we will go ahead and close it.
   Thank you!
 
 # Comment to post when removing the stale label. Set to `false` to disable
@@ -32,8 +31,8 @@ unmarkComment: false
 # Comment to post when closing a stale Issue. Set to `false` to disable
 closeComment: >
   Hey there,
-  This issue has been automatically closed because there hasn't been any activity for a while.
-  Feel free to [open a new one](https://github.com/hashicorp/raft/issues/new) if you still experience this problem :+1:
+  This issue has been automatically closed because there hasn't been any activity for a while. 
+  If you are still experiencing problems, or still have questions, feel free to [open a new one](https://github.com/hashicorp/raft/issues/new) :+1
 
 # Limit to only `issues`
 only: issues
