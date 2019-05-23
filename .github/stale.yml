@@ -20,8 +20,10 @@ staleLabel: "waiting-reply"
 # Comment to post when marking as stale. Set to `false` to disable
 markComment: |
   Hey there,
-  We wanted to check in on this request since it has been inactive for 90 days. 
-  Are you having the same issue with the latest version of Raft? Have you reviewed the latest [godocs](https://godoc.org/github.com/hashicorp/raft)? 
+  We wanted to check in on this request since it has been inactive for at least 90 days.
+  Have you reviewed the latest [godocs](https://godoc.org/github.com/hashicorp/raft)? 
+  If you think this is still an important issue in the latest version of [the Raft library](https://github.com/hashicorp/raft/compare/) or 
+  [its documentation](https://github.com/hashicorp/raft/compare/) please feel let us know and we'll keep it open for investigation.
   If there is still no activity on this request in 30 days, we will go ahead and close it.
   Thank you!
 
