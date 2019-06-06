@@ -294,9 +294,11 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 			// couldn't open any snapshots.
 			continue
 		}
-		defer source.Close()
 
-		if err := fsm.Restore(source); err != nil {
+		err = fsm.Restore(source)
+		// Close the source after the restore has completed
+		source.Close()
+		if err != nil {
 			// Same here, skip and try the next one.
 			continue
 		}
@@ -545,9 +547,11 @@ func (r *Raft) restoreSnapshot() error {
 			r.logger.Error(fmt.Sprintf("Failed to open snapshot %v: %v", snapshot.ID, err))
 			continue
 		}
-		defer source.Close()
 
-		if err := r.fsm.Restore(source); err != nil {
+		err = r.fsm.Restore(source)
+		// Close the source after the restore has completed
+		source.Close()
+		if err != nil {
 			r.logger.Error(fmt.Sprintf("Failed to restore snapshot %v: %v", snapshot.ID, err))
 			continue
 		}
