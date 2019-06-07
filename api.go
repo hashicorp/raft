@@ -175,8 +175,8 @@ type Raft struct {
 
 // BootstrapCluster initializes a server's storage with the given cluster
 // configuration. This should only be called at the beginning of time for the
-// cluster with a configuration listing all Voter servers. There is no need to
-// bootstrap Nonvoter and Staging servers.
+// cluster with an identical configuration listing all Voter servers. There is
+// no need to bootstrap Nonvoter and Staging servers.
 //
 // A cluster can only be bootstrapped once from a single participating Voter
 // server. Any further attempts to bootstrap will return an error that can be
@@ -591,9 +591,9 @@ func (r *Raft) restoreSnapshot() error {
 
 // BootstrapCluster is equivalent to non-member BootstrapCluster but can be
 // called on an un-bootstrapped Raft instance after it has been created. This
-// should only be called at the beginning of time for the cluster with a
-// configuration listing all Voter servers. There is no need to bootstrap
-// Nonvoter and Staging servers.
+// should only be called at the beginning of time for the cluster with an
+// identical configuration listing all Voter servers. There is no need to
+// bootstrap Nonvoter and Staging servers.
 //
 // A cluster can only be bootstrapped once from a single participating Voter
 // server. Any further attempts to bootstrap will return an error that can be
