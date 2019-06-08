@@ -9,9 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hashicorp/go-hclog"
-
-	"github.com/armon/go-metrics"
+	metrics "github.com/armon/go-metrics"
+	hclog "github.com/hashicorp/go-hclog"
 )
 
 var (
@@ -49,6 +48,10 @@ var (
 	// ErrCantBootstrap is returned when attempt is made to bootstrap a
 	// cluster that already has state present.
 	ErrCantBootstrap = errors.New("bootstrap only works on new clusters")
+
+	// ErrLeadershipTransferInProgress is returned when the leader is rejecting
+	// client requests because it is attempting to transfer leadership.
+	ErrLeadershipTransferInProgress = errors.New("leadership transfer in progress")
 )
 
 // Raft implements a Raft node.
@@ -96,6 +99,12 @@ type Raft struct {
 
 	// leaderState used only while state is leader
 	leaderState leaderState
+
+	// candidateFromLeadershipTransfer is used to indicate that this server became
+	// candidate because the leader tries to transfer leadership. This flag is
+	// used in RequestVoteRequest to express that a leadership transfer is going
+	// on.
+	candidateFromLeadershipTransfer bool
 
 	// Stores our local server ID, used to avoid sending RPCs to ourself
 	localID ServerID
@@ -157,6 +166,10 @@ type Raft struct {
 	// is indexed by an artificial ID which is used for deregistration.
 	observersLock sync.RWMutex
 	observers     map[uint64]*Observer
+
+	// leadershipTransferCh is used to start a leadership transfer from outside of
+	// the main thread.
+	leadershipTransferCh chan *leadershipTransferFuture
 }
 
 // BootstrapCluster initializes a server's storage with the given cluster
@@ -243,14 +256,13 @@ func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
 // the usual APIs in order to bring the cluster back into a known state.
 func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 	snaps SnapshotStore, trans Transport, configuration Configuration) error {
-	var err error
 	// Validate the Raft server config.
-	if err = ValidateConfig(conf); err != nil {
+	if err := ValidateConfig(conf); err != nil {
 		return err
 	}
 
 	// Sanity check the Raft peer configuration.
-	if err = checkConfiguration(configuration); err != nil {
+	if err := checkConfiguration(configuration); err != nil {
 		return err
 	}
 
@@ -259,20 +271,18 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 	// expect data to be there and it's not. By refusing, we force them
 	// to show intent to start a cluster fresh by explicitly doing a
 	// bootstrap, rather than quietly fire up a fresh cluster here.
-	var hasState bool
-	hasState, err = HasExistingState(logs, stable, snaps)
-	if err != nil {
+	if hasState, err := HasExistingState(logs, stable, snaps); err != nil {
 		return fmt.Errorf("failed to check for existing state: %v", err)
-	}
-	if !hasState {
+	} else if !hasState {
 		return fmt.Errorf("refused to recover cluster with no initial state, this is probably an operator error")
 	}
 
 	// Attempt to restore any snapshots we find, newest to oldest.
-	var snapshotIndex uint64
-	var snapshotTerm uint64
-	var snapshots []*SnapshotMeta
-	snapshots, err = snaps.List()
+	var (
+		snapshotIndex  uint64
+		snapshotTerm   uint64
+		snapshots, err = snaps.List()
+	)
 	if err != nil {
 		return fmt.Errorf("failed to list snapshots: %v", err)
 	}
@@ -284,9 +294,11 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 			// couldn't open any snapshots.
 			continue
 		}
-		defer source.Close()
 
-		if err = fsm.Restore(source); err != nil {
+		err = fsm.Restore(source)
+		// Close the source after the restore has completed
+		source.Close()
+		if err != nil {
 			// Same here, skip and try the next one.
 			continue
 		}
@@ -305,8 +317,7 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 	lastTerm := snapshotTerm
 
 	// Apply any Raft log entries past the snapshot.
-	var lastLogIndex uint64
-	lastLogIndex, err = logs.LastIndex()
+	lastLogIndex, err := logs.LastIndex()
 	if err != nil {
 		return fmt.Errorf("failed to find last log: %v", err)
 	}
@@ -324,14 +335,12 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 
 	// Create a new snapshot, placing the configuration in as if it was
 	// committed at index 1.
-	var snapshot FSMSnapshot
-	snapshot, err = fsm.Snapshot()
+	snapshot, err := fsm.Snapshot()
 	if err != nil {
 		return fmt.Errorf("failed to snapshot FSM: %v", err)
 	}
 	version := getSnapshotVersion(conf.ProtocolVersion)
-	var sink SnapshotSink
-	sink, err = snaps.Create(version, lastIndex, lastTerm, configuration, 1, trans)
+	sink, err := snaps.Create(version, lastIndex, lastTerm, configuration, 1, trans)
 	if err != nil {
 		return fmt.Errorf("failed to create snapshot: %v", err)
 	}
@@ -344,12 +353,11 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 
 	// Compact the log so that we don't get bad interference from any
 	// configuration change log entries that might be there.
-	var firstLogIndex uint64
-	firstLogIndex, err = logs.FirstIndex()
+	firstLogIndex, err := logs.FirstIndex()
 	if err != nil {
 		return fmt.Errorf("failed to get first log index: %v", err)
 	}
-	if err = logs.DeleteRange(firstLogIndex, lastLogIndex); err != nil {
+	if err := logs.DeleteRange(firstLogIndex, lastLogIndex); err != nil {
 		return fmt.Errorf("log compaction failed: %v", err)
 	}
 
@@ -475,6 +483,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		configurationsCh:      make(chan *configurationsFuture, 8),
 		bootstrapCh:           make(chan *bootstrapFuture),
 		observers:             make(map[uint64]*Observer),
+		leadershipTransferCh:  make(chan *leadershipTransferFuture, 1),
 	}
 
 	// Initialize as a follower.
@@ -538,9 +547,11 @@ func (r *Raft) restoreSnapshot() error {
 			r.logger.Error(fmt.Sprintf("Failed to open snapshot %v: %v", snapshot.ID, err))
 			continue
 		}
-		defer source.Close()
 
-		if err := r.fsm.Restore(source); err != nil {
+		err = r.fsm.Restore(source)
+		// Close the source after the restore has completed
+		source.Close()
+		if err != nil {
 			r.logger.Error(fmt.Sprintf("Failed to restore snapshot %v: %v", snapshot.ID, err))
 			continue
 		}
@@ -927,8 +938,9 @@ func (r *Raft) LastContact() time.Time {
 // "last_snapshot_index", "last_snapshot_term",
 // "latest_configuration", "last_contact", and "num_peers".
 //
-// The value of "state" is a numerical value representing a
-// RaftState const.
+// The value of "state" is a numeric constant representing one of
+// the possible leadership states the node is in at any given time.
+// the possible states are: "Follower", "Candidate", "Leader", "Shutdown".
 //
 // The value of "latest_configuration" is a string which contains
 // the id of each server, its suffrage status, and its address.
@@ -1018,4 +1030,39 @@ func (r *Raft) LastIndex() uint64 {
 // index.
 func (r *Raft) AppliedIndex() uint64 {
 	return r.getLastApplied()
+}
+
+// LeadershipTransfer will transfer leadership to a server in the cluster.
+// This can only be called from the leader, or it will fail. The leader will
+// stop accepting client requests, make sure the target server is up to date
+// and starts the transfer with a TimeoutNow message. This message has the same
+// effect as if the election timeout on the on the target server fires. Since
+// it is unlikely that another server is starting an election, it is very
+// likely that the target server is able to win the election.  Note that raft
+// protocol version 3 is not sufficient to use LeadershipTransfer. A recent
+// version of that library has to be used that includes this feature.  Using
+// transfer leadership is safe however in a cluster where not every node has
+// the latest version. If a follower cannot be promoted, it will fail
+// gracefully.
+func (r *Raft) LeadershipTransfer() Future {
+	if r.protocolVersion < 3 {
+		return errorFuture{ErrUnsupportedProtocol}
+	}
+
+	return r.initiateLeadershipTransfer(nil, nil)
+}
+
+// LeadershipTransferToServer does the same as LeadershipTransfer but takes a
+// server in the arguments in case a leadership should be transitioned to a
+// specific server in the cluster.  Note that raft protocol version 3 is not
+// sufficient to use LeadershipTransfer. A recent version of that library has
+// to be used that includes this feature. Using transfer leadership is safe
+// however in a cluster where not every node has the latest version. If a
+// follower cannot be promoted, it will fail gracefully.
+func (r *Raft) LeadershipTransferToServer(id ServerID, address ServerAddress) Future {
+	if r.protocolVersion < 3 {
+		return errorFuture{ErrUnsupportedProtocol}
+	}
+
+	return r.initiateLeadershipTransfer(&id, &address)
 }

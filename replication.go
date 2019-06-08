@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/armon/go-metrics"
@@ -40,12 +41,18 @@ type followerReplication struct {
 	// index; replication should be attempted with a best effort up through that
 	// index, before exiting.
 	stopCh chan uint64
+
 	// triggerCh is notified every time new entries are appended to the log.
 	triggerCh chan struct{}
+
+	// triggerDeferErrorCh is used to provide a backchannel. By sending a
+	// deferErr, the sender can be notifed when the replication is done.
+	triggerDeferErrorCh chan *deferError
 
 	// currentTerm is the term of this leader, to be included in AppendEntries
 	// requests.
 	currentTerm uint64
+
 	// nextIndex is the index of the next log entry to send to the follower,
 	// which may fall past the end of the log.
 	nextIndex uint64
@@ -134,6 +141,14 @@ RPC:
 				r.replicateTo(s, maxIndex)
 			}
 			return
+		case deferErr := <-s.triggerDeferErrorCh:
+			lastLogIdx, _ := r.getLastLog()
+			shouldStop = r.replicateTo(s, lastLogIdx)
+			if !shouldStop {
+				deferErr.respond(nil)
+			} else {
+				deferErr.respond(fmt.Errorf("replication failed"))
+			}
 		case <-s.triggerCh:
 			lastLogIdx, _ := r.getLastLog()
 			shouldStop = r.replicateTo(s, lastLogIdx)
@@ -187,7 +202,7 @@ START:
 	}
 
 	// Setup the request
-	if err := r.setupAppendEntries(s, &req, s.nextIndex, lastIndex); err == ErrLogNotFound {
+	if err := r.setupAppendEntries(s, &req, atomic.LoadUint64(&s.nextIndex), lastIndex); err == ErrLogNotFound {
 		goto SEND_SNAP
 	} else if err != nil {
 		return
@@ -220,13 +235,13 @@ START:
 		s.failures = 0
 		s.allowPipeline = true
 	} else {
-		s.nextIndex = max(min(s.nextIndex-1, resp.LastLog+1), 1)
+		atomic.StoreUint64(&s.nextIndex, max(min(s.nextIndex-1, resp.LastLog+1), 1))
 		if resp.NoRetryBackoff {
 			s.failures = 0
 		} else {
 			s.failures++
 		}
-		r.logger.Warn(fmt.Sprintf("AppendEntries to %v rejected, sending older logs (next: %d)", s.peer, s.nextIndex))
+		r.logger.Warn(fmt.Sprintf("AppendEntries to %v rejected, sending older logs (next: %d)", s.peer, atomic.LoadUint64(&s.nextIndex)))
 	}
 
 CHECK_MORE:
@@ -242,7 +257,7 @@ CHECK_MORE:
 	}
 
 	// Check if there are more logs to replicate
-	if s.nextIndex <= lastIndex {
+	if atomic.LoadUint64(&s.nextIndex) <= lastIndex {
 		goto START
 	}
 	return
@@ -321,7 +336,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	// Check for success
 	if resp.Success {
 		// Update the indexes
-		s.nextIndex = meta.Index + 1
+		atomic.StoreUint64(&s.nextIndex, meta.Index+1)
 		s.commitment.match(s.peer.ID, meta.Index)
 
 		// Clear any failures
@@ -397,7 +412,7 @@ func (r *Raft) pipelineReplicate(s *followerReplication) error {
 	r.goFunc(func() { r.pipelineDecode(s, pipeline, stopCh, finishCh) })
 
 	// Start pipeline sends at the last good nextIndex
-	nextIndex := s.nextIndex
+	nextIndex := atomic.LoadUint64(&s.nextIndex)
 
 	shouldStop := false
 SEND:
@@ -411,6 +426,14 @@ SEND:
 				r.pipelineSend(s, pipeline, &nextIndex, maxIndex)
 			}
 			break SEND
+		case deferErr := <-s.triggerDeferErrorCh:
+			lastLogIdx, _ := r.getLastLog()
+			shouldStop = r.pipelineSend(s, pipeline, &nextIndex, lastLogIdx)
+			if !shouldStop {
+				deferErr.respond(nil)
+			} else {
+				deferErr.respond(fmt.Errorf("replication failed"))
+			}
 		case <-s.triggerCh:
 			lastLogIdx, _ := r.getLastLog()
 			shouldStop = r.pipelineSend(s, pipeline, &nextIndex, lastLogIdx)
@@ -447,7 +470,7 @@ func (r *Raft) pipelineSend(s *followerReplication, p AppendPipeline, nextIdx *u
 	// Increase the next send log to avoid re-sending old logs
 	if n := len(req.Entries); n > 0 {
 		last := req.Entries[n-1]
-		*nextIdx = last.Index + 1
+		atomic.StoreUint64(nextIdx, last.Index+1)
 	}
 	return false
 }
@@ -563,7 +586,7 @@ func updateLastAppended(s *followerReplication, req *AppendEntriesRequest) {
 	// Mark any inflight logs as committed
 	if logs := req.Entries; len(logs) > 0 {
 		last := logs[len(logs)-1]
-		s.nextIndex = last.Index + 1
+		atomic.StoreUint64(&s.nextIndex, last.Index+1)
 		s.commitment.match(s.peer.ID, last.Index)
 	}
 
