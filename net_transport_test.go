@@ -705,7 +705,7 @@ func makeTransport(t *testing.T, useAddrProvider bool, addressOverride string) (
 }
 
 type testCountingWriter struct {
-	t *testing.T
+	t        *testing.T
 	numCalls *int32
 }
 
@@ -739,7 +739,6 @@ func (sl testCountingStreamLayer) Dial(address ServerAddress, timeout time.Durat
 	return nil, fmt.Errorf("not needed")
 }
 
-
 // TestNetworkTransport_ListenBackoff tests that Accept() errors in NetworkTransport#listen()
 // do not result in a tight loop and spam the log. We verify this here by counting the number
 // of calls against Accept() and the logger
@@ -755,8 +754,8 @@ func TestNetworkTransport_ListenBackoff(t *testing.T) {
 	countingWriter := testCountingWriter{t, &numLogs}
 	countingLogger := log.New(countingWriter, "test", log.LstdFlags)
 	transport := NetworkTransport{
-		logger: countingLogger,
-		stream: testCountingStreamLayer{&numAccepts},
+		logger:     countingLogger,
+		stream:     testCountingStreamLayer{&numAccepts},
 		shutdownCh: make(chan struct{}),
 	}
 
@@ -769,7 +768,7 @@ func TestNetworkTransport_ListenBackoff(t *testing.T) {
 	// Verify that the method exited (but without block this test)
 	// maxDelay == 1s, so we will give the routine 1.25s to loop around and shut down.
 	select {
-	case <- transport.shutdownCh:
+	case <-transport.shutdownCh:
 	case <-time.After(1250 * time.Millisecond):
 		t.Error("timed out waiting for NetworkTransport to shut down")
 	}

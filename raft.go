@@ -549,7 +549,8 @@ func (r *Raft) leaderLoop() {
 				future.respond(ErrLeadershipTransferInProgress)
 				continue
 			}
-			r.logger.Debug(fmt.Sprintf("starting leadership transfer to %v: %v", future.ID, future.Address))
+
+			r.logger.Debug("starting leadership transfer", "id", future.ID, "address", future.Address)
 
 			// When we are leaving leaderLoop, we are no longer
 			// leader, so we should stop transferring.

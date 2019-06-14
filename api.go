@@ -175,9 +175,12 @@ type Raft struct {
 
 // BootstrapCluster initializes a server's storage with the given cluster
 // configuration. This should only be called at the beginning of time for the
-// cluster, and you absolutely must make sure that you call it with the same
-// configuration on all the Voter servers. There is no need to bootstrap
-// Nonvoter and Staging servers.
+// cluster with an identical configuration listing all Voter servers. There is
+// no need to bootstrap Nonvoter and Staging servers.
+//
+// A cluster can only be bootstrapped once from a single participating Voter
+// server. Any further attempts to bootstrap will return an error that can be
+// safely ignored.
 //
 // One sane approach is to bootstrap a single server with a configuration
 // listing just itself as a Voter, then invoke AddVoter() on it to add other
@@ -294,9 +297,11 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 			// couldn't open any snapshots.
 			continue
 		}
-		defer source.Close()
 
-		if err := fsm.Restore(source); err != nil {
+		err = fsm.Restore(source)
+		// Close the source after the restore has completed
+		source.Close()
+		if err != nil {
 			// Same here, skip and try the next one.
 			continue
 		}
@@ -545,9 +550,11 @@ func (r *Raft) restoreSnapshot() error {
 			r.logger.Error(fmt.Sprintf("Failed to open snapshot %v: %v", snapshot.ID, err))
 			continue
 		}
-		defer source.Close()
 
-		if err := r.fsm.Restore(source); err != nil {
+		err = r.fsm.Restore(source)
+		// Close the source after the restore has completed
+		source.Close()
+		if err != nil {
 			r.logger.Error(fmt.Sprintf("Failed to restore snapshot %v: %v", snapshot.ID, err))
 			continue
 		}
@@ -588,10 +595,17 @@ func (r *Raft) restoreSnapshot() error {
 
 // BootstrapCluster is equivalent to non-member BootstrapCluster but can be
 // called on an un-bootstrapped Raft instance after it has been created. This
-// should only be called at the beginning of time for the cluster, and you
-// absolutely must make sure that you call it with the same configuration on all
-// the Voter servers. There is no need to bootstrap Nonvoter and Staging
-// servers.
+// should only be called at the beginning of time for the cluster with an
+// identical configuration listing all Voter servers. There is no need to
+// bootstrap Nonvoter and Staging servers.
+//
+// A cluster can only be bootstrapped once from a single participating Voter
+// server. Any further attempts to bootstrap will return an error that can be
+// safely ignored.
+//
+// One sane approach is to bootstrap a single server with a configuration
+// listing just itself as a Voter, then invoke AddVoter() on it to add other
+// servers to the cluster.
 func (r *Raft) BootstrapCluster(configuration Configuration) Future {
 	bootstrapReq := &bootstrapFuture{}
 	bootstrapReq.init()
