@@ -1785,6 +1785,9 @@ func TestRaft_UserSnapshot(t *testing.T) {
 	conf := inmemConfig(t)
 	conf.SnapshotThreshold = 50
 	conf.TrailingLogs = 10
+	// Set protocl to a lower version to avoid applying configuration entries on
+	// bootstrap
+	conf.ProtocolVersion = 1
 	c := MakeCluster(1, t, conf)
 	defer c.Close()
 
