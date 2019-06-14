@@ -32,6 +32,8 @@ type MockSnapshot struct {
 	maxIndex int
 }
 
+var _ ConfigurationStore = (*MockFSM)(nil)
+
 func (m *MockFSM) Apply(log *Log) interface{} {
 	m.Lock()
 	defer m.Unlock()
@@ -56,13 +58,11 @@ func (m *MockFSM) Restore(inp io.ReadCloser) error {
 	return dec.Decode(&m.logs)
 }
 
-/*func (m *MockFSM) StoreConfiguration(index uint64, config Configuration) error {
+func (m *MockFSM) StoreConfiguration(index uint64, config Configuration) {
 	m.Lock()
 	defer m.Unlock()
 	m.configurations = append(m.configurations, config)
-
-	return nil
-}*/
+}
 
 func (m *MockSnapshot) Persist(sink SnapshotSink) error {
 	hd := codec.MsgpackHandle{}
@@ -532,6 +532,26 @@ CHECK:
 				fsm.Unlock()
 				if time.Now().After(limit) {
 					c.FailNowf("[ERR] FSM log mismatch at index %d", idx)
+				} else {
+					goto WAIT
+				}
+			}
+		}
+		if len(first.configurations) != len(fsm.configurations) {
+			fsm.Unlock()
+			if time.Now().After(limit) {
+				c.FailNowf("[ERR] FSM configuration length mismatch: %d %d",
+					len(first.logs), len(fsm.logs))
+			} else {
+				goto WAIT
+			}
+		}
+
+		for idx := 0; idx < len(first.configurations); idx++ {
+			if !reflect.DeepEqual(first.configurations[idx], fsm.configurations[idx]) {
+				fsm.Unlock()
+				if time.Now().After(limit) {
+					c.FailNowf("[ERR] FSM configuration mismatch at index %d: %v, %v", idx, first.configurations[idx], fsm.configurations[idx])
 				} else {
 					goto WAIT
 				}
@@ -1247,18 +1267,25 @@ func TestRaft_JoinNode(t *testing.T) {
 func TestRaft_JoinNode_ConfigStore(t *testing.T) {
 	// Make a cluster
 	conf := inmemConfig(t)
-	c := makeCluster(2, true, t, conf)
+	c := makeCluster(1, true, t, conf)
 	defer c.Close()
 
-	// Make a new cluster of 1
+	// Make a new nodes
 	c1 := MakeClusterNoBootstrap(1, t, nil)
+	c2 := MakeClusterNoBootstrap(1, t, nil)
 
 	// Merge clusters
 	c.Merge(c1)
+	c.Merge(c2)
 	c.FullyConnect()
 
 	// Join the new node in
 	future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 0)
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+	// Join the new node in
+	future = c.Leader().AddVoter(c2.rafts[0].localID, c2.rafts[0].localAddr, 0, 0)
 	if err := future.Error(); err != nil {
 		c.FailNowf("[ERR] err: %v", err)
 	}
@@ -1271,6 +1298,23 @@ func TestRaft_JoinNode_ConfigStore(t *testing.T) {
 
 	// Check the peers
 	c.EnsureSamePeers(t)
+
+	// Check the fsm holds the correct config logs
+	for _, fsm := range c.fsms {
+		if len(fsm.configurations) != 3 {
+			c.FailNowf("[ERR] unexpected number of configuration changes: %d", len(fsm.configurations))
+		}
+		if len(fsm.configurations[0].Servers) != 1 {
+			c.FailNowf("[ERR] unexpected number of servers in config change: %v", fsm.configurations[0].Servers)
+		}
+		if len(fsm.configurations[1].Servers) != 2 {
+			c.FailNowf("[ERR] unexpected number of servers in config change: %v", fsm.configurations[1].Servers)
+		}
+		if len(fsm.configurations[2].Servers) != 3 {
+			c.FailNowf("[ERR] unexpected number of servers in config change: %v", fsm.configurations[2].Servers)
+		}
+	}
+
 }
 
 func TestRaft_RemoveFollower(t *testing.T) {

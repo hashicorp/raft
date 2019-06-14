@@ -50,12 +50,28 @@ func (r *Raft) runFSM() {
 	var lastIndex, lastTerm uint64
 
 	commit := func(req *commitTuple) {
-		// Apply the log if a command
+		// Apply the log if a command or config change
 		var resp interface{}
-		if req.log.Type == LogCommand {
+		switch req.log.Type {
+		case LogCommand:
 			start := time.Now()
 			resp = r.fsm.Apply(req.log)
 			metrics.MeasureSince([]string{"raft", "fsm", "apply"}, start)
+
+		case LogConfiguration:
+			configStore, ok := r.fsm.(ConfigurationStore)
+			if !ok {
+				// Return early to avoid incrementing the index and term for
+				// an unimplemented operation.
+				if req.future != nil {
+					req.future.respond(nil)
+				}
+				return
+			}
+
+			start := time.Now()
+			configStore.StoreConfiguration(req.log.Index, decodeConfiguration(req.log.Data))
+			metrics.MeasureSince([]string{"raft", "fsm", "store_config"}, start)
 		}
 
 		// Update the indexes
@@ -65,34 +81,6 @@ func (r *Raft) runFSM() {
 		// Invoke the future if given
 		if req.future != nil {
 			req.future.response = resp
-			req.future.respond(nil)
-		}
-	}
-
-	commitConfiguration := func(req *configurationCommitTuple) {
-		configStore, ok := r.fsm.(ConfigurationStore)
-		if !ok {
-			if req.future != nil {
-				req.future.respond(nil)
-			}
-			return
-		}
-
-		// Apply the log if a command
-		if req.log.Type == LogConfiguration {
-			start := time.Now()
-			if err := configStore.StoreConfig(req.log.Index, req.configuration); err != nil {
-				panic(err)
-			}
-			metrics.MeasureSince([]string{"raft", "fsm", "apply"}, start)
-		}
-
-		// Update the indexes
-		lastIndex = req.log.Index
-		lastTerm = req.log.Term
-
-		// Invoke the future if given
-		if req.future != nil {
 			req.future.respond(nil)
 		}
 	}
@@ -149,9 +137,6 @@ func (r *Raft) runFSM() {
 
 			case *restoreFuture:
 				restore(req)
-
-			case *configurationCommitTuple:
-				commitConfiguration(req)
 
 			default:
 				panic(fmt.Errorf("bad type passed to fsmMutateCh: %#v", ptr))

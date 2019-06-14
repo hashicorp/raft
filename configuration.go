@@ -32,18 +32,18 @@ func (s ServerSuffrage) String() string {
 	return "ServerSuffrage"
 }
 
-// ConfigurationStore provides an interface that can be implemented by clients
+// ConfigurationStore provides an interface that can be implemented by FSMs
 // to store configuration updates made in the replicated log.
 type ConfigurationStore interface {
-	// StoreConfig is invoked once a log entry containing a configuration change
-	// is committed. It takes the index at which the configuration was written
-	// and the configuration value.
-	StoreConfig(index uint64, configuration Configuration) error
+	// StoreConfiguration is invoked once a log entry containing a configuration
+	// change is committed. It takes the index at which the configuration was
+	// written and the configuration value.
+	StoreConfiguration(index uint64, configuration Configuration)
 }
 
 type nopConfigurationStore struct{}
 
-func (s nopConfigurationStore) StoreConfig(_ uint64, _ Configuration) error { return nil }
+func (s nopConfigurationStore) StoreConfiguration(_ uint64, _ Configuration) {}
 
 // ServerID is a unique string identifying a server for all time.
 type ServerID string
