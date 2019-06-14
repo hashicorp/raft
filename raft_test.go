@@ -646,7 +646,7 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
 		c.dirs = append(c.dirs, dir2)
 		c.snaps = append(c.snaps, snap)
 
-		addr, trans := NewInmemTransportWithTimeout("", time.Second)
+		addr, trans := NewInmemTransport("")
 		c.trans = append(c.trans, trans)
 		localID := ServerID(fmt.Sprintf("server-%s", addr))
 		if conf.ProtocolVersion < 3 {
@@ -876,7 +876,7 @@ func TestRaft_RecoverCluster(t *testing.T) {
 			// Fire up the recovered Raft instance. We have to patch
 			// up the cluster state manually since this is an unusual
 			// operation.
-			_, trans := NewInmemTransportWithTimeout(r.localAddr, time.Second)
+			_, trans := NewInmemTransport(r.localAddr)
 			r2, err := NewRaft(&r.conf, &MockFSM{}, r.logs, r.stable, r.snapshots, trans)
 			if err != nil {
 				c.FailNowf("[ERR] new raft err: %v", err)
@@ -1647,7 +1647,6 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 // up.
 
 func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
-	t.Skip()
 	// Make the cluster.
 	conf := inmemConfig(t)
 	conf.ProtocolVersion = 1
@@ -1724,7 +1723,7 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 
 	// Can't just reuse the old transport as it will be closed. We also start
 	// with a fresh FSM for good measure so no state can carry over.
-	_, trans := NewInmemTransportWithTimeout(r.localAddr, time.Second)
+	_, trans := NewInmemTransport(r.localAddr)
 	r, err = NewRaft(&r.conf, &MockFSM{}, r.logs, r.stable, r.snapshots, trans)
 	if err != nil {
 		c.FailNowf("[ERR] err: %v", err)
