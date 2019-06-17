@@ -52,6 +52,15 @@ func (r *Raft) runFSM() {
 	commit := func(req *commitTuple) {
 		// Apply the log if a command or config change
 		var resp interface{}
+		// Make sure we send a response
+		defer func() {
+			// Invoke the future if given
+			if req.future != nil {
+				req.future.response = resp
+				req.future.respond(nil)
+			}
+		}()
+
 		switch req.log.Type {
 		case LogCommand:
 			start := time.Now()
@@ -63,9 +72,6 @@ func (r *Raft) runFSM() {
 			if !ok {
 				// Return early to avoid incrementing the index and term for
 				// an unimplemented operation.
-				if req.future != nil {
-					req.future.respond(nil)
-				}
 				return
 			}
 
@@ -77,12 +83,6 @@ func (r *Raft) runFSM() {
 		// Update the indexes
 		lastIndex = req.log.Index
 		lastTerm = req.log.Term
-
-		// Invoke the future if given
-		if req.future != nil {
-			req.future.response = resp
-			req.future.respond(nil)
-		}
 	}
 
 	restore := func(req *restoreFuture) {
