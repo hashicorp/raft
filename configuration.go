@@ -32,7 +32,7 @@ func (s ServerSuffrage) String() string {
 	return "ServerSuffrage"
 }
 
-// ConfigurationStore provides an interface that can be implemented by FSMs
+// ConfigurationStore provides an interface that can optionally be implemented by FSMs
 // to store configuration updates made in the replicated log.
 type ConfigurationStore interface {
 	// StoreConfiguration is invoked once a log entry containing a configuration
