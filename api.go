@@ -244,7 +244,7 @@ func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
 func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 	snaps SnapshotStore, trans Transport, configuration Configuration) error {
 	var err error
-	var lastIndex, lastTerm, lastLogIndex uint64
+	var lastSnapIndex, lastTerm, lastLogIndex uint64
 	// check error conditions for misconfigured or unreadable configuration and state
 	if err = validateState(conf, logs, stable, snaps, configuration); err != nil {
 		return err
@@ -253,19 +253,19 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 	// The snapshot information is the best known end point for the data
 	// until we play back the Raft log entries.
 	// Attempt to restore any snapshots we find, newest to oldest.
-	lastIndex, lastTerm, err = restoreSnapshots(snaps, fsm)
+	lastSnapIndex, lastTerm, err = restoreSnapshots(snaps, fsm)
 	if err != nil {
 		return err
 	}
 
 	// Apply any Raft log entries past the snapshot.
-	lastIndex, lastTerm, lastLogIndex, err = applyLogs(logs, fsm)
+	lastSnapIndex, lastTerm, lastLogIndex, err = applyLogs(logs, fsm)
 	if err != nil {
 		return err
 	}
 
 	// Take new snapshot
-	if err = commitSnapshot(conf, logs, snaps, fsm, configuration, trans, lastIndex, lastTerm); err != nil {
+	if err = commitSnapshot(conf, logs, snaps, fsm, configuration, trans, lastSnapIndex, lastTerm); err != nil {
 		return err
 	}
 

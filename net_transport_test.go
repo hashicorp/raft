@@ -95,7 +95,7 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 		}
 
 		// Try to do parallel appends, should stress the conn pool
-		for j := 0; j < 5; j++ {
+		for i := 0; i < 5; i++ {
 			go appendFunc()
 		}
 
