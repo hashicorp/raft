@@ -23,13 +23,31 @@ import (
 // the logs sequentially.
 type MockFSM struct {
 	sync.Mutex
-	logs [][]byte
+	logs           [][]byte
+	configurations []Configuration
+}
+
+type MockFSMConfigStore struct {
+	*MockFSM
+}
+
+func getMockFSM(fsm FSM) *MockFSM {
+	switch f := fsm.(type) {
+	case *MockFSM:
+		return f
+	case *MockFSMConfigStore:
+		return f.MockFSM
+	}
+
+	return nil
 }
 
 type MockSnapshot struct {
 	logs     [][]byte
 	maxIndex int
 }
+
+var _ ConfigurationStore = (*MockFSMConfigStore)(nil)
 
 func (m *MockFSM) Apply(log *Log) interface{} {
 	m.Lock()
@@ -53,6 +71,12 @@ func (m *MockFSM) Restore(inp io.ReadCloser) error {
 
 	m.logs = nil
 	return dec.Decode(&m.logs)
+}
+
+func (m *MockFSMConfigStore) StoreConfiguration(index uint64, config Configuration) {
+	m.Lock()
+	defer m.Unlock()
+	m.configurations = append(m.configurations, config)
 }
 
 func (m *MockSnapshot) Persist(sink SnapshotSink) error {
@@ -130,7 +154,7 @@ func newTestLeveledLoggerWithPrefix(t *testing.T, prefix string) hclog.Logger {
 type cluster struct {
 	dirs             []string
 	stores           []*InmemStore
-	fsms             []*MockFSM
+	fsms             []FSM
 	snaps            []*FileSnapshotStore
 	trans            []LoopbackTransport
 	rafts            []*Raft
@@ -273,7 +297,8 @@ CHECK:
 			c.FailNowf("[ERR] Timeout waiting for replication")
 
 		case <-ch:
-			for _, fsm := range c.fsms {
+			for _, fsmRaw := range c.fsms {
+				fsm := getMockFSM(fsmRaw)
 				fsm.Lock()
 				num := len(fsm.logs)
 				fsm.Unlock()
@@ -498,11 +523,12 @@ func (c *cluster) EnsureLeader(t *testing.T, expect ServerAddress) {
 // EnsureSame makes sure all the FSMs have the same contents.
 func (c *cluster) EnsureSame(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
-	first := c.fsms[0]
+	first := getMockFSM(c.fsms[0])
 
 CHECK:
 	first.Lock()
-	for i, fsm := range c.fsms {
+	for i, fsmRaw := range c.fsms {
+		fsm := getMockFSM(fsmRaw)
 		if i == 0 {
 			continue
 		}
@@ -523,6 +549,26 @@ CHECK:
 				fsm.Unlock()
 				if time.Now().After(limit) {
 					c.FailNowf("[ERR] FSM log mismatch at index %d", idx)
+				} else {
+					goto WAIT
+				}
+			}
+		}
+		if len(first.configurations) != len(fsm.configurations) {
+			fsm.Unlock()
+			if time.Now().After(limit) {
+				c.FailNowf("[ERR] FSM configuration length mismatch: %d %d",
+					len(first.logs), len(fsm.logs))
+			} else {
+				goto WAIT
+			}
+		}
+
+		for idx := 0; idx < len(first.configurations); idx++ {
+			if !reflect.DeepEqual(first.configurations[idx], fsm.configurations[idx]) {
+				fsm.Unlock()
+				if time.Now().After(limit) {
+					c.FailNowf("[ERR] FSM configuration mismatch at index %d: %v, %v", idx, first.configurations[idx], fsm.configurations[idx])
 				} else {
 					goto WAIT
 				}
@@ -583,7 +629,7 @@ WAIT:
 // If bootstrap is true, the servers will know about each other before starting,
 // otherwise their transports will be wired up but they won't yet have configured
 // each other.
-func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
+func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config, configStoreFSM bool) *cluster {
 	if conf == nil {
 		conf = inmemConfig(t)
 	}
@@ -611,7 +657,13 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
 		store := NewInmemStore()
 		c.dirs = append(c.dirs, dir)
 		c.stores = append(c.stores, store)
-		c.fsms = append(c.fsms, &MockFSM{})
+		if configStoreFSM {
+			c.fsms = append(c.fsms, &MockFSMConfigStore{
+				MockFSM: &MockFSM{},
+			})
+		} else {
+			c.fsms = append(c.fsms, &MockFSM{})
+		}
 
 		dir2, snap := FileSnapTest(t)
 		c.dirs = append(c.dirs, dir2)
@@ -669,12 +721,12 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
 
 // See makeCluster. This adds the peers initially to the peer store.
 func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
-	return makeCluster(n, true, t, conf)
+	return makeCluster(n, true, t, conf, false)
 }
 
 // See makeCluster. This doesn't add the peers initially to the peer store.
 func MakeClusterNoBootstrap(n int, t *testing.T, conf *Config) *cluster {
-	return makeCluster(n, false, t, conf)
+	return makeCluster(n, false, t, conf, false)
 }
 
 func TestRaft_StartStop(t *testing.T) {
@@ -947,7 +999,7 @@ func TestRaft_SingleNode(t *testing.T) {
 	}
 
 	// Check that it is applied to the FSM
-	if len(c.fsms[0].logs) != 1 {
+	if len(getMockFSM(c.fsms[0]).logs) != 1 {
 		c.FailNowf("[ERR] did not apply to FSM!")
 	}
 }
@@ -1034,7 +1086,8 @@ func TestRaft_LeaderFail(t *testing.T) {
 	c.EnsureSame(t)
 
 	// Check two entries are applied to the FSM
-	for _, fsm := range c.fsms {
+	for _, fsmRaw := range c.fsms {
+		fsm := getMockFSM(fsmRaw)
 		fsm.Lock()
 		if len(fsm.logs) != 2 {
 			c.FailNowf("[ERR] did not apply both to FSM! %v", fsm.logs)
@@ -1233,6 +1286,60 @@ func TestRaft_JoinNode(t *testing.T) {
 
 	// Check the peers
 	c.EnsureSamePeers(t)
+}
+
+func TestRaft_JoinNode_ConfigStore(t *testing.T) {
+	// Make a cluster
+	conf := inmemConfig(t)
+	c := makeCluster(1, true, t, conf, true)
+	defer c.Close()
+
+	// Make a new nodes
+	c1 := makeCluster(1, false, t, conf, true)
+	c2 := makeCluster(1, false, t, conf, true)
+
+	// Merge clusters
+	c.Merge(c1)
+	c.Merge(c2)
+	c.FullyConnect()
+
+	// Join the new node in
+	future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 0)
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+	// Join the new node in
+	future = c.Leader().AddVoter(c2.rafts[0].localID, c2.rafts[0].localAddr, 0, 0)
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+
+	// Ensure one leader
+	c.EnsureLeader(t, c.Leader().localAddr)
+
+	// Check the FSMs
+	c.EnsureSame(t)
+
+	// Check the peers
+	c.EnsureSamePeers(t)
+
+	// Check the fsm holds the correct config logs
+	for _, fsmRaw := range c.fsms {
+		fsm := getMockFSM(fsmRaw)
+		if len(fsm.configurations) != 3 {
+			c.FailNowf("[ERR] unexpected number of configuration changes: %d", len(fsm.configurations))
+		}
+		if len(fsm.configurations[0].Servers) != 1 {
+			c.FailNowf("[ERR] unexpected number of servers in config change: %v", fsm.configurations[0].Servers)
+		}
+		if len(fsm.configurations[1].Servers) != 2 {
+			c.FailNowf("[ERR] unexpected number of servers in config change: %v", fsm.configurations[1].Servers)
+		}
+		if len(fsm.configurations[2].Servers) != 3 {
+			c.FailNowf("[ERR] unexpected number of servers in config change: %v", fsm.configurations[2].Servers)
+		}
+	}
+
 }
 
 func TestRaft_RemoveFollower(t *testing.T) {
@@ -1796,7 +1903,7 @@ func snapshotAndRestore(t *testing.T, offset uint64) {
 	// part of the original snapshot, and that the contents after were
 	// reverted.
 	c.EnsureSame(t)
-	fsm := c.fsms[0]
+	fsm := getMockFSM(c.fsms[0])
 	fsm.Lock()
 	if len(fsm.logs) != 10 {
 		c.FailNowf("[ERR] Log length bad: %d", len(fsm.logs))
@@ -2090,7 +2197,7 @@ func TestRaft_Barrier(t *testing.T) {
 
 	// Ensure all the logs are the same
 	c.EnsureSame(t)
-	if len(c.fsms[0].logs) != 100 {
+	if len(getMockFSM(c.fsms[0]).logs) != 100 {
 		c.FailNowf("[ERR] Bad log length")
 	}
 }
@@ -2233,7 +2340,7 @@ func TestRaft_StartAsLeader(t *testing.T) {
 	}
 
 	// Check that it is applied to the FSM
-	if len(c.fsms[0].logs) != 1 {
+	if len(getMockFSM(c.fsms[0]).logs) != 1 {
 		c.FailNowf("[ERR] did not apply to FSM!")
 	}
 }
