@@ -193,6 +193,11 @@ func (r *Raft) runFollower() {
 				continue
 			}
 
+			if r.leaving == true {
+				r.logger.Info("leaving, ignore Heartbeat timeout")
+				continue
+			}
+
 			// Heartbeat failed! Transition to the candidate state
 			lastLeader := r.Leader()
 			r.setLeader("")

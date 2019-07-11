@@ -134,6 +134,9 @@ type Raft struct {
 	shutdownCh   chan struct{}
 	shutdownLock sync.Mutex
 
+	// leaving is used for mark leave status
+	leaving bool
+
 	// snapshots is used to store and retrieve snapshots
 	snapshots SnapshotStore
 
@@ -657,6 +660,12 @@ func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
 	case r.applyCh <- logFuture:
 		return logFuture
 	}
+}
+
+// Leave is used to mark raft in leaving stage
+// it can prevent heartbeat timeout election
+func (r *Raft) Leave() {
+	r.leaving = true
 }
 
 // Barrier is used to issue a command that blocks until all preceeding
