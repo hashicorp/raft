@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	TT_Inmem = iota
+	TTInmem = iota
 
 	// NOTE: must be last
 	numTestTransports
@@ -16,7 +16,7 @@ const (
 
 func NewTestTransport(ttype int, addr ServerAddress) (ServerAddress, LoopbackTransport) {
 	switch ttype {
-	case TT_Inmem:
+	case TTInmem:
 		addr, lt := NewInmemTransport(addr)
 		return addr, lt
 	default:

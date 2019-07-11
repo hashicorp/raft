@@ -105,6 +105,7 @@ type NetworkTransportConfig struct {
 	Timeout time.Duration
 }
 
+// ServerAddressProvider is a target address to which we invoke an RPC when establishing a connection
 type ServerAddressProvider interface {
 	ServerAddr(id ServerID) (ServerAddress, error)
 }
