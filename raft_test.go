@@ -23,13 +23,31 @@ import (
 // the logs sequentially.
 type MockFSM struct {
 	sync.Mutex
-	logs [][]byte
+	logs           [][]byte
+	configurations []Configuration
+}
+
+type MockFSMConfigStore struct {
+	*MockFSM
+}
+
+func getMockFSM(fsm FSM) *MockFSM {
+	switch f := fsm.(type) {
+	case *MockFSM:
+		return f
+	case *MockFSMConfigStore:
+		return f.MockFSM
+	}
+
+	return nil
 }
 
 type MockSnapshot struct {
 	logs     [][]byte
 	maxIndex int
 }
+
+var _ ConfigurationStore = (*MockFSMConfigStore)(nil)
 
 func (m *MockFSM) Apply(log *Log) interface{} {
 	m.Lock()
@@ -53,6 +71,12 @@ func (m *MockFSM) Restore(inp io.ReadCloser) error {
 
 	m.logs = nil
 	return dec.Decode(&m.logs)
+}
+
+func (m *MockFSMConfigStore) StoreConfiguration(index uint64, config Configuration) {
+	m.Lock()
+	defer m.Unlock()
+	m.configurations = append(m.configurations, config)
 }
 
 func (m *MockSnapshot) Persist(sink SnapshotSink) error {
@@ -130,7 +154,7 @@ func newTestLeveledLoggerWithPrefix(t *testing.T, prefix string) hclog.Logger {
 type cluster struct {
 	dirs             []string
 	stores           []*InmemStore
-	fsms             []*MockFSM
+	fsms             []FSM
 	snaps            []*FileSnapshotStore
 	trans            []LoopbackTransport
 	rafts            []*Raft
@@ -273,7 +297,8 @@ CHECK:
 			c.FailNowf("[ERR] Timeout waiting for replication")
 
 		case <-ch:
-			for _, fsm := range c.fsms {
+			for _, fsmRaw := range c.fsms {
+				fsm := getMockFSM(fsmRaw)
 				fsm.Lock()
 				num := len(fsm.logs)
 				fsm.Unlock()
@@ -498,11 +523,12 @@ func (c *cluster) EnsureLeader(t *testing.T, expect ServerAddress) {
 // EnsureSame makes sure all the FSMs have the same contents.
 func (c *cluster) EnsureSame(t *testing.T) {
 	limit := time.Now().Add(c.longstopTimeout)
-	first := c.fsms[0]
+	first := getMockFSM(c.fsms[0])
 
 CHECK:
 	first.Lock()
-	for i, fsm := range c.fsms {
+	for i, fsmRaw := range c.fsms {
+		fsm := getMockFSM(fsmRaw)
 		if i == 0 {
 			continue
 		}
@@ -523,6 +549,26 @@ CHECK:
 				fsm.Unlock()
 				if time.Now().After(limit) {
 					c.FailNowf("[ERR] FSM log mismatch at index %d", idx)
+				} else {
+					goto WAIT
+				}
+			}
+		}
+		if len(first.configurations) != len(fsm.configurations) {
+			fsm.Unlock()
+			if time.Now().After(limit) {
+				c.FailNowf("[ERR] FSM configuration length mismatch: %d %d",
+					len(first.logs), len(fsm.logs))
+			} else {
+				goto WAIT
+			}
+		}
+
+		for idx := 0; idx < len(first.configurations); idx++ {
+			if !reflect.DeepEqual(first.configurations[idx], fsm.configurations[idx]) {
+				fsm.Unlock()
+				if time.Now().After(limit) {
+					c.FailNowf("[ERR] FSM configuration mismatch at index %d: %v, %v", idx, first.configurations[idx], fsm.configurations[idx])
 				} else {
 					goto WAIT
 				}
@@ -583,7 +629,7 @@ WAIT:
 // If bootstrap is true, the servers will know about each other before starting,
 // otherwise their transports will be wired up but they won't yet have configured
 // each other.
-func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
+func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config, configStoreFSM bool) *cluster {
 	if conf == nil {
 		conf = inmemConfig(t)
 	}
@@ -611,7 +657,13 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
 		store := NewInmemStore()
 		c.dirs = append(c.dirs, dir)
 		c.stores = append(c.stores, store)
-		c.fsms = append(c.fsms, &MockFSM{})
+		if configStoreFSM {
+			c.fsms = append(c.fsms, &MockFSMConfigStore{
+				MockFSM: &MockFSM{},
+			})
+		} else {
+			c.fsms = append(c.fsms, &MockFSM{})
+		}
 
 		dir2, snap := FileSnapTest(t)
 		c.dirs = append(c.dirs, dir2)
@@ -669,12 +721,12 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config) *cluster {
 
 // See makeCluster. This adds the peers initially to the peer store.
 func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
-	return makeCluster(n, true, t, conf)
+	return makeCluster(n, true, t, conf, false)
 }
 
 // See makeCluster. This doesn't add the peers initially to the peer store.
 func MakeClusterNoBootstrap(n int, t *testing.T, conf *Config) *cluster {
-	return makeCluster(n, false, t, conf)
+	return makeCluster(n, false, t, conf, false)
 }
 
 func TestRaft_StartStop(t *testing.T) {
@@ -947,7 +999,7 @@ func TestRaft_SingleNode(t *testing.T) {
 	}
 
 	// Check that it is applied to the FSM
-	if len(c.fsms[0].logs) != 1 {
+	if len(getMockFSM(c.fsms[0]).logs) != 1 {
 		c.FailNowf("[ERR] did not apply to FSM!")
 	}
 }
@@ -1034,7 +1086,8 @@ func TestRaft_LeaderFail(t *testing.T) {
 	c.EnsureSame(t)
 
 	// Check two entries are applied to the FSM
-	for _, fsm := range c.fsms {
+	for _, fsmRaw := range c.fsms {
+		fsm := getMockFSM(fsmRaw)
 		fsm.Lock()
 		if len(fsm.logs) != 2 {
 			c.FailNowf("[ERR] did not apply both to FSM! %v", fsm.logs)
@@ -1233,6 +1286,60 @@ func TestRaft_JoinNode(t *testing.T) {
 
 	// Check the peers
 	c.EnsureSamePeers(t)
+}
+
+func TestRaft_JoinNode_ConfigStore(t *testing.T) {
+	// Make a cluster
+	conf := inmemConfig(t)
+	c := makeCluster(1, true, t, conf, true)
+	defer c.Close()
+
+	// Make a new nodes
+	c1 := makeCluster(1, false, t, conf, true)
+	c2 := makeCluster(1, false, t, conf, true)
+
+	// Merge clusters
+	c.Merge(c1)
+	c.Merge(c2)
+	c.FullyConnect()
+
+	// Join the new node in
+	future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 0)
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+	// Join the new node in
+	future = c.Leader().AddVoter(c2.rafts[0].localID, c2.rafts[0].localAddr, 0, 0)
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+
+	// Ensure one leader
+	c.EnsureLeader(t, c.Leader().localAddr)
+
+	// Check the FSMs
+	c.EnsureSame(t)
+
+	// Check the peers
+	c.EnsureSamePeers(t)
+
+	// Check the fsm holds the correct config logs
+	for _, fsmRaw := range c.fsms {
+		fsm := getMockFSM(fsmRaw)
+		if len(fsm.configurations) != 3 {
+			c.FailNowf("[ERR] unexpected number of configuration changes: %d", len(fsm.configurations))
+		}
+		if len(fsm.configurations[0].Servers) != 1 {
+			c.FailNowf("[ERR] unexpected number of servers in config change: %v", fsm.configurations[0].Servers)
+		}
+		if len(fsm.configurations[1].Servers) != 2 {
+			c.FailNowf("[ERR] unexpected number of servers in config change: %v", fsm.configurations[1].Servers)
+		}
+		if len(fsm.configurations[2].Servers) != 3 {
+			c.FailNowf("[ERR] unexpected number of servers in config change: %v", fsm.configurations[2].Servers)
+		}
+	}
+
 }
 
 func TestRaft_RemoveFollower(t *testing.T) {
@@ -1796,7 +1903,7 @@ func snapshotAndRestore(t *testing.T, offset uint64) {
 	// part of the original snapshot, and that the contents after were
 	// reverted.
 	c.EnsureSame(t)
-	fsm := c.fsms[0]
+	fsm := getMockFSM(c.fsms[0])
 	fsm.Lock()
 	if len(fsm.logs) != 10 {
 		c.FailNowf("[ERR] Log length bad: %d", len(fsm.logs))
@@ -2090,7 +2197,7 @@ func TestRaft_Barrier(t *testing.T) {
 
 	// Ensure all the logs are the same
 	c.EnsureSame(t)
-	if len(c.fsms[0].logs) != 100 {
+	if len(getMockFSM(c.fsms[0]).logs) != 100 {
 		c.FailNowf("[ERR] Bad log length")
 	}
 }
@@ -2233,7 +2340,7 @@ func TestRaft_StartAsLeader(t *testing.T) {
 	}
 
 	// Check that it is applied to the FSM
-	if len(c.fsms[0].logs) != 1 {
+	if len(getMockFSM(c.fsms[0]).logs) != 1 {
 		c.FailNowf("[ERR] did not apply to FSM!")
 	}
 }
@@ -2277,11 +2384,12 @@ func TestRaft_Voting(t *testing.T) {
 	ldrT := c.trans[c.IndexOf(ldr)]
 
 	reqVote := RequestVoteRequest{
-		RPCHeader:    ldr.getRPCHeader(),
-		Term:         ldr.getCurrentTerm() + 10,
-		Candidate:    ldrT.EncodePeer(ldr.localID, ldr.localAddr),
-		LastLogIndex: ldr.LastIndex(),
-		LastLogTerm:  ldr.getCurrentTerm(),
+		RPCHeader:          ldr.getRPCHeader(),
+		Term:               ldr.getCurrentTerm() + 10,
+		Candidate:          ldrT.EncodePeer(ldr.localID, ldr.localAddr),
+		LastLogIndex:       ldr.LastIndex(),
+		LastLogTerm:        ldr.getCurrentTerm(),
+		LeadershipTransfer: false,
 	}
 	// a follower that thinks there's a leader should vote for that leader.
 	var resp RequestVoteResponse
@@ -2291,13 +2399,23 @@ func TestRaft_Voting(t *testing.T) {
 	if !resp.Granted {
 		c.FailNowf("[ERR] expected vote to be granted, but wasn't %+v", resp)
 	}
-	// a follow that thinks there's a leader shouldn't vote for a different candidate
+	// a follower that thinks there's a leader shouldn't vote for a different candidate
 	reqVote.Candidate = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
 	if err := ldrT.RequestVote(followers[1].localID, followers[1].localAddr, &reqVote, &resp); err != nil {
 		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
 	}
 	if resp.Granted {
 		c.FailNowf("[ERR] expected vote not to be granted, but was %+v", resp)
+	}
+	// a follower that thinks there's a leader, but the request has the leadership transfer flag, should
+	// vote for a different candidate
+	reqVote.LeadershipTransfer = true
+	reqVote.Candidate = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
+	if err := ldrT.RequestVote(followers[1].localID, followers[1].localAddr, &reqVote, &resp); err != nil {
+		c.FailNowf("[ERR] RequestVote RPC failed %v", err)
+	}
+	if !resp.Granted {
+		c.FailNowf("[ERR] expected vote to be granted, but wasn't %+v", resp)
 	}
 }
 
@@ -2407,6 +2525,259 @@ func TestRaft_ProtocolVersion_Upgrade_2_3(t *testing.T) {
 	// Remove an old server using the old address-based API.
 	if future := c.Leader().RemovePeer(oldAddr); future.Error() != nil {
 		c.FailNowf("[ERR] err: %v", future.Error())
+	}
+}
+
+func TestRaft_LeadershipTransferInProgress(t *testing.T) {
+	r := &Raft{leaderState: leaderState{}}
+	r.setupLeaderState()
+
+	if r.getLeadershipTransferInProgress() != false {
+		t.Errorf("should be true after setup")
+	}
+
+	r.setLeadershipTransferInProgress(true)
+	if r.getLeadershipTransferInProgress() != true {
+		t.Errorf("should be true because we set it before")
+	}
+	r.setLeadershipTransferInProgress(false)
+	if r.getLeadershipTransferInProgress() != false {
+		t.Errorf("should be false because we set it before")
+	}
+}
+
+func pointerToString(s string) *string {
+	return &s
+}
+
+func TestRaft_LeadershipTransferPickServer(t *testing.T) {
+	type variant struct {
+		lastLogIndex int
+		servers      map[string]uint64
+		expected     *string
+	}
+	leaderID := "z"
+	variants := []variant{
+		{lastLogIndex: 10, servers: map[string]uint64{}, expected: nil},
+		{lastLogIndex: 10, servers: map[string]uint64{leaderID: 11, "a": 9}, expected: pointerToString("a")},
+		{lastLogIndex: 10, servers: map[string]uint64{leaderID: 11, "a": 9, "b": 8}, expected: pointerToString("a")},
+		{lastLogIndex: 10, servers: map[string]uint64{leaderID: 11, "c": 9, "b": 8, "a": 8}, expected: pointerToString("c")},
+		{lastLogIndex: 10, servers: map[string]uint64{leaderID: 11, "a": 7, "b": 11, "c": 8}, expected: pointerToString("b")},
+	}
+	for i, v := range variants {
+		servers := []Server{}
+		replState := map[ServerID]*followerReplication{}
+		for id, idx := range v.servers {
+			servers = append(servers, Server{ID: ServerID(id)})
+			replState[ServerID(id)] = &followerReplication{nextIndex: idx}
+		}
+		r := Raft{leaderState: leaderState{}, localID: ServerID(leaderID), configurations: configurations{latest: Configuration{Servers: servers}}}
+		r.lastLogIndex = uint64(v.lastLogIndex)
+		r.leaderState.replState = replState
+
+		actual := r.pickServer()
+		if v.expected == nil && actual == nil {
+			continue
+		} else if v.expected == nil && actual != nil {
+			t.Errorf("case %d: actual: %v doesn't match expected: %v", i, actual, v.expected)
+		} else if actual == nil && v.expected != nil {
+			t.Errorf("case %d: actual: %v doesn't match expected: %v", i, actual, v.expected)
+		} else if string(actual.ID) != *v.expected {
+			t.Errorf("case %d: actual: %v doesn't match expected: %v", i, actual.ID, *v.expected)
+		}
+	}
+}
+
+func TestRaft_LeadershipTransfer(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	oldLeader := string(c.Leader().localID)
+	err := c.Leader().LeadershipTransfer()
+	if err.Error() != nil {
+		t.Fatalf("Didn't expect error: %v", err.Error())
+	}
+	newLeader := string(c.Leader().localID)
+	if oldLeader == newLeader {
+		t.Error("Leadership should have been transitioned to another peer.")
+	}
+}
+
+func TestRaft_LeadershipTransferWithOneNode(t *testing.T) {
+	c := MakeCluster(1, t, nil)
+	defer c.Close()
+
+	future := c.Leader().LeadershipTransfer()
+	if future.Error() == nil {
+		t.Fatal("leadership transfer should err")
+	}
+
+	expected := "cannot find peer"
+	actual := future.Error().Error()
+	if !strings.Contains(actual, expected) {
+		t.Errorf("leadership transfer should err with: %s", expected)
+	}
+}
+
+func TestRaft_LeadershipTransferWithSevenNodes(t *testing.T) {
+	c := MakeCluster(7, t, nil)
+	defer c.Close()
+
+	oldLeader := c.Leader().localID
+	follower := c.GetInState(Follower)[0]
+	future := c.Leader().LeadershipTransferToServer(follower.localID, follower.localAddr)
+	if future.Error() != nil {
+		t.Fatalf("Didn't expect error: %v", future.Error())
+	}
+	if oldLeader == c.Leader().localID {
+		t.Error("Leadership should have been transitioned to specified server.")
+	}
+}
+
+func TestRaft_LeadershipTransferToInvalidID(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	future := c.Leader().LeadershipTransferToServer(ServerID("abc"), ServerAddress("127.0.0.1"))
+	if future.Error() == nil {
+		t.Fatal("leadership transfer should err")
+	}
+
+	expected := "cannot find replication state"
+	actual := future.Error().Error()
+	if !strings.Contains(actual, expected) {
+		t.Errorf("leadership transfer should err with: %s", expected)
+	}
+}
+
+func TestRaft_LeadershipTransferToInvalidAddress(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	follower := c.GetInState(Follower)[0]
+	future := c.Leader().LeadershipTransferToServer(follower.localID, ServerAddress("127.0.0.1"))
+	if future.Error() == nil {
+		t.Fatal("leadership transfer should err")
+	}
+	expected := "failed to make TimeoutNow RPC"
+	actual := future.Error().Error()
+	if !strings.Contains(actual, expected) {
+		t.Errorf("leadership transfer should err with: %s", expected)
+	}
+}
+
+func TestRaft_LeadershipTransferToBehindServer(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	l := c.Leader()
+	behind := c.GetInState(Follower)[0]
+
+	// Commit a lot of things
+	for i := 0; i < 1000; i++ {
+		l.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	future := l.LeadershipTransferToServer(behind.localID, behind.localAddr)
+	if future.Error() != nil {
+		t.Fatalf("This is not supposed to error: %v", future.Error())
+	}
+	if c.Leader().localID != behind.localID {
+		t.Fatal("Behind server did not get leadership")
+	}
+}
+
+func TestRaft_LeadershipTransferToItself(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	l := c.Leader()
+
+	future := l.LeadershipTransferToServer(l.localID, l.localAddr)
+	if future.Error() == nil {
+		t.Fatal("leadership transfer should err")
+	}
+	expected := "cannot transfer leadership to itself"
+	actual := future.Error().Error()
+	if !strings.Contains(actual, expected) {
+		t.Errorf("leadership transfer should err with: %s", expected)
+	}
+}
+
+func TestRaft_LeadershipTransferLeaderRejectsClientRequests(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+	l := c.Leader()
+	l.setLeadershipTransferInProgress(true)
+
+	// tests for API > protocol version 3 is missing here because leadership transfer
+	// is only available for protocol version >= 3
+	// TODO: is something missing here?
+	futures := []Future{
+		l.AddNonvoter(ServerID(""), ServerAddress(""), 0, 0),
+		l.AddVoter(ServerID(""), ServerAddress(""), 0, 0),
+		l.Apply([]byte("test"), 0),
+		l.Barrier(0),
+		l.DemoteVoter(ServerID(""), 0, 0),
+		l.GetConfiguration(),
+
+		// the API is tested, but here we are making sure we reject any config change.
+		l.requestConfigChange(configurationChangeRequest{}, 100*time.Millisecond),
+	}
+	futures = append(futures, l.LeadershipTransfer())
+	select {
+	case <-l.leadershipTransferCh:
+	default:
+	}
+
+	futures = append(futures, l.LeadershipTransferToServer(ServerID(""), ServerAddress("")))
+
+	for i, f := range futures {
+		if f.Error() != ErrLeadershipTransferInProgress {
+			t.Errorf("case %d: should have errored with: %s, instead of %s", i, ErrLeadershipTransferInProgress, f.Error())
+		}
+	}
+}
+
+func TestRaft_LeadershipTransferLeaderReplicationTimeout(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	l := c.Leader()
+	behind := c.GetInState(Follower)[0]
+
+	// Commit a lot of things, so that the timeout can kick in
+	for i := 0; i < 10000; i++ {
+		l.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	// set ElectionTimeout really short because this is used to determine
+	// how long a transfer is allowed to take.
+	l.conf.ElectionTimeout = 1 * time.Nanosecond
+
+	future := l.LeadershipTransferToServer(behind.localID, behind.localAddr)
+	if future.Error() == nil {
+		t.Log("This test is fishing for a replication timeout, but this is not guaranteed to happen.")
+	} else {
+		expected := "leadership transfer timeout"
+		actual := future.Error().Error()
+		if !strings.Contains(actual, expected) {
+			t.Errorf("leadership transfer should err with: %s", expected)
+		}
+	}
+}
+
+func TestRaft_LeadershipTransferStopRightAway(t *testing.T) {
+	r := Raft{leaderState: leaderState{}}
+	r.setupLeaderState()
+
+	stopCh := make(chan struct{})
+	doneCh := make(chan error, 1)
+	close(stopCh)
+	r.leadershipTransfer(ServerID("a"), ServerAddress(""), &followerReplication{}, stopCh, doneCh)
+	err := <-doneCh
+	if err != nil {
+		t.Errorf("leadership shouldn't have started, but instead it error with: %v", err)
 	}
 }
 

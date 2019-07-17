@@ -205,32 +205,52 @@ func (c *cluster) appliedIndexes() map[string]uint64 {
 	return r
 }
 
-func (c *cluster) ApplyN(t *testing.T, leaderTimeout time.Duration, s *applySource, n uint) uint64 {
-	f := make([]raft.ApplyFuture, n)
+func (c *cluster) generateNApplies(s *applySource, n uint) [][]byte {
 	data := make([][]byte, n)
-	startTime := time.Now()
-	endTime := startTime.Add(leaderTimeout)
 	for i := uint(0); i < n; i++ {
-		ldr := c.Leader(endTime.Sub(time.Now()))
-		if ldr != nil {
-			data[i] = s.nextEntry()
-			f[i] = ldr.raft.Apply(data[i], time.Second)
-		}
+		data[i] = s.nextEntry()
 	}
+	return data
+}
+
+func (c *cluster) leadershipTransfer(leaderTimeout time.Duration) raft.Future {
+	ldr := c.Leader(leaderTimeout)
+	return ldr.raft.LeadershipTransfer()
+}
+
+type applyFutureWithData struct {
+	future raft.ApplyFuture
+	data   []byte
+}
+
+func (c *cluster) sendNApplies(leaderTimeout time.Duration, data [][]byte) []applyFutureWithData {
+	f := []applyFutureWithData{}
+
+	ldr := c.Leader(leaderTimeout)
+	for _, d := range data {
+		f = append(f, applyFutureWithData{future: ldr.raft.Apply(d, time.Second), data: d})
+	}
+	return f
+}
+
+func (c *cluster) checkApplyFutures(futures []applyFutureWithData) uint64 {
 	success := uint64(0)
-	for i := uint(0); i < n; i++ {
-		if f[i] == nil {
-			continue
-		}
-		if err := f[i].Error(); err == nil {
+	for _, a := range futures {
+		if err := a.future.Error(); err == nil {
 			success++
-			c.lastApplySuccess = f[i]
-			c.applied = append(c.applied, appliedItem{f[i].Index(), data[i]})
+			c.lastApplySuccess = a.future
+			c.applied = append(c.applied, appliedItem{a.future.Index(), a.data})
 		} else {
-			c.lastApplyFailure = f[i]
+			c.lastApplyFailure = a.future
 		}
 	}
 	return success
+}
+
+func (c *cluster) ApplyN(t *testing.T, leaderTimeout time.Duration, s *applySource, n uint) uint64 {
+	data := c.generateNApplies(s, n)
+	futures := c.sendNApplies(leaderTimeout, data)
+	return c.checkApplyFutures(futures)
 }
 
 func (c *cluster) VerifyFSM(t *testing.T) {
