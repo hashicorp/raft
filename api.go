@@ -14,6 +14,10 @@ import (
 	"github.com/armon/go-metrics"
 )
 
+const (
+	SuggestedMaxDataSize = 512 * 1024
+)
+
 var (
 	// ErrLeader is returned when an operation can't be completed on a
 	// leader node.
@@ -680,6 +684,14 @@ func (r *Raft) Leader() ServerAddress {
 // will fail.
 func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
 	metrics.IncrCounter([]string{"raft", "apply"}, 1)
+
+	return r.ApplyWithLog(Log{Data: cmd}, timeout)
+}
+
+// ApplyWithLog performs Apply but allows specifying extra Log parameters.
+// Currently this is limited to Data and ChunkInfo.
+func (r *Raft) ApplyWithLog(log Log, timeout time.Duration) ApplyFuture {
+	metrics.IncrCounter([]string{"raft", "apply_with_log"}, 1)
 	var timer <-chan time.Time
 	if timeout > 0 {
 		timer = time.After(timeout)
@@ -688,8 +700,9 @@ func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
 	// Create a log future, no index or term yet
 	logFuture := &logFuture{
 		log: Log{
-			Type: LogCommand,
-			Data: cmd,
+			Type:      LogCommand,
+			Data:      log.Data,
+			ChunkInfo: log.ChunkInfo,
 		},
 	}
 	logFuture.init()
