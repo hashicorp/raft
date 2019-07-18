@@ -39,12 +39,18 @@ type MockFSMConfigStore struct {
 	FSM
 }
 
+type WrappingFSM interface {
+	Underlying() FSM
+}
+
 func getMockFSM(fsm FSM) *MockFSM {
 	switch f := fsm.(type) {
 	case *MockFSM:
 		return f
 	case *MockFSMConfigStore:
 		return f.FSM.(*MockFSM)
+	case WrappingFSM:
+		return getMockFSM(f.Underlying())
 	}
 
 	return nil
