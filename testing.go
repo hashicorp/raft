@@ -29,16 +29,20 @@ func inmemConfig(t *testing.T) *Config {
 
 // MockFSM is an implementation of the FSM interface, and just stores
 // the logs sequentially.
+//
+// NOTE: This is exposed for middleware testing purposes and is not a stable API
 type MockFSM struct {
 	sync.Mutex
 	logs           [][]byte
 	configurations []Configuration
 }
 
+// NOTE: This is exposed for middleware testing purposes and is not a stable API
 type MockFSMConfigStore struct {
 	FSM
 }
 
+// NOTE: This is exposed for middleware testing purposes and is not a stable API
 type WrappingFSM interface {
 	Underlying() FSM
 }
@@ -56,6 +60,7 @@ func getMockFSM(fsm FSM) *MockFSM {
 	return nil
 }
 
+// NOTE: This is exposed for middleware testing purposes and is not a stable API
 type MockSnapshot struct {
 	logs     [][]byte
 	maxIndex int
@@ -63,6 +68,7 @@ type MockSnapshot struct {
 
 var _ ConfigurationStore = (*MockFSMConfigStore)(nil)
 
+// NOTE: This is exposed for middleware testing purposes and is not a stable API
 func (m *MockFSM) Apply(log *Log) interface{} {
 	m.Lock()
 	defer m.Unlock()
@@ -70,12 +76,14 @@ func (m *MockFSM) Apply(log *Log) interface{} {
 	return len(m.logs)
 }
 
+// NOTE: This is exposed for middleware testing purposes and is not a stable API
 func (m *MockFSM) Snapshot() (FSMSnapshot, error) {
 	m.Lock()
 	defer m.Unlock()
 	return &MockSnapshot{m.logs, len(m.logs)}, nil
 }
 
+// NOTE: This is exposed for middleware testing purposes and is not a stable API
 func (m *MockFSM) Restore(inp io.ReadCloser) error {
 	m.Lock()
 	defer m.Unlock()
@@ -87,12 +95,14 @@ func (m *MockFSM) Restore(inp io.ReadCloser) error {
 	return dec.Decode(&m.logs)
 }
 
+// NOTE: This is exposed for middleware testing purposes and is not a stable API
 func (m *MockFSM) Logs() [][]byte {
 	m.Lock()
 	defer m.Unlock()
 	return m.logs
 }
 
+// NOTE: This is exposed for middleware testing purposes and is not a stable API
 func (m *MockFSMConfigStore) StoreConfiguration(index uint64, config Configuration) {
 	mm := m.FSM.(*MockFSM)
 	mm.Lock()
@@ -100,6 +110,7 @@ func (m *MockFSMConfigStore) StoreConfiguration(index uint64, config Configurati
 	mm.configurations = append(mm.configurations, config)
 }
 
+// NOTE: This is exposed for middleware testing purposes and is not a stable API
 func (m *MockSnapshot) Persist(sink SnapshotSink) error {
 	hd := codec.MsgpackHandle{}
 	enc := codec.NewEncoder(sink, &hd)
@@ -111,6 +122,7 @@ func (m *MockSnapshot) Persist(sink SnapshotSink) error {
 	return nil
 }
 
+// NOTE: This is exposed for middleware testing purposes and is not a stable API
 func (m *MockSnapshot) Release() {
 }
 
@@ -735,20 +747,22 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config, configStoreF
 	return c
 }
 
-// See makeCluster. This adds the peers initially to the peer store.
+// NOTE: This is exposed for middleware testing purposes and is not a stable API
 func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 	return makeCluster(n, true, t, conf, false, nil)
 }
 
-// See makeCluster. This doesn't add the peers initially to the peer store.
+// NOTE: This is exposed for middleware testing purposes and is not a stable API
 func MakeClusterNoBootstrap(n int, t *testing.T, conf *Config) *cluster {
 	return makeCluster(n, false, t, conf, false, nil)
 }
 
+// NOTE: This is exposed for middleware testing purposes and is not a stable API
 func MakeClusterCustomFSM(n int, t *testing.T, conf *Config, fsmFunc func() FSM) *cluster {
 	return makeCluster(n, true, t, conf, false, fsmFunc)
 }
 
+// NOTE: This is exposed for middleware testing purposes and is not a stable API
 func FileSnapTest(t *testing.T) (string, *FileSnapshotStore) {
 	// Create a test dir
 	dir, err := ioutil.TempDir("", "raft")
