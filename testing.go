@@ -734,7 +734,7 @@ func MakeClusterNoBootstrap(n int, t *testing.T, conf *Config) *cluster {
 }
 
 func MakeClusterCustomFSM(n int, t *testing.T, conf *Config, fsmFunc func() FSM) *cluster {
-	return makeCluster(n, false, t, conf, false, fsmFunc)
+	return makeCluster(n, true, t, conf, false, fsmFunc)
 }
 
 func FileSnapTest(t *testing.T) (string, *FileSnapshotStore) {
