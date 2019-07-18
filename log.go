@@ -33,22 +33,6 @@ const (
 	LogConfiguration
 )
 
-// ChunkInfo is used to hold information about an operation that spans multiple
-// log entries.
-type ChunkInfo struct {
-	// ID is the ID of the op, used to ensure values are applied to the right
-	// operation
-	OpID uint64
-
-	// Num is the current number of the ops; when applying we should see this
-	// start at zero and increment by one without skips
-	SequenceNum int
-
-	// Used by middleware to check whether all chunks have been received and
-	// reconstruction should be attempted
-	NumChunks int
-}
-
 // Log entries are replicated to all members of the Raft cluster
 // and form the heart of the replicated state machine.
 type Log struct {
@@ -64,9 +48,11 @@ type Log struct {
 	// Data holds the log entry's type-specific data.
 	Data []byte
 
-	// ChunkInfo holds information about multiple-log operations for use by
-	// middleware
-	ChunkInfo *ChunkInfo
+	// Extensions holds an opaque byte slice of information for middleware. It
+	// is up to the client of the library to properly modify this as it adds
+	// layers and remove those layers when appropriate. This value is a part of
+	// the log, so very large values could cause timing issues.
+	Extensions []byte
 }
 
 // LogStore is used to provide an interface for storing

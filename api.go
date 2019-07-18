@@ -689,7 +689,7 @@ func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
 }
 
 // ApplyWithLog performs Apply but allows specifying extra Log parameters.
-// Currently this is limited to Data and ChunkInfo.
+// Currently this is limited to Data and Extensions.
 func (r *Raft) ApplyWithLog(log Log, timeout time.Duration) ApplyFuture {
 	metrics.IncrCounter([]string{"raft", "apply_with_log"}, 1)
 	var timer <-chan time.Time
@@ -700,9 +700,9 @@ func (r *Raft) ApplyWithLog(log Log, timeout time.Duration) ApplyFuture {
 	// Create a log future, no index or term yet
 	logFuture := &logFuture{
 		log: Log{
-			Type:      LogCommand,
-			Data:      log.Data,
-			ChunkInfo: log.ChunkInfo,
+			Type:       LogCommand,
+			Data:       log.Data,
+			Extensions: log.Extensions,
 		},
 	}
 	logFuture.init()
