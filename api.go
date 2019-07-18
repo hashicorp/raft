@@ -692,6 +692,7 @@ func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
 // Currently this is limited to Data and Extensions.
 func (r *Raft) ApplyWithLog(log Log, timeout time.Duration) ApplyFuture {
 	metrics.IncrCounter([]string{"raft", "apply_with_log"}, 1)
+
 	var timer <-chan time.Time
 	if timeout > 0 {
 		timer = time.After(timeout)
