@@ -14,17 +14,6 @@ import (
 	"time"
 )
 
-// Return configurations optimized for in-memory
-func inmemConfig(t *testing.T) *Config {
-	conf := DefaultConfig()
-	conf.HeartbeatTimeout = 50 * time.Millisecond
-	conf.ElectionTimeout = 50 * time.Millisecond
-	conf.LeaderLeaseTimeout = 50 * time.Millisecond
-	conf.CommitTimeout = 5 * time.Millisecond
-	conf.Logger = newTestLeveledLogger(t)
-	return conf
-}
-
 func TestRaft_StartStop(t *testing.T) {
 	c := MakeCluster(1, t, nil)
 	c.Close()
@@ -587,12 +576,12 @@ func TestRaft_JoinNode(t *testing.T) {
 func TestRaft_JoinNode_ConfigStore(t *testing.T) {
 	// Make a cluster
 	conf := inmemConfig(t)
-	c := makeCluster(1, true, t, conf, true)
+	c := makeCluster(1, true, t, conf, true, nil)
 	defer c.Close()
 
 	// Make a new nodes
-	c1 := makeCluster(1, false, t, conf, true)
-	c2 := makeCluster(1, false, t, conf, true)
+	c1 := makeCluster(1, false, t, conf, true, nil)
+	c2 := makeCluster(1, false, t, conf, true, nil)
 
 	// Merge clusters
 	c.Merge(c1)

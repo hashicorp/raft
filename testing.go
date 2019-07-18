@@ -16,6 +16,17 @@ import (
 	"github.com/hashicorp/go-msgpack/codec"
 )
 
+// Return configurations optimized for in-memory
+func inmemConfig(t *testing.T) *Config {
+	conf := DefaultConfig()
+	conf.HeartbeatTimeout = 50 * time.Millisecond
+	conf.ElectionTimeout = 50 * time.Millisecond
+	conf.LeaderLeaseTimeout = 50 * time.Millisecond
+	conf.CommitTimeout = 5 * time.Millisecond
+	conf.Logger = newTestLeveledLogger(t)
+	return conf
+}
+
 // MockFSM is an implementation of the FSM interface, and just stores
 // the logs sequentially.
 type MockFSM struct {
@@ -724,4 +735,18 @@ func MakeClusterNoBootstrap(n int, t *testing.T, conf *Config) *cluster {
 
 func MakeClusterCustomFSM(n int, t *testing.T, conf *Config, fsmFunc func() FSM) *cluster {
 	return makeCluster(n, false, t, conf, false, fsmFunc)
+}
+
+func FileSnapTest(t *testing.T) (string, *FileSnapshotStore) {
+	// Create a test dir
+	dir, err := ioutil.TempDir("", "raft")
+	if err != nil {
+		t.Fatalf("err: %v ", err)
+	}
+
+	snap, err := NewFileSnapshotStoreWithLogger(dir, 3, newTestLogger(t))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	return dir, snap
 }
