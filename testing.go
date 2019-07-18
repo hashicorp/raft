@@ -647,30 +647,44 @@ WAIT:
 	goto CHECK
 }
 
+// NOTE: This is exposed for middleware testing purposes and is not a stable API
+type MakeClusterOpts struct {
+	Peers           int
+	Bootstrap       bool
+	Conf            *Config
+	ConfigStoreFSM  bool
+	MakeFSMFunc     func() FSM
+	LongstopTimeout time.Duration
+}
+
 // makeCluster will return a cluster with the given config and number of peers.
 // If bootstrap is true, the servers will know about each other before starting,
 // otherwise their transports will be wired up but they won't yet have configured
 // each other.
-func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config, configStoreFSM bool, fsmFunc func() FSM) *cluster {
-	if conf == nil {
-		conf = inmemConfig(t)
+func makeCluster(t *testing.T, opts *MakeClusterOpts) *cluster {
+	if opts.Conf == nil {
+		opts.Conf = inmemConfig(t)
 	}
 
 	c := &cluster{
 		observationCh: make(chan Observation, 1024),
-		conf:          conf,
+		conf:          opts.Conf,
 		// Propagation takes a maximum of 2 heartbeat timeouts (time to
 		// get a new heartbeat that would cause a commit) plus a bit.
-		propagateTimeout: conf.HeartbeatTimeout*2 + conf.CommitTimeout,
-		longstopTimeout:  10 * time.Second,
+		propagateTimeout: opts.Conf.HeartbeatTimeout*2 + opts.Conf.CommitTimeout,
+		longstopTimeout:  5 * time.Second,
 		logger:           newTestLoggerWithPrefix(t, "cluster"),
 		failedCh:         make(chan struct{}),
 	}
+	if opts.LongstopTimeout > 0 {
+		c.longstopTimeout = opts.LongstopTimeout
+	}
+
 	c.t = t
 	var configuration Configuration
 
 	// Setup the stores and transports
-	for i := 0; i < n; i++ {
+	for i := 0; i < opts.Peers; i++ {
 		dir, err := ioutil.TempDir("", "raft")
 		if err != nil {
 			c.FailNowf("[ERR] err: %v ", err)
@@ -679,14 +693,14 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config, configStoreF
 		store := NewInmemStore()
 		c.dirs = append(c.dirs, dir)
 		c.stores = append(c.stores, store)
-		if configStoreFSM {
+		if opts.ConfigStoreFSM {
 			c.fsms = append(c.fsms, &MockFSMConfigStore{
 				FSM: &MockFSM{},
 			})
 		} else {
 			var fsm FSM
-			if fsmFunc != nil {
-				fsm = fsmFunc()
+			if opts.MakeFSMFunc != nil {
+				fsm = opts.MakeFSMFunc()
 			} else {
 				fsm = &MockFSM{}
 			}
@@ -700,7 +714,7 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config, configStoreF
 		addr, trans := NewInmemTransport("")
 		c.trans = append(c.trans, trans)
 		localID := ServerID(fmt.Sprintf("server-%s", addr))
-		if conf.ProtocolVersion < 3 {
+		if opts.Conf.ProtocolVersion < 3 {
 			localID = ServerID(addr)
 		}
 		configuration.Servers = append(configuration.Servers, Server{
@@ -715,17 +729,17 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config, configStoreF
 
 	// Create all the rafts
 	c.startTime = time.Now()
-	for i := 0; i < n; i++ {
+	for i := 0; i < opts.Peers; i++ {
 		logs := c.stores[i]
 		store := c.stores[i]
 		snap := c.snaps[i]
 		trans := c.trans[i]
 
-		peerConf := conf
+		peerConf := opts.Conf
 		peerConf.LocalID = configuration.Servers[i].ID
 		peerConf.Logger = newTestLeveledLoggerWithPrefix(t, string(configuration.Servers[i].ID))
 
-		if bootstrap {
+		if opts.Bootstrap {
 			err := BootstrapCluster(peerConf, logs, store, snap, trans, configuration)
 			if err != nil {
 				c.FailNowf("[ERR] BootstrapCluster failed: %v", err)
@@ -749,17 +763,24 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config, configStoreF
 
 // NOTE: This is exposed for middleware testing purposes and is not a stable API
 func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
-	return makeCluster(n, true, t, conf, false, nil)
+	return makeCluster(t, &MakeClusterOpts{
+		Peers:     n,
+		Bootstrap: true,
+		Conf:      conf,
+	})
 }
 
 // NOTE: This is exposed for middleware testing purposes and is not a stable API
 func MakeClusterNoBootstrap(n int, t *testing.T, conf *Config) *cluster {
-	return makeCluster(n, false, t, conf, false, nil)
+	return makeCluster(t, &MakeClusterOpts{
+		Peers: n,
+		Conf:  conf,
+	})
 }
 
 // NOTE: This is exposed for middleware testing purposes and is not a stable API
-func MakeClusterCustomFSM(n int, t *testing.T, conf *Config, fsmFunc func() FSM) *cluster {
-	return makeCluster(n, true, t, conf, false, fsmFunc)
+func MakeClusterCustom(t *testing.T, opts *MakeClusterOpts) *cluster {
+	return makeCluster(t, opts)
 }
 
 // NOTE: This is exposed for middleware testing purposes and is not a stable API

@@ -576,12 +576,27 @@ func TestRaft_JoinNode(t *testing.T) {
 func TestRaft_JoinNode_ConfigStore(t *testing.T) {
 	// Make a cluster
 	conf := inmemConfig(t)
-	c := makeCluster(1, true, t, conf, true, nil)
+	c := makeCluster(t, &MakeClusterOpts{
+		Peers:          1,
+		Bootstrap:      true,
+		Conf:           conf,
+		ConfigStoreFSM: true,
+	})
 	defer c.Close()
 
 	// Make a new nodes
-	c1 := makeCluster(1, false, t, conf, true, nil)
-	c2 := makeCluster(1, false, t, conf, true, nil)
+	c1 := makeCluster(t, &MakeClusterOpts{
+		Peers:          1,
+		Bootstrap:      false,
+		Conf:           conf,
+		ConfigStoreFSM: true,
+	})
+	c2 := makeCluster(t, &MakeClusterOpts{
+		Peers:          1,
+		Bootstrap:      false,
+		Conf:           conf,
+		ConfigStoreFSM: true,
+	})
 
 	// Merge clusters
 	c.Merge(c1)
