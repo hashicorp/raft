@@ -87,6 +87,12 @@ func (m *MockFSM) Restore(inp io.ReadCloser) error {
 	return dec.Decode(&m.logs)
 }
 
+func (m *MockFSM) Logs() [][]byte {
+	m.Lock()
+	defer m.Unlock()
+	return m.logs
+}
+
 func (m *MockFSMConfigStore) StoreConfiguration(index uint64, config Configuration) {
 	mm := m.FSM.(*MockFSM)
 	mm.Lock()
