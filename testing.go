@@ -650,7 +650,7 @@ func makeCluster(n int, bootstrap bool, t *testing.T, conf *Config, configStoreF
 		// Propagation takes a maximum of 2 heartbeat timeouts (time to
 		// get a new heartbeat that would cause a commit) plus a bit.
 		propagateTimeout: conf.HeartbeatTimeout*2 + conf.CommitTimeout,
-		longstopTimeout:  5 * time.Second,
+		longstopTimeout:  10 * time.Second,
 		logger:           newTestLoggerWithPrefix(t, "cluster"),
 		failedCh:         make(chan struct{}),
 	}
