@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -85,6 +86,26 @@ type leaderState struct {
 	replState                    map[ServerID]*followerReplication
 	notify                       map[*verifyFuture]struct{}
 	stepDown                     chan struct{}
+
+	// recoveringPeers is a map of followers whe are currently recovering from
+	// being too far behind. The Index is set before we install a new snapshot on
+	// the peer to the index of that snapshot and then updated when we start
+	// sending logs to track the progress of the peer in catching up. When the
+	// peer catches up to within `TrailingLogs/2` of the most recent snaphot (i.e.
+	// we are sure that there will be enough trailing logs for it to continue
+	// catching up) we remove the peer from the map again.
+	//
+	// During compaction these values are checked to ensure that we never compact
+	// away logs that will prevent a peer from being able to complete it's
+	// recovery even if snapshot install takes a while.
+	//
+	// It's separate from replState although it could logically belong there
+	// because it needs to be accessed by the snapshot goroutine while all the
+	// rest of this leader state assumes it is only accessed by the main loop and
+	// so is not accessed under lock currently.
+	recoveringPeers map[ServerID]uint64
+	// recoveringPeersLock protects all accesses to the recoveringPeers map
+	recoveringPeersLock sync.Mutex
 }
 
 // setLeader is used to modify the current leader of the cluster
@@ -408,6 +429,7 @@ func (r *Raft) runLeader() {
 		r.leaderState.replState = nil
 		r.leaderState.notify = nil
 		r.leaderState.stepDown = nil
+		r.leaderState.recoveringPeers = nil
 
 		// If we are stepping down for some reason, no known leader.
 		// We may have stepped down due to an RPC call, which would
@@ -1752,4 +1774,18 @@ func (r *Raft) timeoutNow(rpc RPC, req *TimeoutNowRequest) {
 	r.setState(Candidate)
 	r.candidateFromLeadershipTransfer = true
 	rpc.Respond(&TimeoutNowResponse{}, nil)
+}
+
+// lowestRecoveringPeerIndex returns the raft index of the lowest recovering
+// peer if there is one or zero otherwise.
+func (r *Raft) lowestRecoveringPeerIndex() uint64 {
+	r.leaderState.recoveringPeersLock.Lock()
+	defer r.leaderState.recoveringPeersLock.Unlock()
+	min := uint64(0)
+	for _, index := range r.leaderState.recoveringPeers {
+		if min == 0 || min > index {
+			min = index
+		}
+	}
+	return min
 }

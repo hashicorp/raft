@@ -36,11 +36,12 @@ type inmemPipelineInflight struct {
 // tested in-memory without going over a network.
 type InmemTransport struct {
 	sync.RWMutex
-	consumerCh chan RPC
-	localAddr  ServerAddress
-	peers      map[ServerAddress]*InmemTransport
-	pipelines  []*inmemPipeline
-	timeout    time.Duration
+	consumerCh           chan RPC
+	localAddr            ServerAddress
+	peers                map[ServerAddress]*InmemTransport
+	pipelines            []*inmemPipeline
+	timeout              time.Duration
+	installSnapshotDelay <-chan struct{}
 }
 
 // NewInmemTransportWithTimeout is used to initialize a new transport and
@@ -64,6 +65,15 @@ func NewInmemTransportWithTimeout(addr ServerAddress, timeout time.Duration) (Se
 // and generates a random local address if none is specified
 func NewInmemTransport(addr ServerAddress) (ServerAddress, *InmemTransport) {
 	return NewInmemTransportWithTimeout(addr, 50*time.Millisecond)
+}
+
+// DelayInstallSnapshot registers a chan that will be blocked on before
+// InstallSnapshot requests are sent. This is useful to deterministically
+// simulate very large snapshots that take a long time to complete.
+func (i *InmemTransport) DelayInstallSnapshot(ch <-chan struct{}) {
+	i.Lock()
+	defer i.Unlock()
+	i.installSnapshotDelay = ch
 }
 
 // SetHeartbeatHandler is used to set optional fast-path for
@@ -124,6 +134,13 @@ func (i *InmemTransport) RequestVote(id ServerID, target ServerAddress, args *Re
 
 // InstallSnapshot implements the Transport interface.
 func (i *InmemTransport) InstallSnapshot(id ServerID, target ServerAddress, args *InstallSnapshotRequest, resp *InstallSnapshotResponse, data io.Reader) error {
+	i.RLock()
+	ch := i.installSnapshotDelay
+	i.RUnlock()
+	if ch != nil {
+		// Wait on trigger before delivering snapshot
+		<-ch
+	}
 	rpcResp, err := i.makeRPC(target, args, data, 10*i.timeout)
 	if err != nil {
 		return err

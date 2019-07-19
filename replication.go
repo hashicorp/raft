@@ -233,7 +233,7 @@ START:
 	// Update s based on success
 	if resp.Success {
 		// Update our replication state
-		updateLastAppended(s, &req)
+		r.updateLastAppended(s, &req)
 
 		// Clear any failures, allow pipelining
 		s.failures = 0
@@ -317,6 +317,15 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 		Configuration:      encodeConfiguration(meta.Configuration),
 		ConfigurationIndex: meta.ConfigurationIndex,
 	}
+
+	// Mark this peer as recovering to prevent logs it will need being compacted
+	// before it's had time to catch up.
+	r.leaderState.recoveringPeersLock.Lock()
+	if r.leaderState.recoveringPeers == nil {
+		r.leaderState.recoveringPeers = make(map[ServerID]uint64)
+	}
+	r.leaderState.recoveringPeers[s.peer.ID] = meta.Index
+	r.leaderState.recoveringPeersLock.Unlock()
 
 	// Make the call
 	start := time.Now()
@@ -504,7 +513,7 @@ func (r *Raft) pipelineDecode(s *followerReplication, p AppendPipeline, stopCh, 
 			}
 
 			// Update our replication state
-			updateLastAppended(s, req)
+			r.updateLastAppended(s, req)
 		case <-stopCh:
 			return
 		}
@@ -586,12 +595,33 @@ func (r *Raft) handleStaleTerm(s *followerReplication) {
 // updateLastAppended is used to update follower replication state after a
 // successful AppendEntries RPC.
 // TODO: This isn't used during InstallSnapshot, but the code there is similar.
-func updateLastAppended(s *followerReplication, req *AppendEntriesRequest) {
+func (r *Raft) updateLastAppended(s *followerReplication, req *AppendEntriesRequest) {
 	// Mark any inflight logs as committed
 	if logs := req.Entries; len(logs) > 0 {
 		last := logs[len(logs)-1]
 		atomic.StoreUint64(&s.nextIndex, last.Index+1)
 		s.commitment.match(s.peer.ID, last.Index)
+
+		// If peer is "caught up" ensure it's not longer considered "recovering". We
+		// somewhat arbitrarily define caught up to mean that it's at least half way
+		// into the current TrailingLogs buffer so that if log compaction happens
+		// right after this, it will still likely be able to continue catching up.
+		lastLog, _ := r.getLastLog()
+		delta := r.conf.TrailingLogs / 2
+		caughtUp := last.Index > (lastLog - delta)
+
+		// Take lock and see if we need to modify recoveringPeer state.
+		r.leaderState.recoveringPeersLock.Lock()
+		if r.leaderState.recoveringPeers != nil {
+			if caughtUp {
+				delete(r.leaderState.recoveringPeers, s.peer.ID)
+			} else {
+				// Not caught up but we can update the index so we don't prevent
+				// compaction of logs we did already manage to send to this peer.
+				r.leaderState.recoveringPeers[s.peer.ID] = last.Index
+			}
+		}
+		r.leaderState.recoveringPeersLock.Unlock()
 	}
 
 	// Notify still leader

@@ -216,17 +216,21 @@ func (r *Raft) compactLogs(snapIdx uint64) error {
 		return fmt.Errorf("failed to get first log index: %v", err)
 	}
 
-	// Check if we have enough logs to truncate
+	// Figure out which logs are safe to truncate.
+	//
+	// - we can only truncate up to the snapIdx
+	// - we must leave at least TrailingLogs in the log store
+	// - we must leave enough logs for any recovering peers to complete recovery
 	lastLogIdx, _ := r.getLastLog()
-	if lastLogIdx <= r.conf.TrailingLogs {
-		return nil
+	maxLog := snapIdx
+	// Ensure we don't underflow the uint for small raft logs
+	if lastLogIdx > r.conf.TrailingLogs && lastLogIdx-r.conf.TrailingLogs < snapIdx {
+		maxLog = lastLogIdx - r.conf.TrailingLogs
 	}
-
-	// Truncate up to the end of the snapshot, or `TrailingLogs`
-	// back from the head, which ever is further back. This ensures
-	// at least `TrailingLogs` entries, but does not allow logs
-	// after the snapshot to be removed.
-	maxLog := min(snapIdx, lastLogIdx-r.conf.TrailingLogs)
+	minRecPeerIdx := r.lowestRecoveringPeerIndex()
+	if minRecPeerIdx > 0 && minRecPeerIdx < maxLog {
+		maxLog = minRecPeerIdx
+	}
 
 	// Log this
 	r.logger.Info(fmt.Sprintf("Compacting logs from %d to %d", minLog, maxLog))

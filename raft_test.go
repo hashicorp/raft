@@ -17,6 +17,7 @@ import (
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-msgpack/codec"
+	"github.com/stretchr/testify/require"
 )
 
 // MockFSM is an implementation of the FSM interface, and just stores
@@ -2020,6 +2021,83 @@ func TestRaft_SendSnapshotFollower(t *testing.T) {
 
 	// Ensure all the logs are the same
 	c.EnsureSame(t)
+}
+
+func TestRaft_SendSnapshotFollowerFarBehind(t *testing.T) {
+	// Make the cluster
+	conf := inmemConfig(t)
+	conf.TrailingLogs = 10
+	c := MakeCluster(3, t, conf)
+	defer c.Close()
+
+	// Disconnect one follower
+	followers := c.Followers()
+	leader := c.Leader()
+	behind := followers[0]
+	c.Disconnect(behind.localAddr)
+
+	// Commit a lot of things
+	var future Future
+	for i := 0; i < 100; i++ {
+		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	// Wait for the last future to apply
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	} else {
+		t.Logf("[INFO] Finished apply without behind follower")
+	}
+
+	// Snapshot, this will truncate logs!
+	for _, r := range c.rafts {
+		future = r.Snapshot()
+		// the disconnected node will have nothing to snapshot, so that's expected
+		if err := future.Error(); err != nil && err != ErrNothingNewToSnapshot {
+			c.FailNowf("[ERR] err: %v", err)
+		}
+	}
+	snapIdx := leader.lastLogIndex
+
+	// Prevent snapshot from completing until we are ready to simulate large, slow
+	// install snapshot.
+	triggerInstall := make(chan struct{})
+	behind.trans.(*InmemTransport).DelayInstallSnapshot(triggerInstall)
+
+	// Reconnect the behind node
+	c.FullyConnect()
+
+	// Now write a load more logs beyond the TrailingLogs limit
+	for i := 0; i < 100; i++ {
+		future = leader.Apply([]byte(fmt.Sprintf("test2%d", i)), 0)
+	}
+	// Any wait for them...
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	} else {
+		t.Logf("[INFO] Finished apply without behind follower")
+	}
+
+	// Snapshot should _not_ truncate logs on leader now
+	require.NoError(t, leader.Snapshot().Error())
+
+	leaderStore := c.stores[c.IndexOf(leader)]
+	var log Log
+	// Should still have the entry the snapshot was taken in the store
+	err := leaderStore.GetLog(snapIdx, &log)
+	require.NoError(t, err)
+
+	// Now trigger the snapshot to complete
+	close(triggerInstall)
+
+	// Run snapshots again on leader
+	require.NoError(t, leader.Snapshot().Error())
+
+	// Should only have TrailingLogs left now
+	err = leaderStore.GetLog(200-10, &log)
+	require.NoError(t, err)
+	err = leaderStore.GetLog(200-11, &log)
+	require.Error(t, err)
 }
 
 func TestRaft_SendSnapshotAndLogsFollower(t *testing.T) {
