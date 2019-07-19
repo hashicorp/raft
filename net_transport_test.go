@@ -38,7 +38,7 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 		PrevLogEntry: 100,
 		PrevLogTerm:  4,
 		Entries: []*Log{
-			{
+			&Log{
 				Index: 101,
 				Term:  4,
 				Type:  LogNoop,
@@ -76,6 +76,7 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	defer trans2.Close()
+
 	for i := 0; i < 2; i++ {
 		// Create wait group
 		wg := &sync.WaitGroup{}
@@ -198,7 +199,7 @@ func TestNetworkTransport_AppendEntries(t *testing.T) {
 			PrevLogEntry: 100,
 			PrevLogTerm:  4,
 			Entries: []*Log{
-				{
+				&Log{
 					Index: 101,
 					Term:  4,
 					Type:  LogNoop,
@@ -267,7 +268,7 @@ func TestNetworkTransport_AppendEntriesPipeline(t *testing.T) {
 			PrevLogEntry: 100,
 			PrevLogTerm:  4,
 			Entries: []*Log{
-				{
+				&Log{
 					Index: 101,
 					Term:  4,
 					Type:  LogNoop,
@@ -350,7 +351,7 @@ func TestNetworkTransport_AppendEntriesPipeline_CloseStreams(t *testing.T) {
 		PrevLogEntry: 100,
 		PrevLogTerm:  4,
 		Entries: []*Log{
-			{
+			&Log{
 				Index: 101,
 				Term:  4,
 				Type:  LogNoop,
@@ -624,7 +625,7 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 		PrevLogEntry: 100,
 		PrevLogTerm:  4,
 		Entries: []*Log{
-			{
+			&Log{
 				Index: 101,
 				Term:  4,
 				Type:  LogNoop,
