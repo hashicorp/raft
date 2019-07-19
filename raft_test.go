@@ -1671,6 +1671,48 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 // TODO: Need a test to process old-style entries in the Raft log when starting
 // up.
 
+func TestRaft_NoRestoreOnStart(t *testing.T) {
+	conf := inmemConfig(t)
+	conf.TrailingLogs = 10
+	conf.NoSnapshotRestoreOnStart = true
+	c := MakeCluster(1, t, conf)
+
+	// Commit a lot of things.
+	leader := c.Leader()
+	var future Future
+	for i := 0; i < 100; i++ {
+		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	// Wait for the last future to apply
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+
+	// Take a snapshot.
+	snapFuture := leader.Snapshot()
+	if err := snapFuture.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+
+	// Shutdown.
+	shutdown := leader.Shutdown()
+	if err := shutdown.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+
+	_, trans := NewInmemTransport(leader.localAddr)
+	newFSM := &MockFSM{}
+	_, err := NewRaft(&leader.conf, newFSM, leader.logs, leader.stable, leader.snapshots, trans)
+	if err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+
+	if len(newFSM.logs) != 0 {
+		c.FailNowf("[ERR] expected empty FSM, got %v", newFSM)
+	}
+}
+
 func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	// Make the cluster.
 	conf := inmemConfig(t)
