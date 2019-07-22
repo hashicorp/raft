@@ -15,6 +15,11 @@ import (
 )
 
 const (
+	// This is the current suggested max size of the data in a raft log entry.
+	// This is based on current architecture, default timing, etc. Clients can
+	// ignore this value if they want as there is no actual hard checking
+	// within the library. As the library is enhanced this value may change
+	// over time to reflect current suggested maximums.
 	SuggestedMaxDataSize = 512 * 1024
 )
 
