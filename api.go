@@ -647,12 +647,12 @@ func (r *Raft) Leader() ServerAddress {
 func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
 	metrics.IncrCounter([]string{"raft", "apply"}, 1)
 
-	return r.ApplyWithLog(Log{Data: cmd}, timeout)
+	return r.ApplyLog(Log{Data: cmd}, timeout)
 }
 
-// ApplyWithLog performs Apply but allows specifying extra Log parameters.
-// Currently this is limited to Data and Extensions.
-func (r *Raft) ApplyWithLog(log Log, timeout time.Duration) ApplyFuture {
+// ApplyLog performs Apply but takes in a Log directly. The only values
+// currently taken from the submitted Log are Data and Extensions.
+func (r *Raft) ApplyLog(log Log, timeout time.Duration) ApplyFuture {
 	metrics.IncrCounter([]string{"raft", "apply_with_log"}, 1)
 
 	var timer <-chan time.Time
