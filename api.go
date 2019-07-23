@@ -645,15 +645,13 @@ func (r *Raft) Leader() ServerAddress {
 // for the command to be started. This must be run on the leader or it
 // will fail.
 func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
-	metrics.IncrCounter([]string{"raft", "apply"}, 1)
-
 	return r.ApplyLog(Log{Data: cmd}, timeout)
 }
 
 // ApplyLog performs Apply but takes in a Log directly. The only values
 // currently taken from the submitted Log are Data and Extensions.
 func (r *Raft) ApplyLog(log Log, timeout time.Duration) ApplyFuture {
-	metrics.IncrCounter([]string{"raft", "apply_with_log"}, 1)
+	metrics.IncrCounter([]string{"raft", "apply"}, 1)
 
 	var timer <-chan time.Time
 	if timeout > 0 {
