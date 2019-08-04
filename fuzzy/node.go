@@ -2,7 +2,7 @@ package fuzzy
 
 import (
 	"fmt"
-	"log"
+	"github.com/hashicorp/go-hclog"
 	"path/filepath"
 	"time"
 
@@ -14,18 +14,18 @@ type raftNode struct {
 	transport *transport
 	store     *rdb.BoltStore
 	raft      *raft.Raft
-	log       *log.Logger
+	log       hclog.Logger
 	fsm       *fuzzyFSM
 	name      string
 	dir       string
 }
 
-func newRaftNode(logger *log.Logger, tc *transports, h TransportHooks, nodes []string, name string) (*raftNode, error) {
+func newRaftNode(logger hclog.Logger, tc *transports, h TransportHooks, nodes []string, name string) (*raftNode, error) {
 	datadir, err := resolveDirectory(fmt.Sprintf("data/%v", name), true)
 	if err != nil {
 		return nil, err
 	}
-	logger.Printf("[INFO] Creating new raft Node with data in dir %v", datadir)
+	logger.Info("creating new raft node with data in", "directory", datadir)
 	ss, err := raft.NewFileSnapshotStoreWithLogger(datadir, 5, logger)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to initialize snapshots %v\n", err.Error())
