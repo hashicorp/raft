@@ -58,7 +58,7 @@ func (r *RaftEnv) Restart(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	r.trans = trans
-	r.logger.Info(fmt.Sprintf("Starting node at %v", trans.LocalAddr()))
+	r.logger.Info("starting node", "addr", trans.LocalAddr())
 	raft, err := NewRaft(r.conf, r.fsm, r.store, r.store, r.snapshot, r.trans)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -113,7 +113,7 @@ func MakeRaft(t *testing.T, conf *Config, bootstrap bool) *RaftEnv {
 			t.Fatalf("err: %v", err)
 		}
 	}
-	env.logger.Info(fmt.Sprintf("Starting node at %v", trans.LocalAddr()))
+	env.logger.Info("starting node", "addr", trans.LocalAddr())
 	conf.Logger = env.logger
 	raft, err := NewRaft(conf, env.fsm, stable, stable, snap, trans)
 	if err != nil {
@@ -240,7 +240,7 @@ func TestRaft_Integ(t *testing.T) {
 		}
 		for _, f := range futures {
 			NoErr(WaitFuture(f, t), t)
-			leader.logger.Debug(fmt.Sprintf("Applied at %d, size %d", f.Index(), sz))
+			leader.logger.Debug("applied", "index", f.Index(), "size", sz)
 		}
 		totalApplied += n
 	}

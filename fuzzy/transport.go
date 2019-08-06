@@ -152,7 +152,6 @@ func (t *transport) sendRPC(target string, req interface{}, resp interface{}) er
 			}
 		}
 	}
-	// t.log.Printf("sendRPC %v -> %v : %+v", t.node, target, rpc.Command)
 	if result == nil {
 		tt.consumer <- rpc
 		cr := <-rc
@@ -165,7 +164,6 @@ func (t *transport) sendRPC(target string, req interface{}, resp interface{}) er
 			result.Error = err
 		}
 	}
-	// t.log.Printf("sendRPC %v <- %v: %+v %v", t.node, target, result.Response, result.Error)
 	buff = bytes.Buffer{}
 	codec.NewEncoder(&buff, &codecHandle).Encode(result.Response)
 	codec.NewDecoderBytes(buff.Bytes(), &codecHandle).Decode(resp)

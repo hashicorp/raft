@@ -360,7 +360,6 @@ func (c *cluster) pollState(s RaftState) ([]*Raft, uint64) {
 // settled into the given state.
 func (c *cluster) GetInState(s RaftState) []*Raft {
 	c.logger.Info("starting stability test", "raft-state", s)
-	// c.logger.Printf("[INFO] Starting stability test for raft state: %+v", s)
 	limitCh := time.After(c.longstopTimeout)
 
 	// An election should complete after 2 * max(HeartbeatTimeout, ElectionTimeout)

@@ -405,8 +405,8 @@ func (r *Raft) pipelineReplicate(s *followerReplication) error {
 	defer pipeline.Close()
 
 	// Log start and stop of pipeline
-	r.logger.Info(fmt.Sprintf("pipelining replication to peer %v", s.peer))
-	defer r.logger.Info(fmt.Sprintf("aborting pipeline replication to peer %v", s.peer))
+	r.logger.Info("pipelining replication", "peer", s.peer)
+	defer r.logger.Info("aborting pipeline replication", "peer", s.peer)
 
 	// Create a shutdown and finish channel
 	stopCh := make(chan struct{})
@@ -467,7 +467,7 @@ func (r *Raft) pipelineSend(s *followerReplication, p AppendPipeline, nextIdx *u
 
 	// Pipeline the append entries
 	if _, err := p.AppendEntries(req, new(AppendEntriesResponse)); err != nil {
-		r.logger.Error(fmt.Sprintf("Failed to pipeline AppendEntries to %v: %v", s.peer, err))
+		r.logger.Error("failed to pipeline appendEntries", "peer", s.peer, "error", err)
 		return true
 	}
 
@@ -543,7 +543,7 @@ func (r *Raft) setPreviousLog(req *AppendEntriesRequest, nextIndex uint64) error
 	} else {
 		var l Log
 		if err := r.logs.GetLog(nextIndex-1, &l); err != nil {
-			r.logger.Error(fmt.Sprintf("Failed to get log at index %d: %v", nextIndex-1, err))
+			r.logger.Error("failed to get log", "index", nextIndex-1, "error", err)
 			return err
 		}
 
@@ -562,7 +562,7 @@ func (r *Raft) setNewLogs(req *AppendEntriesRequest, nextIndex, lastIndex uint64
 	for i := nextIndex; i <= maxIndex; i++ {
 		oldLog := new(Log)
 		if err := r.logs.GetLog(i, oldLog); err != nil {
-			r.logger.Error(fmt.Sprintf("Failed to get log at index %d: %v", i, err))
+			r.logger.Error("failed to get log", "index", i, "error", err)
 			return err
 		}
 		req.Entries = append(req.Entries, oldLog)
@@ -578,7 +578,7 @@ func appendStats(peer string, start time.Time, logs float32) {
 
 // handleStaleTerm is used when a follower indicates that we have a stale term.
 func (r *Raft) handleStaleTerm(s *followerReplication) {
-	r.logger.Error(fmt.Sprintf("peer %v has newer term, stopping replication", s.peer))
+	r.logger.Error("peer has newer term, stopping replication", "peer", s.peer)
 	s.notifyAll(false) // No longer leader
 	asyncNotifyCh(s.stepDown)
 }
