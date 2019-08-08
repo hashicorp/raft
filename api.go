@@ -528,7 +528,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	for index := snapshotIndex + 1; index <= lastLog.Index; index++ {
 		var entry Log
 		if err := r.logs.GetLog(index, &entry); err != nil {
-			r.logger.Error(fmt.Sprintf("Failed to get log at %d: %v", index, err))
+			r.logger.Error("failed to get log", "index", index, "error", err)
 			panic(err)
 		}
 		r.processConfigurationLogEntry(&entry)
@@ -1014,7 +1014,7 @@ func (r *Raft) Stats() map[string]string {
 
 	future := r.GetConfiguration()
 	if err := future.Error(); err != nil {
-		r.logger.Warn(fmt.Sprintf("could not get configuration for Stats: %v", err))
+		r.logger.Warn("could not get configuration for stats", "error", err)
 	} else {
 		configuration := future.Configuration()
 		s["latest_configuration_index"] = toString(future.Index())

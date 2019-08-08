@@ -182,7 +182,7 @@ PIPELINE:
 	// to standard mode on failure.
 	if err := r.pipelineReplicate(s); err != nil {
 		if err != ErrPipelineReplicationNotSupported {
-			r.logger.Error(fmt.Sprintf("Failed to start pipeline replication to %s: %s", s.peer, err))
+			r.logger.Error("failed to start pipeline replication to", "peer", s.peer, "error", err)
 		}
 	}
 	goto RPC
@@ -215,7 +215,7 @@ START:
 	// Make the RPC call
 	start = time.Now()
 	if err := r.trans.AppendEntries(s.peer.ID, s.peer.Address, &req, &resp); err != nil {
-		r.logger.Error(fmt.Sprintf("Failed to AppendEntries to %v: %v", s.peer, err))
+		r.logger.Error("failed to appendEntries to", "peer", s.peer, "error", err)
 		s.failures++
 		return
 	}
@@ -245,7 +245,7 @@ START:
 		} else {
 			s.failures++
 		}
-		r.logger.Warn(fmt.Sprintf("AppendEntries to %v rejected, sending older logs (next: %d)", s.peer, atomic.LoadUint64(&s.nextIndex)))
+		r.logger.Warn("appendEntries rejected, sending older logs", "peer", s.peer, "next", atomic.LoadUint64(&s.nextIndex))
 	}
 
 CHECK_MORE:
@@ -272,7 +272,7 @@ SEND_SNAP:
 	if stop, err := r.sendLatestSnapshot(s); stop {
 		return true
 	} else if err != nil {
-		r.logger.Error(fmt.Sprintf("Failed to send snapshot to %v: %v", s.peer, err))
+		r.logger.Error("failed to send snapshot to", "peer", s.peer, "error", err)
 		return
 	}
 
@@ -286,7 +286,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	// Get the snapshots
 	snapshots, err := r.snapshots.List()
 	if err != nil {
-		r.logger.Error(fmt.Sprintf("Failed to list snapshots: %v", err))
+		r.logger.Error("failed to list snapshots", "error", err)
 		return false, err
 	}
 
@@ -299,7 +299,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	snapID := snapshots[0].ID
 	meta, snapshot, err := r.snapshots.Open(snapID)
 	if err != nil {
-		r.logger.Error(fmt.Sprintf("Failed to open snapshot %v: %v", snapID, err))
+		r.logger.Error("failed to open snapshot", "id", snapID, "error", err)
 		return false, err
 	}
 	defer snapshot.Close()
@@ -322,7 +322,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	start := time.Now()
 	var resp InstallSnapshotResponse
 	if err := r.trans.InstallSnapshot(s.peer.ID, s.peer.Address, &req, &resp, snapshot); err != nil {
-		r.logger.Error(fmt.Sprintf("Failed to install snapshot %v: %v", snapID, err))
+		r.logger.Error("failed to install snapshot", "id", snapID, "error", err)
 		s.failures++
 		return false, err
 	}
@@ -350,7 +350,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 		s.notifyAll(true)
 	} else {
 		s.failures++
-		r.logger.Warn(fmt.Sprintf("InstallSnapshot to %v rejected", s.peer))
+		r.logger.Warn("installSnapshot rejected to", "peer", s.peer)
 	}
 	return false, nil
 }
@@ -377,7 +377,7 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 
 		start := time.Now()
 		if err := r.trans.AppendEntries(s.peer.ID, s.peer.Address, &req, &resp); err != nil {
-			r.logger.Error(fmt.Sprintf("Failed to heartbeat to %v: %v", s.peer.Address, err))
+			r.logger.Error("failed to heartbeat to", "peer", s.peer.Address, "error", err)
 			failures++
 			select {
 			case <-time.After(backoff(failureWait, failures, maxFailureScale)):

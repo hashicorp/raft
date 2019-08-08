@@ -132,7 +132,7 @@ func (t *transport) sendRPC(target string, req interface{}, resp interface{}) er
 		}
 		rpc.Command = &appEnt
 	default:
-		t.log.Warn("unexpected request type", "type", fmt.Sprintf("%T", req), "request", req)
+		t.log.Warn("unexpected request type", "type", hclog.Fmt("%T", req), "request", req)
 	}
 	var result *raft.RPCResponse
 	if t.hooks != nil {
