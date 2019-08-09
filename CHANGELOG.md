@@ -1,5 +1,7 @@
 # UNRELEASED
 
+* Replace logger with hclog [[GH-360](https://github.com/hashicorp/raft/pull/360)]
+
 # 1.1.1 (July 23rd, 2019)
 
 FEATURES
