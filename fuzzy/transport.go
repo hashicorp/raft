@@ -5,8 +5,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/hashicorp/go-hclog"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -32,10 +32,10 @@ type appendEntries struct {
 type transports struct {
 	sync.RWMutex
 	nodes map[string]*transport
-	log   *log.Logger
+	log   hclog.Logger
 }
 
-func newTransports(log *log.Logger) *transports {
+func newTransports(log hclog.Logger) *transports {
 	return &transports{
 		nodes: make(map[string]*transport),
 		log:   log,
@@ -65,7 +65,7 @@ type TransportHooks interface {
 }
 
 type transport struct {
-	log        *log.Logger
+	log        hclog.Logger
 	transports *transports
 	node       string
 	ae         []appendEntries
@@ -99,7 +99,7 @@ func (t *transport) sendRPC(target string, req interface{}, resp interface{}) er
 	t.transports.RLock()
 	tt := t.transports.nodes[target]
 	if tt == nil {
-		t.log.Printf("sendRPC target=%v but unknown node (transports=%v)", target, t.transports.nodes)
+		t.log.Info("sendRPC unknown node", "target", target, "transports", t.transports.nodes)
 		t.transports.RUnlock()
 		return fmt.Errorf("Unknown target host %v", target)
 	}
@@ -132,7 +132,7 @@ func (t *transport) sendRPC(target string, req interface{}, resp interface{}) er
 		}
 		rpc.Command = &appEnt
 	default:
-		t.log.Printf("Unexpected request type %T %+v", req, req)
+		t.log.Warn("unexpected request type", "type", hclog.Fmt("%T", req), "request", req)
 	}
 	var result *raft.RPCResponse
 	if t.hooks != nil {
@@ -152,7 +152,6 @@ func (t *transport) sendRPC(target string, req interface{}, resp interface{}) er
 			}
 		}
 	}
-	//t.log.Printf("sendRPC %v -> %v : %+v", t.node, target, rpc.Command)
 	if result == nil {
 		tt.consumer <- rpc
 		cr := <-rc
@@ -165,7 +164,6 @@ func (t *transport) sendRPC(target string, req interface{}, resp interface{}) er
 			result.Error = err
 		}
 	}
-	//t.log.Printf("sendRPC %v <- %v: %+v %v", t.node, target, result.Response, result.Error)
 	buff = bytes.Buffer{}
 	codec.NewEncoder(&buff, &codecHandle).Encode(result.Response)
 	codec.NewDecoderBytes(buff.Bytes(), &codecHandle).Decode(resp)
@@ -225,7 +223,7 @@ func (t *transport) RequestVote(id raft.ServerID, target raft.ServerAddress, arg
 // InstallSnapshot is used to push a snapshot down to a follower. The data is read from
 // the ReadCloser and streamed to the client.
 func (t *transport) InstallSnapshot(id raft.ServerID, target raft.ServerAddress, args *raft.InstallSnapshotRequest, resp *raft.InstallSnapshotResponse, data io.Reader) error {
-	t.log.Printf("INSTALL SNAPSHOT *************************************")
+	t.log.Debug("INSTALL SNAPSHOT *************************************")
 	return errors.New("huh")
 }
 

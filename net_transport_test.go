@@ -3,8 +3,8 @@ package raft
 import (
 	"bytes"
 	"fmt"
+	"github.com/hashicorp/go-hclog"
 	"github.com/stretchr/testify/require"
-	"log"
 	"net"
 	"reflect"
 	"strings"
@@ -711,7 +711,7 @@ type testCountingWriter struct {
 
 func (tw testCountingWriter) Write(p []byte) (n int, err error) {
 	atomic.AddInt32(tw.numCalls, 1)
-	if !strings.Contains(string(p), "raft-net: Failed to accept connection") {
+	if !strings.Contains(string(p), "failed to accept connection") {
 		tw.t.Error("did not receive expected log message")
 	}
 	tw.t.Log("countingWriter:", string(p))
@@ -752,7 +752,11 @@ func TestNetworkTransport_ListenBackoff(t *testing.T) {
 	var numAccepts int32
 	var numLogs int32
 	countingWriter := testCountingWriter{t, &numLogs}
-	countingLogger := log.New(countingWriter, "test", log.LstdFlags)
+	countingLogger := hclog.New(&hclog.LoggerOptions{
+		Name:   "test",
+		Output: countingWriter,
+		Level:  hclog.DefaultLevel,
+	})
 	transport := NetworkTransport{
 		logger:     countingLogger,
 		stream:     testCountingStreamLayer{&numAccepts},
