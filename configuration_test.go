@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-var sampleConfiguration Configuration = Configuration{
+var sampleConfiguration = Configuration{
 	Servers: []Server{
 		Server{
 			Suffrage: Nonvoter,

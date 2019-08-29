@@ -2,9 +2,10 @@ package fuzzy
 
 import (
 	"fmt"
-	"github.com/hashicorp/go-hclog"
 	"path/filepath"
 	"time"
+
+	"github.com/hashicorp/go-hclog"
 
 	"github.com/hashicorp/raft"
 	rdb "github.com/hashicorp/raft-boltdb"
@@ -49,7 +50,7 @@ func newRaftNode(logger hclog.Logger, tc *transports, h TransportHooks, nodes []
 		for _, n := range nodes {
 			c = append(c, raft.Server{Suffrage: raft.Voter, ID: raft.ServerID(n), Address: raft.ServerAddress(n)})
 		}
-		configuration := raft.Configuration{c}
+		configuration := raft.Configuration{Servers: c}
 		if err := raft.BootstrapCluster(config, store, store, ss, transport, configuration); err != nil {
 			return nil, err
 		}
