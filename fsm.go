@@ -31,6 +31,12 @@ type FSM interface {
 	Restore(io.ReadCloser) error
 }
 
+type BatchingFSM interface {
+	ApplyBatch([]*Log) []interface{}
+
+	FSM
+}
+
 // FSMSnapshot is returned by an FSM in response to a Snapshot
 // It must be safe to invoke FSMSnapshot methods with concurrent
 // calls to Apply.
@@ -49,7 +55,10 @@ type FSMSnapshot interface {
 func (r *Raft) runFSM() {
 	var lastIndex, lastTerm uint64
 
-	commit := func(req *commitTuple) {
+	batchingFSM, batchingEnabled := r.fsm.(BatchingFSM)
+	configStore, configStoreEnabled := r.fsm.(ConfigurationStore)
+
+	commitSingle := func(req *commitTuple) {
 		// Apply the log if a command or config change
 		var resp interface{}
 		// Make sure we send a response
@@ -68,8 +77,7 @@ func (r *Raft) runFSM() {
 			metrics.MeasureSince([]string{"raft", "fsm", "apply"}, start)
 
 		case LogConfiguration:
-			configStore, ok := r.fsm.(ConfigurationStore)
-			if !ok {
+			if !configStoreEnabled {
 				// Return early to avoid incrementing the index and term for
 				// an unimplemented operation.
 				return
@@ -83,6 +91,32 @@ func (r *Raft) runFSM() {
 		// Update the indexes
 		lastIndex = req.log.Index
 		lastTerm = req.log.Term
+	}
+
+	commitBatch := func(req []*commitTuple) {
+		if !batchingEnabled {
+			for _, ct := range req {
+				commitSingle(ct)
+			}
+			return
+		}
+
+		logs := make([]*Log, len(req))
+		for i, ct := range req {
+			logs[i] = ct.log
+		}
+
+		start := time.Now()
+		responses := batchingFSM.ApplyBatch(logs)
+		metrics.MeasureSince([]string{"raft", "fsm", "applyBatch"}, start)
+		metrics.SetGauge([]string{"raft", "fsm", "applyBatchNum"}, float32(len(req)))
+
+		for i, resp := range responses {
+			if resp != nil && req[i].future != nil {
+				req[i].future.response = resp
+				req[i].future.respond(nil)
+			}
+		}
 	}
 
 	restore := func(req *restoreFuture) {
@@ -132,8 +166,8 @@ func (r *Raft) runFSM() {
 		select {
 		case ptr := <-r.fsmMutateCh:
 			switch req := ptr.(type) {
-			case *commitTuple:
-				commit(req)
+			case []*commitTuple:
+				commitBatch(req)
 
 			case *restoreFuture:
 				restore(req)

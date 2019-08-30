@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"container/list"
 	"fmt"
-	"github.com/hashicorp/go-hclog"
 	"io"
 	"io/ioutil"
 	"sync/atomic"
 	"time"
+
+	"github.com/hashicorp/go-hclog"
 
 	"github.com/armon/go-metrics"
 )
@@ -631,22 +632,46 @@ func (r *Raft) leaderLoop() {
 			start := time.Now()
 
 			for {
-				e := r.leaderState.inflight.Front()
-				if e == nil {
+				var groupReady []*list.Element
+				var groupFutures = make(map[uint64]*logFuture)
+				lastApplied := r.getLastApplied()
+				var lastInBatch uint64
+
+			BUILD_GROUP:
+				for e := r.leaderState.inflight.Front(); e != nil; e = e.Next() {
+
+					commitLog := e.Value.(*logFuture)
+					idx := commitLog.log.Index
+					if idx > commitIndex {
+						break BUILD_GROUP
+					}
+
+					// Check that we do not exceed the limit of entries in a
+					// group. This should count any non-applied logs that have
+					// no pending futures.
+					if idx-lastApplied > uint64(r.conf.MaxAppendEntries) {
+						break BUILD_GROUP
+					}
+
+					// Measure the commit time
+					metrics.MeasureSince([]string{"raft", "commitTime"}, commitLog.dispatch)
+					groupReady = append(groupReady, e)
+					groupFutures[idx] = commitLog
+					lastInBatch = idx
+				}
+
+				// If no logs are ready break from the outer loop
+				if len(groupReady) == 0 {
 					break
 				}
-				commitLog := e.Value.(*logFuture)
-				idx := commitLog.log.Index
-				if idx > commitIndex {
-					break
+
+				// Process the group
+				r.processLogsBatch(lastInBatch, groupFutures)
+
+				for _, e := range groupReady {
+					r.leaderState.inflight.Remove(e)
 				}
-				// Measure the commit time
-				metrics.MeasureSince([]string{"raft", "commitTime"}, commitLog.dispatch)
-
-				r.processLogs(idx, commitLog)
-
-				r.leaderState.inflight.Remove(e)
-				numProcessed++
+				numProcessed += len(groupReady)
 			}
 
 			// Measure the time to enqueue batch of logs for FSM to apply
@@ -1112,6 +1137,83 @@ func (r *Raft) processLogs(index uint64, future *logFuture) {
 		// Update the lastApplied index and term
 		r.setLastApplied(idx)
 	}
+}
+
+func (r *Raft) processLogsBatch(index uint64, futures map[uint64]*logFuture) {
+	// Reject logs we've applied already
+	lastApplied := r.getLastApplied()
+	if index <= lastApplied {
+		r.logger.Warn("skipping application of old log", "index", index)
+		return
+	}
+
+	batch := make([]*commitTuple, 0, index-lastApplied)
+
+	// Apply all the preceding logs
+	for idx := r.getLastApplied() + 1; idx <= index; idx++ {
+		var preparedLog *commitTuple
+		// Get the log, either from the future or from our log store
+		future, futureOk := futures[idx]
+		if futureOk {
+			preparedLog = r.prepareLog(&future.log, future)
+		} else {
+			l := new(Log)
+			if err := r.logs.GetLog(idx, l); err != nil {
+				r.logger.Error("failed to get log", "index", idx, "error", err)
+				panic(err)
+			}
+			preparedLog = r.prepareLog(l, nil)
+		}
+
+		switch {
+		case preparedLog != nil:
+			batch = append(batch, preparedLog)
+		case futureOk:
+			// Invoke the future if given.
+			future.respond(nil)
+		}
+	}
+
+	select {
+	case r.fsmMutateCh <- batch:
+	case <-r.shutdownCh:
+		for _, cl := range batch {
+			if cl.future != nil {
+				// TODO: what if we already responded to the future above?
+				cl.future.respond(ErrRaftShutdown)
+			}
+		}
+	}
+
+	// Update the lastApplied index and term
+	r.setLastApplied(index)
+}
+
+// processLog is invoked to process the application of a single committed log entry.
+func (r *Raft) prepareLog(l *Log, future *logFuture) *commitTuple {
+	switch l.Type {
+	case LogBarrier:
+		// Barrier is handled by the FSM
+		fallthrough
+
+	case LogCommand:
+		return &commitTuple{l, future}
+
+	case LogConfiguration:
+		// Only support this with the v2 configuration format
+		if r.protocolVersion > 2 {
+			return &commitTuple{l, future}
+		}
+	case LogAddPeerDeprecated:
+	case LogRemovePeerDeprecated:
+	case LogNoop:
+		// Ignore the no-op
+
+	default:
+		panic(fmt.Errorf("unrecognized log type: %#v", l))
+	}
+
+	return nil
 }
 
 // processLog is invoked to process the application of a single committed log entry.
