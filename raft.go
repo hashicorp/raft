@@ -619,6 +619,8 @@ func (r *Raft) leaderLoop() {
 			commitIndex := r.leaderState.commitment.getCommitIndex()
 			r.setCommitIndex(commitIndex)
 
+			// New configration has been committed, set it as the committed
+			// value.
 			if r.configurations.latestIndex > oldCommitIndex &&
 				r.configurations.latestIndex <= commitIndex {
 				r.configurations.committed = r.configurations.latest
@@ -628,57 +630,41 @@ func (r *Raft) leaderLoop() {
 				}
 			}
 
-			var numProcessed int
 			start := time.Now()
+			var groupReady []*list.Element
+			var groupFutures = make(map[uint64]*logFuture)
+			var lastInGroup uint64
 
-			for {
-				var groupReady []*list.Element
-				var groupFutures = make(map[uint64]*logFuture)
-				lastApplied := r.getLastApplied()
-				var lastInBatch uint64
-
-			BUILD_GROUP:
-				for e := r.leaderState.inflight.Front(); e != nil; e = e.Next() {
-
-					commitLog := e.Value.(*logFuture)
-					idx := commitLog.log.Index
-					if idx > commitIndex {
-						break BUILD_GROUP
-					}
-
-					// Check that we do not exceed the limit of entries in a
-					// group. This should count any non-applied logs that have
-					// no pending futures.
-					if idx-lastApplied > uint64(r.conf.MaxAppendEntries) {
-						break BUILD_GROUP
-					}
-
-					// Measure the commit time
-					metrics.MeasureSince([]string{"raft", "commitTime"}, commitLog.dispatch)
-					groupReady = append(groupReady, e)
-					groupFutures[idx] = commitLog
-					lastInBatch = idx
-				}
-
-				// If no logs are ready break from the outer loop
-				if len(groupReady) == 0 {
+			// Pull all inflight logs that are committed off the queue.
+			for e := r.leaderState.inflight.Front(); e != nil; e = e.Next() {
+				commitLog := e.Value.(*logFuture)
+				idx := commitLog.log.Index
+				if idx > commitIndex {
+					// Don't go past the committed index
 					break
 				}
 
-				// Process the group
-				r.processLogsBatch(lastInBatch, groupFutures)
+				// Measure the commit time
+				metrics.MeasureSince([]string{"raft", "commitTime"}, commitLog.dispatch)
+				groupReady = append(groupReady, e)
+				groupFutures[idx] = commitLog
+				lastInGroup = idx
+			}
+
+			// Process the group
+			if len(groupReady) != 0 {
+				r.processLogsBatch(lastInGroup, groupFutures)
 
 				for _, e := range groupReady {
 					r.leaderState.inflight.Remove(e)
 				}
-				numProcessed += len(groupReady)
 			}
 
 			// Measure the time to enqueue batch of logs for FSM to apply
 			metrics.MeasureSince([]string{"raft", "fsm", "enqueue"}, start)
 
 			// Count the number of logs enqueued
-			metrics.SetGauge([]string{"raft", "commitNumLogs"}, float32(numProcessed))
+			metrics.SetGauge([]string{"raft", "commitNumLogs"}, float32(len(groupReady)))
 
 			if stepDown {
 				if r.conf.ShutdownOnRemove {
@@ -1147,7 +1133,19 @@ func (r *Raft) processLogsBatch(index uint64, futures map[uint64]*logFuture) {
 		return
 	}
 
-	batch := make([]*commitTuple, 0, index-lastApplied)
+	applyBatch := func(batch []*commitTuple) {
+		select {
+		case r.fsmMutateCh <- batch:
+		case <-r.shutdownCh:
+			for _, cl := range batch {
+				if cl.future != nil {
+					cl.future.respond(ErrRaftShutdown)
+				}
+			}
+		}
+	}
+
+	batch := make([]*commitTuple, 0, r.conf.MaxAppendEntries)
 
 	// Apply all the preceding logs
 	for idx := r.getLastApplied() + 1; idx <= index; idx++ {
@@ -1167,22 +1165,25 @@ func (r *Raft) processLogsBatch(index uint64, futures map[uint64]*logFuture) {
 
 		switch {
 		case preparedLog != nil:
+			// If we have a log ready to send to the FSM add it to the batch.
+			// The FSM thread will respond to the future.
 			batch = append(batch, preparedLog)
+
+			// If we have filled up a batch, send it to the FSM
+			if len(batch) >= r.conf.MaxAppendEntries {
+				applyBatch(batch)
+				batch = make([]*commitTuple, 0, r.conf.MaxAppendEntries)
+			}
+
 		case futureOk:
 			// Invoke the future if given.
 			future.respond(nil)
 		}
 	}
 
-	select {
-	case r.fsmMutateCh <- batch:
-	case <-r.shutdownCh:
-		for _, cl := range batch {
-			if cl.future != nil {
-				// TODO: what if we already responded to the future above?
-				cl.future.respond(ErrRaftShutdown)
-			}
-		}
+	// If there are any remaining logs in the batch apply them
+	if len(batch) != 0 {
+		applyBatch(batch)
 	}
 
 	// Update the lastApplied index and term

@@ -31,7 +31,19 @@ type FSM interface {
 	Restore(io.ReadCloser) error
 }
 
+// BatchingFSM extends the FSM interface to add an ApplyBatch function. This can
+// optionally be implemented by clients to enable multiple logs to be applied to
+// the FSM in batches. Up to MaxAppendEntries could be sent in a batch.
 type BatchingFSM interface {
+	// ApplyBatch is invoked once a batch of log entries has been committed and
+	// are ready to be applied to the FSM. ApplyBatch will take in an array of
+	// log entries. These log entries could be of a few types clients should
+	// check the log type prior to attempting to decode the data attached.
+	// Presently the LogCommand and LogConfiguration types will be sent.
+	//
+	// The returned slice must be the same length as the input. The returned
+	// values will be made available in the ApplyFuture returned by Raft.Apply
+	// method if that method was called on the same Raft node as the FSM.
 	ApplyBatch([]*Log) []interface{}
 
 	FSM
@@ -101,15 +113,22 @@ func (r *Raft) runFSM() {
 			return
 		}
 
+		var lastBatchIndex, lastBatchTerm uint64
 		logs := make([]*Log, len(req))
 		for i, ct := range req {
 			logs[i] = ct.log
+			lastBatchIndex = ct.log.Index
+			lastBatchTerm = ct.log.Term
 		}
 
 		start := time.Now()
 		responses := batchingFSM.ApplyBatch(logs)
 		metrics.MeasureSince([]string{"raft", "fsm", "applyBatch"}, start)
 		metrics.SetGauge([]string{"raft", "fsm", "applyBatchNum"}, float32(len(req)))
+
+		// Update the indexes
+		lastIndex = lastBatchIndex
+		lastTerm = lastBatchTerm
 
 		for i, resp := range responses {
 			if resp != nil && req[i].future != nil {
