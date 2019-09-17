@@ -3,13 +3,14 @@ package fuzzy
 import (
 	"bytes"
 	"fmt"
-	"github.com/hashicorp/go-hclog"
 	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/hashicorp/go-hclog"
 
 	"github.com/hashicorp/raft"
 )
@@ -239,8 +240,10 @@ func (c *cluster) sendNApplies(leaderTimeout time.Duration, data [][]byte) []app
 	f := []applyFutureWithData{}
 
 	ldr := c.Leader(leaderTimeout)
-	for _, d := range data {
-		f = append(f, applyFutureWithData{future: ldr.raft.Apply(d, time.Second), data: d})
+	if ldr != nil {
+		for _, d := range data {
+			f = append(f, applyFutureWithData{future: ldr.raft.Apply(d, time.Second), data: d})
+		}
 	}
 	return f
 }
