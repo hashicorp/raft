@@ -17,7 +17,7 @@ ci.integ: ci.test
 	INTEG_TESTS=yes gotestsum --format=short-verbose --junitfile $(TEST_RESULTS_DIR)/gotestsum-report-integ.xml -- -timeout=25s -run=Integ .
 
 fuzz:
-	go test -timeout=300s ./fuzzy
+	go test $(TESTARGS) -timeout=20m ./fuzzy
 
 deps:
 	go get -t -d -v ./...
