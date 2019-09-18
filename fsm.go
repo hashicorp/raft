@@ -96,7 +96,7 @@ func (r *Raft) runFSM() {
 			}
 
 			start := time.Now()
-			configStore.StoreConfiguration(req.log.Index, decodeConfiguration(req.log.Data))
+			configStore.StoreConfiguration(req.log.Index, DecodeConfiguration(req.log.Data))
 			metrics.MeasureSince([]string{"raft", "fsm", "store_config"}, start)
 		}
 
@@ -105,17 +105,18 @@ func (r *Raft) runFSM() {
 		lastTerm = req.log.Term
 	}
 
-	commitBatch := func(req []*commitTuple) {
+	commitBatch := func(reqs []*commitTuple) {
 		if !batchingEnabled {
-			for _, ct := range req {
+			for _, ct := range reqs {
 				commitSingle(ct)
 			}
 			return
 		}
 
+		// TODO: how to handle barrier logs?
 		var lastBatchIndex, lastBatchTerm uint64
-		logs := make([]*Log, len(req))
-		for i, ct := range req {
+		logs := make([]*Log, len(reqs))
+		for i, ct := range reqs {
 			logs[i] = ct.log
 			lastBatchIndex = ct.log.Index
 			lastBatchTerm = ct.log.Term
@@ -124,16 +125,16 @@ func (r *Raft) runFSM() {
 		start := time.Now()
 		responses := batchingFSM.ApplyBatch(logs)
 		metrics.MeasureSince([]string{"raft", "fsm", "applyBatch"}, start)
-		metrics.SetGauge([]string{"raft", "fsm", "applyBatchNum"}, float32(len(req)))
+		metrics.SetGauge([]string{"raft", "fsm", "applyBatchNum"}, float32(len(reqs)))
 
 		// Update the indexes
 		lastIndex = lastBatchIndex
 		lastTerm = lastBatchTerm
 
-		for i, resp := range responses {
-			if resp != nil && req[i].future != nil {
-				req[i].future.response = resp
-				req[i].future.respond(nil)
+		for i, req := range reqs {
+			if req.future != nil {
+				req.future.response = responses[i]
+				req.future.respond(nil)
 			}
 		}
 	}

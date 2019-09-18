@@ -1148,7 +1148,7 @@ func (r *Raft) processLogsBatch(index uint64, futures map[uint64]*logFuture) {
 	batch := make([]*commitTuple, 0, r.conf.MaxAppendEntries)
 
 	// Apply all the preceding logs
-	for idx := r.getLastApplied() + 1; idx <= index; idx++ {
+	for idx := lastApplied + 1; idx <= index; idx++ {
 		var preparedLog *commitTuple
 		// Get the log, either from the future or from our log store
 		future, futureOk := futures[idx]
@@ -1464,7 +1464,7 @@ func (r *Raft) processConfigurationLogEntry(entry *Log) {
 	if entry.Type == LogConfiguration {
 		r.configurations.committed = r.configurations.latest
 		r.configurations.committedIndex = r.configurations.latestIndex
-		r.configurations.latest = decodeConfiguration(entry.Data)
+		r.configurations.latest = DecodeConfiguration(entry.Data)
 		r.configurations.latestIndex = entry.Index
 	} else if entry.Type == LogAddPeerDeprecated || entry.Type == LogRemovePeerDeprecated {
 		r.configurations.committed = r.configurations.latest
@@ -1620,7 +1620,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	var reqConfiguration Configuration
 	var reqConfigurationIndex uint64
 	if req.SnapshotVersion > 0 {
-		reqConfiguration = decodeConfiguration(req.Configuration)
+		reqConfiguration = DecodeConfiguration(req.Configuration)
 		reqConfigurationIndex = req.ConfigurationIndex
 	} else {
 		reqConfiguration = decodePeers(req.Peers, r.trans)

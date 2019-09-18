@@ -478,7 +478,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	// Create Raft struct.
 	r := &Raft{
 		protocolVersion:       protocolVersion,
-		applyCh:               make(chan *logFuture, conf.MaxAppendEntries),
+		applyCh:               make(chan *logFuture),
 		conf:                  *conf,
 		fsm:                   fsm,
 		fsmMutateCh:           make(chan interface{}, 128),
