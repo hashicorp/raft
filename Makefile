@@ -2,10 +2,10 @@ DEPS = $(go list -f '{{range .TestImports}}{{.}} {{end}}' ./...)
 TEST_RESULTS_DIR?=/tmp/test-results
 
 test:
-	go test -timeout=60s -race .
+	go test $(TESTARGS) -timeout=60s -race .
 
 integ: test
-	INTEG_TESTS=yes go test -timeout=25s -run=Integ .
+	INTEG_TESTS=yes go test $(TESTARGS) -timeout=25s -run=Integ .
 
 ci.test-norace:
 	gotestsum --format=short-verbose --junitfile $(TEST_RESULTS_DIR)/gotestsum-report-test.xml -- -timeout=60s
