@@ -307,7 +307,7 @@ func TestConfiguration_encodeDecodePeers(t *testing.T) {
 }
 
 func TestConfiguration_encodeDecodeConfiguration(t *testing.T) {
-	decoded := decodeConfiguration(encodeConfiguration(sampleConfiguration))
+	decoded := DecodeConfiguration(encodeConfiguration(sampleConfiguration))
 	if !reflect.DeepEqual(sampleConfiguration, decoded) {
 		t.Fatalf("mismatch %v %v", sampleConfiguration, decoded)
 	}

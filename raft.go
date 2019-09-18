@@ -653,7 +653,7 @@ func (r *Raft) leaderLoop() {
 
 			// Process the group
 			if len(groupReady) != 0 {
-				r.processLogsBatch(lastInGroup, groupFutures)
+				r.processLogs(lastInGroup, groupFutures)
 
 				for _, e := range groupReady {
 					r.leaderState.inflight.Remove(e)
@@ -1098,7 +1098,7 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 // pass future=nil.
 // Leaders call this once per inflight when entries are committed. They pass
 // the future from inflights.
-func (r *Raft) processLogs(index uint64, future *logFuture) {
+/*func (r *Raft) processLogs(index uint64, future *logFuture) {
 	// Reject logs we've applied already
 	lastApplied := r.getLastApplied()
 	if index <= lastApplied {
@@ -1123,9 +1123,9 @@ func (r *Raft) processLogs(index uint64, future *logFuture) {
 		// Update the lastApplied index and term
 		r.setLastApplied(idx)
 	}
-}
+}*/
 
-func (r *Raft) processLogsBatch(index uint64, futures map[uint64]*logFuture) {
+func (r *Raft) processLogs(index uint64, futures map[uint64]*logFuture) {
 	// Reject logs we've applied already
 	lastApplied := r.getLastApplied()
 	if index <= lastApplied {
@@ -1215,58 +1215,6 @@ func (r *Raft) prepareLog(l *Log, future *logFuture) *commitTuple {
 	}
 
 	return nil
-}
-
-// processLog is invoked to process the application of a single committed log entry.
-func (r *Raft) processLog(l *Log, future *logFuture) {
-	switch l.Type {
-	case LogBarrier:
-		// Barrier is handled by the FSM
-		fallthrough
-
-	case LogCommand:
-		// Forward to the fsm handler
-		select {
-		case r.fsmMutateCh <- &commitTuple{l, future}:
-		case <-r.shutdownCh:
-			if future != nil {
-				future.respond(ErrRaftShutdown)
-			}
-		}
-
-		// Return so that the future is only responded to
-		// by the FSM handler when the application is done
-		return
-
-	case LogConfiguration:
-		// Only support this with the v2 configuration format
-		if r.protocolVersion > 2 {
-			// Forward to the fsm handler
-			select {
-			case r.fsmMutateCh <- &commitTuple{l, future}:
-			case <-r.shutdownCh:
-				if future != nil {
-					future.respond(ErrRaftShutdown)
-				}
-			}
-
-			// Return so that the future is only responded to
-			// by the FSM handler when the application is done
-			return
-		}
-	case LogAddPeerDeprecated:
-	case LogRemovePeerDeprecated:
-	case LogNoop:
-		// Ignore the no-op
-
-	default:
-		panic(fmt.Errorf("unrecognized log type: %#v", l))
-	}
-
-	// Invoke the future if given
-	if future != nil {
-		future.respond(nil)
-	}
 }
 
 // processRPC is called to handle an incoming RPC request. This must only be
