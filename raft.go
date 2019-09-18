@@ -1095,36 +1095,9 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 // applied up to the given index limit.
 // This can be called from both leaders and followers.
 // Followers call this from AppendEntries, for n entries at a time, and always
-// pass future=nil.
-// Leaders call this once per inflight when entries are committed. They pass
-// the future from inflights.
-/*func (r *Raft) processLogs(index uint64, future *logFuture) {
-	// Reject logs we've applied already
-	lastApplied := r.getLastApplied()
-	if index <= lastApplied {
-		r.logger.Warn("skipping application of old log", "index", index)
-		return
-	}
-
-	// Apply all the preceding logs
-	for idx := r.getLastApplied() + 1; idx <= index; idx++ {
-		// Get the log, either from the future or from our log store
-		if future != nil && future.log.Index == idx {
-			r.processLog(&future.log, future)
-		} else {
-			l := new(Log)
-			if err := r.logs.GetLog(idx, l); err != nil {
-				r.logger.Error("failed to get log", "index", idx, "error", err)
-				panic(err)
-			}
-			r.processLog(l, nil)
-		}
-
-		// Update the lastApplied index and term
-		r.setLastApplied(idx)
-	}
-}*/
-
+// pass futures=nil.
+// Leaders call this when entries are committed. They pass the futures from any
+// inflight logs.
 func (r *Raft) processLogs(index uint64, futures map[uint64]*logFuture) {
 	// Reject logs we've applied already
 	lastApplied := r.getLastApplied()
