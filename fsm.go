@@ -152,12 +152,15 @@ func (r *Raft) runFSM() {
 
 		var i int
 		for _, req := range reqs {
+			var resp interface{}
+			// If the log was sent to the FSM, retrieve the response.
+			if shouldSend(req.log) {
+				resp = responses[i]
+				i++
+			}
+
 			if req.future != nil {
-				// If the log was sent to the FSM, retrieve the response.
-				if shouldSend(req.log) {
-					req.future.response = responses[i]
-					i++
-				}
+				req.future.response = resp
 				req.future.respond(nil)
 			}
 		}
