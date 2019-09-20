@@ -14,6 +14,10 @@ import (
 	"time"
 )
 
+var (
+	userSnapshotErrorsOnNoData = true
+)
+
 func TestRaft_StartStop(t *testing.T) {
 	c := MakeCluster(1, t, nil)
 	c.Close()
@@ -1157,8 +1161,10 @@ func TestRaft_UserSnapshot(t *testing.T) {
 
 	// With nothing committed, asking for a snapshot should return an error.
 	leader := c.Leader()
-	if err := leader.Snapshot().Error(); err != ErrNothingNewToSnapshot {
-		c.FailNowf("Request for Snapshot failed: %v", err)
+	if userSnapshotErrorsOnNoData {
+		if err := leader.Snapshot().Error(); err != ErrNothingNewToSnapshot {
+			c.FailNowf("Request for Snapshot failed: %v", err)
+		}
 	}
 
 	// Commit some things.

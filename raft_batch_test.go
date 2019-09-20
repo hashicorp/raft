@@ -2,6 +2,10 @@
 
 package raft
 
+func init() {
+	userSnapshotErrorsOnNoData = false
+}
+
 // NOTE: This is exposed for middleware testing purposes and is not a stable API
 func (m *MockFSM) ApplyBatch(logs []*Log) []interface{} {
 	m.Lock()
