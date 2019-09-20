@@ -7,18 +7,23 @@ test:
 
 integ: test
 	INTEG_TESTS=yes go test -timeout=25s -run=Integ .
+	INTEG_TESTS=yes go test -timeout=25s -tags batchtest -run=Integ .
 
 ci.test-norace:
 	gotestsum --format=short-verbose --junitfile $(TEST_RESULTS_DIR)/gotestsum-report-test.xml -- -timeout=60s
+	gotestsum --format=short-verbose --junitfile $(TEST_RESULTS_DIR)/gotestsum-report-test.xml -- -timeout=60s -tags batchtest
 
 ci.test:
 	gotestsum --format=short-verbose --junitfile $(TEST_RESULTS_DIR)/gotestsum-report-test.xml -- -timeout=60s -race .
+	gotestsum --format=short-verbose --junitfile $(TEST_RESULTS_DIR)/gotestsum-report-test.xml -- -timeout=60s -race -tags batchtest .
 
 ci.integ: ci.test
 	INTEG_TESTS=yes gotestsum --format=short-verbose --junitfile $(TEST_RESULTS_DIR)/gotestsum-report-integ.xml -- -timeout=25s -run=Integ .
+	INTEG_TESTS=yes gotestsum --format=short-verbose --junitfile $(TEST_RESULTS_DIR)/gotestsum-report-integ.xml -- -timeout=25s -run=Integ -tags batchtest .
 
 fuzz:
 	go test -timeout=300s ./fuzzy
+	go test -timeout=300s -tags batchtest ./fuzzy
 
 deps:
 	go get -t -d -v ./...
