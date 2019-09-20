@@ -1540,7 +1540,7 @@ func TestRaft_Barrier(t *testing.T) {
 	// Ensure all the logs are the same
 	c.EnsureSame(t)
 	if len(getMockFSM(c.fsms[0]).logs) != 100 {
-		c.FailNowf("Bad log length")
+		c.FailNowf(fmt.Sprintf("Bad log length: %d", len(getMockFSM(c.fsms[0]).logs)))
 	}
 }
 

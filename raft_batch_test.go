@@ -9,8 +9,13 @@ func (m *MockFSM) ApplyBatch(logs []*Log) []interface{} {
 
 	ret := make([]interface{}, len(logs))
 	for i, log := range logs {
-		m.logs = append(m.logs, log.Data)
-		ret[i] = len(m.logs)
+		switch log.Type {
+		case LogCommand:
+			m.logs = append(m.logs, log.Data)
+			ret[i] = len(m.logs)
+		default:
+			ret[i] = nil
+		}
 	}
 
 	return ret
