@@ -3,6 +3,7 @@ TEST_RESULTS_DIR?=/tmp/test-results
 
 test:
 	go test -timeout=60s -race .
+	go test -timeout=60s -tags batchtest -race .
 
 integ: test
 	INTEG_TESTS=yes go test -timeout=25s -run=Integ .

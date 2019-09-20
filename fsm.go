@@ -113,27 +113,51 @@ func (r *Raft) runFSM() {
 			return
 		}
 
-		// TODO: how to handle barrier logs?
-		var lastBatchIndex, lastBatchTerm uint64
-		logs := make([]*Log, len(reqs))
-		for i, ct := range reqs {
-			logs[i] = ct.log
-			lastBatchIndex = ct.log.Index
-			lastBatchTerm = ct.log.Term
+		// Only send LogCommand and LogConfiguration log types. LogBarrier types
+		// will not be sent to the FSM.
+		shouldSend := func(l *Log) bool {
+			switch l.Type {
+			case LogCommand, LogConfiguration:
+				return true
+			}
+			return false
 		}
 
-		start := time.Now()
-		responses := batchingFSM.ApplyBatch(logs)
-		metrics.MeasureSince([]string{"raft", "fsm", "applyBatch"}, start)
-		metrics.SetGauge([]string{"raft", "fsm", "applyBatchNum"}, float32(len(reqs)))
+		var lastBatchIndex, lastBatchTerm uint64
+		sendLogs := make([]*Log, 0, len(reqs))
+		for _, req := range reqs {
+			if shouldSend(req.log) {
+				sendLogs = append(sendLogs, req.log)
+			}
+			lastBatchIndex = req.log.Index
+			lastBatchTerm = req.log.Term
+		}
+
+		var responses []interface{}
+		if len(sendLogs) > 0 {
+			start := time.Now()
+			responses = batchingFSM.ApplyBatch(sendLogs)
+			metrics.MeasureSince([]string{"raft", "fsm", "applyBatch"}, start)
+			metrics.SetGauge([]string{"raft", "fsm", "applyBatchNum"}, float32(len(reqs)))
+
+			// Ensure we get the expected responses
+			if len(sendLogs) != len(responses) {
+				panic("invalid number of responses")
+			}
+		}
 
 		// Update the indexes
 		lastIndex = lastBatchIndex
 		lastTerm = lastBatchTerm
 
-		for i, req := range reqs {
+		var i int
+		for _, req := range reqs {
 			if req.future != nil {
-				req.future.response = responses[i]
+				// If the log was sent to the FSM, retrieve the response.
+				if shouldSend(req.log) {
+					req.future.response = responses[i]
+					i++
+				}
 				req.future.respond(nil)
 			}
 		}
