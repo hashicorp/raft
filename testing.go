@@ -506,7 +506,7 @@ OUTER:
 				t.Disconnect(a)
 			}
 		} else {
-			for a, _ := range near {
+			for a := range near {
 				t.Disconnect(a)
 			}
 		}

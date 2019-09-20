@@ -100,7 +100,7 @@ func (s *followerReplication) notifyAll(leader bool) {
 	s.notifyLock.Unlock()
 
 	// Submit our votes
-	for v, _ := range n {
+	for v := range n {
 		v.vote(leader)
 	}
 }
