@@ -54,7 +54,7 @@ func (ca *clusterApplier) apply(t *testing.T, c *cluster, n uint) {
 		case <-ca.stopCh:
 			return
 		default:
-			ca.applied += c.ApplyN(t, time.Second, ca.src, n)
+			ca.applied += c.ApplyN(t, 5*time.Second, ca.src, n)
 		}
 	}
 }
