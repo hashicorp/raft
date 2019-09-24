@@ -1,6 +1,7 @@
 # UNRELEASED
 
 * Replace logger with hclog [[GH-360](https://github.com/hashicorp/raft/pull/360)]
+* Fix snapshot to not attempt to truncate a negative range [[GH-358](https://github.com/hashicorp/raft/pull/358)]
 
 # 1.1.1 (July 23rd, 2019)
 

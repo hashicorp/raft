@@ -2,12 +2,12 @@ DEPS = $(go list -f '{{range .TestImports}}{{.}} {{end}}' ./...)
 TEST_RESULTS_DIR?=/tmp/test-results
 
 test:
-	go test -timeout=60s -race .
-	go test -timeout=60s -tags batchtest -race .
+	go test $(TESTARGS) -timeout=60s -race .
+	go test $(TESTARGS) -timeout=60s -tags batchtest -race .
 
 integ: test
-	INTEG_TESTS=yes go test -timeout=25s -run=Integ .
-	INTEG_TESTS=yes go test -timeout=25s -tags batchtest -run=Integ .
+	INTEG_TESTS=yes go test $(TESTARGS) -timeout=25s -run=Integ .
+	INTEG_TESTS=yes go test $(TESTARGS) -timeout=25s -tags batchtest -run=Integ .
 
 ci.test-norace:
 	gotestsum --format=short-verbose --junitfile $(TEST_RESULTS_DIR)/gotestsum-report-test.xml -- -timeout=60s
@@ -22,8 +22,8 @@ ci.integ: ci.test
 	INTEG_TESTS=yes gotestsum --format=short-verbose --junitfile $(TEST_RESULTS_DIR)/gotestsum-report-integ.xml -- -timeout=25s -run=Integ -tags batchtest .
 
 fuzz:
-	go test -timeout=300s ./fuzzy
-	go test -timeout=300s -tags batchtest ./fuzzy
+	go test $(TESTARGS) -timeout=300s ./fuzzy
+	go test $(TESTARGS) -timeout=300s -tags batchtest ./fuzzy
 
 deps:
 	go get -t -d -v ./...

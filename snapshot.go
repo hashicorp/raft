@@ -228,6 +228,11 @@ func (r *Raft) compactLogs(snapIdx uint64) error {
 	// after the snapshot to be removed.
 	maxLog := min(snapIdx, lastLogIdx-r.conf.TrailingLogs)
 
+	if minLog > maxLog {
+		r.logger.Info("no logs to truncate")
+		return nil
+	}
+
 	r.logger.Info("compacting logs", "from", minLog, "to", maxLog)
 
 	// Compact the logs
