@@ -1,7 +1,7 @@
 DEPS = $(go list -f '{{range .TestImports}}{{.}} {{end}}' ./...)
 ENV  = $(shell go env GOPATH)
 GO_VERSION  = $(shell go version)
-GOLANG_CI_VERSION = v1.16.0
+GOLANG_CI_VERSION = v1.19.0
 
 # Look for versions prior to 1.10 which have a different fmt output
 # and don't lint with gofmt against them.
