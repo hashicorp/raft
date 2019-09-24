@@ -10,20 +10,6 @@ import (
 	"testing"
 )
 
-func FileSnapTest(t *testing.T) (string, *FileSnapshotStore) {
-	// Create a test dir
-	dir, err := ioutil.TempDir("", "raft")
-	if err != nil {
-		t.Fatalf("err: %v ", err)
-	}
-
-	snap, err := NewFileSnapshotStoreWithLogger(dir, 3, newTestLogger(t))
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	return dir, snap
-}
-
 func TestFileSnapshotStoreImpl(t *testing.T) {
 	var impl interface{} = &FileSnapshotStore{}
 	if _, ok := impl.(SnapshotStore); !ok {

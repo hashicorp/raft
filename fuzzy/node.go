@@ -2,9 +2,10 @@ package fuzzy
 
 import (
 	"fmt"
-	"log"
 	"path/filepath"
 	"time"
+
+	"github.com/hashicorp/go-hclog"
 
 	"github.com/hashicorp/raft"
 	rdb "github.com/hashicorp/raft-boltdb"
@@ -14,7 +15,7 @@ type raftNode struct {
 	transport *transport
 	store     *rdb.BoltStore
 	raft      *raft.Raft
-	log       *log.Logger
+	log       hclog.Logger
 	fsm       *fuzzyFSM
 	name      string
 	dir       string
@@ -30,6 +31,7 @@ func newRaftNode(logger *log.Logger, tc *transports, h TransportHooks, nodes []s
 	logger.Printf("[INFO] Creating new raft Node with data in dir %v", datadir)
 	var ss *raft.FileSnapshotStore
 	ss, err = raft.NewFileSnapshotStoreWithLogger(datadir, 5, logger)
+
 	if err != nil {
 		return nil, fmt.Errorf("unable to initialize snapshots %v", err.Error())
 	}
@@ -54,6 +56,7 @@ func newRaftNode(logger *log.Logger, tc *transports, h TransportHooks, nodes []s
 			c = append(c, raft.Server{Suffrage: raft.Voter, ID: raft.ServerID(n), Address: raft.ServerAddress(n)})
 		}
 		configuration := raft.Configuration{Servers: c}
+    
 		if err = raft.BootstrapCluster(config, store, store, ss, transport, configuration); err != nil {
 			return nil, err
 		}

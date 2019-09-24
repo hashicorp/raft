@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/hashicorp/go-hclog"
 
 	"github.com/hashicorp/raft"
 )
@@ -38,17 +39,17 @@ type Logger interface {
 
 // LoggerAdapter allows a log.Logger to be used with the local Logger interface
 type LoggerAdapter struct {
-	log *log.Logger
+	log hclog.Logger
 }
 
 // Log a message to the contained debug log
 func (a *LoggerAdapter) Log(v ...interface{}) {
-	a.log.Print(v...)
+	a.log.Info(fmt.Sprint(v...))
 }
 
 // Logf will record a formatted message to the contained debug log
 func (a *LoggerAdapter) Logf(s string, v ...interface{}) {
-	a.log.Printf(s, v...)
+	a.log.Info(fmt.Sprintf(s, v...))
 }
 
 func newRaftCluster(t *testing.T, logWriter io.Writer, namePrefix string, n uint, transportHooks TransportHooks) *cluster {
@@ -57,10 +58,18 @@ func newRaftCluster(t *testing.T, logWriter io.Writer, namePrefix string, n uint
 	for i := uint(0); i < n; i++ {
 		names = append(names, nodeName(namePrefix, i))
 	}
-	l := log.New(logWriter, "", log.Lmicroseconds)
+	l := hclog.New(&hclog.LoggerOptions{
+		Output: logWriter,
+		Level:  hclog.DefaultLevel,
+	})
 	transports := newTransports(l)
 	for _, i := range names {
-		r, err := newRaftNode(log.New(logWriter, i+":", log.Lmicroseconds), transports, transportHooks, names, i)
+
+		r, err := newRaftNode(hclog.New(&hclog.LoggerOptions{
+			Name:   i + ":",
+			Output: logWriter,
+			Level:  hclog.DefaultLevel,
+		}), transports, transportHooks, names, i)
 		if err != nil {
 			t.Fatalf("Unable to create raftNode:%v : %v", i, err)
 		}
@@ -78,7 +87,11 @@ func newRaftCluster(t *testing.T, logWriter io.Writer, namePrefix string, n uint
 
 func (c *cluster) CreateAndAddNode(t *testing.T, logWriter io.Writer, namePrefix string, nodeNum uint) error {
 	name := nodeName(namePrefix, nodeNum)
-	rn, err := newRaftNode(log.New(logWriter, name+":", log.Lmicroseconds), c.transports, c.hooks, nil, name)
+	rn, err := newRaftNode(hclog.New(&hclog.LoggerOptions{
+		Name:   name + ":",
+		Output: logWriter,
+		Level:  hclog.DefaultLevel,
+	}), c.transports, c.hooks, nil, name)
 	if err != nil {
 		t.Fatalf("Unable to create raftNode:%v : %v", name, err)
 	}
@@ -227,8 +240,10 @@ func (c *cluster) sendNApplies(leaderTimeout time.Duration, data [][]byte) []app
 	f := []applyFutureWithData{}
 
 	ldr := c.Leader(leaderTimeout)
-	for _, d := range data {
-		f = append(f, applyFutureWithData{future: ldr.raft.Apply(d, time.Second), data: d})
+	if ldr != nil {
+		for _, d := range data {
+			f = append(f, applyFutureWithData{future: ldr.raft.Apply(d, time.Second), data: d})
+		}
 	}
 	return f
 }
