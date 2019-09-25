@@ -184,7 +184,6 @@ func (u *userSnapshotFuture) Open() (*SnapshotMeta, io.ReadCloser, error) {
 	if u.opener == nil {
 		return nil, nil, fmt.Errorf("no snapshot available")
 	}
-
 	// Invalidate the opener so it can't get called multiple times,
 	// which isn't generally safe.
 	defer func() {
