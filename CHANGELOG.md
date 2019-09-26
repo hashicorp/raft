@@ -1,7 +1,8 @@
 # UNRELEASED
 
-* Replace logger with hclog [[GH-360](https://github.com/hashicorp/raft/pull/360)]
+* Export the leader field in LeaderObservation [[GH-357](https://github.com/hashicorp/raft/pull/357)]
 * Fix snapshot to not attempt to truncate a negative range [[GH-358](https://github.com/hashicorp/raft/pull/358)]
+* Replace logger with hclog [[GH-360](https://github.com/hashicorp/raft/pull/360)]
 
 # 1.1.1 (July 23rd, 2019)
 
