@@ -1,5 +1,12 @@
 # UNRELEASED
 
+CHANGES
+
+* Existing gauge metrics `raft.commitNumLogs` and `raft.leader.dispatchNumLogs`
+  have been updated to histogram samples. Gauge was not the correct metric type
+  for these values and was causing samples to be dropped. Metrics sinks should
+  be updated accordingly. 
+
 FEATURES
 
 * Improve FSM apply performance through batching. Implementing the `BatchingFSM` interface enables this new feature [[GH-364](https://github.com/hashicorp/raft/pull/364)]

@@ -664,7 +664,7 @@ func (r *Raft) leaderLoop() {
 			metrics.MeasureSince([]string{"raft", "fsm", "enqueue"}, start)
 
 			// Count the number of logs enqueued
-			metrics.SetGauge([]string{"raft", "commitNumLogs"}, float32(len(groupReady)))
+			metrics.AddSample([]string{"raft", "commitNumLogs"}, float32(len(groupReady)))
 
 			if stepDown {
 				if r.conf.ShutdownOnRemove {
@@ -1060,7 +1060,7 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 
 	n := len(applyLogs)
 	logs := make([]*Log, n)
-	metrics.SetGauge([]string{"raft", "leader", "dispatchNumLogs"}, float32(n))
+	metrics.AddSample([]string{"raft", "leader", "dispatchNumLogs"}, float32(n))
 
 	for idx, applyLog := range applyLogs {
 		applyLog.dispatch = now
