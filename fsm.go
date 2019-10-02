@@ -37,11 +37,13 @@ type FSM interface {
 type BatchingFSM interface {
 	// ApplyBatch is invoked once a batch of log entries has been committed and
 	// are ready to be applied to the FSM. ApplyBatch will take in an array of
-	// log entries. These log entries could be of a few types clients should
-	// check the log type prior to attempting to decode the data attached.
-	// Presently the LogCommand and LogConfiguration types will be sent.
+	// log entries. These log entries will be in the order they were committed,
+	// will not have gaps, and could be of a few log types. Clients should check
+	// the log type prior to attempting to decode the data attached. Presently
+	// the LogCommand and LogConfiguration types will be sent.
 	//
-	// The returned slice must be the same length as the input. The returned
+	// The returned slice must be the same length as the input and each response
+	// should correlate to the log at the same index of the input. The returned
 	// values will be made available in the ApplyFuture returned by Raft.Apply
 	// method if that method was called on the same Raft node as the FSM.
 	ApplyBatch([]*Log) []interface{}
@@ -138,7 +140,7 @@ func (r *Raft) runFSM() {
 			start := time.Now()
 			responses = batchingFSM.ApplyBatch(sendLogs)
 			metrics.MeasureSince([]string{"raft", "fsm", "applyBatch"}, start)
-			metrics.SetGauge([]string{"raft", "fsm", "applyBatchNum"}, float32(len(reqs)))
+			metrics.AddSample([]string{"raft", "fsm", "applyBatchNum"}, float32(len(reqs)))
 
 			// Ensure we get the expected responses
 			if len(sendLogs) != len(responses) {

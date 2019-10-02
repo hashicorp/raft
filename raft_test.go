@@ -14,10 +14,6 @@ import (
 	"time"
 )
 
-var (
-	userSnapshotErrorsOnNoData = true
-)
-
 func TestRaft_StartStop(t *testing.T) {
 	c := MakeCluster(1, t, nil)
 	c.Close()

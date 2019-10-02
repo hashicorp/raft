@@ -342,9 +342,9 @@ func decodePeers(buf []byte, trans Transport) Configuration {
 	}
 }
 
-// encodeConfiguration serializes a Configuration using MsgPack, or panics on
+// EncodeConfiguration serializes a Configuration using MsgPack, or panics on
 // errors.
-func encodeConfiguration(configuration Configuration) []byte {
+func EncodeConfiguration(configuration Configuration) []byte {
 	buf, err := encodeMsgPack(configuration)
 	if err != nil {
 		panic(fmt.Errorf("failed to encode configuration: %v", err))

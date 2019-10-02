@@ -633,7 +633,7 @@ func (r *Raft) leaderLoop() {
 			start := time.Now()
 			var groupReady []*list.Element
 			var groupFutures = make(map[uint64]*logFuture)
-			var lastInGroup uint64
+			var lastIdxInGroup uint64
 
 			// Pull all inflight logs that are committed off the queue.
 			for e := r.leaderState.inflight.Front(); e != nil; e = e.Next() {
@@ -648,12 +648,12 @@ func (r *Raft) leaderLoop() {
 				metrics.MeasureSince([]string{"raft", "commitTime"}, commitLog.dispatch)
 				groupReady = append(groupReady, e)
 				groupFutures[idx] = commitLog
-				lastInGroup = idx
+				lastIdxInGroup = idx
 			}
 
 			// Process the group
 			if len(groupReady) != 0 {
-				r.processLogs(lastInGroup, groupFutures)
+				r.processLogs(lastIdxInGroup, groupFutures)
 
 				for _, e := range groupReady {
 					r.leaderState.inflight.Remove(e)
@@ -1037,7 +1037,7 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 	} else {
 		future.log = Log{
 			Type: LogConfiguration,
-			Data: encodeConfiguration(configuration),
+			Data: EncodeConfiguration(configuration),
 		}
 	}
 
