@@ -1,8 +1,17 @@
 # UNRELEASED
 
+FEATURES
+
+* Improve FSM apply performance through batching. Implementing the `BatchingFSM` interface enables this new feature [[GH-364](https://github.com/hashicorp/raft/pull/364)]
+
+IMPROVEMENTS
+
+* Replace logger with hclog [[GH-360](https://github.com/hashicorp/raft/pull/360)]
+
+BUG FIXES
+
 * Export the leader field in LeaderObservation [[GH-357](https://github.com/hashicorp/raft/pull/357)]
 * Fix snapshot to not attempt to truncate a negative range [[GH-358](https://github.com/hashicorp/raft/pull/358)]
-* Replace logger with hclog [[GH-360](https://github.com/hashicorp/raft/pull/360)]
 
 # 1.1.1 (July 23rd, 2019)
 
