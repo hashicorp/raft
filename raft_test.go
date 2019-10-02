@@ -1157,8 +1157,10 @@ func TestRaft_UserSnapshot(t *testing.T) {
 
 	// With nothing committed, asking for a snapshot should return an error.
 	leader := c.Leader()
-	if err := leader.Snapshot().Error(); err != ErrNothingNewToSnapshot {
-		c.FailNowf("Request for Snapshot failed: %v", err)
+	if userSnapshotErrorsOnNoData {
+		if err := leader.Snapshot().Error(); err != ErrNothingNewToSnapshot {
+			c.FailNowf("Request for Snapshot failed: %v", err)
+		}
 	}
 
 	// Commit some things.
@@ -1540,7 +1542,7 @@ func TestRaft_Barrier(t *testing.T) {
 	// Ensure all the logs are the same
 	c.EnsureSame(t)
 	if len(getMockFSM(c.fsms[0]).logs) != 100 {
-		c.FailNowf("Bad log length")
+		c.FailNowf(fmt.Sprintf("Bad log length: %d", len(getMockFSM(c.fsms[0]).logs)))
 	}
 }
 

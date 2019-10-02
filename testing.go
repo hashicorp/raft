@@ -15,6 +15,10 @@ import (
 	"github.com/hashicorp/go-msgpack/codec"
 )
 
+var (
+	userSnapshotErrorsOnNoData = true
+)
+
 // Return configurations optimized for in-memory
 func inmemConfig(t *testing.T) *Config {
 	conf := DefaultConfig()
