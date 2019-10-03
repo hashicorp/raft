@@ -22,8 +22,8 @@ ci.integ: ci.test
 	INTEG_TESTS=yes gotestsum --format=short-verbose --junitfile $(TEST_RESULTS_DIR)/gotestsum-report-integ.xml -- -timeout=25s -run=Integ -tags batchtest .
 
 fuzz:
-	go test $(TESTARGS) -timeout=500s ./fuzzy
-	go test $(TESTARGS) -timeout=500s -tags batchtest ./fuzzy
+	go test $(TESTARGS) -timeout=20m ./fuzzy
+	go test $(TESTARGS) -timeout=20m -tags batchtest ./fuzzy
 
 deps:
 	go get -t -d -v ./...
