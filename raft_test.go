@@ -2144,6 +2144,65 @@ func TestRaft_GetConfigurationNoBootstrap(t *testing.T) {
 	}
 }
 
+func TestRaft_ProtocolVersion_Upgrade_2_3_Redux(t *testing.T) {
+	// Make a cluster back on protocol version 2.
+	c2conf := inmemConfig(t)
+	c2conf.ProtocolVersion = 2
+	c2 := MakeCluster(3, t, c2conf)
+	defer c2.Close()
+
+	conf := *c2conf
+	conf.ProtocolVersion = 3
+
+	// Wait for the old cluster to commit the noop
+	c2.EnsureLeader(t, c2.Leader().localAddr)
+
+	// copy the original server ids
+	dels := make([]ServerID, 3)
+	for i := 0; i < 3; i++ {
+		dels[i] = c2.rafts[i].localID
+	}
+
+	// c3i := uint64(1)
+	idx := uint64(1)
+	for i := 0; i < 3; i++ {
+		raft := c2.rafts[i]
+
+		// Remove a raft proto 2 server
+		future := c2.Leader().RemoveServer(dels[i], idx, 1*time.Second)
+		if err := future.Error(); err != nil {
+			fmt.Printf("[ERR] err: %s", err.Error())
+		}
+		idx = future.Index()
+
+		// Use the new ID-based API to add the server with its ID.
+		raft.Shutdown()
+		// conf.LocalID = raft.localID
+		conf.LocalID = ServerID(generateUUID())
+		conf.ProtocolVersion = 3
+
+		addr := raft.localAddr
+		// addr, trans := NewInmemTransport(raft.localAddr)
+		raft, _ = NewRaft(&conf, raft.fsm, raft.logs, raft.stable, raft.snapshots, raft.trans)
+
+		future = c2.Leader().AddVoter(raft.localID, addr, idx, 1*time.Second)
+		if err := future.Error(); err != nil {
+			fmt.Printf("[ERR] err: %s", err.Error())
+		}
+		idx = future.Index()
+	}
+
+	// Sanity check the cluster.
+	c2.EnsureSame(t)
+	c2.EnsureSamePeers(t)
+	c2.Leader()
+	c2.EnsureLeader(t, c2.Leader().localAddr)
+	l := len(c2.rafts)
+	if l != 3 {
+		t.Fatalf("[ERR] peer count: expected %d found %d\n", 3, l)
+	}
+}
+
 // TODO: These are test cases we'd like to write for appendEntries().
 // Unfortunately, it's difficult to do so with the current way this file is
 // tested.
