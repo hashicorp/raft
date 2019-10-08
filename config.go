@@ -41,6 +41,7 @@ import (
 // 2. Update the server's config to use a UUID or something else that is
 //	  not tied to the machine as the ServerID (restarting the server).
 // 3. Add the server back to the cluster with AddVoter, using its new ID.
+// 4. Wait for the server to catch up and be promoted.
 //
 // You can do this during the rolling upgrade from N+1 to N+2 of your app, or
 // as a rolling change at any time after the upgrade.

@@ -1,6 +1,9 @@
 package raft
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // ServerSuffrage determines whether a Server in a Configuration gets a vote.
 type ServerSuffrage int
@@ -127,6 +130,59 @@ type configurationChangeRequest struct {
 	// this change may be applied; if another configuration entry has been
 	// added in the meantime, this request will fail.
 	prevIndex uint64
+}
+
+// configurationChangeState handles requests in fifo order, delaying the first request until
+// it's safe to apply. All methods are called in the main thread in leaderLoop, the updates
+// to `pending` require this.
+type configurationChangeState struct {
+	requestCh chan *configurationChangeFuture
+	pending   *configurationChangeFuture
+}
+
+func makeConfigurationChangeState() *configurationChangeState {
+	return &configurationChangeState{
+		requestCh: make(chan *configurationChangeFuture),
+		pending:   nil,
+	}
+}
+
+func (c *configurationChangeState) request(future *configurationChangeFuture) {
+	c.requestCh <- future
+}
+
+func (c *configurationChangeState) delay(future *configurationChangeFuture) {
+	c.pending = future
+}
+
+// channel is called by the leader to select the request channel if no request is pending,
+// and to execute a delay otherwise
+func (c *configurationChangeState) channel() <-chan *configurationChangeFuture {
+	if c.pending == nil {
+		return c.requestCh
+	}
+	retryCh := make(chan *configurationChangeFuture)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		retryCh <- c.pending
+	}()
+	return retryCh
+}
+
+// drain is called when not the leader, to empty the queue and respond with failure
+// immediately
+func (c *configurationChangeState) drain() <-chan *configurationChangeFuture {
+	if c.pending == nil {
+		return c.requestCh
+	}
+	retryCh := make(chan *configurationChangeFuture)
+	retryCh <- c.pending
+	c.pending = nil
+	return retryCh
+}
+
+func (c *configurationChangeState) reset() {
+	c.pending = nil
 }
 
 // configurations is state tracked on every server about its Configurations.
