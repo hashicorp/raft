@@ -115,7 +115,7 @@ func (r *Raft) requestConfigChange(req configurationChangeRequest, timeout time.
 	select {
 	case <-timer:
 		return errorFuture{ErrEnqueueTimeout}
-	case r.configurationChangeCh <- future:
+	case r.configurationChange.requestCh <- future:
 		return future
 	case <-r.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
@@ -158,7 +158,7 @@ func (r *Raft) runFollower() {
 		case rpc := <-r.rpcCh:
 			r.processRPC(rpc)
 
-		case c := <-r.configurationChangeCh:
+		case c := <-r.configurationChange.channel():
 			// Reject any operations since we are not the leader
 			c.respond(ErrNotLeader)
 
@@ -295,7 +295,7 @@ func (r *Raft) runCandidate() {
 				return
 			}
 
-		case c := <-r.configurationChangeCh:
+		case c := <-r.configurationChange.channel():
 			// Reject any operations since we are not the leader
 			c.respond(ErrNotLeader)
 
@@ -351,6 +351,7 @@ func (r *Raft) setupLeaderState() {
 	r.leaderState.commitment = newCommitment(r.leaderState.commitCh,
 		r.configurations.latest,
 		r.getLastIndex()+1 /* first index that may be committed in this term */)
+	r.configurationChange.reset()
 	r.leaderState.inflight = list.New()
 	r.leaderState.replState = make(map[ServerID]*followerReplication)
 	r.leaderState.notify = make(map[*verifyFuture]struct{})
@@ -506,22 +507,46 @@ func (r *Raft) startStopReplication() {
 	}
 }
 
-// configurationChangeChIfStable returns r.configurationChangeCh if it's safe
-// to process requests from it, or nil otherwise. This must only be called
-// from the main thread.
-//
-// Note that if the conditions here were to change outside of leaderLoop to take
-// this from nil to non-nil, we would need leaderLoop to be kicked.
-func (r *Raft) configurationChangeChIfStable() chan *configurationChangeFuture {
-	// Have to wait until:
+// Must be called on the main thread (configuration access)
+func (r *Raft) configurationChangeIsSafe(future *configurationChangeFuture) bool {
+	// In order to safely apply any change, wait until:
 	// 1. The latest configuration is committed, and
 	// 2. This leader has committed some entry (the noop) in this term
 	//    https://groups.google.com/forum/#!msg/raft-dev/t4xj6dJTP6E/d2D9LrWRza8J
 	if r.configurations.latestIndex == r.configurations.committedIndex &&
 		r.getCommitIndex() >= r.leaderState.commitment.startIndex {
-		return r.configurationChangeCh
+
+		// Any change not a remove is safe to apply now
+		if future.req.command != RemoveServer {
+			return true
+		}
+
+		voters := 0
+		isStaging := false
+		isNonVoter := false
+
+		for _, server := range r.configurations.latest.Servers {
+			switch server.Suffrage {
+			case Voter:
+				voters++
+			case Staging:
+				isStaging = true
+			}
+			if server.ID == future.req.serverID &&
+				server.Suffrage != Voter {
+				isNonVoter = true
+			}
+		}
+
+		// Remove is safe if:
+		// removing a non-voter
+		// quorum size won't change (odd)
+		// no voter is staging
+		if isNonVoter || voters%2 == 1 || !isStaging {
+			return true
+		}
 	}
-	return nil
+	return false
 }
 
 // leaderLoop is the hot loop for a leader. It is invoked
@@ -717,13 +742,19 @@ func (r *Raft) leaderLoop() {
 			future.configurations = r.configurations.Clone()
 			future.respond(nil)
 
-		case future := <-r.configurationChangeChIfStable():
+		case future := <-r.configurationChange.channel():
 			if r.getLeadershipTransferInProgress() {
 				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
 				future.respond(ErrLeadershipTransferInProgress)
+				r.configurationChange.reset()
 				continue
 			}
-			r.appendConfigurationEntry(future)
+			if r.configurationChangeIsSafe(future) {
+				r.appendConfigurationEntry(future)
+				r.configurationChange.reset()
+			} else {
+				r.configurationChange.delay(future)
+			}
 
 		case b := <-r.bootstrapCh:
 			b.respond(ErrCantBootstrap)
@@ -896,17 +927,22 @@ func (r *Raft) checkLeaderLease() time.Duration {
 	return maxDiff
 }
 
-// quorumSize is used to return the quorum size. This must only be called on
-// the main thread.
-// TODO: revisit usage
-func (r *Raft) quorumSize() int {
+// voterCount returns the number of voters. This must only be called on the main thread.
+func (r *Raft) voterCount() int {
 	voters := 0
 	for _, server := range r.configurations.latest.Servers {
 		if server.Suffrage == Voter {
 			voters++
 		}
 	}
-	return voters/2 + 1
+	return voters
+}
+
+// quorumSize is used to return the quorum size. This must only be called on
+// the main thread.
+// TODO: revisit usage
+func (r *Raft) quorumSize() int {
+	return r.voterCount()/2 + 1
 }
 
 // restoreUserSnapshot is used to manually consume an external snapshot, such
@@ -1134,7 +1170,6 @@ func (r *Raft) processLogs(index uint64, futures map[uint64]*logFuture) {
 			}
 			preparedLog = r.prepareLog(l, nil)
 		}
-
 		switch {
 		case preparedLog != nil:
 			// If we have a log ready to send to the FSM add it to the batch.
@@ -1157,6 +1192,13 @@ func (r *Raft) processLogs(index uint64, futures map[uint64]*logFuture) {
 	if len(batch) != 0 {
 		applyBatch(batch)
 	}
+
+	// MLM
+	// tag := "FOLLOWER"
+	// if r.getState() == Leader {
+	// 	tag = "LEADER"
+	// }
+	// fmt.Printf("THIS APPLY %s %d\n", tag, idx)
 
 	// Update the lastApplied index and term
 	r.setLastApplied(index)
@@ -1360,7 +1402,12 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	// Update the commit index
 	if a.LeaderCommitIndex > 0 && a.LeaderCommitIndex > r.getCommitIndex() {
 		start := time.Now()
-		idx := min(a.LeaderCommitIndex, r.getLastIndex())
+		// MLM
+		// we keep the earliest of the last index we have in stable storage and the
+		// leader's committed index expressed in this message
+		last := r.getLastIndex()
+		idx := min(a.LeaderCommitIndex, last)
+		// fmt.Printf("THIS FOLLOWER setCommitIndex msg %d log %d\n", a.LeaderCommitIndex, last)
 		r.setCommitIndex(idx)
 		if r.configurations.latestIndex <= idx {
 			r.setCommittedConfiguration(r.configurations.latest, r.configurations.latestIndex)
