@@ -129,7 +129,8 @@ func (d *deferError) respond(err error) {
 // This is internal to a single server.
 type configurationChangeFuture struct {
 	logFuture
-	req configurationChangeRequest
+	req      configurationChangeRequest
+	timedOut bool
 }
 
 // bootstrapFuture is used to attempt a live bootstrap of the cluster. See the

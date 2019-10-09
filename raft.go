@@ -109,11 +109,13 @@ func (r *Raft) requestConfigChange(req configurationChangeRequest, timeout time.
 		timer = time.After(timeout)
 	}
 	future := &configurationChangeFuture{
-		req: req,
+		req:      req,
+		timedOut: false,
 	}
 	future.init()
 	select {
 	case <-timer:
+		future.timedOut = true
 		return errorFuture{ErrEnqueueTimeout}
 	case r.configurationChange.requestCh <- future:
 		return future
@@ -749,7 +751,9 @@ func (r *Raft) leaderLoop() {
 				r.configurationChange.reset()
 				continue
 			}
-			if r.configurationChangeIsSafe(future) {
+			if future.timedOut {
+				r.configurationChange.reset()
+			} else if r.configurationChangeIsSafe(future) {
 				r.appendConfigurationEntry(future)
 				r.configurationChange.reset()
 			} else {
