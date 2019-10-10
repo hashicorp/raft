@@ -56,7 +56,7 @@ func newRaftNode(logger *log.Logger, tc *transports, h TransportHooks, nodes []s
 			c = append(c, raft.Server{Suffrage: raft.Voter, ID: raft.ServerID(n), Address: raft.ServerAddress(n)})
 		}
 		configuration := raft.Configuration{Servers: c}
-    
+
 		if err = raft.BootstrapCluster(config, store, store, ss, transport, configuration); err != nil {
 			return nil, err
 		}

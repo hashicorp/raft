@@ -17,8 +17,7 @@ const (
 func NewTestTransport(ttype int, addr ServerAddress) (ServerAddress, LoopbackTransport) {
 	switch ttype {
 	case TTInmem:
-		newaddr, lt := NewInmemTransport(addr)
-		return newaddr, lt
+		return NewInmemTransport(addr)
 	default:
 		panic("Unknown transport type")
 	}

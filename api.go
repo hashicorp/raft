@@ -233,7 +233,7 @@ func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
 		entry.Data = encodePeers(configuration, trans)
 	} else {
 		entry.Type = LogConfiguration
-		entry.Data = encodeConfiguration(configuration)
+		entry.Data = EncodeConfiguration(configuration)
 	}
 	if err := logs.StoreLog(entry); err != nil {
 		return fmt.Errorf("failed to append configuration entry to log: %v", err)
@@ -311,13 +311,12 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 			continue
 		}
 
-			err = fsm.Restore(source)
-			// Close the source after the restore has completed
-			source.Close()
-			if err != nil {
-				// Same here, skip and try the next one.
-				continue
-			}
+		err = fsm.Restore(source)
+		// Close the source after the restore has completed
+		source.Close()
+		if err != nil {
+			// Same here, skip and try the next one.
+			continue
 		}
 
 		snapshotIndex = snapshot.Index
