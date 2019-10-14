@@ -210,6 +210,9 @@ type Config struct {
 	// raft's configuration and index values. This is used in NewRaft and
 	// RestoreCluster.
 	NoSnapshotRestoreOnStart bool
+
+	// noBackgroundWork allows NewRaft() to bypass all background work goroutines
+	noBackgroundWork bool
 }
 
 // DefaultConfig returns a Config with usable defaults.
