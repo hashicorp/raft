@@ -7,7 +7,7 @@ import (
 
 var (
 	// ErrKeyNotFound is returned when a key does not exist in collection.
-	ErrKeyNotFound = errors.New("key is not found")
+	ErrKeyNotFound = errors.New("not found")
 )
 
 // InmemStore implements the LogStore and StableStore interface.
