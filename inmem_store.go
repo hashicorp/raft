@@ -5,6 +5,11 @@ import (
 	"sync"
 )
 
+var (
+	// ErrKeyNotFound is returned when a key does not exist in collection.
+	ErrKeyNotFound = errors.New("not found")
+)
+
 // InmemStore implements the LogStore and StableStore interface.
 // It should NOT EVER be used for production. It is used only for
 // unit tests. Use the MDBStore implementation instead.
@@ -109,7 +114,7 @@ func (i *InmemStore) Get(key []byte) ([]byte, error) {
 	defer i.l.RUnlock()
 	val := i.kv[string(key)]
 	if val == nil {
-		return nil, errors.New("not found")
+		return nil, ErrKeyNotFound
 	}
 	return val, nil
 }
