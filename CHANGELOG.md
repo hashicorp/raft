@@ -6,6 +6,7 @@ FEATURES
 
 IMPROVEMENTS
 
+* Remove lint violations and add a `make` rule for running the linter.
 * Replace logger with hclog [[GH-360](https://github.com/hashicorp/raft/pull/360)]
 
 BUG FIXES
