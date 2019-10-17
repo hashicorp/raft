@@ -487,9 +487,11 @@ func (s *FileSnapshotSink) finalize() error {
 
 // writeMeta is used to write out the metadata we have.
 func (s *FileSnapshotSink) writeMeta() error {
+	var err error
 	// Open the meta file
 	metaPath := filepath.Join(s.dir, metaFilePath)
-	fh, err := os.Create(metaPath)
+	var fh *os.File
+	fh, err = os.Create(metaPath)
 	if err != nil {
 		return err
 	}
@@ -500,7 +502,7 @@ func (s *FileSnapshotSink) writeMeta() error {
 
 	// Write out as JSON
 	enc := json.NewEncoder(buffered)
-	if err := enc.Encode(&s.meta); err != nil {
+	if err = enc.Encode(&s.meta); err != nil {
 		return err
 	}
 

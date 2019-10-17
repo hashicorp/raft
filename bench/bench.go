@@ -80,9 +80,9 @@ func StoreLogs(b *testing.B, store raft.LogStore) {
 		b.StopTimer()
 		offset := 3 * (n + 1)
 		logs := []*raft.Log{
-			&raft.Log{Index: uint64(offset - 2), Data: []byte("data")},
-			&raft.Log{Index: uint64(offset - 1), Data: []byte("data")},
-			&raft.Log{Index: uint64(offset), Data: []byte("data")},
+			{Index: uint64(offset - 2), Data: []byte("data")},
+			{Index: uint64(offset - 1), Data: []byte("data")},
+			{Index: uint64(offset), Data: []byte("data")},
 		}
 		b.StartTimer()
 

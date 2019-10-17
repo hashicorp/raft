@@ -9,9 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hashicorp/go-hclog"
-
-	"github.com/armon/go-metrics"
+	metrics "github.com/armon/go-metrics"
+	hclog "github.com/hashicorp/go-hclog"
 )
 
 const (
@@ -288,37 +287,36 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 	// expect data to be there and it's not. By refusing, we force them
 	// to show intent to start a cluster fresh by explicitly doing a
 	// bootstrap, rather than quietly fire up a fresh cluster here.
-	hasState, err := HasExistingState(logs, stable, snaps)
-	if err != nil {
+	if hasState, err := HasExistingState(logs, stable, snaps); err != nil {
 		return fmt.Errorf("failed to check for existing state: %v", err)
-	}
-	if !hasState {
+	} else if !hasState {
 		return fmt.Errorf("refused to recover cluster with no initial state, this is probably an operator error")
 	}
 
 	// Attempt to restore any snapshots we find, newest to oldest.
-	var snapshotIndex uint64
-	var snapshotTerm uint64
-	snapshots, err := snaps.List()
+	var (
+		snapshotIndex  uint64
+		snapshotTerm   uint64
+		snapshots, err = snaps.List()
+	)
 	if err != nil {
 		return fmt.Errorf("failed to list snapshots: %v", err)
 	}
 	for _, snapshot := range snapshots {
-		if !conf.NoSnapshotRestoreOnStart {
-			_, source, err := snaps.Open(snapshot.ID)
-			if err != nil {
-				// Skip this one and try the next. We will detect if we
-				// couldn't open any snapshots.
-				continue
-			}
+		var source io.ReadCloser
+		_, source, err = snaps.Open(snapshot.ID)
+		if err != nil {
+			// Skip this one and try the next. We will detect if we
+			// couldn't open any snapshots.
+			continue
+		}
 
-			err = fsm.Restore(source)
-			// Close the source after the restore has completed
-			source.Close()
-			if err != nil {
-				// Same here, skip and try the next one.
-				continue
-			}
+		err = fsm.Restore(source)
+		// Close the source after the restore has completed
+		source.Close()
+		if err != nil {
+			// Same here, skip and try the next one.
+			continue
 		}
 
 		snapshotIndex = snapshot.Index
@@ -341,7 +339,7 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 	}
 	for index := snapshotIndex + 1; index <= lastLogIndex; index++ {
 		var entry Log
-		if err := logs.GetLog(index, &entry); err != nil {
+		if err = logs.GetLog(index, &entry); err != nil {
 			return fmt.Errorf("failed to get log at index %d: %v", index, err)
 		}
 		if entry.Type == LogCommand {
@@ -362,10 +360,10 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 	if err != nil {
 		return fmt.Errorf("failed to create snapshot: %v", err)
 	}
-	if err := snapshot.Persist(sink); err != nil {
+	if err = snapshot.Persist(sink); err != nil {
 		return fmt.Errorf("failed to persist snapshot: %v", err)
 	}
-	if err := sink.Close(); err != nil {
+	if err = sink.Close(); err != nil {
 		return fmt.Errorf("failed to finalize snapshot: %v", err)
 	}
 

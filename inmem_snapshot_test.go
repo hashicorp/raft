@@ -153,10 +153,10 @@ func TestInmemSS_OpenSnapshotTwice(t *testing.T) {
 
 	// Read out everything
 	var buf1 bytes.Buffer
-	if _, err := io.Copy(&buf1, r); err != nil {
+	if _, err = io.Copy(&buf1, r); err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if err := r.Close(); err != nil {
+	if err = r.Close(); err != nil {
 		t.Fatalf("err: %v", err)
 	}
 

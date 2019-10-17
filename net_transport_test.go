@@ -38,7 +38,7 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 		PrevLogEntry: 100,
 		PrevLogTerm:  4,
 		Entries: []*Log{
-			&Log{
+			{
 				Index: 101,
 				Term:  4,
 				Type:  LogNoop,
@@ -76,8 +76,8 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	defer trans2.Close()
-
-	for i := 0; i < 2; i++ {
+	var i int
+	for i = 0; i < 2; i++ {
 		// Create wait group
 		wg := &sync.WaitGroup{}
 		wg.Add(5)
@@ -96,7 +96,7 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 		}
 
 		// Try to do parallel appends, should stress the conn pool
-		for i := 0; i < 5; i++ {
+		for i = 0; i < 5; i++ {
 			go appendFunc()
 		}
 
@@ -199,7 +199,7 @@ func TestNetworkTransport_AppendEntries(t *testing.T) {
 			PrevLogEntry: 100,
 			PrevLogTerm:  4,
 			Entries: []*Log{
-				&Log{
+				{
 					Index: 101,
 					Term:  4,
 					Type:  LogNoop,
@@ -268,7 +268,7 @@ func TestNetworkTransport_AppendEntriesPipeline(t *testing.T) {
 			PrevLogEntry: 100,
 			PrevLogTerm:  4,
 			Entries: []*Log{
-				&Log{
+				{
 					Index: 101,
 					Term:  4,
 					Type:  LogNoop,
@@ -351,7 +351,7 @@ func TestNetworkTransport_AppendEntriesPipeline_CloseStreams(t *testing.T) {
 		PrevLogEntry: 100,
 		PrevLogTerm:  4,
 		Entries: []*Log{
-			&Log{
+			{
 				Index: 101,
 				Term:  4,
 				Type:  LogNoop,
@@ -625,7 +625,7 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 		PrevLogEntry: 100,
 		PrevLogTerm:  4,
 		Entries: []*Log{
-			&Log{
+			{
 				Index: 101,
 				Term:  4,
 				Type:  LogNoop,
