@@ -35,6 +35,3 @@ closeComment: >
   Hey there,
   This issue has been automatically closed because there hasn't been any activity for a while. 
   If you are still experiencing problems, or still have questions, feel free to [open a new one](https://github.com/hashicorp/raft/issues/new) :+1
-
-# Limit to only `issues`
-only: issues
