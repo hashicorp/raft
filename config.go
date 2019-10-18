@@ -211,8 +211,8 @@ type Config struct {
 	// RestoreCluster.
 	NoSnapshotRestoreOnStart bool
 
-	// noBackgroundWork allows NewRaft() to bypass all background work goroutines
-	noBackgroundWork bool
+	// skipStartup allows NewRaft() to bypass all background work goroutines
+	skipStartup bool
 }
 
 // DefaultConfig returns a Config with usable defaults.

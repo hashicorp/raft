@@ -387,7 +387,7 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 // This function has identical behavior to Raft.GetConfiguration
 func GetConfiguration(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 	snaps SnapshotStore, trans Transport) (Configuration, error) {
-	conf.noBackgroundWork = true
+	conf.skipStartup = true
 	r, err := NewRaft(conf, fsm, logs, stable, snaps, trans)
 	if err != nil {
 		return Configuration{}, err
@@ -559,12 +559,13 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	// to be called concurrently with a blocking RPC.
 	trans.SetHeartbeatHandler(r.processHeartbeat)
 
-	if !conf.noBackgroundWork {
-		// Start the background work.
-		r.goFunc(r.run)
-		r.goFunc(r.runFSM)
-		r.goFunc(r.runSnapshots)
+	if conf.skipStartup {
+		return r, nil
 	}
+	// Start the background work.
+	r.goFunc(r.run)
+	r.goFunc(r.runFSM)
+	r.goFunc(r.runSnapshots)
 	return r, nil
 }
 
