@@ -380,6 +380,23 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 	return nil
 }
 
+// GetConfiguration returns the configuration of the Raft cluster without
+// starting a Raft instance or connecting to the cluster
+// This function has identical behavior to Raft.GetConfiguration
+func GetConfiguration(conf *Config, fsm FSM, logs LogStore, stable StableStore,
+	snaps SnapshotStore, trans Transport) (Configuration, error) {
+	conf.skipStartup = true
+	r, err := NewRaft(conf, fsm, logs, stable, snaps, trans)
+	if err != nil {
+		return Configuration{}, err
+	}
+	future := r.GetConfiguration()
+	if err = future.Error(); err != nil {
+		return Configuration{}, err
+	}
+	return future.Configuration(), nil
+}
+
 // HasExistingState returns true if the server has any existing state (logs,
 // knowledge of a current term, or any snapshots).
 func HasExistingState(logs LogStore, stable StableStore, snaps SnapshotStore) (bool, error) {
@@ -540,6 +557,9 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	// to be called concurrently with a blocking RPC.
 	trans.SetHeartbeatHandler(r.processHeartbeat)
 
+	if conf.skipStartup {
+		return r, nil
+	}
 	// Start the background work.
 	r.goFunc(r.run)
 	r.goFunc(r.runFSM)

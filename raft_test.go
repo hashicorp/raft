@@ -2133,6 +2133,42 @@ func TestRaft_LeadershipTransferStopRightAway(t *testing.T) {
 		t.Errorf("leadership shouldn't have started, but instead it error with: %v", err)
 	}
 }
+func TestRaft_GetConfigurationNoBootstrap(t *testing.T) {
+	c := MakeCluster(2, t, nil)
+	defer c.Close()
+
+	// Should be one leader
+	c.Followers()
+	leader := c.Leader()
+	c.EnsureLeader(t, leader.localAddr)
+
+	// Should be able to apply
+	future := leader.Apply([]byte("test"), c.conf.CommitTimeout)
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+	c.WaitForReplication(1)
+
+	// Get configuration via GetConfiguration of a running node
+	cfgf := c.rafts[0].GetConfiguration()
+	if err := cfgf.Error(); err != nil {
+		t.Fatal(err)
+	}
+	expected := cfgf.Configuration()
+
+	// Obtain the same configuration via GetConfig
+	logs := c.stores[0]
+	store := c.stores[0]
+	snap := c.snaps[0]
+	trans := c.trans[0]
+	observed, err := GetConfiguration(c.conf, c.fsms[0], logs, store, snap, trans)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(observed, expected) {
+		t.Errorf("GetConfiguration result differ from Raft.GetConfiguration: observed %+v, expected %+v", observed, expected)
+	}
+}
 
 // TODO: These are test cases we'd like to write for appendEntries().
 // Unfortunately, it's difficult to do so with the current way this file is
