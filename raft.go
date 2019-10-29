@@ -82,6 +82,7 @@ type commitTuple struct {
 type leaderState struct {
 	leadershipTransferInProgress int32 // indicates that a leadership transfer is in progress.
 	commitCh                     chan struct{}
+	stagedCh                     chan struct{}
 	commitment                   *commitment
 	inflight                     *list.List // list of logFuture in log index order
 	replState                    map[ServerID]*followerReplication
@@ -217,9 +218,24 @@ func (r *Raft) runFollower() {
 			} else {
 				r.logger.Warn("heartbeat timeout reached, starting election", "last-leader", lastLeader)
 				metrics.IncrCounter([]string{"raft", "transition", "heartbeat_timeout"}, 1)
-				fmt.Printf("TIMEOUT %s\n", string(r.localID))
-				// does this happen even if we're a Nonvoter?
-				r.setState(Candidate)
+
+				isVoter := false
+				for _, s := range r.configurations.latest.Servers {
+					if s.ID == r.localID && s.Suffrage == Voter {
+						isVoter = true
+						break
+					}
+				}
+
+				fmt.Printf("TIMEOUT %s %d %t\n",
+					string(r.localID),
+					int32(r.getState()),
+					isVoter,
+				)
+				// does this happen even if we're a Nonvoter? yes!
+				if isVoter {
+					r.setState(Candidate)
+				}
 				return
 			}
 
@@ -354,7 +370,9 @@ func (r *Raft) getLeadershipTransferInProgress() bool {
 
 func (r *Raft) setupLeaderState() {
 	r.leaderState.commitCh = make(chan struct{}, 1)
-	r.leaderState.commitment = newCommitment(r.leaderState.commitCh,
+	r.leaderState.commitment = newCommitment(
+		r.leaderState.commitCh,
+		r.leaderState.stagedCh,
 		r.configurations.latest,
 		r.getLastIndex()+1 /* first index that may be committed in this term */)
 	r.configurationChange.reset()
@@ -654,7 +672,9 @@ LOOP:
 
 			go r.leadershipTransfer(*id, *address, state, stopCh, doneCh)
 
+		case <-r.leaderState.stagedCh:
 		case <-r.leaderState.commitCh:
+			fmt.Println("COMMIT")
 			// Process the newly committed entries
 			oldCommitIndex := r.getCommitIndex()
 			commitIndex := r.leaderState.commitment.getCommitIndex()
@@ -667,19 +687,6 @@ LOOP:
 				r.setCommittedConfiguration(r.configurations.latest, r.configurations.latestIndex)
 				if !hasVote(r.configurations.committed, r.localID) {
 					stepDown = true
-				}
-
-				// MLM
-				// Commit index has advanced, lets see if the staging server has got the updated index
-				for _, s := range r.configurations.latest.Servers {
-					if s.Suffrage == Staging &&
-						r.leaderState.commitment.stagingIndexes[s.ID] == commitIndex {
-
-						fmt.Println("FOUND OK PROMOTE")
-
-						r.PromoteVoter(s.ID, s.Address, commitIndex, 0)
-						continue LOOP
-					}
 				}
 			}
 
@@ -713,6 +720,17 @@ LOOP:
 				}
 			}
 
+			// MLM
+			// staged index has advanced, lets see if the staging server has got the updated index
+			for _, s := range r.configurations.latest.Servers {
+				if s.Suffrage == Staging &&
+					r.leaderState.commitment.stagingIndexes[s.ID] == commitIndex {
+					fmt.Println("FOUND OK PROMOTE")
+					r.PromoteVoter(s.ID, s.Address, commitIndex, 0)
+					continue LOOP
+				}
+			}
+
 			// Measure the time to enqueue batch of logs for FSM to apply
 			metrics.MeasureSince([]string{"raft", "fsm", "enqueue"}, start)
 
@@ -730,6 +748,7 @@ LOOP:
 			}
 
 		case v := <-r.verifyCh:
+			fmt.Println("VERIFY")
 			if v.quorumSize == 0 {
 				// Just dispatched, start the verification
 				r.verifyLeader(v)
@@ -754,6 +773,7 @@ LOOP:
 			}
 
 		case future := <-r.userRestoreCh:
+			fmt.Println("RESTORE")
 			if r.getLeadershipTransferInProgress() {
 				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
 				future.respond(ErrLeadershipTransferInProgress)
@@ -762,7 +782,8 @@ LOOP:
 			err := r.restoreUserSnapshot(future.meta, future.reader)
 			future.respond(err)
 
-		case future := <-r.configurationsCh:
+		case future := <-r.configurationsCh: // GET configuration
+			fmt.Println("GETCFG")
 			if r.getLeadershipTransferInProgress() {
 				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
 				future.respond(ErrLeadershipTransferInProgress)
@@ -771,7 +792,15 @@ LOOP:
 			future.configurations = r.configurations.Clone()
 			future.respond(nil)
 
-		case future := <-r.configurationChange.channel():
+		case future := <-r.configurationChange.channel(): // SET configuration
+			fmt.Println("EVENT")
+
+			// fmt.Printf("EVENT xfer %t time %t safe %t\n",
+			// 	r.getLeadershipTransferInProgress(),
+			// 	future.timedOut,
+			// 	r.configurationChangeIsSafe(future),
+			// )
+
 			if r.getLeadershipTransferInProgress() {
 				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
 				future.respond(ErrLeadershipTransferInProgress)
@@ -785,12 +814,15 @@ LOOP:
 				r.configurationChange.reset()
 			} else {
 				r.configurationChange.delay(future)
+				fmt.Println("DELAYED")
 			}
 
 		case b := <-r.bootstrapCh:
 			b.respond(ErrCantBootstrap)
 
 		case newLog := <-r.applyCh:
+			fmt.Println("NEWLOG")
+
 			if r.getLeadershipTransferInProgress() {
 				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
 				newLog.respond(ErrLeadershipTransferInProgress)
@@ -819,6 +851,8 @@ LOOP:
 			}
 
 		case <-lease:
+			fmt.Println("LEASE")
+
 			// Check if we've exceeded the lease, potentially stepping down
 			maxDiff := r.checkLeaderLease()
 
@@ -1438,7 +1472,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		// leader's committed index expressed in this message
 		last := r.getLastIndex()
 		idx := min(a.LeaderCommitIndex, last)
-		// fmt.Printf("THIS FOLLOWER setCommitIndex msg %d log %d\n", a.LeaderCommitIndex, last)
+		fmt.Printf("FOLLOWER setCommitIndex msg %d log %d id %s\n", a.LeaderCommitIndex, last, r.localID)
 		r.setCommitIndex(idx)
 		if r.configurations.latestIndex <= idx {
 			r.setCommittedConfiguration(r.configurations.latest, r.configurations.latestIndex)
@@ -1804,7 +1838,10 @@ func (r *Raft) setCurrentTerm(t uint64) {
 // transition causes the known leader to be cleared. This means
 // that leader should be set only after updating the state.
 func (r *Raft) setState(state RaftState) {
-	fmt.Printf("SETSTATE %d %s\n", int32(state), string(r.localID))
+	fmt.Printf("SETSTATE %s %s\n",
+		state.String(),
+		string(r.localID),
+	)
 
 	r.setLeader("")
 	oldState := r.raftState.getState()
