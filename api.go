@@ -806,6 +806,19 @@ func (r *Raft) AddVoter(id ServerID, address ServerAddress, prevIndex uint64, ti
 	}, timeout)
 }
 
+func (r *Raft) PromoteVoter(id ServerID, address ServerAddress, prevIndex uint64, timeout time.Duration) IndexFuture {
+	if r.protocolVersion < 2 {
+		return errorFuture{ErrUnsupportedProtocol}
+	}
+
+	return r.requestConfigChange(configurationChangeRequest{
+		command:       Promote,
+		serverID:      id,
+		serverAddress: address,
+		prevIndex:     prevIndex,
+	}, timeout)
+}
+
 // AddNonvoter will add the given server to the cluster but won't assign it a
 // vote. The server will receive log entries, but it won't participate in
 // elections or log entry commitment. If the server is already in the cluster,
