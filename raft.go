@@ -563,6 +563,7 @@ func (r *Raft) leaderLoop() {
 	stepDown := false
 	lease := time.After(r.conf.LeaderLeaseTimeout)
 
+LOOP:
 	for r.getState() == Leader {
 		select {
 		case rpc := <-r.rpcCh:
@@ -653,6 +654,16 @@ func (r *Raft) leaderLoop() {
 				r.setCommittedConfiguration(r.configurations.latest, r.configurations.latestIndex)
 				if !hasVote(r.configurations.committed, r.localID) {
 					stepDown = true
+				}
+
+				// MLM
+				// Commit index has advanced, lets see if the staging server has got the updated index
+				for _, s := range r.configurations.latest.Servers {
+					if s.Suffrage == Staging &&
+						r.leaderState.commitment.stagingIndexes[s.ID] == commitIndex {
+						r.PromoteVoter(s.ID, s.Address, commitIndex, 0)
+						continue LOOP
+					}
 				}
 			}
 
