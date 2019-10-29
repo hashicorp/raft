@@ -136,6 +136,8 @@ func (r *Raft) run() {
 		default:
 		}
 
+		fmt.Printf("STARTUP %s\n", r.getState())
+
 		// Enter into a sub-FSM
 		switch r.getState() {
 		case Follower:
@@ -215,6 +217,8 @@ func (r *Raft) runFollower() {
 			} else {
 				r.logger.Warn("heartbeat timeout reached, starting election", "last-leader", lastLeader)
 				metrics.IncrCounter([]string{"raft", "transition", "heartbeat_timeout"}, 1)
+				fmt.Printf("TIMEOUT %s\n", string(r.localID))
+				// does this happen even if we're a Nonvoter?
 				r.setState(Candidate)
 				return
 			}
@@ -544,7 +548,16 @@ func (r *Raft) configurationChangeIsSafe(future *configurationChangeFuture) bool
 		// removing a non-voter
 		// quorum size won't change (odd)
 		// no voter is staging
-		if isNonVoter || voters%2 == 1 || !isStaging {
+
+		fmt.Printf("VOTERS %t servers %#v server %s\n",
+			isNonVoter || !isStaging,
+			r.configurations.latest.Servers,
+			future.req.serverID,
+			// string(future.req.serverID),
+		)
+
+		if isNonVoter || // voters%2 == 1 ||
+			!isStaging {
 			return true
 		}
 	}
@@ -661,6 +674,9 @@ LOOP:
 				for _, s := range r.configurations.latest.Servers {
 					if s.Suffrage == Staging &&
 						r.leaderState.commitment.stagingIndexes[s.ID] == commitIndex {
+
+						fmt.Println("FOUND OK PROMOTE")
+
 						r.PromoteVoter(s.ID, s.Address, commitIndex, 0)
 						continue LOOP
 					}
@@ -1693,6 +1709,16 @@ type voteResult struct {
 // response channel returned is used to wait for all the responses (including a
 // vote for ourself). This must only be called from the main thread.
 func (r *Raft) electSelf() <-chan *voteResult {
+	// MLM
+	// I think we propose our own election if we're not a Voter, which might break
+	// quorum
+	// this is not the right place to do this check, we need to keep following
+	// for _, s := range r.configurations.latest.Servers {
+	// 	if s.ID == r.localID && s.Suffrage != Voter {
+	// 		return nil
+	// 	}
+	// }
+
 	// Create a response channel
 	respCh := make(chan *voteResult, len(r.configurations.latest.Servers))
 
@@ -1778,6 +1804,8 @@ func (r *Raft) setCurrentTerm(t uint64) {
 // transition causes the known leader to be cleared. This means
 // that leader should be set only after updating the state.
 func (r *Raft) setState(state RaftState) {
+	fmt.Printf("SETSTATE %d %s\n", int32(state), string(r.localID))
+
 	r.setLeader("")
 	oldState := r.raftState.getState()
 	r.raftState.setState(state)
@@ -1845,6 +1873,8 @@ func (r *Raft) initiateLeadershipTransfer(id *ServerID, address *ServerAddress) 
 
 // timeoutNow is what happens when a server receives a TimeoutNowRequest.
 func (r *Raft) timeoutNow(rpc RPC, req *TimeoutNowRequest) {
+	fmt.Println("TIMEOUTNOW")
+
 	r.setLeader("")
 	r.setState(Candidate)
 	r.candidateFromLeadershipTransfer = true
