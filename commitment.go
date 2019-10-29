@@ -15,6 +15,8 @@ type commitment struct {
 	commitCh chan struct{}
 	// voter ID to log index: the server stores up through this log entry
 	matchIndexes map[ServerID]uint64
+	// stagingIndexes track the current index of servers that are staging, pending promotion
+	stagingIndexes map[ServerID]uint64
 	// a quorum stores up through this log entry. monotonically increases.
 	commitIndex uint64
 	// the first index of this leader's term: this needs to be replicated to a
@@ -31,16 +33,21 @@ type commitment struct {
 // its description above).
 func newCommitment(commitCh chan struct{}, configuration Configuration, startIndex uint64) *commitment {
 	matchIndexes := make(map[ServerID]uint64)
+	stagingIndexes := make(map[ServerID]uint64)
 	for _, server := range configuration.Servers {
 		if server.Suffrage == Voter {
 			matchIndexes[server.ID] = 0
 		}
+		if server.Suffrage == Staging {
+			stagingIndexes[server.ID] = 0
+		}
 	}
 	return &commitment{
-		commitCh:     commitCh,
-		matchIndexes: matchIndexes,
-		commitIndex:  0,
-		startIndex:   startIndex,
+		commitCh:       commitCh,
+		matchIndexes:   matchIndexes,
+		stagingIndexes: stagingIndexes,
+		commitIndex:    0,
+		startIndex:     startIndex,
 	}
 }
 
@@ -50,11 +57,17 @@ func newCommitment(commitCh chan struct{}, configuration Configuration, startInd
 func (c *commitment) setConfiguration(configuration Configuration) {
 	c.Lock()
 	defer c.Unlock()
+	// Make new match index collections to gc servers missing from the configuration
 	oldMatchIndexes := c.matchIndexes
 	c.matchIndexes = make(map[ServerID]uint64)
+	oldStagingIndexes := c.stagingIndexes
+	c.stagingIndexes = make(map[ServerID]uint64)
 	for _, server := range configuration.Servers {
 		if server.Suffrage == Voter {
 			c.matchIndexes[server.ID] = oldMatchIndexes[server.ID] // defaults to 0
+		}
+		if server.Suffrage == Staging {
+			c.stagingIndexes = oldStagingIndexes[server.ID]
 		}
 	}
 	c.recalculate()
@@ -77,6 +90,9 @@ func (c *commitment) match(server ServerID, matchIndex uint64) {
 	if prev, hasVote := c.matchIndexes[server]; hasVote && matchIndex > prev {
 		c.matchIndexes[server] = matchIndex
 		c.recalculate()
+	}
+	if prev, isStaging := c.stagingIndexes[server]; isStaging && matchIndex > prev {
+		c.stagingIndexes[server] = matchIndex
 	}
 }
 
