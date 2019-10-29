@@ -136,14 +136,18 @@ type configurationChangeRequest struct {
 // it's safe to apply. All methods are called in the main thread in leaderLoop, the updates
 // to `pending` require this.
 type configurationChangeState struct {
-	requestCh chan *configurationChangeFuture
-	pending   *configurationChangeFuture
+	requestCh    chan *configurationChangeFuture
+	pendingCh    chan *configurationChangeFuture
+	pending      *configurationChangeFuture
+	timerRunning bool
 }
 
 func makeConfigurationChangeState() *configurationChangeState {
 	return &configurationChangeState{
-		requestCh: make(chan *configurationChangeFuture),
-		pending:   nil,
+		requestCh:    make(chan *configurationChangeFuture),
+		pendingCh:    make(chan *configurationChangeFuture),
+		pending:      nil,
+		timerRunning: false,
 	}
 }
 
@@ -161,12 +165,16 @@ func (c *configurationChangeState) channel() <-chan *configurationChangeFuture {
 	if c.pending == nil {
 		return c.requestCh
 	}
-	retryCh := make(chan *configurationChangeFuture)
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		retryCh <- c.pending
-	}()
-	return retryCh
+
+	if c.timerRunning == false {
+		go func() {
+			time.Sleep(1000 * time.Millisecond)
+			c.pendingCh <- c.pending
+			c.timerRunning = false
+		}()
+		c.timerRunning = true
+	}
+	return c.pendingCh
 }
 
 // drain is called when not the leader, to empty the queue and respond with failure
