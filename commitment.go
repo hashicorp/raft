@@ -11,8 +11,10 @@ import (
 type commitment struct {
 	// protects matchIndexes and commitIndex
 	sync.Mutex
-	// notified when commitIndex increases
+	// notified when commitIndex increases, shared with leaderState
 	commitCh chan struct{}
+	// notified when stagedIndexes are bumped, shared with leaderState
+	stagedCh chan struct{}
 	// voter ID to log index: the server stores up through this log entry
 	matchIndexes map[ServerID]uint64
 	// stagingIndexes track the current index of servers that are staging, pending promotion
@@ -31,7 +33,7 @@ type commitment struct {
 // 'configuration' is the servers in the cluster.
 // 'startIndex' is the first index created in this term (see
 // its description above).
-func newCommitment(commitCh chan struct{}, configuration Configuration, startIndex uint64) *commitment {
+func newCommitment(commitCh chan struct{}, stagedCh chan struct{}, configuration Configuration, startIndex uint64) *commitment {
 	matchIndexes := make(map[ServerID]uint64)
 	stagingIndexes := make(map[ServerID]uint64)
 	for _, server := range configuration.Servers {
@@ -44,6 +46,7 @@ func newCommitment(commitCh chan struct{}, configuration Configuration, startInd
 	}
 	return &commitment{
 		commitCh:       commitCh,
+		stagedCh:       stagedCh,
 		matchIndexes:   matchIndexes,
 		stagingIndexes: stagingIndexes,
 		commitIndex:    0,
@@ -67,7 +70,7 @@ func (c *commitment) setConfiguration(configuration Configuration) {
 			c.matchIndexes[server.ID] = oldMatchIndexes[server.ID] // defaults to 0
 		}
 		if server.Suffrage == Staging {
-			c.stagingIndexes = oldStagingIndexes[server.ID]
+			c.stagingIndexes[server.ID] = oldStagingIndexes[server.ID]
 		}
 	}
 	c.recalculate()
@@ -93,6 +96,7 @@ func (c *commitment) match(server ServerID, matchIndex uint64) {
 	}
 	if prev, isStaging := c.stagingIndexes[server]; isStaging && matchIndex > prev {
 		c.stagingIndexes[server] = matchIndex
+		c.recalculate()
 	}
 }
 
@@ -112,6 +116,6 @@ func (c *commitment) recalculate() {
 
 	if quorumMatchIndex > c.commitIndex && quorumMatchIndex >= c.startIndex {
 		c.commitIndex = quorumMatchIndex
-		asyncNotifyCh(c.commitCh)
 	}
+	asyncNotifyCh(c.commitCh)
 }
