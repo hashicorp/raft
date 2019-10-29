@@ -2185,6 +2185,8 @@ func TestRaft_ProtocolVersion_Upgrade_2_3_Redux(t *testing.T) {
 		// addr, trans := NewInmemTransport(raft.localAddr)
 		raft, _ = NewRaft(&conf, raft.fsm, raft.logs, raft.stable, raft.snapshots, raft.trans)
 
+		fmt.Printf("ADDVOTER %s\n", conf.LocalID)
+
 		future = c2.Leader().AddVoter(raft.localID, addr, idx, 1*time.Second)
 		if err := future.Error(); err != nil {
 			fmt.Printf("[ERR] err: %s", err.Error())
