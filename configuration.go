@@ -279,7 +279,7 @@ func nextConfiguration(current Configuration, currentIndex uint64, change config
 			// coordinates with the replication goroutines today. So, for now, the
 			// server will have a vote right away, and the Promote case below is
 			// unused.
-			Suffrage: Voter,
+			Suffrage: Staging,
 			ID:       change.serverID,
 			Address:  change.serverAddress,
 		}
