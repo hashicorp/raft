@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-hclog"
-
 	"github.com/hashicorp/raft"
 	rdb "github.com/hashicorp/raft-boltdb"
 )
@@ -21,14 +20,14 @@ type raftNode struct {
 	dir       string
 }
 
-func newRaftNode(logger *log.Logger, tc *transports, h TransportHooks, nodes []string, name string) (*raftNode, error) {
+func newRaftNode(logger hclog.Logger, tc *transports, h TransportHooks, nodes []string, name string) (*raftNode, error) {
 	var err error
 	var datadir string
 	datadir, err = resolveDirectory(fmt.Sprintf("data/%v", name), true)
 	if err != nil {
 		return nil, err
 	}
-	logger.Printf("[INFO] Creating new raft Node with data in dir %v", datadir)
+	logger.Info("[INFO] Creating new raft Node with data in dir %v", datadir)
 	var ss *raft.FileSnapshotStore
 	ss, err = raft.NewFileSnapshotStoreWithLogger(datadir, 5, logger)
 
