@@ -137,6 +137,7 @@ type configurationChangeRequest struct {
 // to `pending` require this.
 type configurationChangeState struct {
 	requestCh    chan *configurationChangeFuture
+	removeCh     chan *configurationChangeFuture
 	pendingCh    chan *configurationChangeFuture
 	pending      *configurationChangeFuture
 	timerRunning bool
@@ -145,6 +146,7 @@ type configurationChangeState struct {
 func makeConfigurationChangeState() *configurationChangeState {
 	return &configurationChangeState{
 		requestCh:    make(chan *configurationChangeFuture),
+		removeCh:     make(chan *configurationChangeFuture, 64),
 		pendingCh:    make(chan *configurationChangeFuture),
 		pending:      nil,
 		timerRunning: false,
@@ -157,13 +159,29 @@ func (c *configurationChangeState) request(future *configurationChangeFuture) {
 
 func (c *configurationChangeState) delay(future *configurationChangeFuture) {
 	c.pending = future
+	// go func() {
+	// 	time.Sleep(50 * time.Millisecond)
+	// 	c.requestCh <- future
+	// }()
+}
+
+func (c *configurationChangeState) requestChannel(r *Raft) <-chan *configurationChangeFuture {
+	// In order to safely apply any change, wait until:
+	// 1. The latest configuration is committed, and
+	// 2. This leader has committed some entry (the noop) in this term
+	//    https://groups.google.com/forum/#!msg/raft-dev/t4xj6dJTP6E/d2D9LrWRza8J
+	if r.configurations.latestIndex == r.configurations.committedIndex &&
+		r.getCommitIndex() >= r.leaderState.commitment.startIndex {
+		return c.requestCh
+	}
+	return nil
 }
 
 // channel is called by the leader to select the request channel if no request is pending,
 // and to execute a delay otherwise
-func (c *configurationChangeState) channel() <-chan *configurationChangeFuture {
+func (c *configurationChangeState) removeChannel() <-chan *configurationChangeFuture {
 	if c.pending == nil {
-		return c.requestCh
+		return c.removeCh
 	}
 
 	if c.timerRunning == false {

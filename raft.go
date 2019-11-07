@@ -105,6 +105,10 @@ func (r *Raft) setLeader(leader ServerAddress) {
 // configuration change requests. 'req' describes the change. For timeout,
 // see AddVoter.
 func (r *Raft) requestConfigChange(req configurationChangeRequest, timeout time.Duration) IndexFuture {
+	if req.command == RemoveServer {
+		return r.requestConfigRemove(req, timeout)
+	}
+
 	var timer <-chan time.Time
 	if timeout > 0 {
 		timer = time.After(timeout)
@@ -119,6 +123,32 @@ func (r *Raft) requestConfigChange(req configurationChangeRequest, timeout time.
 		future.timedOut = true
 		return errorFuture{ErrEnqueueTimeout}
 	case r.configurationChange.requestCh <- future:
+		return future
+	case <-r.shutdownCh:
+		return errorFuture{ErrRaftShutdown}
+	}
+}
+
+func (r *Raft) requestConfigRemove(req configurationChangeRequest, timeout time.Duration) IndexFuture {
+	// var timer <-chan time.Time
+	// if timeout > 0 {
+	// 	timer = time.After(timeout)
+	// }
+	future := &configurationChangeFuture{
+		req:      req,
+		timedOut: false,
+	}
+
+	future.init()
+	// go func() {
+	// 	_ := <-timer
+	// 	if !future.logFuture.responded {
+	// 		future.timedOut = true
+	// 	}
+	// }()
+
+	select {
+	case r.configurationChange.removeCh <- future:
 		return future
 	case <-r.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
@@ -163,7 +193,11 @@ func (r *Raft) runFollower() {
 		case rpc := <-r.rpcCh:
 			r.processRPC(rpc)
 
-		case c := <-r.configurationChange.channel():
+		case c := <-r.configurationChange.requestCh:
+			// Reject any operations since we are not the leader
+			c.respond(ErrNotLeader)
+
+		case c := <-r.configurationChange.removeCh:
 			// Reject any operations since we are not the leader
 			c.respond(ErrNotLeader)
 
@@ -317,7 +351,11 @@ func (r *Raft) runCandidate() {
 				return
 			}
 
-		case c := <-r.configurationChange.channel():
+		case c := <-r.configurationChange.requestCh:
+			// Reject any operations since we are not the leader
+			c.respond(ErrNotLeader)
+
+		case c := <-r.configurationChange.removeCh:
 			// Reject any operations since we are not the leader
 			c.respond(ErrNotLeader)
 
@@ -672,7 +710,6 @@ LOOP:
 
 			go r.leadershipTransfer(*id, *address, state, stopCh, doneCh)
 
-		case <-r.leaderState.stagedCh:
 		case <-r.leaderState.commitCh:
 			fmt.Println("COMMIT")
 			// Process the newly committed entries
@@ -725,8 +762,11 @@ LOOP:
 			for _, s := range r.configurations.latest.Servers {
 				if s.Suffrage == Staging &&
 					r.leaderState.commitment.stagingIndexes[s.ID] == commitIndex {
-					fmt.Println("FOUND OK PROMOTE")
-					r.PromoteVoter(s.ID, s.Address, commitIndex, 0)
+					go func() {
+						fmt.Println("FOUND OK PROMOTE")
+						r.PromoteVoter(s.ID, s.Address, 0, 0)
+						fmt.Println("PROMOTED")
+					}()
 					continue LOOP
 				}
 			}
@@ -792,14 +832,25 @@ LOOP:
 			future.configurations = r.configurations.Clone()
 			future.respond(nil)
 
-		case future := <-r.configurationChange.channel(): // SET configuration
-			fmt.Println("EVENT")
+		case future := <-r.configurationChange.requestChannel(r): // add configuration
+			fmt.Println("CHANGE")
+			if r.getLeadershipTransferInProgress() {
+				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
+				future.respond(ErrLeadershipTransferInProgress)
+				r.configurationChange.reset()
+				continue
+			}
+			if !future.timedOut {
+				r.appendConfigurationEntry(future)
+				future.succeed()
+			}
 
-			// fmt.Printf("EVENT xfer %t time %t safe %t\n",
-			// 	r.getLeadershipTransferInProgress(),
-			// 	future.timedOut,
-			// 	r.configurationChangeIsSafe(future),
-			// )
+		case future := <-r.configurationChange.removeChannel(): // rm configuration
+			// fmt.Println("CHANGE")
+			fmt.Printf("REMOVE xfer %t time %t safe %t\n",
+				r.getLeadershipTransferInProgress(),
+				future.timedOut,
+				r.configurationChangeIsSafe(future))
 
 			if r.getLeadershipTransferInProgress() {
 				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
@@ -811,8 +862,10 @@ LOOP:
 				r.configurationChange.reset()
 			} else if r.configurationChangeIsSafe(future) {
 				r.appendConfigurationEntry(future)
+				future.succeed()
 				r.configurationChange.reset()
 			} else {
+				fmt.Println("DELAYER")
 				r.configurationChange.delay(future)
 				fmt.Println("DELAYED")
 			}
@@ -851,8 +904,6 @@ LOOP:
 			}
 
 		case <-lease:
-			fmt.Println("LEASE")
-
 			// Check if we've exceeded the lease, potentially stepping down
 			maxDiff := r.checkLeaderLease()
 
@@ -1113,6 +1164,7 @@ func (r *Raft) restoreUserSnapshot(meta *SnapshotMeta, reader io.Reader) error {
 func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 	configuration, err := nextConfiguration(r.configurations.latest, r.configurations.latestIndex, future.req)
 	if err != nil {
+		fmt.Printf("NEXTCONFIG ERR: %v\n", err)
 		future.respond(err)
 		return
 	}
@@ -1143,7 +1195,11 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 	}
 
 	r.dispatchLogs([]*logFuture{&future.logFuture})
+	// docs say "this must not be called until the Error method has returned", has it?
 	index := future.Index()
+	fmt.Printf("DISPATCHED %d\n", int(index))
+	r.configurations.latest = configuration
+	r.configurations.latestIndex = index
 	r.setLatestConfiguration(configuration, index)
 	r.leaderState.commitment.setConfiguration(configuration)
 	r.startStopReplication()

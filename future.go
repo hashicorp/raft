@@ -124,6 +124,10 @@ func (d *deferError) respond(err error) {
 	d.responded = true
 }
 
+func (d *deferError) succeed() {
+	d.respond(nil)
+}
+
 // There are several types of requests that cause a configuration entry to
 // be appended to the log. These are encoded here for leaderLoop() to process.
 // This is internal to a single server.
