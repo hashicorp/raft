@@ -206,7 +206,7 @@ type Config struct {
 
 	// NoSnapshotRestoreOnStart controls if raft will restore a snapshot to the
 	// FSM on start. This is useful if your FSM recovers from other mechanisms
-	// than raft snapshotting. Snapshot metadata will still be used to initalize
+	// than raft snapshotting. Snapshot metadata will still be used to initialize
 	// raft's configuration and index values. This is used in NewRaft and
 	// RestoreCluster.
 	NoSnapshotRestoreOnStart bool
