@@ -10,20 +10,6 @@ import (
 	"testing"
 )
 
-func FileSnapTest(t *testing.T) (string, *FileSnapshotStore) {
-	// Create a test dir
-	dir, err := ioutil.TempDir("", "raft")
-	if err != nil {
-		t.Fatalf("err: %v ", err)
-	}
-
-	snap, err := NewFileSnapshotStoreWithLogger(dir, 3, newTestLogger(t))
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	return dir, snap
-}
-
 func TestFileSnapshotStoreImpl(t *testing.T) {
 	var impl interface{} = &FileSnapshotStore{}
 	if _, ok := impl.(SnapshotStore); !ok {
@@ -208,14 +194,17 @@ func TestFileSS_CancelSnapshot(t *testing.T) {
 }
 
 func TestFileSS_Retention(t *testing.T) {
+	var err error
 	// Create a test dir
-	dir, err := ioutil.TempDir("", "raft")
+	var dir string
+	dir, err = ioutil.TempDir("", "raft")
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
 	defer os.RemoveAll(dir)
 
-	snap, err := NewFileSnapshotStoreWithLogger(dir, 2, newTestLogger(t))
+	var snap *FileSnapshotStore
+	snap, err = NewFileSnapshotStoreWithLogger(dir, 2, newTestLogger(t))
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -223,7 +212,8 @@ func TestFileSS_Retention(t *testing.T) {
 	// Create a few snapshots
 	_, trans := NewInmemTransport(NewInmemAddr())
 	for i := 10; i < 15; i++ {
-		sink, err := snap.Create(SnapshotVersionMax, uint64(i), 3, Configuration{}, 0, trans)
+		var sink SnapshotSink
+		sink, err = snap.Create(SnapshotVersionMax, uint64(i), 3, Configuration{}, 0, trans)
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
@@ -234,7 +224,8 @@ func TestFileSS_Retention(t *testing.T) {
 	}
 
 	// Should only have 2 listed!
-	snaps, err := snap.List()
+	var snaps []*SnapshotMeta
+	snaps, err = snap.List()
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -252,29 +243,32 @@ func TestFileSS_Retention(t *testing.T) {
 }
 
 func TestFileSS_BadPerm(t *testing.T) {
+	var err error
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping file permission test on windows")
 	}
 
 	// Create a temp dir
-	dir1, err := ioutil.TempDir("", "raft")
+	var dir1 string
+	dir1, err = ioutil.TempDir("", "raft")
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}
 	defer os.RemoveAll(dir1)
 
 	// Create a sub dir and remove all permissions
-	dir2, err := ioutil.TempDir(dir1, "badperm")
+	var dir2 string
+	dir2, err = ioutil.TempDir(dir1, "badperm")
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}
-	if err := os.Chmod(dir2, 000); err != nil {
+	if err = os.Chmod(dir2, 000); err != nil {
 		t.Fatalf("err: %s", err)
 	}
 	defer os.Chmod(dir2, 777) // Set perms back for delete
 
 	// Should fail
-	if _, err := NewFileSnapshotStore(dir2, 3, nil); err == nil {
+	if _, err = NewFileSnapshotStore(dir2, 3, nil); err == nil {
 		t.Fatalf("should fail to use dir with bad perms")
 	}
 }

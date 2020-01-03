@@ -118,3 +118,70 @@ func TestInmemSS_CreateSnapshot(t *testing.T) {
 		t.Fatalf("content mismatch")
 	}
 }
+
+func TestInmemSS_OpenSnapshotTwice(t *testing.T) {
+	snap := NewInmemSnapshotStore()
+
+	// Create a new sink
+	var configuration Configuration
+	configuration.Servers = append(configuration.Servers, Server{
+		Suffrage: Voter,
+		ID:       ServerID("my id"),
+		Address:  ServerAddress("over here"),
+	})
+	_, trans := NewInmemTransport(NewInmemAddr())
+	sink, err := snap.Create(SnapshotVersionMax, 10, 3, configuration, 2, trans)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Write to the sink
+	_, err = sink.Write([]byte("data\n"))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	err = sink.Close()
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Read the snapshot a first time
+	_, r, err := snap.Open(sink.ID())
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Read out everything
+	var buf1 bytes.Buffer
+	if _, err = io.Copy(&buf1, r); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if err = r.Close(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Ensure a match
+	if bytes.Compare(buf1.Bytes(), []byte("data\n")) != 0 {
+		t.Fatalf("content mismatch")
+	}
+
+	// Read the snapshot a second time.
+	_, r, err = snap.Open(sink.ID())
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Read out everything again
+	var buf2 bytes.Buffer
+	if _, err := io.Copy(&buf2, r); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Ensure it's still the same content
+	if bytes.Compare(buf2.Bytes(), []byte("data\n")) != 0 {
+		t.Fatalf("content mismatch")
+	}
+}

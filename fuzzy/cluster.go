@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/hashicorp/go-hclog"
 
 	"github.com/hashicorp/raft"
 )
@@ -38,17 +39,17 @@ type Logger interface {
 
 // LoggerAdapter allows a log.Logger to be used with the local Logger interface
 type LoggerAdapter struct {
-	log *log.Logger
+	log hclog.Logger
 }
 
 // Log a message to the contained debug log
 func (a *LoggerAdapter) Log(v ...interface{}) {
-	a.log.Print(v...)
+	a.log.Info(fmt.Sprint(v...))
 }
 
 // Logf will record a formatted message to the contained debug log
 func (a *LoggerAdapter) Logf(s string, v ...interface{}) {
-	a.log.Printf(s, v...)
+	a.log.Info(fmt.Sprintf(s, v...))
 }
 
 func newRaftCluster(t *testing.T, logWriter io.Writer, namePrefix string, n uint, transportHooks TransportHooks) *cluster {
@@ -57,10 +58,18 @@ func newRaftCluster(t *testing.T, logWriter io.Writer, namePrefix string, n uint
 	for i := uint(0); i < n; i++ {
 		names = append(names, nodeName(namePrefix, i))
 	}
-	l := log.New(logWriter, "", log.Lmicroseconds)
+	l := hclog.New(&hclog.LoggerOptions{
+		Output: logWriter,
+		Level:  hclog.DefaultLevel,
+	})
 	transports := newTransports(l)
 	for _, i := range names {
-		r, err := newRaftNode(log.New(logWriter, i+":", log.Lmicroseconds), transports, transportHooks, names, i)
+
+		r, err := newRaftNode(hclog.New(&hclog.LoggerOptions{
+			Name:   i + ":",
+			Output: logWriter,
+			Level:  hclog.DefaultLevel,
+		}), transports, transportHooks, names, i)
 		if err != nil {
 			t.Fatalf("Unable to create raftNode:%v : %v", i, err)
 		}
@@ -78,7 +87,11 @@ func newRaftCluster(t *testing.T, logWriter io.Writer, namePrefix string, n uint
 
 func (c *cluster) CreateAndAddNode(t *testing.T, logWriter io.Writer, namePrefix string, nodeNum uint) error {
 	name := nodeName(namePrefix, nodeNum)
-	rn, err := newRaftNode(log.New(logWriter, name+":", log.Lmicroseconds), c.transports, c.hooks, nil, name)
+	rn, err := newRaftNode(hclog.New(&hclog.LoggerOptions{
+		Name:   name + ":",
+		Output: logWriter,
+		Level:  hclog.DefaultLevel,
+	}), c.transports, c.hooks, nil, name)
 	if err != nil {
 		t.Fatalf("Unable to create raftNode:%v : %v", name, err)
 	}
@@ -169,7 +182,7 @@ func (c *cluster) Stop(t *testing.T, maxWait time.Duration) {
 }
 
 // WaitTilUptoDate blocks until all nodes in the cluster have gotten their
-// commitedIndex upto the Index from the last sucecssfull call to Apply
+// commitedIndex upto the Index from the last successful call to Apply
 func (c *cluster) WaitTilUptoDate(t *testing.T, maxWait time.Duration) {
 	idx := c.lastApplySuccess.Index()
 	start := time.Now()
@@ -205,32 +218,54 @@ func (c *cluster) appliedIndexes() map[string]uint64 {
 	return r
 }
 
-func (c *cluster) ApplyN(t *testing.T, leaderTimeout time.Duration, s *applySource, n uint) uint64 {
-	f := make([]raft.ApplyFuture, n)
+func (c *cluster) generateNApplies(s *applySource, n uint) [][]byte {
 	data := make([][]byte, n)
-	startTime := time.Now()
-	endTime := startTime.Add(leaderTimeout)
 	for i := uint(0); i < n; i++ {
-		ldr := c.Leader(endTime.Sub(time.Now()))
-		if ldr != nil {
-			data[i] = s.nextEntry()
-			f[i] = ldr.raft.Apply(data[i], time.Second)
+		data[i] = s.nextEntry()
+	}
+	return data
+}
+
+func (c *cluster) leadershipTransfer(leaderTimeout time.Duration) raft.Future {
+	ldr := c.Leader(leaderTimeout)
+	return ldr.raft.LeadershipTransfer()
+}
+
+type applyFutureWithData struct {
+	future raft.ApplyFuture
+	data   []byte
+}
+
+func (c *cluster) sendNApplies(leaderTimeout time.Duration, data [][]byte) []applyFutureWithData {
+	f := []applyFutureWithData{}
+
+	ldr := c.Leader(leaderTimeout)
+	if ldr != nil {
+		for _, d := range data {
+			f = append(f, applyFutureWithData{future: ldr.raft.Apply(d, time.Second), data: d})
 		}
 	}
+	return f
+}
+
+func (c *cluster) checkApplyFutures(futures []applyFutureWithData) uint64 {
 	success := uint64(0)
-	for i := uint(0); i < n; i++ {
-		if f[i] == nil {
-			continue
-		}
-		if err := f[i].Error(); err == nil {
+	for _, a := range futures {
+		if err := a.future.Error(); err == nil {
 			success++
-			c.lastApplySuccess = f[i]
-			c.applied = append(c.applied, appliedItem{f[i].Index(), data[i]})
+			c.lastApplySuccess = a.future
+			c.applied = append(c.applied, appliedItem{a.future.Index(), a.data})
 		} else {
-			c.lastApplyFailure = f[i]
+			c.lastApplyFailure = a.future
 		}
 	}
 	return success
+}
+
+func (c *cluster) ApplyN(t *testing.T, leaderTimeout time.Duration, s *applySource, n uint) uint64 {
+	data := c.generateNApplies(s, n)
+	futures := c.sendNApplies(leaderTimeout, data)
+	return c.checkApplyFutures(futures)
 }
 
 func (c *cluster) VerifyFSM(t *testing.T) {
@@ -365,7 +400,7 @@ func (c *cluster) VerifyLog(t *testing.T, applyCount uint64) {
 }
 
 // assertLogEntryEqual compares the 2 raft Log entries and reports any differences to the supplied testing.T instance
-// it return true if the 2 entrie are equal, false otherwise.
+// it return true if the 2 entries are equal, false otherwise.
 func assertLogEntryEqual(t *testing.T, node string, exp *raft.Log, act *raft.Log) bool {
 	res := true
 	if exp.Term != act.Term {

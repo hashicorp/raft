@@ -1,7 +1,13 @@
 package raft
 
 import (
+	"errors"
 	"sync"
+)
+
+var (
+	// ErrKeyNotFound is returned when a key does not exist in collection.
+	ErrKeyNotFound = errors.New("not found")
 )
 
 // InmemStore implements the LogStore and StableStore interface.
@@ -106,7 +112,11 @@ func (i *InmemStore) Set(key []byte, val []byte) error {
 func (i *InmemStore) Get(key []byte) ([]byte, error) {
 	i.l.RLock()
 	defer i.l.RUnlock()
-	return i.kv[string(key)], nil
+	val := i.kv[string(key)]
+	if val == nil {
+		return nil, ErrKeyNotFound
+	}
+	return val, nil
 }
 
 // SetUint64 implements the StableStore interface.

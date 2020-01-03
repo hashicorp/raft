@@ -1,0 +1,121 @@
+version: 2.1
+
+references:
+  images:
+    go-1.11: &GOLANG_1_11_IMAGE circleci/golang:1.11
+    go-1.12: &GOLANG_1_12_IMAGE circleci/golang:1.12
+
+  environment: &ENVIRONMENT
+    TEST_RESULTS_DIR: &TEST_RESULTS_DIR /tmp/test-results # path to where test results are saved
+    GO111MODULE: 'on'
+
+jobs:
+  go-fmt-and-vet:
+    docker:
+      - image: *GOLANG_1_12_IMAGE
+    steps:
+      - checkout
+
+      # Restore go module cache if there is one
+      - restore_cache:
+          keys:
+            - raft-modcache-v1-{{ checksum "go.mod" }}
+
+      - run: go mod download
+
+      # Save go module cache if the go.mod file has changed
+      - save_cache:
+          key: raft-modcache-v1-{{ checksum "go.mod" }}
+          paths:
+            - "/go/pkg/mod"
+
+      # check go fmt output because it does not report non-zero when there are fmt changes
+      - run:
+          name: check go fmt
+          command: |
+            files=$(go fmt ./...)
+            if [ -n "$files" ]; then
+              echo "The following file(s) do not conform to go fmt:"
+              echo "$files"
+              exit 1
+            fi
+      - run: |
+          PACKAGE_NAMES=$(go list ./... | grep -v github.com/hashicorp/raft/fuzzy)
+          go vet $PACKAGE_NAMES
+
+  go-test:
+    description: Runs go tests
+    parameters:
+      go-version:
+        description: what go version to use
+        type: string
+    docker:
+      - image: << parameters.go-version >>
+    environment: *ENVIRONMENT
+    steps:
+      - checkout
+      - run: mkdir -p $TEST_RESULTS_DIR
+
+      - restore_cache: # restore cache
+          keys:
+            - raft-modcache-v1-{{ checksum "go.mod" }}
+
+      # run go tests with gotestsum
+      - run: make ci.integ
+      - store_test_results:
+          path: /tmp/test-results
+      - store_artifacts:
+          path: /tmp/test-results
+
+  go-test-32bit:
+    description: Runs go tests - 32 bit
+    parameters:
+      go-version:
+        description: what go version to use
+        type: string
+    docker:
+      - image: << parameters.go-version >>
+    environment:
+      <<: *ENVIRONMENT
+      GOARCH: '386'
+    steps:
+      - checkout
+      - run: mkdir -p $TEST_RESULTS_DIR
+
+      - restore_cache: # restore cache
+          keys:
+            - raft-modcache-v1-{{ checksum "go.mod" }}
+
+      # run go tests with gotestsum
+      - run: make ci.test-norace
+      - store_test_results:
+          path: /tmp/test-results
+      - store_artifacts:
+          path: /tmp/test-results
+
+workflows:
+  version: 2
+  test-and-build:
+    jobs:
+      - go-fmt-and-vet
+      - go-test:
+          name: test go1.11
+          go-version: *GOLANG_1_11_IMAGE
+          requires:
+            - go-fmt-and-vet
+      - go-test:
+          name: test go1.12
+          go-version: *GOLANG_1_12_IMAGE
+          requires:
+            - go-fmt-and-vet
+      - go-test-32bit:
+          name: test go1.11 - 32bit
+          go-version: *GOLANG_1_11_IMAGE
+          requires:
+            - go-fmt-and-vet
+      - go-test-32bit:
+          name: test go1.12 - 32 bit
+          go-version: *GOLANG_1_12_IMAGE
+          requires:
+            - go-fmt-and-vet
+
