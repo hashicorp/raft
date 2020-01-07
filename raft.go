@@ -1612,19 +1612,6 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	return
 }
 
-func (r *Raft) setLatestConfiguration(c Configuration, i uint64) {
-	r.configurations.latest = c
-	r.configurations.latestIndex = i
-	r.latestConfigurationLock.Lock()
-	r.latestConfiguration = c.Clone()
-	r.latestConfigurationLock.Unlock()
-}
-
-func (r *Raft) setCommittedConfiguration(c Configuration, i uint64) {
-	r.configurations.committed = c
-	r.configurations.committedIndex = i
-}
-
 // setLastContact is used to set the last contact time to now
 func (r *Raft) setLastContact() {
 	r.lastContactLock.Lock()
@@ -1800,6 +1787,24 @@ func (r *Raft) timeoutNow(rpc RPC, req *TimeoutNowRequest) {
 	rpc.Respond(&TimeoutNowResponse{}, nil)
 }
 
+// setLatestConfiguration stores the latest configuration and updates a copy of it.
+func (r *Raft) setLatestConfiguration(c Configuration, i uint64) {
+	r.configurations.latest = c
+	r.configurations.latestIndex = i
+	r.latestConfigurationLock.Lock()
+	r.latestConfiguration = c.Clone()
+	r.latestConfigurationLock.Unlock()
+}
+
+// setCommittedConfiguration stores the committed configuration.
+func (r *Raft) setCommittedConfiguration(c Configuration, i uint64) {
+	r.configurations.committed = c
+	r.configurations.committedIndex = i
+}
+
+// getLatestConfiguration reads the configuration from a copy of the main
+// configuration, which means it can be accessed independently from the main
+// loop.
 func (r *Raft) getLatestConfiguration() Configuration {
 	r.latestConfigurationLock.RLock()
 	defer r.latestConfigurationLock.RUnlock()

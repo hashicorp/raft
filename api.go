@@ -136,7 +136,10 @@ type Raft struct {
 
 	// Tracks the latest configuration and latest committed configuration from
 	// the log/snapshot.
-	configurations          configurations
+	configurations configurations
+
+	// Holds a copy of the latest configuration which can be read
+	// independently from main loop.
 	latestConfiguration     Configuration
 	latestConfigurationLock sync.RWMutex
 
@@ -747,9 +750,8 @@ func (r *Raft) VerifyLeader() Future {
 	}
 }
 
-// GetConfiguration returns the latest configuration and its associated index
-// currently in use. This may not yet be committed. This must not be called on
-// the main thread (which can access the information directly).
+// GetConfiguration returns the latest configuration. This may not yet be
+// committed. The main loop can access this directly.
 func (r *Raft) GetConfiguration() ConfigurationFuture {
 	configReq := &configurationsFuture{}
 	configReq.init()
