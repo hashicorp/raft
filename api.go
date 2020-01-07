@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	metrics "github.com/armon/go-metrics"
@@ -140,8 +141,7 @@ type Raft struct {
 
 	// Holds a copy of the latest configuration which can be read
 	// independently from main loop.
-	latestConfiguration     Configuration
-	latestConfigurationLock sync.RWMutex
+	latestConfiguration atomic.Value
 
 	// RPC chan comes from the transport layer
 	rpcCh <-chan RPC
