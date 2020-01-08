@@ -623,8 +623,7 @@ func (r *Raft) leaderLoop() {
 			// value.
 			if r.configurations.latestIndex > oldCommitIndex &&
 				r.configurations.latestIndex <= commitIndex {
-				r.configurations.committed = r.configurations.latest
-				r.configurations.committedIndex = r.configurations.latestIndex
+				r.setCommittedConfiguration(r.configurations.latest, r.configurations.latestIndex)
 				if !hasVote(r.configurations.committed, r.localID) {
 					stepDown = true
 				}
@@ -1043,8 +1042,7 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 
 	r.dispatchLogs([]*logFuture{&future.logFuture})
 	index := future.Index()
-	r.configurations.latest = configuration
-	r.configurations.latestIndex = index
+	r.setLatestConfiguration(configuration, index)
 	r.leaderState.commitment.setConfiguration(configuration)
 	r.startStopReplication()
 }
@@ -1329,8 +1327,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 					return
 				}
 				if entry.Index <= r.configurations.latestIndex {
-					r.configurations.latest = r.configurations.committed
-					r.configurations.latestIndex = r.configurations.committedIndex
+					r.setLatestConfiguration(r.configurations.committed, r.configurations.committedIndex)
 				}
 				newEntries = a.Entries[i:]
 				break
@@ -1365,8 +1362,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		idx := min(a.LeaderCommitIndex, r.getLastIndex())
 		r.setCommitIndex(idx)
 		if r.configurations.latestIndex <= idx {
-			r.configurations.committed = r.configurations.latest
-			r.configurations.committedIndex = r.configurations.latestIndex
+			r.setCommittedConfiguration(r.configurations.latest, r.configurations.latestIndex)
 		}
 		r.processLogs(idx, nil)
 		metrics.MeasureSince([]string{"raft", "rpc", "appendEntries", "processLogs"}, start)
@@ -1383,15 +1379,11 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 // called from the main thread, or from NewRaft() before any threads have begun.
 func (r *Raft) processConfigurationLogEntry(entry *Log) {
 	if entry.Type == LogConfiguration {
-		r.configurations.committed = r.configurations.latest
-		r.configurations.committedIndex = r.configurations.latestIndex
-		r.configurations.latest = DecodeConfiguration(entry.Data)
-		r.configurations.latestIndex = entry.Index
+		r.setCommittedConfiguration(r.configurations.latest, r.configurations.latestIndex)
+		r.setLatestConfiguration(DecodeConfiguration(entry.Data), entry.Index)
 	} else if entry.Type == LogAddPeerDeprecated || entry.Type == LogRemovePeerDeprecated {
-		r.configurations.committed = r.configurations.latest
-		r.configurations.committedIndex = r.configurations.latestIndex
-		r.configurations.latest = decodePeers(entry.Data, r.trans)
-		r.configurations.latestIndex = entry.Index
+		r.setCommittedConfiguration(r.configurations.latest, r.configurations.latestIndex)
+		r.setLatestConfiguration(decodePeers(entry.Data, r.trans), entry.Index)
 	}
 }
 
@@ -1606,10 +1598,8 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	r.setLastSnapshot(req.LastLogIndex, req.LastLogTerm)
 
 	// Restore the peer set
-	r.configurations.latest = reqConfiguration
-	r.configurations.latestIndex = reqConfigurationIndex
-	r.configurations.committed = reqConfiguration
-	r.configurations.committedIndex = reqConfigurationIndex
+	r.setLatestConfiguration(reqConfiguration, reqConfigurationIndex)
+	r.setCommittedConfiguration(reqConfiguration, reqConfigurationIndex)
 
 	// Compact logs, continue even if this fails
 	if err := r.compactLogs(req.LastLogIndex); err != nil {
@@ -1795,4 +1785,31 @@ func (r *Raft) timeoutNow(rpc RPC, req *TimeoutNowRequest) {
 	r.setState(Candidate)
 	r.candidateFromLeadershipTransfer = true
 	rpc.Respond(&TimeoutNowResponse{}, nil)
+}
+
+// setLatestConfiguration stores the latest configuration and updates a copy of it.
+func (r *Raft) setLatestConfiguration(c Configuration, i uint64) {
+	r.configurations.latest = c
+	r.configurations.latestIndex = i
+	r.latestConfiguration.Store(c.Clone())
+}
+
+// setCommittedConfiguration stores the committed configuration.
+func (r *Raft) setCommittedConfiguration(c Configuration, i uint64) {
+	r.configurations.committed = c
+	r.configurations.committedIndex = i
+}
+
+// getLatestConfiguration reads the configuration from a copy of the main
+// configuration, which means it can be accessed independently from the main
+// loop.
+func (r *Raft) getLatestConfiguration() Configuration {
+	// this switch catches the case where this is called without having set
+	// a configuration previously.
+	switch c := r.latestConfiguration.Load().(type) {
+	case Configuration:
+		return c
+	default:
+		return Configuration{}
+	}
 }

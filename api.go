@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	metrics "github.com/armon/go-metrics"
@@ -137,6 +138,10 @@ type Raft struct {
 	// Tracks the latest configuration and latest committed configuration from
 	// the log/snapshot.
 	configurations configurations
+
+	// Holds a copy of the latest configuration which can be read
+	// independently from main loop.
+	latestConfiguration atomic.Value
 
 	// RPC chan comes from the transport layer
 	rpcCh <-chan RPC
@@ -603,18 +608,17 @@ func (r *Raft) restoreSnapshot() error {
 		r.setLastSnapshot(snapshot.Index, snapshot.Term)
 
 		// Update the configuration
+		var conf Configuration
+		var index uint64
 		if snapshot.Version > 0 {
-			r.configurations.committed = snapshot.Configuration
-			r.configurations.committedIndex = snapshot.ConfigurationIndex
-			r.configurations.latest = snapshot.Configuration
-			r.configurations.latestIndex = snapshot.ConfigurationIndex
+			conf = snapshot.Configuration
+			index = snapshot.ConfigurationIndex
 		} else {
-			configuration := decodePeers(snapshot.Peers, r.trans)
-			r.configurations.committed = configuration
-			r.configurations.committedIndex = snapshot.Index
-			r.configurations.latest = configuration
-			r.configurations.latestIndex = snapshot.Index
+			conf = decodePeers(snapshot.Peers, r.trans)
+			index = snapshot.Index
 		}
+		r.setCommittedConfiguration(conf, index)
+		r.setLatestConfiguration(conf, index)
 
 		// Success!
 		return nil
@@ -746,19 +750,14 @@ func (r *Raft) VerifyLeader() Future {
 	}
 }
 
-// GetConfiguration returns the latest configuration and its associated index
-// currently in use. This may not yet be committed. This must not be called on
-// the main thread (which can access the information directly).
+// GetConfiguration returns the latest configuration. This may not yet be
+// committed. The main loop can access this directly.
 func (r *Raft) GetConfiguration() ConfigurationFuture {
 	configReq := &configurationsFuture{}
 	configReq.init()
-	select {
-	case <-r.shutdownCh:
-		configReq.respond(ErrRaftShutdown)
-		return configReq
-	case r.configurationsCh <- configReq:
-		return configReq
-	}
+	configReq.configurations = configurations{latest: r.getLatestConfiguration()}
+	configReq.respond(nil)
+	return configReq
 }
 
 // AddPeer (deprecated) is used to add a new peer into the cluster. This must be
