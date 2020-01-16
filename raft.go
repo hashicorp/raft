@@ -256,7 +256,7 @@ func (r *Raft) runCandidate() {
 	// Make sure the leadership transfer flag is reset after each run. Having this
 	// flag will set the field LeadershipTransfer in a RequestVoteRequst to true,
 	// which will make other servers vote even though they have a leader already.
-	// It is important to reset that flag, because this privilege could be abused
+	// It is important to reset that flag, because this priviledge could be abused
 	// otherwise.
 	defer func() { r.candidateFromLeadershipTransfer = false }()
 
@@ -1437,12 +1437,12 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 
 	// Check if we have voted yet
 	lastVoteTerm, err := r.stable.GetUint64(keyLastVoteTerm)
-	if err != nil && err != ErrKeyNotFound {
+	if err != nil && err.Error() != "not found" {
 		r.logger.Error("failed to get last vote term", "error", err)
 		return
 	}
 	lastVoteCandBytes, err := r.stable.Get(keyLastVoteCand)
-	if err != nil && err != ErrKeyNotFound {
+	if err != nil && err.Error() != "not found" {
 		r.logger.Error("failed to get last vote candidate", "error", err)
 		return
 	}
