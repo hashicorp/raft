@@ -15,6 +15,7 @@ BUG FIXES
 
 * Export the leader field in LeaderObservation [[GH-357](https://github.com/hashicorp/raft/pull/357)]
 * Fix snapshot to not attempt to truncate a negative range [[GH-358](https://github.com/hashicorp/raft/pull/358)]
+* Check for shutdown in inmemPipeline before sending RPCs [[GH-276](https://github.com/hashicorp/raft/pull/276)]
 
 # 1.1.1 (July 23rd, 2019)
 
