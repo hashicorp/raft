@@ -52,7 +52,7 @@ var (
 	ErrEnqueueTimeout = errors.New("timed out enqueuing operation")
 
 	// ErrNothingNewToSnapshot is returned when trying to create a snapshot
-	// but there's nothing new committed to the FSM since we started.
+	// but there's nothing new commited to the FSM since we started.
 	ErrNothingNewToSnapshot = errors.New("nothing new to snapshot")
 
 	// ErrUnsupportedProtocol is returned when an operation is attempted
@@ -412,7 +412,7 @@ func HasExistingState(logs LogStore, stable StableStore, snaps SnapshotStore) (b
 			return true, nil
 		}
 	} else {
-		if err != ErrKeyNotFound {
+		if err.Error() != "not found" {
 			return false, fmt.Errorf("failed to read current term: %v", err)
 		}
 	}
@@ -466,7 +466,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 
 	// Try to restore the current term.
 	currentTerm, err := stable.GetUint64(keyCurrentTerm)
-	if err != nil && err != ErrKeyNotFound {
+	if err != nil && err.Error() != "not found" {
 		return nil, fmt.Errorf("failed to load current term: %v", err)
 	}
 
@@ -705,7 +705,7 @@ func (r *Raft) ApplyLog(log Log, timeout time.Duration) ApplyFuture {
 	}
 }
 
-// Barrier is used to issue a command that blocks until all preceding
+// Barrier is used to issue a command that blocks until all preceeding
 // operations have been applied to the FSM. It can be used to ensure the
 // FSM reflects all queued writes. An optional timeout can be provided to
 // limit the amount of time we wait for the command to be started. This

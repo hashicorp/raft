@@ -21,11 +21,3 @@ _testmain.go
 
 *.exe
 *.test
-
-# MacOS
-.DS_Store
-.AppleDouble
-.LSOverride
-
-# IDE specific
-.vscode/*
