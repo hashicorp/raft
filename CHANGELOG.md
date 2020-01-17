@@ -1,4 +1,4 @@
-# UNRELEASED
+# 1.1.2 (January 17th, 2020)
 
 FEATURES
 
@@ -9,7 +9,7 @@ IMPROVEMENTS
 
 * Remove lint violations and add a `make` rule for running the linter.
 * Replace logger with hclog [[GH-360](https://github.com/hashicorp/raft/pull/360)]
-* Read latest configuration independently from main loop (#379)
+* Read latest configuration independently from main loop [[GH-379](https://github.com/hashicorp/raft/pull/379)]
 
 BUG FIXES
 
