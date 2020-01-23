@@ -8,6 +8,7 @@ references:
   environment: &ENVIRONMENT
     TEST_RESULTS_DIR: &TEST_RESULTS_DIR /tmp/test-results # path to where test results are saved
     GO111MODULE: 'on'
+    GOMAXPROCS: 2
 
 jobs:
   go-fmt-and-vet:
