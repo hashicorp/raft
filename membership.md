@@ -81,3 +81,15 @@ Again, we're looking for feedback here before we start working on this. Here are
  - What do we need to worry about in terms of backwards compatibility?
  - What implication will this have on current tests?
  - What's the best way to test this code, in particular the small changes that will be sprinkled all over the library?
+
+## Implementation Notes
+
+We need to separate add/promote from remove in order to offer a predictable interface for users. Add and Promote, which should be allowed to proceed one committed write at a time by a qualified (committed noop post-election write) leader. Removes must also be processed one committed write at a time, but prohibited while any member is `Staging`. This allows the user to express an upgrade, without accidentally removing all currently voting servers too quickly.
+
+Specifically on an upgrade from v2 to v3, we have to remove the old server first, in order to avoid the error of having two servers with different ids and the same address.
+
+1. remove `a`
+2. add `a'`, with the new id
+3. request remove `b`, which waits because `a'` is pending
+4. promote `a'`
+5. process remove `b`

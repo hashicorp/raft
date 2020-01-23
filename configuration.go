@@ -136,8 +136,12 @@ type configurationChangeRequest struct {
 // it's safe to apply. All methods are called in the main thread in leaderLoop, the updates
 // to `pending` require this.
 type configurationChangeState struct {
-	requestCh    chan *configurationChangeFuture
-	removeCh     chan *configurationChangeFuture
+	requestCh chan *configurationChangeFuture
+	removeCh  chan *configurationChangeFuture
+
+	// hold up the first remove request until it's safe to process it. We need to
+	// examine the contents of the remove to see if it's safe, and we need the channel
+	// and timer to persist between removeChannel() calls, so they're in the struct.
 	pendingCh    chan *configurationChangeFuture
 	pending      *configurationChangeFuture
 	timerRunning bool

@@ -2155,7 +2155,7 @@ func TestRaft_ProtocolVersion_Upgrade_2_3_Redux(t *testing.T) {
 	conf.ProtocolVersion = 3
 
 	// Wait for the old cluster to commit the noop
-	// c2.EnsureLeader(t, c2.Leader().localAddr)
+	c2.EnsureLeader(t, c2.Leader().localAddr)
 
 	leader := c2.Leader()
 
@@ -2174,7 +2174,7 @@ func TestRaft_ProtocolVersion_Upgrade_2_3_Redux(t *testing.T) {
 		fmt.Printf("REMOVE %s\n", id)
 
 		// Remove a raft proto 2 server
-		leader.RemoveServer(id, 0, 15*time.Second)
+		c2.Leader().RemoveServer(id, 0, 15*time.Second)
 		// if err := future.Error(); err != nil {
 		// 	fmt.Printf("[ERR] REMOVE %s err: %s\n", id, err.Error())
 		// }
@@ -2193,7 +2193,7 @@ func TestRaft_ProtocolVersion_Upgrade_2_3_Redux(t *testing.T) {
 
 		fmt.Printf("ADDVOTER %s\n", conf.LocalID)
 
-		leader.AddVoter(raft.localID, addr, 0, 1*time.Second)
+		c2.Leader().AddVoter(raft.localID, addr, 0, 1*time.Second)
 		// if err := future.Error(); err != nil {
 		// 	fmt.Printf("[ERR] addvoter err: %s\n", err.Error())
 		// }
