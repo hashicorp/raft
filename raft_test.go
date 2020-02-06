@@ -1653,51 +1653,6 @@ func TestRaft_VerifyLeader_PartialConnect(t *testing.T) {
 	}
 }
 
-func TestRaft_StartAsLeader(t *testing.T) {
-	conf := inmemConfig(t)
-	conf.StartAsLeader = true
-	c := MakeCluster(1, t, conf)
-	defer c.Close()
-	raft := c.rafts[0]
-
-	// Watch leaderCh for change
-	select {
-	case v := <-raft.LeaderCh():
-		if !v {
-			c.FailNowf("should become leader")
-		}
-	case <-time.After(c.conf.HeartbeatTimeout * 4):
-		// Longer than you think as possibility of multiple elections
-		c.FailNowf("timeout becoming leader")
-	}
-
-	// Should be leader
-	if s := raft.State(); s != Leader {
-		c.FailNowf("expected leader: %v", s)
-	}
-
-	// Should be able to apply
-	future := raft.Apply([]byte("test"), c.conf.CommitTimeout)
-	if err := future.Error(); err != nil {
-		c.FailNowf("err: %v", err)
-	}
-
-	// Check the response
-	if future.Response().(int) != 1 {
-		c.FailNowf("bad response: %v", future.Response())
-	}
-
-	// Check the index
-	if idx := future.Index(); idx == 0 {
-		c.FailNowf("bad index: %d", idx)
-	}
-
-	// Check that it is applied to the FSM
-	if len(getMockFSM(c.fsms[0]).logs) != 1 {
-		c.FailNowf("did not apply to FSM!")
-	}
-}
-
 func TestRaft_NotifyCh(t *testing.T) {
 	ch := make(chan bool, 1)
 	conf := inmemConfig(t)

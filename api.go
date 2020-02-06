@@ -527,13 +527,6 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	// Initialize as a follower.
 	r.setState(Follower)
 
-	// Start as leader if specified. This should only be used
-	// for testing purposes.
-	if conf.StartAsLeader {
-		r.setState(Leader)
-		r.setLeader(r.localAddr)
-	}
-
 	// Restore the current term and the last log.
 	r.setCurrentTerm(currentTerm)
 	r.setLastLog(lastLog.Index, lastLog.Term)
