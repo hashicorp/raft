@@ -232,7 +232,7 @@ func (c *cluster) notifyFailed() {
 // fail tests using this function.
 func (c *cluster) Failf(format string, args ...interface{}) {
 	c.logger.Error(fmt.Sprintf(format, args...))
-	c.t.Fail()
+	c.t.Errorf(format, args...)
 	c.notifyFailed()
 }
 
@@ -242,7 +242,9 @@ func (c *cluster) Failf(format string, args ...interface{}) {
 // other goroutines created during the test. Calling FailNowf does not stop
 // those other goroutines.
 func (c *cluster) FailNowf(format string, args ...interface{}) {
+	c.t.Helper()
 	c.logger.Error(fmt.Sprintf(format, args...))
+	c.t.Fatalf(format, args...)
 	c.t.FailNow()
 }
 
