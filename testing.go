@@ -255,11 +255,12 @@ func (c *cluster) Close() {
 		futures = append(futures, r.Shutdown())
 	}
 
+	start := time.Now()
 	// Wait for shutdown
 	limit := time.AfterFunc(c.longstopTimeout, func() {
 		// We can't FailNowf here, and c.Failf won't do anything if we
 		// hang, so panic.
-		panic("timed out waiting for shutdown")
+		panic(fmt.Sprintf("timed out waiting for shutdown: %v", time.Since(start)))
 	})
 	defer limit.Stop()
 
@@ -684,7 +685,7 @@ func makeCluster(t *testing.T, opts *MakeClusterOpts) *cluster {
 		// Propagation takes a maximum of 2 heartbeat timeouts (time to
 		// get a new heartbeat that would cause a commit) plus a bit.
 		propagateTimeout: opts.Conf.HeartbeatTimeout*2 + opts.Conf.CommitTimeout,
-		longstopTimeout:  5 * time.Second,
+		longstopTimeout:  10 * time.Second,
 		logger:           newTestLoggerWithPrefix(t, "cluster"),
 		failedCh:         make(chan struct{}),
 	}

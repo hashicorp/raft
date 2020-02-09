@@ -1280,15 +1280,23 @@ func snapshotAndRestore(t *testing.T, offset uint64) {
 }
 
 func TestRaft_UserRestore(t *testing.T) {
-	// Snapshots from the past.
-	snapshotAndRestore(t, 0)
-	snapshotAndRestore(t, 1)
-	snapshotAndRestore(t, 2)
+	offsets := []uint64{
+		// Snapshots from the past.
+		0,
+		1,
+		2,
 
-	// Snapshots from the future.
-	snapshotAndRestore(t, 100)
-	snapshotAndRestore(t, 1000)
-	snapshotAndRestore(t, 10000)
+		// Snapshots from the future.
+		100,
+		1000,
+		10000,
+	}
+
+	for _, c := range offsets {
+		t.Run(fmt.Sprintf("case %v", c), func(t *testing.T) {
+			snapshotAndRestore(t, c)
+		})
+	}
 }
 
 func TestRaft_SendSnapshotFollower(t *testing.T) {
