@@ -810,3 +810,26 @@ func FileSnapTest(t *testing.T) (string, *FileSnapshotStore) {
 	}
 	return dir, snap
 }
+
+func waitFor(fn func() (bool, error), errFn func(err error)) {
+	start := time.Now()
+	timeout := 5 * time.Second
+
+	for {
+		b, err := fn()
+		if b {
+			return
+		}
+
+		if time.Since(start) > timeout {
+			if err == nil {
+				err = fmt.Errorf("timed out waiting")
+			}
+			errFn(err)
+			return
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+}

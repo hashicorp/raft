@@ -1116,11 +1116,17 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	// Ensure we elect a leader, and that we replicate to our new followers.
 	c2.EnsureSame(t)
 
-	// We should have restored from the snapshot! Note that there's one
-	// index bump from the noop the leader tees up when it takes over.
-	if last := r.getLastApplied(); last != 103 {
-		c.FailNowf("bad last: %v", last)
-	}
+	waitFor(func() (bool, error) {
+		// index bump from the noop the leader tees up when it takes over.
+		last := r.getLastApplied()
+		if last != 103 {
+			return false, fmt.Errorf("bad last %v != %v", last, 103)
+		}
+
+		return true, nil
+	}, func(err error) {
+		c.FailNowf("err: %v", err)
+	})
 
 	// Check the peers.
 	c2.EnsureSamePeers(t)
