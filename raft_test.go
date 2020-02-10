@@ -119,8 +119,8 @@ func TestRaft_RecoverCluster(t *testing.T) {
 	// Run with different number of applies which will cover no snapshot and
 	// snapshot + log scenarios. By sweeping through the trailing logs value
 	// we will also hit the case where we have a snapshot only.
-	var err error
-	runRecover := func(applies int) {
+	runRecover := func(t *testing.T, applies int) {
+		var err error
 		conf := inmemConfig(t)
 		conf.TrailingLogs = 10
 		c := MakeCluster(3, t, conf)
@@ -207,8 +207,11 @@ func TestRaft_RecoverCluster(t *testing.T) {
 		c.EnsureSame(t)
 		c.EnsureSamePeers(t)
 	}
+
 	for applies := 0; applies < 20; applies++ {
-		runRecover(applies)
+		t.Run(fmt.Sprintf("applies=%v", applies), func(t *testing.T) {
+			runRecover(t, applies)
+		})
 	}
 }
 
