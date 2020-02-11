@@ -364,7 +364,7 @@ func (r *Raft) runLeader() {
 	metrics.IncrCounter([]string{"raft", "state", "leader"}, 1)
 
 	// Notify that we are the leader
-	asyncNotifyBool(r.leaderCh, true)
+	overrideNotifyBool(r.leaderCh, true)
 
 	// Push to the notify channel if given
 	if notify := r.conf.NotifyCh; notify != nil {
@@ -420,7 +420,7 @@ func (r *Raft) runLeader() {
 		r.leaderLock.Unlock()
 
 		// Notify that we are not the leader
-		asyncNotifyBool(r.leaderCh, false)
+		overrideNotifyBool(r.leaderCh, false)
 
 		// Push to the notify channel if given
 		if notify := r.conf.NotifyCh; notify != nil {
