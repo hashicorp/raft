@@ -724,7 +724,7 @@ func makeCluster(t *testing.T, opts *MakeClusterOpts) *cluster {
 		c.dirs = append(c.dirs, dir2)
 		c.snaps = append(c.snaps, snap)
 
-		addr, trans := NewInmemTransport("")
+		addr, trans := NewInmemTransportWithTimeout("", 500*time.Millisecond)
 		c.trans = append(c.trans, trans)
 		localID := ServerID(fmt.Sprintf("server-%s", addr))
 		if opts.Conf.ProtocolVersion < 3 {

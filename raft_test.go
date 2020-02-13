@@ -1206,6 +1206,10 @@ func TestRaft_UserSnapshot(t *testing.T) {
 func snapshotAndRestore(t *testing.T, offset uint64) {
 	// Make the cluster.
 	conf := inmemConfig(t)
+	conf.HeartbeatTimeout = 500 * time.Millisecond
+	conf.ElectionTimeout = 500 * time.Millisecond
+	conf.LeaderLeaseTimeout = 400 * time.Millisecond
+
 	c := MakeCluster(3, t, conf)
 	defer c.Close()
 
