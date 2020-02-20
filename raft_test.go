@@ -7,71 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
-
-// Interface for detecting support for testing.TB.Helper(), which was
-// introduced in Go 1.9.
-type testingHelper interface {
-	Helper()
-}
-
-// Wait for f() to return an error and then return it.
-//
-// If this doesn't happen withing 'timeout', print all current goroutines and
-// fail the test with the given message and arguments.
-func waitForError(t testing.TB, f func() error, timeout time.Duration, msg string, v ...interface{}) error {
-	if helper, ok := t.(testingHelper); ok {
-		helper.Helper()
-	}
-	errCh := make(chan error)
-	go func() {
-		errCh <- f()
-	}()
-	select {
-	case err := <-errCh:
-		return err
-	case <-time.After(timeout):
-		buf := make([]byte, 1<<16)
-		n := runtime.Stack(buf, true)
-		t.Logf("goroutines:\n%s", buf[:n])
-		t.Fatalf(msg, v...)
-		return nil
-	}
-}
-
-// Close shuts down the cluster and cleans up.
-func (c *cluster) Close() {
-	defer func() {
-		for _, d := range c.dirs {
-			os.RemoveAll(d)
-		}
-	}()
-
-	var futures []Future
-	for _, r := range c.rafts {
-		futures = append(futures, r.Shutdown())
-	}
-
-	f := func() error {
-		for _, f := range futures {
-			if err := f.Error(); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	msg := "timed out waiting for shutdown"
-	if err := waitForError(c.t, f, c.longstopTimeout, msg); err != nil {
-		c.FailNowf("[ERR] shutdown future err: %v", err)
-	}
-}
-
 
 func TestRaft_StartStop(t *testing.T) {
 	c := MakeCluster(1, t, nil)
