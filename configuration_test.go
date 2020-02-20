@@ -7,19 +7,19 @@ import (
 	"testing"
 )
 
-var sampleConfiguration Configuration = Configuration{
+var sampleConfiguration = Configuration{
 	Servers: []Server{
-		Server{
+		{
 			Suffrage: Nonvoter,
 			ID:       ServerID("id0"),
 			Address:  ServerAddress("addr0"),
 		},
-		Server{
+		{
 			Suffrage: Voter,
 			ID:       ServerID("id1"),
 			Address:  ServerAddress("addr1"),
 		},
-		Server{
+		{
 			Suffrage: Staging,
 			ID:       ServerID("id2"),
 			Address:  ServerAddress("addr2"),
@@ -39,20 +39,20 @@ func TestConfiguration_Configuration_Clone(t *testing.T) {
 }
 
 func TestConfiguration_configurations_Clone(t *testing.T) {
-	configurations := configurations{
+	configuration := configurations{
 		committed:      sampleConfiguration,
 		committedIndex: 1,
 		latest:         sampleConfiguration,
 		latestIndex:    2,
 	}
-	cloned := configurations.Clone()
-	if !reflect.DeepEqual(configurations, cloned) {
-		t.Fatalf("mismatch %v %v", configurations, cloned)
+	cloned := configuration.Clone()
+	if !reflect.DeepEqual(configuration, cloned) {
+		t.Fatalf("mismatch %v %v", configuration, cloned)
 	}
 	cloned.committed.Servers[1].ID = "scribble"
 	cloned.latest.Servers[1].ID = "scribble"
-	if configurations.committed.Servers[1].ID == "scribble" ||
-		configurations.latest.Servers[1].ID == "scribble" {
+	if configuration.committed.Servers[1].ID == "scribble" ||
+		configuration.latest.Servers[1].ID == "scribble" {
 		t.Fatalf("cloned configuration shouldn't alias Servers")
 	}
 }
@@ -118,7 +118,7 @@ func TestConfiguration_checkConfiguration(t *testing.T) {
 
 var singleServer = Configuration{
 	Servers: []Server{
-		Server{
+		{
 			Suffrage: Voter,
 			ID:       ServerID("id1"),
 			Address:  ServerAddress("addr1x"),
@@ -128,17 +128,17 @@ var singleServer = Configuration{
 
 var oneOfEach = Configuration{
 	Servers: []Server{
-		Server{
+		{
 			Suffrage: Voter,
 			ID:       ServerID("id1"),
 			Address:  ServerAddress("addr1x"),
 		},
-		Server{
+		{
 			Suffrage: Staging,
 			ID:       ServerID("id2"),
 			Address:  ServerAddress("addr2x"),
 		},
-		Server{
+		{
 			Suffrage: Nonvoter,
 			ID:       ServerID("id3"),
 			Address:  ServerAddress("addr3x"),
@@ -148,12 +148,12 @@ var oneOfEach = Configuration{
 
 var voterPair = Configuration{
 	Servers: []Server{
-		Server{
+		{
 			Suffrage: Voter,
 			ID:       ServerID("id1"),
 			Address:  ServerAddress("addr1x"),
 		},
-		Server{
+		{
 			Suffrage: Voter,
 			ID:       ServerID("id2"),
 			Address:  ServerAddress("addr2x"),
@@ -307,7 +307,7 @@ func TestConfiguration_encodeDecodePeers(t *testing.T) {
 }
 
 func TestConfiguration_encodeDecodeConfiguration(t *testing.T) {
-	decoded := decodeConfiguration(encodeConfiguration(sampleConfiguration))
+	decoded := DecodeConfiguration(EncodeConfiguration(sampleConfiguration))
 	if !reflect.DeepEqual(sampleConfiguration, decoded) {
 		t.Fatalf("mismatch %v %v", sampleConfiguration, decoded)
 	}

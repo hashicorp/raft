@@ -21,7 +21,7 @@ func newApplySource(seed string) *applySource {
 	return s
 }
 
-// reset this source back to its initial state, it'll generate the same sequence of data it initally did
+// reset this source back to its initial state, it'll generate the same sequence of data it initially did
 func (a *applySource) reset() {
 	a.rnd = rand.New(rand.NewSource(a.seed))
 }
@@ -54,7 +54,7 @@ func (ca *clusterApplier) apply(t *testing.T, c *cluster, n uint) {
 		case <-ca.stopCh:
 			return
 		default:
-			ca.applied += c.ApplyN(t, time.Second, ca.src, n)
+			ca.applied += c.ApplyN(t, 5*time.Second, ca.src, n)
 		}
 	}
 }
