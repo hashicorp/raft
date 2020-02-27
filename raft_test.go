@@ -1490,13 +1490,17 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	c.Disconnect(follower.localAddr)
 
 	// Watch the leaderCh
-	select {
-	case v := <-leader.LeaderCh():
-		if v {
-			c.FailNowf("should step down as leader")
+	timeout := time.After(conf.LeaderLeaseTimeout * 2)
+LOOP:
+	for {
+		select {
+		case v := <-leader.LeaderCh():
+			if !v {
+				break LOOP
+			}
+		case <-timeout:
+			c.FailNowf("timeout stepping down as leader")
 		}
-	case <-time.After(conf.LeaderLeaseTimeout * 2):
-		c.FailNowf("timeout stepping down as leader")
 	}
 
 	// Ensure the last contact of the leader is non-zero
