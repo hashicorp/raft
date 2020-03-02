@@ -2,6 +2,7 @@ package raft
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -276,20 +277,13 @@ func (c *cluster) Close() {
 // or a timeout occurs. It is possible to set a filter to look for specific
 // observations. Setting timeout to 0 means that it will wait forever until a
 // non-filtered observation is made.
-func (c *cluster) WaitEventChan(filter FilterFn, timeout time.Duration) (<-chan struct{}, chan struct{}) {
+func (c *cluster) WaitEventChan(ctx context.Context, filter FilterFn) <-chan struct{} {
 	ch := make(chan struct{})
-	doneCh := make(chan struct{})
 	go func() {
 		defer close(ch)
-		var timeoutCh <-chan time.Time
-		if timeout > 0 {
-			timeoutCh = time.After(timeout)
-		}
 		for {
 			select {
-			case <-timeoutCh:
-				return
-			case <-doneCh:
+			case <-ctx.Done():
 				return
 			case o, ok := <-c.observationCh:
 				if !ok || filter == nil || filter(&o) {
@@ -298,7 +292,7 @@ func (c *cluster) WaitEventChan(filter FilterFn, timeout time.Duration) (<-chan 
 			}
 		}
 	}()
-	return ch, doneCh
+	return ch
 }
 
 // WaitEvent waits until an observation is made, a timeout occurs, or a test
@@ -306,8 +300,9 @@ func (c *cluster) WaitEventChan(filter FilterFn, timeout time.Duration) (<-chan 
 // observations. Setting timeout to 0 means that it will wait forever until a
 // non-filtered observation is made or a test failure is signaled.
 func (c *cluster) WaitEvent(filter FilterFn, timeout time.Duration) {
-	eventCh, doneCh := c.WaitEventChan(filter, timeout)
-	defer close(doneCh)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	eventCh := c.WaitEventChan(ctx, filter)
 	select {
 	case <-c.failedCh:
 		c.t.FailNow()
@@ -322,8 +317,9 @@ func (c *cluster) WaitForReplication(fsmLength int) {
 
 CHECK:
 	for {
-		ch, doneCh := c.WaitEventChan(nil, c.conf.CommitTimeout)
-		defer close(doneCh)
+		ctx, cancel := context.WithTimeout(context.Background(), c.conf.CommitTimeout)
+		defer cancel()
+		ch := c.WaitEventChan(ctx, nil)
 		select {
 		case <-c.failedCh:
 			c.t.FailNow()
@@ -419,8 +415,9 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 			}
 		}
 
-		eventCh, doneCh := c.WaitEventChan(filter, 0)
-		defer close(doneCh)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		eventCh := c.WaitEventChan(ctx, filter)
 		select {
 		case <-c.failedCh:
 			c.t.FailNow()
