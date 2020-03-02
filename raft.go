@@ -982,6 +982,7 @@ func (r *Raft) restoreUserSnapshot(meta *SnapshotMeta, reader io.Reader) error {
 	// Restore the snapshot into the FSM. If this fails we are in a
 	// bad state so we panic to take ourselves out.
 	fsm := &restoreFuture{ID: sink.ID()}
+	fsm.ShutdownCh = r.shutdownCh
 	fsm.init()
 	select {
 	case r.fsmMutateCh <- fsm:
@@ -1576,6 +1577,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 
 	// Restore snapshot
 	future := &restoreFuture{ID: sink.ID()}
+	future.ShutdownCh = r.shutdownCh
 	future.init()
 	select {
 	case r.fsmMutateCh <- future:
