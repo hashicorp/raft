@@ -276,8 +276,9 @@ func (c *cluster) Close() {
 // or a timeout occurs. It is possible to set a filter to look for specific
 // observations. Setting timeout to 0 means that it will wait forever until a
 // non-filtered observation is made.
-func (c *cluster) WaitEventChan(filter FilterFn, timeout time.Duration) <-chan struct{} {
+func (c *cluster) WaitEventChan(filter FilterFn, timeout time.Duration) (<-chan struct{}, chan struct{}) {
 	ch := make(chan struct{})
+	doneCh := make(chan struct{})
 	go func() {
 		defer close(ch)
 		var timeoutCh <-chan time.Time
@@ -288,7 +289,8 @@ func (c *cluster) WaitEventChan(filter FilterFn, timeout time.Duration) <-chan s
 			select {
 			case <-timeoutCh:
 				return
-
+			case <-doneCh:
+				return
 			case o, ok := <-c.observationCh:
 				if !ok || filter == nil || filter(&o) {
 					return
@@ -296,7 +298,7 @@ func (c *cluster) WaitEventChan(filter FilterFn, timeout time.Duration) <-chan s
 			}
 		}
 	}()
-	return ch
+	return ch, doneCh
 }
 
 // WaitEvent waits until an observation is made, a timeout occurs, or a test
@@ -304,11 +306,12 @@ func (c *cluster) WaitEventChan(filter FilterFn, timeout time.Duration) <-chan s
 // observations. Setting timeout to 0 means that it will wait forever until a
 // non-filtered observation is made or a test failure is signaled.
 func (c *cluster) WaitEvent(filter FilterFn, timeout time.Duration) {
+	eventCh, doneCh := c.WaitEventChan(filter, timeout)
+	defer close(doneCh)
 	select {
 	case <-c.failedCh:
 		c.t.FailNow()
-
-	case <-c.WaitEventChan(filter, timeout):
+	case <-eventCh:
 	}
 }
 
@@ -319,7 +322,8 @@ func (c *cluster) WaitForReplication(fsmLength int) {
 
 CHECK:
 	for {
-		ch := c.WaitEventChan(nil, c.conf.CommitTimeout)
+		ch, doneCh := c.WaitEventChan(nil, c.conf.CommitTimeout)
+		defer close(doneCh)
 		select {
 		case <-c.failedCh:
 			c.t.FailNow()
@@ -415,6 +419,8 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 			}
 		}
 
+		eventCh, doneCh := c.WaitEventChan(filter, 0)
+		defer close(doneCh)
 		select {
 		case <-c.failedCh:
 			c.t.FailNow()
@@ -422,7 +428,7 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 		case <-limitCh:
 			c.FailNowf("timeout waiting for stable %s state", s)
 
-		case <-c.WaitEventChan(filter, 0):
+		case <-eventCh:
 			c.logger.Debug("resetting stability timeout")
 
 		case t, ok := <-timer.C:
