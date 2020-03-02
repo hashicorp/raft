@@ -1235,7 +1235,10 @@ func snapshotAndRestore(t *testing.T, offset uint64) {
 	}
 	defer reader.Close()
 	if err := leader.Restore(meta, reader, 5*time.Second); err != nil {
-		c.FailNowf("Restore failed: %v", err)
+		// Losing leadership is fine during restore
+		if err != ErrLeadershipLost {
+			c.FailNowf("Restore failed: %v", err)
+		}
 	}
 
 	// Make sure the index was updated correctly. We add 2 because we burn
@@ -1269,6 +1272,8 @@ func snapshotAndRestore(t *testing.T, offset uint64) {
 	}
 	fsm.Unlock()
 
+	// Make sure to get the possibly new leader
+	leader = c.Leader()
 	// Commit some more things.
 	for i := 20; i < 30; i++ {
 		future = leader.Apply([]byte(fmt.Sprintf("test %d", i)), 0)
