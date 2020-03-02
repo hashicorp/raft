@@ -4,6 +4,7 @@ references:
   images:
     go-1.11: &GOLANG_1_11_IMAGE circleci/golang:1.11
     go-1.12: &GOLANG_1_12_IMAGE circleci/golang:1.12
+    go-1.13: &GOLANG_1_13_IMAGE circleci/golang:1.13
 
   environment: &ENVIRONMENT
     TEST_RESULTS_DIR: &TEST_RESULTS_DIR /tmp/test-results # path to where test results are saved
@@ -110,6 +111,11 @@ workflows:
           go-version: *GOLANG_1_12_IMAGE
           requires:
             - go-fmt-and-vet
+      - go-test:
+          name: test go1.13
+          go-version: *GOLANG_1_13_IMAGE
+          requires:
+            - go-fmt-and-vet
       - go-test-32bit:
           name: test go1.11 - 32bit
           go-version: *GOLANG_1_11_IMAGE
@@ -118,6 +124,11 @@ workflows:
       - go-test-32bit:
           name: test go1.12 - 32 bit
           go-version: *GOLANG_1_12_IMAGE
+          requires:
+            - go-fmt-and-vet
+      - go-test-32bit:
+          name: test go1.13 - 32bit
+          go-version: *GOLANG_1_13_IMAGE
           requires:
             - go-fmt-and-vet
 
