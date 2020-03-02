@@ -7,6 +7,7 @@ references:
 
   environment: &ENVIRONMENT
     TEST_RESULTS_DIR: &TEST_RESULTS_DIR /tmp/test-results # path to where test results are saved
+    GOTRACEBACK: 'all'
     GO111MODULE: 'on'
     GOMAXPROCS: 2
 
