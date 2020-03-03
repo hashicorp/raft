@@ -63,7 +63,7 @@ func NewInmemTransportWithTimeout(addr ServerAddress, timeout time.Duration) (Se
 // NewInmemTransport is used to initialize a new transport
 // and generates a random local address if none is specified
 func NewInmemTransport(addr ServerAddress) (ServerAddress, *InmemTransport) {
-	return NewInmemTransportWithTimeout(addr, 50*time.Millisecond)
+	return NewInmemTransportWithTimeout(addr, 500*time.Millisecond)
 }
 
 // SetHeartbeatHandler is used to set optional fast-path for
