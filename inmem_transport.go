@@ -159,7 +159,7 @@ func (i *InmemTransport) makeRPC(target ServerAddress, args interface{}, r io.Re
 	}
 
 	// Send the RPC over
-	respCh := make(chan RPCResponse)
+	respCh := make(chan RPCResponse, 1)
 	req := RPC{
 		Command:  args,
 		Reader:   r,

@@ -2,18 +2,19 @@ version: 2.1
 
 references:
   images:
-    go-1.11: &GOLANG_1_11_IMAGE circleci/golang:1.11
-    go-1.12: &GOLANG_1_12_IMAGE circleci/golang:1.12
+    go-1.13: &GOLANG_1_13_IMAGE circleci/golang:1.13
+    go-1.14: &GOLANG_1_14_IMAGE circleci/golang:1.14
 
   environment: &ENVIRONMENT
     TEST_RESULTS_DIR: &TEST_RESULTS_DIR /tmp/test-results # path to where test results are saved
+    GOTRACEBACK: 'all'
     GO111MODULE: 'on'
     GOMAXPROCS: 2
 
 jobs:
   go-fmt-and-vet:
     docker:
-      - image: *GOLANG_1_12_IMAGE
+      - image: *GOLANG_1_14_IMAGE
     steps:
       - checkout
 
@@ -100,23 +101,24 @@ workflows:
     jobs:
       - go-fmt-and-vet
       - go-test:
-          name: test go1.11
-          go-version: *GOLANG_1_11_IMAGE
+          name: test go1.13
+          go-version: *GOLANG_1_13_IMAGE
           requires:
             - go-fmt-and-vet
       - go-test:
-          name: test go1.12
-          go-version: *GOLANG_1_12_IMAGE
+          name: test go1.14
+          go-version: *GOLANG_1_14_IMAGE
           requires:
             - go-fmt-and-vet
       - go-test-32bit:
-          name: test go1.11 - 32bit
-          go-version: *GOLANG_1_11_IMAGE
+          name: test go1.13 - 32bit
+          go-version: *GOLANG_1_13_IMAGE
           requires:
             - go-fmt-and-vet
       - go-test-32bit:
-          name: test go1.12 - 32 bit
-          go-version: *GOLANG_1_12_IMAGE
+          name: test go1.14 - 32bit
+          go-version: *GOLANG_1_14_IMAGE
           requires:
             - go-fmt-and-vet
+
 

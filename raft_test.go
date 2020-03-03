@@ -208,7 +208,9 @@ func TestRaft_RecoverCluster(t *testing.T) {
 		c.EnsureSamePeers(t)
 	}
 	for applies := 0; applies < 20; applies++ {
-		runRecover(applies)
+		t.Run(fmt.Sprintf("%d applies", applies), func(t *testing.T) {
+			runRecover(applies)
+		})
 	}
 }
 
