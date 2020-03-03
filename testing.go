@@ -808,5 +808,6 @@ func FileSnapTest(t *testing.T) (string, *FileSnapshotStore) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
+	snap.noSync = true
 	return dir, snap
 }
