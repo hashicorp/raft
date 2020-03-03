@@ -23,10 +23,10 @@ var (
 // Return configurations optimized for in-memory
 func inmemConfig(t *testing.T) *Config {
 	conf := DefaultConfig()
-	conf.HeartbeatTimeout = 100 * time.Millisecond
-	conf.ElectionTimeout = 100 * time.Millisecond
-	conf.LeaderLeaseTimeout = 100 * time.Millisecond
-	conf.CommitTimeout = 10 * time.Millisecond
+	conf.HeartbeatTimeout = 50 * time.Millisecond
+	conf.ElectionTimeout = 50 * time.Millisecond
+	conf.LeaderLeaseTimeout = 50 * time.Millisecond
+	conf.CommitTimeout = 5 * time.Millisecond
 	conf.Logger = newTestLeveledLogger(t)
 	return conf
 }
