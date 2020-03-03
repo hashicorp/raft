@@ -1272,8 +1272,6 @@ func snapshotAndRestore(t *testing.T, offset uint64) {
 	}
 	fsm.Unlock()
 
-	// Make sure to get the possibly new leader
-	leader = c.Leader()
 	// Commit some more things.
 	for i := 20; i < 30; i++ {
 		future = leader.Apply([]byte(fmt.Sprintf("test %d", i)), 0)
