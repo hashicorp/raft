@@ -1237,10 +1237,7 @@ func snapshotAndRestore(t *testing.T, offset uint64) {
 	}
 	defer reader.Close()
 	if err := leader.Restore(meta, reader, 5*time.Second); err != nil {
-		// Losing leadership is fine during restore
-		if err != ErrLeadershipLost {
-			c.FailNowf("Restore failed: %v", err)
-		}
+		c.FailNowf("Restore failed: %v", err)
 	}
 
 	// Make sure the index was updated correctly. We add 2 because we burn
