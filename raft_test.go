@@ -1199,6 +1199,13 @@ func TestRaft_UserSnapshot(t *testing.T) {
 func snapshotAndRestore(t *testing.T, offset uint64) {
 	// Make the cluster.
 	conf := inmemConfig(t)
+
+	// snapshot operations perform some file IO operations.
+	// increase times out to account for that
+	conf.HeartbeatTimeout = 500 * time.Millisecond
+	conf.ElectionTimeout = 500 * time.Millisecond
+	conf.LeaderLeaseTimeout = 500 * time.Millisecond
+
 	c := MakeCluster(3, t, conf)
 	defer c.Close()
 
@@ -1282,15 +1289,22 @@ func snapshotAndRestore(t *testing.T, offset uint64) {
 }
 
 func TestRaft_UserRestore(t *testing.T) {
-	// Snapshots from the past.
-	snapshotAndRestore(t, 0)
-	snapshotAndRestore(t, 1)
-	snapshotAndRestore(t, 2)
+	cases := []uint64{
+		0,
+		1,
+		2,
 
-	// Snapshots from the future.
-	snapshotAndRestore(t, 100)
-	snapshotAndRestore(t, 1000)
-	snapshotAndRestore(t, 10000)
+		// Snapshots from the future
+		100,
+		1000,
+		10000,
+	}
+
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("case %v", c), func(t *testing.T) {
+			snapshotAndRestore(t, c)
+		})
+	}
 }
 
 func TestRaft_SendSnapshotFollower(t *testing.T) {
