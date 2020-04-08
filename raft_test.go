@@ -2100,7 +2100,7 @@ func TestRaft_LeadershipTransferIgnoresNonvoters(t *testing.T) {
 
 	follower := c.Followers()[0]
 
-	demoteFuture := c.Leader().DemoteVoter(follower.localID, 0, 1*time.Nanosecond)
+	demoteFuture := c.Leader().DemoteVoter(follower.localID, 0, 0)
 	if demoteFuture.Error() != nil {
 		t.Fatalf("demote voter err'd: %v", demoteFuture.Error())
 	}
