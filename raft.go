@@ -1734,13 +1734,13 @@ func (r *Raft) lookupServer(id ServerID) *Server {
 	return nil
 }
 
-// pickServer returns the follower that is most up to date. Because it accesses
-// leaderstate, it should only be called from the leaderloop.
+// pickServer returns the follower that is most up to date and participating in quorum.
+// Because it accesses leaderstate, it should only be called from the leaderloop.
 func (r *Raft) pickServer() *Server {
 	var pick *Server
 	var current uint64
 	for _, server := range r.configurations.latest.Servers {
-		if server.ID == r.localID {
+		if server.ID == r.localID || server.Suffrage != Voter {
 			continue
 		}
 		state, ok := r.leaderState.replState[server.ID]

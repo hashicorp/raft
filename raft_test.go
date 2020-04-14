@@ -2094,6 +2094,29 @@ func TestRaft_LeadershipTransferLeaderReplicationTimeout(t *testing.T) {
 	}
 }
 
+func TestRaft_LeadershipTransferIgnoresNonvoters(t *testing.T) {
+	c := MakeCluster(2, t, nil)
+	defer c.Close()
+
+	follower := c.Followers()[0]
+
+	demoteFuture := c.Leader().DemoteVoter(follower.localID, 0, 0)
+	if demoteFuture.Error() != nil {
+		t.Fatalf("demote voter err'd: %v", demoteFuture.Error())
+	}
+
+	future := c.Leader().LeadershipTransfer()
+	if future.Error() == nil {
+		t.Fatal("leadership transfer should err")
+	}
+
+	expected := "cannot find peer"
+	actual := future.Error().Error()
+	if !strings.Contains(actual, expected) {
+		t.Errorf("leadership transfer should err with: %s", expected)
+	}
+}
+
 func TestRaft_LeadershipTransferStopRightAway(t *testing.T) {
 	r := Raft{leaderState: leaderState{}}
 	r.setupLeaderState()
