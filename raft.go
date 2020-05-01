@@ -1452,7 +1452,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	if lastVoteTerm == req.Term && lastVoteCandBytes != nil {
 		r.logger.Info("duplicate requestVote for same term", "term", req.Term)
 		if bytes.Compare(lastVoteCandBytes, req.Candidate) == 0 {
-			r.logger.Warn("duplicate requestVote from", "candidate", req.Candidate)
+			r.logger.Warn("duplicate requestVote from", "candidate", candidate)
 			resp.Granted = true
 		}
 		return
