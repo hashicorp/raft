@@ -27,6 +27,10 @@ type PeerObservation struct {
 	Peer    Server
 }
 
+type HeartbeatObservation struct {
+	Peer ServerAddress
+}
+
 // nextObserverId is used to provide a unique ID for each observer to aid in
 // deregistration.
 var nextObserverID uint64
