@@ -29,7 +29,7 @@ type PeerObservation struct {
 
 // HeartbeatObservation is sent when a node fails to heartbeat with the leader
 type HeartbeatObservation struct {
-	Peer ServerAddress
+	PeerID ServerID
 }
 
 // nextObserverId is used to provide a unique ID for each observer to aid in
