@@ -27,6 +27,7 @@ type PeerObservation struct {
 	Peer    Server
 }
 
+// HeartbeatObservation is sent when a node fails to heartbeat with the leader
 type HeartbeatObservation struct {
 	Peer ServerAddress
 }
