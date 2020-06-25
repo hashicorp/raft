@@ -572,8 +572,8 @@ func (r *Raft) setNewLogs(req *AppendEntriesRequest, nextIndex, lastIndex uint64
 
 // appendStats is used to emit stats about an AppendEntries invocation.
 func appendStats(peer string, start time.Time, logs float32) {
-	metrics.MeasureSince([]string{"raft", "replication", "appendEntries", "rpc", peer}, start)
-	metrics.IncrCounter([]string{"raft", "replication", "appendEntries", "logs", peer}, logs)
+	metrics.MeasureSince([]string{"raft", "replication", "appendEntries", "rpc"}, start)
+	metrics.IncrCounter([]string{"raft", "replication", "appendEntries", "logs"}, logs)
 }
 
 // handleStaleTerm is used when a follower indicates that we have a stale term.
