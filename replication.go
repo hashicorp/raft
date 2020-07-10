@@ -328,6 +328,8 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	}
 	labels := []metrics.Label{{Name: "peer_id", Value: string(s.peer.ID)}}
 	metrics.MeasureSinceWithLabels([]string{"raft", "replication", "installSnapshot"}, start, labels)
+	// Duplicated information. Kept for backward compatibility.
+	metrics.MeasureSince([]string{"raft", "replication", "installSnapshot", string(s.peer.ID)}, start)
 
 	// Check for a newer term, stop running
 	if resp.Term > req.Term {
@@ -389,6 +391,8 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 			failures = 0
 			labels := []metrics.Label{{Name: "peer_id", Value: string(s.peer.ID)}}
 			metrics.MeasureSinceWithLabels([]string{"raft", "replication", "heartbeat"}, start, labels)
+			// Duplicated information. Kept for backward compatibility.
+			metrics.MeasureSince([]string{"raft", "replication", "heartbeat", string(s.peer.ID)}, start)
 			s.notifyAll(resp.Success)
 		}
 	}
@@ -577,6 +581,9 @@ func appendStats(peer string, start time.Time, logs float32) {
 	labels := []metrics.Label{{Name: "peer_id", Value: peer}}
 	metrics.MeasureSinceWithLabels([]string{"raft", "replication", "appendEntries", "rpc"}, start, labels)
 	metrics.IncrCounterWithLabels([]string{"raft", "replication", "appendEntries", "logs"}, logs, labels)
+	// Duplicated information. Kept for backward compatibility.
+	metrics.MeasureSince([]string{"raft", "replication", "appendEntries", "rpc", peer}, start)
+	metrics.IncrCounter([]string{"raft", "replication", "appendEntries", "logs", peer}, logs)
 }
 
 // handleStaleTerm is used when a follower indicates that we have a stale term.
