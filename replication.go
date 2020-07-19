@@ -375,6 +375,10 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 			return
 		}
 
+		if !s.allowPipeline {
+			req.LeaderCommitIndex = r.getCommitIndex()
+		}
+
 		start := time.Now()
 		if err := r.trans.AppendEntries(s.peer.ID, s.peer.Address, &req, &resp); err != nil {
 			r.logger.Error("failed to heartbeat to", "peer", s.peer.Address, "error", err)
