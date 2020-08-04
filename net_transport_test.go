@@ -24,7 +24,7 @@ func (t *testAddrProvider) ServerAddr(id ServerID) (ServerAddress, error) {
 
 func TestNetworkTransport_CloseStreams(t *testing.T) {
 	// Transport 1 is consumer
-	trans1, err := NewTCPTransportWithLogger("127.0.0.1:0", nil, 2, time.Second, newTestLogger(t))
+	trans1, err := NewTCPTransportWithLogger("localhost:0", nil, 2, time.Second, newTestLogger(t))
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 	}()
 
 	// Transport 2 makes outbound request, 3 conn pool
-	trans2, err := NewTCPTransportWithLogger("127.0.0.1:0", nil, 3, time.Second, newTestLogger(t))
+	trans2, err := NewTCPTransportWithLogger("localhost:0", nil, 3, time.Second, newTestLogger(t))
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 }
 
 func TestNetworkTransport_StartStop(t *testing.T) {
-	trans, err := NewTCPTransportWithLogger("127.0.0.1:0", nil, 2, time.Second, newTestLogger(t))
+	trans, err := NewTCPTransportWithLogger("localhost:0", nil, 2, time.Second, newTestLogger(t))
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestNetworkTransport_StartStop(t *testing.T) {
 
 func TestNetworkTransport_Heartbeat_FastPath(t *testing.T) {
 	// Transport 1 is consumer
-	trans1, err := NewTCPTransportWithLogger("127.0.0.1:0", nil, 2, time.Second, newTestLogger(t))
+	trans1, err := NewTCPTransportWithLogger("localhost:0", nil, 2, time.Second, newTestLogger(t))
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestNetworkTransport_Heartbeat_FastPath(t *testing.T) {
 	trans1.SetHeartbeatHandler(fastpath)
 
 	// Transport 2 makes outbound request
-	trans2, err := NewTCPTransportWithLogger("127.0.0.1:0", nil, 2, time.Second, newTestLogger(t))
+	trans2, err := NewTCPTransportWithLogger("localhost:0", nil, 2, time.Second, newTestLogger(t))
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestNetworkTransport_AppendEntries(t *testing.T) {
 
 	for _, useAddrProvider := range []bool{true, false} {
 		// Transport 1 is consumer
-		trans1, err := makeTransport(t, useAddrProvider, "127.0.0.1:0")
+		trans1, err := makeTransport(t, useAddrProvider, "localhost:0")
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
@@ -254,7 +254,7 @@ func TestNetworkTransport_AppendEntriesPipeline(t *testing.T) {
 
 	for _, useAddrProvider := range []bool{true, false} {
 		// Transport 1 is consumer
-		trans1, err := makeTransport(t, useAddrProvider, "127.0.0.1:0")
+		trans1, err := makeTransport(t, useAddrProvider, "localhost:0")
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
@@ -337,7 +337,7 @@ func TestNetworkTransport_AppendEntriesPipeline(t *testing.T) {
 
 func TestNetworkTransport_AppendEntriesPipeline_CloseStreams(t *testing.T) {
 	// Transport 1 is consumer
-	trans1, err := makeTransport(t, true, "127.0.0.1:0")
+	trans1, err := makeTransport(t, true, "localhost:0")
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -446,7 +446,7 @@ func TestNetworkTransport_RequestVote(t *testing.T) {
 
 	for _, useAddrProvider := range []bool{true, false} {
 		// Transport 1 is consumer
-		trans1, err := makeTransport(t, useAddrProvider, "127.0.0.1:0")
+		trans1, err := makeTransport(t, useAddrProvider, "localhost:0")
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
@@ -505,7 +505,7 @@ func TestNetworkTransport_InstallSnapshot(t *testing.T) {
 
 	for _, useAddrProvider := range []bool{true, false} {
 		// Transport 1 is consumer
-		trans1, err := makeTransport(t, useAddrProvider, "127.0.0.1:0")
+		trans1, err := makeTransport(t, useAddrProvider, "localhost:0")
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
@@ -576,7 +576,7 @@ func TestNetworkTransport_InstallSnapshot(t *testing.T) {
 
 func TestNetworkTransport_EncodeDecode(t *testing.T) {
 	// Transport 1 is consumer
-	trans1, err := NewTCPTransportWithLogger("127.0.0.1:0", nil, 2, time.Second, newTestLogger(t))
+	trans1, err := NewTCPTransportWithLogger("localhost:0", nil, 2, time.Second, newTestLogger(t))
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -592,9 +592,9 @@ func TestNetworkTransport_EncodeDecode(t *testing.T) {
 }
 
 func TestNetworkTransport_EncodeDecode_AddressProvider(t *testing.T) {
-	addressOverride := "127.0.0.1:11111"
+	addressOverride := "localhost:11111"
 	config := &NetworkTransportConfig{MaxPool: 2, Timeout: time.Second, Logger: newTestLogger(t), ServerAddressProvider: &testAddrProvider{addressOverride}}
-	trans1, err := NewTCPTransportWithConfig("127.0.0.1:0", nil, config)
+	trans1, err := NewTCPTransportWithConfig("localhost:0", nil, config)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -611,7 +611,7 @@ func TestNetworkTransport_EncodeDecode_AddressProvider(t *testing.T) {
 
 func TestNetworkTransport_PooledConn(t *testing.T) {
 	// Transport 1 is consumer
-	trans1, err := NewTCPTransportWithLogger("127.0.0.1:0", nil, 2, time.Second, newTestLogger(t))
+	trans1, err := NewTCPTransportWithLogger("localhost:0", nil, 2, time.Second, newTestLogger(t))
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -658,7 +658,7 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 	}()
 
 	// Transport 2 makes outbound request, 3 conn pool
-	trans2, err := NewTCPTransportWithLogger("127.0.0.1:0", nil, 3, time.Second, newTestLogger(t))
+	trans2, err := NewTCPTransportWithLogger("localhost:0", nil, 3, time.Second, newTestLogger(t))
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -699,9 +699,9 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 func makeTransport(t *testing.T, useAddrProvider bool, addressOverride string) (*NetworkTransport, error) {
 	if useAddrProvider {
 		config := &NetworkTransportConfig{MaxPool: 2, Timeout: time.Second, Logger: newTestLogger(t), ServerAddressProvider: &testAddrProvider{addressOverride}}
-		return NewTCPTransportWithConfig("127.0.0.1:0", nil, config)
+		return NewTCPTransportWithConfig("localhost:0", nil, config)
 	}
-	return NewTCPTransportWithLogger("127.0.0.1:0", nil, 2, time.Second, newTestLogger(t))
+	return NewTCPTransportWithLogger("localhost:0", nil, 2, time.Second, newTestLogger(t))
 }
 
 type testCountingWriter struct {
