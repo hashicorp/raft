@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/armon/go-metrics"
+	metrics "github.com/armon/go-metrics"
 )
 
 const (
@@ -327,6 +327,9 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 		return false, err
 	}
 	metrics.MeasureSinceWithLabels([]string{"raft", "replication", "installSnapshot"}, start, []metrics.Label{{Name: "raft_peer_id", Value: string(s.peer.ID)}})
+	// Emit the second metric to maintain backwards-compatibility
+	// with dashboards for all the existing Consul users
+	metrics.MeasureSince([]string{"raft", "replication", "installSnapshot", string(s.peer.ID)}, start)
 
 	// Check for a newer term, stop running
 	if resp.Term > req.Term {
@@ -387,6 +390,9 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 			s.setLastContact()
 			failures = 0
 			metrics.MeasureSinceWithLabels([]string{"raft", "replication", "heartbeat"}, start, []metrics.Label{{Name: "raft_peer_id", Value: string(s.peer.ID)}})
+			// Emit the second metric to maintain backwards-compatibility
+			// with dashboards for all the existing Consul users
+			metrics.MeasureSince([]string{"raft", "replication", "heartbeat", string(s.peer.ID)}, start)
 			s.notifyAll(resp.Success)
 		}
 	}
@@ -575,6 +581,11 @@ func appendStats(peer string, start time.Time, logs float32) {
 	labels := []metrics.Label{{Name: "raft_peer_id", Value: peer}}
 	metrics.MeasureSinceWithLabels([]string{"raft", "replication", "appendEntries", "rpc"}, start, labels)
 	metrics.IncrCounterWithLabels([]string{"raft", "replication", "appendEntries", "logs"}, logs, labels)
+
+	// Emit the second metric to maintain backwards-compatibility
+	// with dashboards for all the existing Consul users
+	metrics.MeasureSince([]string{"raft", "replication", "appendEntries", "rpc", peer}, start)
+	metrics.IncrCounter([]string{"raft", "replication", "appendEntries", "logs", peer}, logs)
 }
 
 // handleStaleTerm is used when a follower indicates that we have a stale term.
