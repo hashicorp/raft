@@ -1966,7 +1966,7 @@ func TestRaft_LeadershipTransferToInvalidID(t *testing.T) {
 	c := MakeCluster(3, t, nil)
 	defer c.Close()
 
-	future := c.Leader().LeadershipTransferToServer(ServerID("abc"), ServerAddress("127.0.0.1"))
+	future := c.Leader().LeadershipTransferToServer(ServerID("abc"), ServerAddress("localhost"))
 	if future.Error() == nil {
 		t.Fatal("leadership transfer should err")
 	}
@@ -1983,7 +1983,7 @@ func TestRaft_LeadershipTransferToInvalidAddress(t *testing.T) {
 	defer c.Close()
 
 	follower := c.GetInState(Follower)[0]
-	future := c.Leader().LeadershipTransferToServer(follower.localID, ServerAddress("127.0.0.1"))
+	future := c.Leader().LeadershipTransferToServer(follower.localID, ServerAddress("localhost"))
 	if future.Error() == nil {
 		t.Fatal("leadership transfer should err")
 	}
