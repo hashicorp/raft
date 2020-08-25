@@ -882,7 +882,7 @@ func (r *Raft) checkLeaderLease() time.Duration {
 					r.logger.Debug("failed to contact", "server-id", server.ID, "time", diff)
 				}
 
-				r.observe(MissedHeartbeatObservation{PeerID: server.ID})
+				r.observe(FailedHeartbeatObservation{PeerID: server.ID})
 			}
 			metrics.AddSample([]string{"raft", "leader", "lastContact"}, float32(diff/time.Millisecond))
 		}
