@@ -83,7 +83,7 @@ type leaderState struct {
 	leadershipTransferInProgress int32 // indicates that a leadership transfer is in progress.
 	commitCh                     chan struct{}
 	commitment                   *commitment
-	inflight                     *list.List // list of logFuture in log index order
+	inflight                     *inflightLogList // list of logFuture in log index order
 	replState                    map[ServerID]*followerReplication
 	notify                       map[*verifyFuture]struct{}
 	stepDown                     chan struct{}
@@ -355,7 +355,7 @@ func (r *Raft) setupLeaderState() {
 	r.leaderState.commitment = newCommitment(r.leaderState.commitCh,
 		r.configurations.latest,
 		r.getLastIndex()+1 /* first index that may be committed in this term */)
-	r.leaderState.inflight = list.New()
+	r.leaderState.inflight = newInflightLogList()
 	r.leaderState.replState = make(map[ServerID]*followerReplication)
 	r.leaderState.notify = make(map[*verifyFuture]struct{})
 	r.leaderState.stepDown = make(chan struct{}, 1)
@@ -397,9 +397,11 @@ func (r *Raft) runLeader() {
 		}
 
 		// Respond to all inflight operations
+		r.leaderState.inflight.Mu.Lock()
 		for e := r.leaderState.inflight.Front(); e != nil; e = e.Next() {
 			e.Value.(*logFuture).respond(ErrLeadershipLost)
 		}
+		r.leaderState.inflight.Mu.Unlock()
 
 		// Respond to any pending verify requests
 		for future := range r.leaderState.notify {
@@ -409,8 +411,8 @@ func (r *Raft) runLeader() {
 		// Clear all the state
 		r.leaderState.commitCh = nil
 		r.leaderState.commitment = nil
-		r.leaderState.inflight = nil
 		r.leaderState.replState = nil
+		r.leaderState.inflight = nil
 		r.leaderState.notify = nil
 		r.leaderState.stepDown = nil
 
@@ -639,6 +641,7 @@ func (r *Raft) leaderLoop() {
 			var lastIdxInGroup uint64
 
 			// Pull all inflight logs that are committed off the queue.
+			r.leaderState.inflight.Mu.Lock()
 			for e := r.leaderState.inflight.Front(); e != nil; e = e.Next() {
 				commitLog := e.Value.(*logFuture)
 				idx := commitLog.log.Index
@@ -662,6 +665,7 @@ func (r *Raft) leaderLoop() {
 					r.leaderState.inflight.Remove(e)
 				}
 			}
+			r.leaderState.inflight.Mu.Unlock()
 
 			// Measure the time to enqueue batch of logs for FSM to apply
 			metrics.MeasureSince([]string{"raft", "fsm", "enqueue"}, start)
@@ -942,12 +946,14 @@ func (r *Raft) restoreUserSnapshot(meta *SnapshotMeta, reader io.Reader) error {
 
 	// Cancel any inflight requests.
 	for {
+		r.leaderState.inflight.Mu.Lock()
 		e := r.leaderState.inflight.Front()
 		if e == nil {
 			break
 		}
 		e.Value.(*logFuture).respond(ErrAbortedByRestore)
 		r.leaderState.inflight.Remove(e)
+		r.leaderState.inflight.Mu.Unlock()
 	}
 
 	// We will overwrite the snapshot metadata with the current term,
@@ -1065,6 +1071,7 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 	logs := make([]*Log, n)
 	metrics.SetGauge([]string{"raft", "leader", "dispatchNumLogs"}, float32(n))
 
+	r.leaderState.inflight.Mu.Lock()
 	for idx, applyLog := range applyLogs {
 		applyLog.dispatch = now
 		lastIndex++
@@ -1073,6 +1080,7 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 		logs[idx] = &applyLog.log
 		r.leaderState.inflight.PushBack(applyLog)
 	}
+	r.leaderState.inflight.Mu.Unlock()
 
 	// Write the log entry locally
 	if err := r.logs.StoreLogs(logs); err != nil {

@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"container/list"
 	"errors"
 	"fmt"
 	"sync"
@@ -125,6 +126,47 @@ func (s *followerReplication) setLastContact() {
 	s.lastContactLock.Lock()
 	s.lastContact = time.Now()
 	s.lastContactLock.Unlock()
+}
+
+type inflightLogList struct {
+	inflight *list.List
+	Mu       sync.Mutex
+}
+
+func newInflightLogList() *inflightLogList {
+	return &inflightLogList{
+		inflight: list.New(),
+	}
+}
+
+func (f *inflightLogList) Front() *list.Element {
+	return f.inflight.Front()
+}
+
+func (f *inflightLogList) Remove(e *list.Element) interface{} {
+	return f.inflight.Remove(e)
+}
+
+func (f *inflightLogList) PushBack(v interface{}) *list.Element {
+	return f.inflight.PushBack(v)
+}
+
+func (f *inflightLogList) Get(index uint64) *list.Element {
+	f.Mu.Lock()
+	defer f.Mu.Unlock()
+	for e := f.inflight.Front(); e != nil; e = e.Next() {
+		infligthLogFuture, ok := e.Value.(*logFuture)
+		if !ok {
+			continue
+		}
+		if infligthLogFuture.Index() > index {
+			return nil
+		}
+		if infligthLogFuture.Index() == index {
+			return e
+		}
+	}
+	return nil
 }
 
 // replicate is a long running routine that replicates log entries to a single
@@ -560,11 +602,20 @@ func (r *Raft) setNewLogs(req *AppendEntriesRequest, nextIndex, lastIndex uint64
 	req.Entries = make([]*Log, 0, r.conf.MaxAppendEntries)
 	maxIndex := min(nextIndex+uint64(r.conf.MaxAppendEntries)-1, lastIndex)
 	for i := nextIndex; i <= maxIndex; i++ {
+		element := r.leaderState.inflight.Get(i)
+		if element != nil {
+			logFu, ok := element.Value.(*logFuture)
+			if ok {
+				req.Entries = append(req.Entries, &logFu.log)
+				continue
+			}
+		}
 		oldLog := new(Log)
 		if err := r.logs.GetLog(i, oldLog); err != nil {
 			r.logger.Error("failed to get log", "index", i, "error", err)
 			return err
 		}
+
 		req.Entries = append(req.Entries, oldLog)
 	}
 	return nil
