@@ -83,7 +83,7 @@ type leaderState struct {
 	leadershipTransferInProgress int32 // indicates that a leadership transfer is in progress.
 	commitCh                     chan struct{}
 	commitment                   *commitment
-	inflight                     *list.List // list of logFuture in log index order
+	inflight                     *inflightLogList // list of logFuture in log index order
 	replState                    map[ServerID]*followerReplication
 	notify                       map[*verifyFuture]struct{}
 	stepDown                     chan struct{}
@@ -355,7 +355,7 @@ func (r *Raft) setupLeaderState() {
 	r.leaderState.commitment = newCommitment(r.leaderState.commitCh,
 		r.configurations.latest,
 		r.getLastIndex()+1 /* first index that may be committed in this term */)
-	r.leaderState.inflight = list.New()
+	r.leaderState.inflight = newInflightLogList()
 	r.leaderState.replState = make(map[ServerID]*followerReplication)
 	r.leaderState.notify = make(map[*verifyFuture]struct{})
 	r.leaderState.stepDown = make(chan struct{}, 1)
