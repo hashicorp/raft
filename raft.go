@@ -84,6 +84,7 @@ type leaderState struct {
 	commitCh                     chan struct{}
 	commitment                   *commitment
 	inflight                     *list.List // list of logFuture in log index order
+	majorityLog                  map[uint64]*Log
 	replState                    map[ServerID]*followerReplication
 	notify                       map[*verifyFuture]struct{}
 	stepDown                     chan struct{}
@@ -98,6 +99,28 @@ func (r *Raft) setLeader(leader ServerAddress) {
 	if oldLeader != leader {
 		r.observe(LeaderObservation{Leader: leader})
 	}
+}
+
+func (r *Raft) GetMajorityLog(index uint64) *Log {
+	r.leaderLock.RLock()
+	log, ok := r.leaderState.majorityLog[index]
+	r.leaderLock.RUnlock()
+	if !ok {
+		return nil
+	}
+	return log
+}
+
+func (r *Raft) AddMajorityLog(index uint64, log *Log) {
+	r.leaderLock.Lock()
+	r.leaderState.majorityLog[index] = log
+	r.leaderLock.Unlock()
+}
+
+func (r *Raft) DeleteMajorityLog(index uint64) {
+	r.leaderLock.Lock()
+	delete(r.leaderState.majorityLog, index)
+	r.leaderLock.Unlock()
 }
 
 // requestConfigChange is a helper for the above functions that make
@@ -356,6 +379,7 @@ func (r *Raft) setupLeaderState() {
 		r.configurations.latest,
 		r.getLastIndex()+1 /* first index that may be committed in this term */)
 	r.leaderState.inflight = list.New()
+	r.leaderState.majorityLog = make(map[uint64]*Log)
 	r.leaderState.replState = make(map[ServerID]*followerReplication)
 	r.leaderState.notify = make(map[*verifyFuture]struct{})
 	r.leaderState.stepDown = make(chan struct{}, 1)
@@ -410,6 +434,7 @@ func (r *Raft) runLeader() {
 		r.leaderState.commitCh = nil
 		r.leaderState.commitment = nil
 		r.leaderState.inflight = nil
+		r.leaderState.majorityLog = nil
 		r.leaderState.replState = nil
 		r.leaderState.notify = nil
 		r.leaderState.stepDown = nil
@@ -659,6 +684,8 @@ func (r *Raft) leaderLoop() {
 				r.processLogs(lastIdxInGroup, groupFutures)
 
 				for _, e := range groupReady {
+					log := e.Value.(*logFuture)
+					r.DeleteMajorityLog(log.Index())
 					r.leaderState.inflight.Remove(e)
 				}
 			}
@@ -946,7 +973,9 @@ func (r *Raft) restoreUserSnapshot(meta *SnapshotMeta, reader io.Reader) error {
 		if e == nil {
 			break
 		}
-		e.Value.(*logFuture).respond(ErrAbortedByRestore)
+		log := e.Value.(*logFuture)
+		log.respond(ErrAbortedByRestore)
+		r.DeleteMajorityLog(log.Index())
 		r.leaderState.inflight.Remove(e)
 	}
 
@@ -1072,6 +1101,7 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 		applyLog.log.Term = term
 		logs[idx] = &applyLog.log
 		r.leaderState.inflight.PushBack(applyLog)
+		r.AddMajorityLog(applyLog.Index(), &applyLog.log)
 	}
 
 	// Write the log entry locally

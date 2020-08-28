@@ -560,7 +560,12 @@ func (r *Raft) setNewLogs(req *AppendEntriesRequest, nextIndex, lastIndex uint64
 	req.Entries = make([]*Log, 0, r.conf.MaxAppendEntries)
 	maxIndex := min(nextIndex+uint64(r.conf.MaxAppendEntries)-1, lastIndex)
 	for i := nextIndex; i <= maxIndex; i++ {
-		oldLog := new(Log)
+		oldLog := r.GetMajorityLog(i)
+		if oldLog != nil {
+			req.Entries = append(req.Entries, oldLog)
+			continue
+		}
+		oldLog = new(Log)
 		if err := r.logs.GetLog(i, oldLog); err != nil {
 			r.logger.Error("failed to get log", "index", i, "error", err)
 			return err
