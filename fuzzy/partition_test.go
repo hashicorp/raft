@@ -129,7 +129,7 @@ func (p *Partitioner) PreRPC(s, t string, r *raft.RPC) error {
 	if sp == st {
 		return nil
 	}
-	return fmt.Errorf("Unable to connect to %v, from %v", t, s)
+	return fmt.Errorf("unable to connect to %v, from %v", t, s)
 }
 
 func (p *Partitioner) PostRPC(s, t string, req *raft.RPC, res *raft.RPCResponse) error {

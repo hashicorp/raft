@@ -101,7 +101,7 @@ func (t *transport) sendRPC(target string, req interface{}, resp interface{}) er
 	if tt == nil {
 		t.log.Info("sendRPC unknown node", "target", target, "transports", t.transports.nodes)
 		t.transports.RUnlock()
-		return fmt.Errorf("Unknown target host %v", target)
+		return fmt.Errorf("unknown target host %v", target)
 	}
 	t.transports.RUnlock()
 	rc := make(chan raft.RPCResponse, 1)
