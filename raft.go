@@ -1563,7 +1563,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	}
 
 	// Check that we received it all
-	if n != req.Size {
+	if req.Size != 0 && n != req.Size {
 		sink.Cancel()
 		r.logger.Error("failed to receive whole snapshot",
 			"received", hclog.Fmt("%d / %d", n, req.Size))

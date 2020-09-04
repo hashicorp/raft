@@ -429,13 +429,9 @@ func (n *NetworkTransport) InstallSnapshot(id ServerID, target ServerAddress, ar
 	}
 	defer conn.Release()
 
-	// Set a deadline, scaled by request size
+	// Set a deadline for the RPC and first block of data of size TimeoutScale
 	if n.timeout > 0 {
-		timeout := n.timeout * time.Duration(args.Size/int64(n.TimeoutScale))
-		if timeout < n.timeout {
-			timeout = n.timeout
-		}
-		conn.conn.SetDeadline(time.Now().Add(timeout))
+		conn.conn.SetDeadline(time.Now().Add(n.timeout))
 	}
 
 	// Send the RPC
@@ -443,8 +439,17 @@ func (n *NetworkTransport) InstallSnapshot(id ServerID, target ServerAddress, ar
 		return err
 	}
 
-	// Stream the state
-	if _, err = io.Copy(conn.w, data); err != nil {
+	for err == nil {
+		// Stream the state
+		var count int64
+		count, err = io.CopyN(conn.w, data, int64(n.TimeoutScale))
+		n.logger.Info("copied", "bytes", count)
+
+		if err == nil && n.timeout > 0 {
+			conn.conn.SetDeadline(time.Now().Add(n.timeout))
+		}
+	}
+	if err != io.EOF {
 		return err
 	}
 
@@ -590,7 +595,7 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 			return err
 		}
 		rpc.Command = &req
-		rpc.Reader = io.LimitReader(r, req.Size)
+		rpc.Reader = r // io.LimitReader(r, req.Size)
 
 	case rpcTimeoutNow:
 		var req TimeoutNowRequest

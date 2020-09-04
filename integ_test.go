@@ -95,6 +95,7 @@ func MakeRaft(t *testing.T, conf *Config, bootstrap bool) *RaftEnv {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
+	trans.TimeoutScale = 1000
 
 	env.logger = hclog.New(&hclog.LoggerOptions{
 		Name: string(trans.LocalAddr()) + " :",
