@@ -982,6 +982,7 @@ func (r *Raft) LeaderCh() <-chan bool {
 		go func() {
 			for v := range r.leaderCh {
 				r.leaderChsLock.Lock()
+				r.leaderChLastMessage = v
 				for _, c := range r.leaderChs {
 					overrideNotifyBool(c, v)
 				}
