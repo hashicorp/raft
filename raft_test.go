@@ -263,13 +263,15 @@ func TestRaft_SingleNode(t *testing.T) {
 	raft := c.rafts[0]
 
 	// Watch leaderCh for change
-	select {
-	case v := <-raft.LeaderCh():
-		if !v {
-			c.FailNowf("should become leader")
+	ch := raft.LeaderCh()
+	isLeader := false
+	for !isLeader {
+		select {
+		case v := <-ch:
+			isLeader = v
+		case <-time.After(conf.HeartbeatTimeout * 3):
+			c.FailNowf("timeout becoming leader")
 		}
-	case <-time.After(conf.HeartbeatTimeout * 3):
-		c.FailNowf("timeout becoming leader")
 	}
 
 	// Should be leader
@@ -1507,10 +1509,11 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 
 	// Watch the leaderCh
 	timeout := time.After(conf.LeaderLeaseTimeout * 2)
+	lch := leader.LeaderCh()
 LOOP:
 	for {
 		select {
-		case v := <-leader.LeaderCh():
+		case v := <-lch:
 			if !v {
 				break LOOP
 			}
