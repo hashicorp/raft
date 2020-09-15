@@ -1,6 +1,8 @@
 package raft
 
 import (
+	"errors"
+	"sync"
 	"testing"
 )
 
@@ -84,5 +86,58 @@ func TestLogCache(t *testing.T) {
 	err = c.GetLog(34, &out)
 	if err != ErrLogNotFound {
 		t.Fatalf("err: %v", err)
+	}
+}
+
+type errorStore struct {
+	LogStore
+	mu      sync.Mutex
+	fail    bool
+	failed  int
+	failMax int
+}
+
+func (e *errorStore) StoreLogs(logs []*Log) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.fail {
+		e.failed++
+		if e.failed <= e.failMax {
+			return errors.New("some error")
+		}
+		e.fail = false
+	}
+	return e.LogStore.StoreLogs(logs)
+}
+
+func (e *errorStore) failNext(count int) {
+	e.mu.Lock()
+	e.fail = true
+	e.failMax = count
+	e.mu.Unlock()
+}
+
+func TestLogCacheWithBackendStoreError(t *testing.T) {
+	store := NewInmemStore()
+	errStore := &errorStore{LogStore: store}
+	c, _ := NewLogCache(16, errStore)
+
+	for i := 0; i < 4; i++ {
+		log := &Log{Index: uint64(i) + 1}
+		store.StoreLog(log)
+	}
+	errStore.failNext(1)
+	log := &Log{Index: 5}
+	c.StoreLog(log)
+
+	var out Log
+	for i := 0; i < 4; i++ {
+		if err := c.GetLog(uint64(i+1), &out); err != nil {
+			t.Fatalf("err: %v", err)
+		}
+	}
+	out = Log{}
+	if err := c.GetLog(5, &out); err != ErrLogNotFound {
+		t.Fatalf("Should have returned not found, got err=%v out=%+v", err, out)
 	}
 }
