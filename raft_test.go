@@ -2167,6 +2167,55 @@ func TestRaft_GetConfigurationNoBootstrap(t *testing.T) {
 	}
 }
 
+func TestRaft_CacheLogWithStoreError(t *testing.T) {
+	c := MakeCluster(2, t, nil)
+	defer c.Close()
+
+	// Should be one leader
+	follower := c.Followers()[0]
+	leader := c.Leader()
+	c.EnsureLeader(t, leader.localAddr)
+
+	// There is no lock to protect this assignment I am afraid.
+	es := &errorStore{LogStore: follower.logs}
+	cl, _ := NewLogCache(100, es)
+	follower.logs = cl
+
+	// Commit some logs
+	for i := 0; i < 5; i++ {
+		future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+		if err := future.Error(); err != nil {
+			c.FailNowf("[ERR] err: %v", err)
+		}
+	}
+
+	// Make the next fail
+	es.failNext(1)
+	leader.Apply([]byte("test6"), 0)
+
+	leader.Apply([]byte("test7"), 0)
+	future := leader.Apply([]byte("test8"), 0)
+
+	// Wait for the last future to apply
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+
+	// Shutdown follower
+	if f := follower.Shutdown(); f.Error() != nil {
+		c.FailNowf("error shuting down follower: %v", f.Error())
+	}
+
+	// Try to restart the follower and make sure it does not fail with a LogNotFound error
+	_, trans := NewInmemTransport(follower.localAddr)
+	follower.logs = es.LogStore
+	n, err := NewRaft(&follower.conf, &MockFSM{}, follower.logs, follower.stable, follower.snapshots, trans)
+	if err != nil {
+		c.FailNowf("error restarting follower: %v", err)
+	}
+	n.Shutdown()
+}
+
 // TODO: These are test cases we'd like to write for appendEntries().
 // Unfortunately, it's difficult to do so with the current way this file is
 // tested.
