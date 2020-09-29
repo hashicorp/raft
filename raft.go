@@ -465,6 +465,7 @@ func (r *Raft) runLeader() {
 // it'll instruct the replication routines to try to replicate to the current
 // index. This must only be called from the main thread.
 func (r *Raft) startStopReplication() {
+	defer metrics.SetGauge([]string{"raft", "peers"}, float32(len(r.configurations.latest.Servers)))
 	inConfig := make(map[ServerID]bool, len(r.configurations.latest.Servers))
 	lastIdx := r.getLastIndex()
 
