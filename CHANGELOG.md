@@ -10,6 +10,7 @@ IMPROVEMENTS
 * Prevent starting a TCP transport when IP address is `nil` [[GH-403](https://github.com/hashicorp/raft/pull/403)]
 * Reject leadership transfer requests when in candidate state to prevent indefinite blocking while unable to elect a leader [[GH-413](https://github.com/hashicorp/raft/pull/413)]
 * Add labels for metric metadata to reduce cardinality of metric names [[GH-409](https://github.com/hashicorp/raft/pull/409)]
+* Add peers metric [[GH-413](https://github.com/hashicorp/raft/pull/431)]
 
 BUG FIXES
 
