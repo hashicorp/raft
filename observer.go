@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"time"
 	"sync/atomic"
 )
 
@@ -30,6 +31,7 @@ type PeerObservation struct {
 // FailedHeartbeatObservation is sent when a node fails to heartbeat with the leader
 type FailedHeartbeatObservation struct {
 	PeerID ServerID
+	LastContact time.Time
 }
 
 // nextObserverId is used to provide a unique ID for each observer to aid in
