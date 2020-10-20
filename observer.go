@@ -1,8 +1,8 @@
 package raft
 
 import (
-	"time"
 	"sync/atomic"
+	"time"
 )
 
 // Observation is sent along the given channel to observers when an event occurs.
@@ -30,7 +30,7 @@ type PeerObservation struct {
 
 // FailedHeartbeatObservation is sent when a node fails to heartbeat with the leader
 type FailedHeartbeatObservation struct {
-	PeerID ServerID
+	PeerID      ServerID
 	LastContact time.Time
 }
 
