@@ -486,7 +486,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 
 	// Make sure we have a valid server address and ID.
 	protocolVersion := conf.ProtocolVersion
-	localAddr := ServerAddress(trans.LocalAddr())
+	localAddr := trans.LocalAddr()
 	localID := conf.LocalID
 
 	// TODO (slackpad) - When we deprecate protocol version 2, remove this
