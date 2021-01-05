@@ -2,13 +2,13 @@ version: 2.1
 
 references:
   images:
-    go-1.13: &GOLANG_1_13_IMAGE circleci/golang:1.13
-    go-1.14: &GOLANG_1_14_IMAGE circleci/golang:1.14
+    go-1.13: &GOLANG_1_13_IMAGE docker.mirror.hashicorp.services/circleci/golang:1.13
+    go-1.14: &GOLANG_1_14_IMAGE docker.mirror.hashicorp.services/circleci/golang:1.14
 
   environment: &ENVIRONMENT
     TEST_RESULTS_DIR: &TEST_RESULTS_DIR /tmp/test-results # path to where test results are saved
-    GOTRACEBACK: 'all'
-    GO111MODULE: 'on'
+    GOTRACEBACK: "all"
+    GO111MODULE: "on"
     GOMAXPROCS: 2
 
 jobs:
@@ -79,7 +79,7 @@ jobs:
       - image: << parameters.go-version >>
     environment:
       <<: *ENVIRONMENT
-      GOARCH: '386'
+      GOARCH: "386"
     steps:
       - checkout
       - run: mkdir -p $TEST_RESULTS_DIR
@@ -120,5 +120,3 @@ workflows:
           go-version: *GOLANG_1_14_IMAGE
           requires:
             - go-fmt-and-vet
-
-
