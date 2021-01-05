@@ -238,20 +238,20 @@ func ValidateConfig(config *Config) error {
 	}
 	if config.ProtocolVersion < protocolMin ||
 		config.ProtocolVersion > ProtocolVersionMax {
-		return fmt.Errorf("Protocol version %d must be >= %d and <= %d",
+		return fmt.Errorf("ProtocolVersion %d must be >= %d and <= %d",
 			config.ProtocolVersion, protocolMin, ProtocolVersionMax)
 	}
 	if len(config.LocalID) == 0 {
 		return fmt.Errorf("LocalID cannot be empty")
 	}
 	if config.HeartbeatTimeout < 5*time.Millisecond {
-		return fmt.Errorf("Heartbeat timeout is too low")
+		return fmt.Errorf("HeartbeatTimeout is too low")
 	}
 	if config.ElectionTimeout < 5*time.Millisecond {
-		return fmt.Errorf("Election timeout is too low")
+		return fmt.Errorf("ElectionTimeout is too low")
 	}
 	if config.CommitTimeout < time.Millisecond {
-		return fmt.Errorf("Commit timeout is too low")
+		return fmt.Errorf("CommitTimeout is too low")
 	}
 	if config.MaxAppendEntries <= 0 {
 		return fmt.Errorf("MaxAppendEntries must be positive")
@@ -260,16 +260,16 @@ func ValidateConfig(config *Config) error {
 		return fmt.Errorf("MaxAppendEntries is too large")
 	}
 	if config.SnapshotInterval < 5*time.Millisecond {
-		return fmt.Errorf("Snapshot interval is too low")
+		return fmt.Errorf("SnapshotInterval is too low")
 	}
 	if config.LeaderLeaseTimeout < 5*time.Millisecond {
-		return fmt.Errorf("Leader lease timeout is too low")
+		return fmt.Errorf("LeaderLeaseTimeout is too low")
 	}
 	if config.LeaderLeaseTimeout > config.HeartbeatTimeout {
-		return fmt.Errorf("Leader lease timeout cannot be larger than heartbeat timeout")
+		return fmt.Errorf("LeaderLeaseTimeout cannot be larger than heartbeat timeout")
 	}
 	if config.ElectionTimeout < config.HeartbeatTimeout {
-		return fmt.Errorf("Election timeout must be equal or greater than Heartbeat Timeout")
+		return fmt.Errorf("ElectionTimeout must be equal or greater than Heartbeat Timeout")
 	}
 	return nil
 }
