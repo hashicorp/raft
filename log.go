@@ -1,5 +1,7 @@
 package raft
 
+import "fmt"
+
 // LogType describes various types of log entries.
 type LogType uint8
 
@@ -32,6 +34,26 @@ const (
 	// when protocol version 1 or greater is in use.
 	LogConfiguration
 )
+
+// String returns LogType as a human readable string.
+func (lt LogType) String() string {
+	switch lt {
+	case LogCommand:
+		return "LogCommand"
+	case LogNoop:
+		return "LogNoop"
+	case LogAddPeerDeprecated:
+		return "LogAddPeerDeprecated"
+	case LogRemovePeerDeprecated:
+		return "LogRemovePeerDeprecated"
+	case LogBarrier:
+		return "LogBarrier"
+	case LogConfiguration:
+		return "LogConfiguration"
+	default:
+		return fmt.Sprintf("%d", lt)
+	}
+}
 
 // Log entries are replicated to all members of the Raft cluster
 // and form the heart of the replicated state machine.
