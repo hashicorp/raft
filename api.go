@@ -495,10 +495,15 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		return nil, fmt.Errorf("when running with ProtocolVersion < 3, LocalID must be set to the network address")
 	}
 
+	applyCh := make(chan *logFuture)
+	if conf.BatchApplyCh {
+		applyCh = make(chan *logFuture, conf.MaxAppendEntries)
+	}
+
 	// Create Raft struct.
 	r := &Raft{
 		protocolVersion:       protocolVersion,
-		applyCh:               make(chan *logFuture),
+		applyCh:               applyCh,
 		conf:                  *conf,
 		fsm:                   fsm,
 		fsmMutateCh:           make(chan interface{}, 128),

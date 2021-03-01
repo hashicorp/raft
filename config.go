@@ -151,6 +151,13 @@ type Config struct {
 	// an inconsistent log.
 	MaxAppendEntries int
 
+	// BatchApplyCh indicates whether we should buffer applyCh
+	// to size MaxAppendEntries. This enables batch log commitment,
+	// but breaks the timeout guarantee on Apply. Specifically,
+	// a log can be added to the applyCh buffer but not actually be
+	// processed until after the specified timeout.
+	BatchApplyCh bool
+
 	// If we are a member of a cluster, and RemovePeer is invoked for the
 	// local node, then we forget all peers and transition into the follower state.
 	// If ShutdownOnRemove is is set, we additional shutdown Raft. Otherwise,
