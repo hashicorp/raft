@@ -152,15 +152,18 @@ WAIT:
 	goto CHECK
 }
 
-func WaitFuture(f Future, t *testing.T) error {
-	timer := time.AfterFunc(200*time.Millisecond, func() {
-		panic(fmt.Errorf("timeout waiting for future %v", f))
-	})
-	defer timer.Stop()
-	return f.Error()
+func WaitFuture(f Future, t testing.TB) error {
+	if helper, ok := t.(testingHelper); ok {
+		helper.Helper()
+	}
+	msg := "timeout waiting for future %v"
+	return waitForError(t, f.Error, 2*time.Second, msg, f)
 }
 
-func NoErr(err error, t *testing.T) {
+func NoErr(err error, t testing.TB) {
+	if helper, ok := t.(testingHelper); ok {
+		helper.Helper()
+	}
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -248,6 +251,7 @@ func TestRaft_Integ(t *testing.T) {
 	applyAndWait(env1, 100, 10)
 
 	// Do a snapshot
+	t.Logf("Wait for snapshot")
 	NoErr(WaitFuture(env1.raft.Snapshot(), t), t)
 
 	// Join a few nodes!
@@ -320,13 +324,14 @@ func TestRaft_Integ(t *testing.T) {
 		conf.LocalID = ServerID(fmt.Sprintf("final-batch-%d", i))
 		env := MakeRaft(t, conf, false)
 		addr := env.trans.LocalAddr()
-		NoErr(WaitFuture(env1.raft.AddVoter(conf.LocalID, addr, 0, 0), t), t)
+
+		// Wait for a leader
+		leader, err = WaitForAny(Leader, append([]*RaftEnv{env1}, envs...))
+		NoErr(err, t)
+
+		NoErr(WaitFuture(leader.raft.AddVoter(conf.LocalID, addr, 0, 0), t), t)
 		envs = append(envs, env)
 	}
-
-	// Wait for a leader
-	leader, err = WaitForAny(Leader, append([]*RaftEnv{env1}, envs...))
-	NoErr(err, t)
 
 	// Remove the old nodes
 	NoErr(WaitFuture(leader.raft.RemoveServer(rm1.raft.localID, 0, 0), t), t)
