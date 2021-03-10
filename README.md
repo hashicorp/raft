@@ -37,7 +37,7 @@ and `StableStore`.
 As of September 2017, HashiCorp will start using tags for this library to clearly indicate
 major version updates. We recommend you vendor your application's dependency on this library.
 
-* v0.1.0 is the original stable version of the library that was in master and has been maintained
+* v0.1.0 is the original stable version of the library that was in main and has been maintained
 with no breaking API changes. This was in use by Consul prior to version 0.7.0.
 
 * v1.0.0 takes the changes that were staged in the library-v2-stage-one branch. This version
