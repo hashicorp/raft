@@ -1764,16 +1764,6 @@ func (r *Raft) setState(state RaftState) {
 	}
 }
 
-// LookupServer looks up a server by ServerID.
-func (r *Raft) lookupServer(id ServerID) *Server {
-	for _, server := range r.configurations.latest.Servers {
-		if server.ID != r.localID {
-			return &server
-		}
-	}
-	return nil
-}
-
 // pickServer returns the follower that is most up to date and participating in quorum.
 // Because it accesses leaderstate, it should only be called from the leaderloop.
 func (r *Raft) pickServer() *Server {
