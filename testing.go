@@ -27,7 +27,7 @@ func inmemConfig(t *testing.T) *Config {
 	conf.ElectionTimeout = 50 * time.Millisecond
 	conf.LeaderLeaseTimeout = 50 * time.Millisecond
 	conf.CommitTimeout = 5 * time.Millisecond
-	conf.Logger = newTestLeveledLogger(t)
+	conf.Logger = newTestLogger(t)
 	return conf
 }
 
@@ -144,9 +144,6 @@ func (a *testLoggerAdapter) Write(d []byte) (int, error) {
 	}
 	if a.prefix != "" {
 		l := a.prefix + ": " + string(d)
-		if testing.Verbose() {
-			fmt.Printf("testLoggerAdapter verbose: %s\n", l)
-		}
 		a.t.Log(l)
 		return len(l), nil
 	}
@@ -156,27 +153,21 @@ func (a *testLoggerAdapter) Write(d []byte) (int, error) {
 }
 
 func newTestLogger(t *testing.T) hclog.Logger {
-	return hclog.New(&hclog.LoggerOptions{
-		Output: &testLoggerAdapter{t: t},
-		Level:  hclog.DefaultLevel,
-	})
+	return newTestLoggerWithPrefix(t, "")
 }
 
+// newTestLoggerWithPrefix returns a Logger that can be used in tests. prefix will
+// be added as the name of the logger.
+//
+// If tests are run with -v (verbose mode, or -json which implies verbose) the
+// log output will go to stderr directly.
+// If tests are run in regular "quiet" mode, logs will be sent to t.Log so that
+// the logs only appear when a test fails.
 func newTestLoggerWithPrefix(t *testing.T, prefix string) hclog.Logger {
-	return hclog.New(&hclog.LoggerOptions{
-		Output: &testLoggerAdapter{t: t, prefix: prefix},
-		Level:  hclog.DefaultLevel,
-	})
-}
+	if testing.Verbose() {
+		return hclog.New(&hclog.LoggerOptions{Name: prefix})
+	}
 
-func newTestLeveledLogger(t *testing.T) hclog.Logger {
-	return hclog.New(&hclog.LoggerOptions{
-		Name:   "",
-		Output: &testLoggerAdapter{t: t},
-	})
-}
-
-func newTestLeveledLoggerWithPrefix(t *testing.T, prefix string) hclog.Logger {
 	return hclog.New(&hclog.LoggerOptions{
 		Name:   prefix,
 		Output: &testLoggerAdapter{t: t, prefix: prefix},
@@ -750,7 +741,7 @@ func makeCluster(t *testing.T, opts *MakeClusterOpts) *cluster {
 
 		peerConf := opts.Conf
 		peerConf.LocalID = configuration.Servers[i].ID
-		peerConf.Logger = newTestLeveledLoggerWithPrefix(t, string(configuration.Servers[i].ID))
+		peerConf.Logger = newTestLoggerWithPrefix(t, string(configuration.Servers[i].ID))
 
 		if opts.Bootstrap {
 			err := BootstrapCluster(peerConf, logs, store, snap, trans, configuration)
