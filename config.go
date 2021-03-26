@@ -167,17 +167,20 @@ type Config struct {
 	// TrailingLogs controls how many logs we leave after a snapshot. This is used
 	// so that we can quickly replay logs on a follower instead of being forced to
 	// send an entire snapshot. The value passed here is the initial setting used.
-	// This can be tuned during operation using
+	// This can be tuned during operation using ReloadConfig.
 	TrailingLogs uint64
 
-	// SnapshotInterval controls how often we check if we should perform a snapshot.
-	// We randomly stagger between this value and 2x this value to avoid the entire
-	// cluster from performing a snapshot at once.
+	// SnapshotInterval controls how often we check if we should perform a
+	// snapshot. We randomly stagger between this value and 2x this value to avoid
+	// the entire cluster from performing a snapshot at once. The value passed
+	// here is the initial setting used. This can be tuned during operation using
+	// ReloadConfig.
 	SnapshotInterval time.Duration
 
 	// SnapshotThreshold controls how many outstanding logs there must be before
 	// we perform a snapshot. This is to prevent excessive snapshots when we can
-	// just replay a small set of logs.
+	// just replay a small set of logs. The value passed here is the initial
+	// setting used. This can be tuned during operation using ReloadConfig.
 	SnapshotThreshold uint64
 
 	// LeaderLeaseTimeout is used to control how long the "lease" lasts

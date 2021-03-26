@@ -642,7 +642,9 @@ func (r *Raft) config() Config {
 	return r.conf.Load().(Config)
 }
 
-// ReloadConfig updates the configuration of a running raft node.
+// ReloadConfig updates the configuration of a running raft node. If the new
+// configuration is invalid an error is returned and no changes made to the
+// instance.
 func (r *Raft) ReloadConfig(rc *ReloadableConfig) error {
 	r.confReloadMu.Lock()
 	defer r.confReloadMu.Unlock()
