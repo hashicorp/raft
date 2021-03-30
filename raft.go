@@ -1087,7 +1087,7 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 		lastIndex++
 		applyLog.log.Index = lastIndex
 		applyLog.log.Term = term
-		applyLog.log.AppendedAt = time.Now()
+		applyLog.log.AppendedAt = now
 		logs[idx] = &applyLog.log
 		r.leaderState.inflight.PushBack(applyLog)
 	}
