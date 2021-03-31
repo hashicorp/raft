@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestRaft_StartStop(t *testing.T) {
@@ -108,7 +110,8 @@ func TestRaft_RecoverCluster_NoState(t *testing.T) {
 			},
 		},
 	}
-	err := RecoverCluster(&r.conf, &MockFSM{}, r.logs, r.stable,
+	cfg := r.config()
+	err := RecoverCluster(&cfg, &MockFSM{}, r.logs, r.stable,
 		r.snapshots, r.trans, configuration)
 	if err == nil || !strings.Contains(err.Error(), "no initial state") {
 		c.FailNowf("should have failed for no initial state: %v", err)
@@ -158,7 +161,8 @@ func TestRaft_RecoverCluster(t *testing.T) {
 			if err != nil {
 				c.FailNowf("snapshot list err: %v", err)
 			}
-			if err = RecoverCluster(&r.conf, &MockFSM{}, r.logs, r.stable,
+			cfg := r.config()
+			if err = RecoverCluster(&cfg, &MockFSM{}, r.logs, r.stable,
 				r.snapshots, r.trans, configuration); err != nil {
 				c.FailNowf("recover err: %v", err)
 			}
@@ -191,7 +195,7 @@ func TestRaft_RecoverCluster(t *testing.T) {
 			// operation.
 			_, trans := NewInmemTransport(r.localAddr)
 			var r2 *Raft
-			r2, err = NewRaft(&r.conf, &MockFSM{}, r.logs, r.stable, r.snapshots, trans)
+			r2, err = NewRaft(&cfg, &MockFSM{}, r.logs, r.stable, r.snapshots, trans)
 			if err != nil {
 				c.FailNowf("new raft err: %v", err)
 			}
@@ -963,7 +967,8 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 	r := leader
 	// Can't just reuse the old transport as it will be closed
 	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
-	r, err := NewRaft(&r.conf, r.fsm, r.logs, r.stable, r.snapshots, trans2)
+	cfg := r.config()
+	r, err := NewRaft(&cfg, r.fsm, r.logs, r.stable, r.snapshots, trans2)
 	if err != nil {
 		c.FailNowf("err: %v", err)
 	}
@@ -1013,7 +1018,8 @@ func TestRaft_NoRestoreOnStart(t *testing.T) {
 
 	_, trans := NewInmemTransport(leader.localAddr)
 	newFSM := &MockFSM{}
-	_, err := NewRaft(&leader.conf, newFSM, leader.logs, leader.stable, leader.snapshots, trans)
+	cfg := leader.config()
+	_, err := NewRaft(&cfg, newFSM, leader.logs, leader.stable, leader.snapshots, trans)
 	if err != nil {
 		c.FailNowf("err: %v", err)
 	}
@@ -1094,7 +1100,8 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	if err != nil {
 		c.FailNowf("err: %v", err)
 	}
-	if err = RecoverCluster(&r.conf, &MockFSM{}, r.logs, r.stable,
+	cfg := r.config()
+	if err = RecoverCluster(&cfg, &MockFSM{}, r.logs, r.stable,
 		r.snapshots, r.trans, configuration); err != nil {
 		c.FailNowf("err: %v", err)
 	}
@@ -1102,7 +1109,7 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	// Can't just reuse the old transport as it will be closed. We also start
 	// with a fresh FSM for good measure so no state can carry over.
 	_, trans := NewInmemTransport(r.localAddr)
-	r, err = NewRaft(&r.conf, &MockFSM{}, r.logs, r.stable, r.snapshots, trans)
+	r, err = NewRaft(&cfg, &MockFSM{}, r.logs, r.stable, r.snapshots, trans)
 	if err != nil {
 		c.FailNowf("err: %v", err)
 	}
@@ -2080,7 +2087,9 @@ func TestRaft_LeadershipTransferLeaderReplicationTimeout(t *testing.T) {
 
 	// set ElectionTimeout really short because this is used to determine
 	// how long a transfer is allowed to take.
-	l.conf.ElectionTimeout = 1 * time.Nanosecond
+	cfg := l.config()
+	cfg.ElectionTimeout = 1 * time.Nanosecond
+	l.conf.Store(cfg)
 
 	future := l.LeadershipTransferToServer(behind.localID, behind.localAddr)
 	if future.Error() == nil {
@@ -2165,6 +2174,58 @@ func TestRaft_GetConfigurationNoBootstrap(t *testing.T) {
 	if !reflect.DeepEqual(observed, expected) {
 		t.Errorf("GetConfiguration result differ from Raft.GetConfiguration: observed %+v, expected %+v", observed, expected)
 	}
+}
+
+func TestRaft_ReloadConfig(t *testing.T) {
+	conf := inmemConfig(t)
+	c := MakeCluster(1, t, conf)
+	defer c.Close()
+	raft := c.rafts[0]
+
+	// Make sure the reloadable values are as expected before
+	require.Equal(t, uint64(10240), raft.config().TrailingLogs)
+	require.Equal(t, 120*time.Second, raft.config().SnapshotInterval)
+	require.Equal(t, uint64(8192), raft.config().SnapshotThreshold)
+
+	// Reload with different values
+	newCfg := &ReloadableConfig{
+		TrailingLogs:      12345,
+		SnapshotInterval:  234 * time.Second,
+		SnapshotThreshold: 6789,
+	}
+
+	require.NoError(t, raft.ReloadConfig(newCfg))
+
+	// Now we should have new values
+	require.Equal(t, newCfg.TrailingLogs, raft.config().TrailingLogs)
+	require.Equal(t, newCfg.SnapshotInterval, raft.config().SnapshotInterval)
+	require.Equal(t, newCfg.SnapshotThreshold, raft.config().SnapshotThreshold)
+}
+
+func TestRaft_ReloadConfigValidates(t *testing.T) {
+	conf := inmemConfig(t)
+	c := MakeCluster(1, t, conf)
+	defer c.Close()
+	raft := c.rafts[0]
+
+	// Make sure the reloadable values are as expected before
+	require.Equal(t, uint64(10240), raft.config().TrailingLogs)
+	require.Equal(t, 120*time.Second, raft.config().SnapshotInterval)
+	require.Equal(t, uint64(8192), raft.config().SnapshotThreshold)
+
+	// Reload with different values that are invalid per ValidateConfig
+	newCfg := &ReloadableConfig{
+		TrailingLogs:      12345,
+		SnapshotInterval:  1 * time.Millisecond, // must be >= 5 millisecond
+		SnapshotThreshold: 6789,
+	}
+
+	require.Error(t, raft.ReloadConfig(newCfg))
+
+	// Now we should have same values
+	require.Equal(t, uint64(10240), raft.config().TrailingLogs)
+	require.Equal(t, 120*time.Second, raft.config().SnapshotInterval)
+	require.Equal(t, uint64(8192), raft.config().SnapshotThreshold)
 }
 
 // TODO: These are test cases we'd like to write for appendEntries().

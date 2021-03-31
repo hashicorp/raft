@@ -164,19 +164,23 @@ type Config struct {
 	// we can become a leader of a cluster containing only this node.
 	ShutdownOnRemove bool
 
-	// TrailingLogs controls how many logs we leave after a snapshot. This is
-	// used so that we can quickly replay logs on a follower instead of being
-	// forced to send an entire snapshot.
+	// TrailingLogs controls how many logs we leave after a snapshot. This is used
+	// so that we can quickly replay logs on a follower instead of being forced to
+	// send an entire snapshot. The value passed here is the initial setting used.
+	// This can be tuned during operation using ReloadConfig.
 	TrailingLogs uint64
 
-	// SnapshotInterval controls how often we check if we should perform a snapshot.
-	// We randomly stagger between this value and 2x this value to avoid the entire
-	// cluster from performing a snapshot at once.
+	// SnapshotInterval controls how often we check if we should perform a
+	// snapshot. We randomly stagger between this value and 2x this value to avoid
+	// the entire cluster from performing a snapshot at once. The value passed
+	// here is the initial setting used. This can be tuned during operation using
+	// ReloadConfig.
 	SnapshotInterval time.Duration
 
 	// SnapshotThreshold controls how many outstanding logs there must be before
 	// we perform a snapshot. This is to prevent excessive snapshots when we can
-	// just replay a small set of logs.
+	// just replay a small set of logs. The value passed here is the initial
+	// setting used. This can be tuned during operation using ReloadConfig.
 	SnapshotThreshold uint64
 
 	// LeaderLeaseTimeout is used to control how long the "lease" lasts
@@ -216,6 +220,40 @@ type Config struct {
 
 	// skipStartup allows NewRaft() to bypass all background work goroutines
 	skipStartup bool
+}
+
+// ReloadableConfig is the subset of Config that may be reconfigured during
+// runtime using raft.ReloadConfig. We choose to duplicate fields over embedding
+// or accepting a Config but only using specific fields to keep the API clear.
+// Reconfiguring some fields is potentially dangerous so we should only
+// selectively enable it for fields where that is allowed.
+type ReloadableConfig struct {
+	// TrailingLogs controls how many logs we leave after a snapshot. This is used
+	// so that we can quickly replay logs on a follower instead of being forced to
+	// send an entire snapshot. The value passed here updates the setting at runtime
+	// which will take effect as soon as the next snapshot completes and truncation
+	// occurs.
+	TrailingLogs uint64
+
+	// SnapshotInterval controls how often we check if we should perform a snapshot.
+	// We randomly stagger between this value and 2x this value to avoid the entire
+	// cluster from performing a snapshot at once.
+	SnapshotInterval time.Duration
+
+	// SnapshotThreshold controls how many outstanding logs there must be before
+	// we perform a snapshot. This is to prevent excessive snapshots when we can
+	// just replay a small set of logs.
+	SnapshotThreshold uint64
+}
+
+// apply sets the reloadable fields on the passed Config to the values in
+// `ReloadableConfig`. It returns a copy of Config with the fields from this
+// ReloadableConfig set.
+func (rc *ReloadableConfig) apply(to Config) Config {
+	to.TrailingLogs = rc.TrailingLogs
+	to.SnapshotInterval = rc.SnapshotInterval
+	to.SnapshotThreshold = rc.SnapshotThreshold
+	return to
 }
 
 // DefaultConfig returns a Config with usable defaults.

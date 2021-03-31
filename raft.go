@@ -29,7 +29,7 @@ var (
 // responses.
 func (r *Raft) getRPCHeader() RPCHeader {
 	return RPCHeader{
-		ProtocolVersion: r.conf.ProtocolVersion,
+		ProtocolVersion: r.config().ProtocolVersion,
 	}
 }
 
@@ -56,7 +56,7 @@ func (r *Raft) checkRPCHeader(rpc RPC) error {
 	// currently what we want, and in general support one version back. We
 	// may need to revisit this policy depending on how future protocol
 	// changes evolve.
-	if header.ProtocolVersion < r.conf.ProtocolVersion-1 {
+	if header.ProtocolVersion < r.config().ProtocolVersion-1 {
 		return ErrUnsupportedProtocol
 	}
 
@@ -151,7 +151,7 @@ func (r *Raft) runFollower() {
 	didWarn := false
 	r.logger.Info("entering follower state", "follower", r, "leader", r.Leader())
 	metrics.IncrCounter([]string{"raft", "state", "follower"}, 1)
-	heartbeatTimer := randomTimeout(r.conf.HeartbeatTimeout)
+	heartbeatTimer := randomTimeout(r.config().HeartbeatTimeout)
 
 	for r.getState() == Follower {
 		select {
@@ -187,11 +187,12 @@ func (r *Raft) runFollower() {
 
 		case <-heartbeatTimer:
 			// Restart the heartbeat timer
-			heartbeatTimer = randomTimeout(r.conf.HeartbeatTimeout)
+			hbTimeout := r.config().HeartbeatTimeout
+			heartbeatTimer = randomTimeout(hbTimeout)
 
 			// Check if we have had a successful contact
 			lastContact := r.LastContact()
-			if time.Now().Sub(lastContact) < r.conf.HeartbeatTimeout {
+			if time.Now().Sub(lastContact) < hbTimeout {
 				continue
 			}
 
@@ -228,7 +229,8 @@ func (r *Raft) runFollower() {
 // called on the main thread, and only makes sense in the follower state.
 func (r *Raft) liveBootstrap(configuration Configuration) error {
 	// Use the pre-init API to make the static updates.
-	err := BootstrapCluster(&r.conf, r.logs, r.stable, r.snapshots,
+	cfg := r.config()
+	err := BootstrapCluster(&cfg, r.logs, r.stable, r.snapshots,
 		r.trans, configuration)
 	if err != nil {
 		return err
@@ -260,7 +262,7 @@ func (r *Raft) runCandidate() {
 	// otherwise.
 	defer func() { r.candidateFromLeadershipTransfer = false }()
 
-	electionTimer := randomTimeout(r.conf.ElectionTimeout)
+	electionTimer := randomTimeout(r.config().ElectionTimeout)
 
 	// Tally the votes, need a simple majority
 	grantedVotes := 0
@@ -370,8 +372,13 @@ func (r *Raft) runLeader() {
 	// Notify that we are the leader
 	overrideNotifyBool(r.leaderCh, true)
 
+	// Store the notify chan. It's not reloadable so shouldn't change before the
+	// defer below runs, but this makes sure we always notify the same chan if
+	// ever for both gaining and loosing leadership.
+	notify := r.config().NotifyCh
+
 	// Push to the notify channel if given
-	if notify := r.conf.NotifyCh; notify != nil {
+	if notify != nil {
 		select {
 		case notify <- true:
 		case <-r.shutdownCh:
@@ -427,7 +434,7 @@ func (r *Raft) runLeader() {
 		overrideNotifyBool(r.leaderCh, false)
 
 		// Push to the notify channel if given
-		if notify := r.conf.NotifyCh; notify != nil {
+		if notify != nil {
 			select {
 			case notify <- false:
 			case <-r.shutdownCh:
@@ -548,7 +555,9 @@ func (r *Raft) leaderLoop() {
 	// only a single peer (ourself) and replicating to an undefined set
 	// of peers.
 	stepDown := false
-	lease := time.After(r.conf.LeaderLeaseTimeout)
+	// This is only used for the first lease check, we reload lease below
+	// based on the current config value.
+	lease := time.After(r.config().LeaderLeaseTimeout)
 
 	for r.getState() == Leader {
 		select {
@@ -583,7 +592,7 @@ func (r *Raft) leaderLoop() {
 			// the stopCh and doneCh.
 			go func() {
 				select {
-				case <-time.After(r.conf.ElectionTimeout):
+				case <-time.After(r.config().ElectionTimeout):
 					close(stopCh)
 					err := fmt.Errorf("leadership transfer timeout")
 					r.logger.Debug(err.Error())
@@ -680,7 +689,7 @@ func (r *Raft) leaderLoop() {
 			metrics.SetGauge([]string{"raft", "commitNumLogs"}, float32(len(groupReady)))
 
 			if stepDown {
-				if r.conf.ShutdownOnRemove {
+				if r.config().ShutdownOnRemove {
 					r.logger.Info("removed ourself, shutting down")
 					r.Shutdown()
 				} else {
@@ -751,7 +760,7 @@ func (r *Raft) leaderLoop() {
 			// Group commit, gather all the ready commits
 			ready := []*logFuture{newLog}
 		GROUP_COMMIT_LOOP:
-			for i := 0; i < r.conf.MaxAppendEntries; i++ {
+			for i := 0; i < r.config().MaxAppendEntries; i++ {
 				select {
 				case newLog := <-r.applyCh:
 					ready = append(ready, newLog)
@@ -776,7 +785,7 @@ func (r *Raft) leaderLoop() {
 
 			// Next check interval should adjust for the last node we've
 			// contacted, without going negative
-			checkInterval := r.conf.LeaderLeaseTimeout - maxDiff
+			checkInterval := r.config().LeaderLeaseTimeout - maxDiff
 			if checkInterval < minCheckInterval {
 				checkInterval = minCheckInterval
 			}
@@ -872,6 +881,11 @@ func (r *Raft) checkLeaderLease() time.Duration {
 	// Track contacted nodes, we can always contact ourself
 	contacted := 0
 
+	// Store lease timeout for this one check invocation as we need to refer to it
+	// in the loop and would be confusing if it ever becomes reloadable and
+	// changes between iterations below.
+	leaseTimeout := r.config().LeaderLeaseTimeout
+
 	// Check each follower
 	var maxDiff time.Duration
 	now := time.Now()
@@ -883,14 +897,14 @@ func (r *Raft) checkLeaderLease() time.Duration {
 			}
 			f := r.leaderState.replState[server.ID]
 			diff := now.Sub(f.LastContact())
-			if diff <= r.conf.LeaderLeaseTimeout {
+			if diff <= leaseTimeout {
 				contacted++
 				if diff > maxDiff {
 					maxDiff = diff
 				}
 			} else {
 				// Log at least once at high value, then debug. Otherwise it gets very verbose.
-				if diff <= 3*r.conf.LeaderLeaseTimeout {
+				if diff <= 3*leaseTimeout {
 					r.logger.Warn("failed to contact", "server-id", server.ID, "time", diff)
 				} else {
 					r.logger.Debug("failed to contact", "server-id", server.ID, "time", diff)
@@ -1131,7 +1145,11 @@ func (r *Raft) processLogs(index uint64, futures map[uint64]*logFuture) {
 		}
 	}
 
-	batch := make([]*commitTuple, 0, r.conf.MaxAppendEntries)
+	// Store maxAppendEntries for this call in case it ever becomes reloadable. We
+	// need to use the same value for all lines here to get the expected result.
+	maxAppendEntries := r.config().MaxAppendEntries
+
+	batch := make([]*commitTuple, 0, maxAppendEntries)
 
 	// Apply all the preceding logs
 	for idx := lastApplied + 1; idx <= index; idx++ {
@@ -1156,9 +1174,9 @@ func (r *Raft) processLogs(index uint64, futures map[uint64]*logFuture) {
 			batch = append(batch, preparedLog)
 
 			// If we have filled up a batch, send it to the FSM
-			if len(batch) >= r.conf.MaxAppendEntries {
+			if len(batch) >= maxAppendEntries {
 				applyBatch(batch)
-				batch = make([]*commitTuple, 0, r.conf.MaxAppendEntries)
+				batch = make([]*commitTuple, 0, maxAppendEntries)
 			}
 
 		case futureOk:
