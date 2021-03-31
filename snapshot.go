@@ -220,7 +220,7 @@ func (r *Raft) compactLogs(snapIdx uint64) error {
 	// Check if we have enough logs to truncate
 	lastLogIdx, _ := r.getLastLog()
 
-	// Ise a consistent value for trailingLogs for the duration of this method
+	// Use a consistent value for trailingLogs for the duration of this method
 	// call to avoid surprising behaviour.
 	trailingLogs := r.config().TrailingLogs
 	if lastLogIdx <= trailingLogs {
