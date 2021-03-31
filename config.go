@@ -230,8 +230,9 @@ type Config struct {
 type ReloadableConfig struct {
 	// TrailingLogs controls how many logs we leave after a snapshot. This is used
 	// so that we can quickly replay logs on a follower instead of being forced to
-	// send an entire snapshot. The value passed here is the initial setting used.
-	// This can be tuned during operation using
+	// send an entire snapshot. The value passed here updates the setting at runtime
+	// which will take effect as soon as the next snapshot completes and truncation
+	// occurs.
 	TrailingLogs uint64
 
 	// SnapshotInterval controls how often we check if we should perform a snapshot.
