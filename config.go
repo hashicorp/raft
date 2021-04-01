@@ -256,6 +256,13 @@ func (rc *ReloadableConfig) apply(to Config) Config {
 	return to
 }
 
+// fromConfig copies the reloadable fields from the passed Config.
+func (rc *ReloadableConfig) fromConfig(from Config) {
+	rc.TrailingLogs = from.TrailingLogs
+	rc.SnapshotInterval = from.SnapshotInterval
+	rc.SnapshotThreshold = from.SnapshotThreshold
+}
+
 // DefaultConfig returns a Config with usable defaults.
 func DefaultConfig() *Config {
 	return &Config{
