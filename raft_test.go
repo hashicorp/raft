@@ -2188,7 +2188,7 @@ func TestRaft_ReloadConfig(t *testing.T) {
 	require.Equal(t, uint64(8192), raft.config().SnapshotThreshold)
 
 	// Reload with different values
-	newCfg := &ReloadableConfig{
+	newCfg := ReloadableConfig{
 		TrailingLogs:      12345,
 		SnapshotInterval:  234 * time.Second,
 		SnapshotThreshold: 6789,
@@ -2214,7 +2214,7 @@ func TestRaft_ReloadConfigValidates(t *testing.T) {
 	require.Equal(t, uint64(8192), raft.config().SnapshotThreshold)
 
 	// Reload with different values that are invalid per ValidateConfig
-	newCfg := &ReloadableConfig{
+	newCfg := ReloadableConfig{
 		TrailingLogs:      12345,
 		SnapshotInterval:  1 * time.Millisecond, // must be >= 5 millisecond
 		SnapshotThreshold: 6789,
