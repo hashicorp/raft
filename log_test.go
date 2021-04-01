@@ -66,49 +66,6 @@ func TestOldestLog(t *testing.T) {
 	}
 }
 
-func testSetupMetrics(t *testing.T) *metrics.InmemSink {
-	// Record for ages (5 mins) so we can be confident that our assertions won't
-	// fail on silly long test runs due to dropped data.
-	s := metrics.NewInmemSink(10*time.Second, 300*time.Second)
-	cfg := metrics.DefaultConfig("raft.test")
-	cfg.EnableHostname = false
-	metrics.NewGlobal(cfg, s)
-	return s
-}
-
-func getCurrentGaugeValue(t *testing.T, sink *metrics.InmemSink, name string) float32 {
-	t.Helper()
-
-	data := sink.Data()
-
-	// Loop backward through intervals until there is a non-empty one
-	// Addresses flakiness around recording to one interval but accessing during the next
-	for i := len(data) - 1; i >= 0; i-- {
-		currentInterval := data[i]
-
-		currentInterval.RLock()
-		if gv, ok := currentInterval.Gauges[name]; ok {
-			currentInterval.RUnlock()
-			return gv.Value
-		}
-		currentInterval.RUnlock()
-	}
-
-	// Debug print all the gauges
-	buf := bytes.NewBuffer(nil)
-	for _, intv := range data {
-		intv.RLock()
-		for name, val := range intv.Gauges {
-			fmt.Fprintf(buf, "[%v][G] '%s': %0.3f\n", intv.Interval, name, val.Value)
-		}
-		intv.RUnlock()
-	}
-	t.Log(buf.String())
-
-	t.Fatalf("didn't find gauge %q", name)
-	return 0
-}
-
 func TestEmitsLogStoreMetrics(t *testing.T) {
 	sink := testSetupMetrics(t)
 
@@ -152,4 +109,47 @@ func TestEmitsLogStoreMetrics(t *testing.T) {
 	if got < 1 {
 		t.Fatalf("max age less than interval: %v", got)
 	}
+}
+
+func testSetupMetrics(t *testing.T) *metrics.InmemSink {
+	// Record for ages (5 mins) so we can be confident that our assertions won't
+	// fail on silly long test runs due to dropped data.
+	s := metrics.NewInmemSink(10*time.Second, 300*time.Second)
+	cfg := metrics.DefaultConfig("raft.test")
+	cfg.EnableHostname = false
+	metrics.NewGlobal(cfg, s)
+	return s
+}
+
+func getCurrentGaugeValue(t *testing.T, sink *metrics.InmemSink, name string) float32 {
+	t.Helper()
+
+	data := sink.Data()
+
+	// Loop backward through intervals until there is a non-empty one
+	// Addresses flakiness around recording to one interval but accessing during the next
+	for i := len(data) - 1; i >= 0; i-- {
+		currentInterval := data[i]
+
+		currentInterval.RLock()
+		if gv, ok := currentInterval.Gauges[name]; ok {
+			currentInterval.RUnlock()
+			return gv.Value
+		}
+		currentInterval.RUnlock()
+	}
+
+	// Debug print all the gauges
+	buf := bytes.NewBuffer(nil)
+	for _, intv := range data {
+		intv.RLock()
+		for name, val := range intv.Gauges {
+			fmt.Fprintf(buf, "[%v][G] '%s': %0.3f\n", intv.Interval, name, val.Value)
+		}
+		intv.RUnlock()
+	}
+	t.Log(buf.String())
+
+	t.Fatalf("didn't find gauge %q", name)
+	return 0
 }
