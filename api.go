@@ -666,7 +666,10 @@ func (r *Raft) ReloadConfig(rc ReloadableConfig) error {
 
 // ReloadableConfig returns the current state of the reloadable fields in Raft's
 // configuration. This is useful for programs to discover the current state for
-// reporting to users or tests. It is safe to call from any goroutine.
+// reporting to users or tests. It is safe to call from any goroutine. It is intended
+// for reporting and testing purposes primarily; external synchronization would be
+// required to safely use this in a read-modify-write pattern for reloadable 
+// configuration options.
 func (r *Raft) ReloadableConfig() ReloadableConfig {
 	cfg := r.config()
 	var rc ReloadableConfig
