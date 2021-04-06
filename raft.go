@@ -15,7 +15,8 @@ import (
 )
 
 const (
-	minCheckInterval = 10 * time.Millisecond
+	minCheckInterval       = 10 * time.Millisecond
+	oldestLogGaugeInterval = 10 * time.Second
 )
 
 var (
@@ -389,8 +390,14 @@ func (r *Raft) runLeader() {
 	// leaderloop.
 	r.setupLeaderState()
 
+	// Run a background go-routine to emit metrics on log age
+	stopCh := make(chan struct{})
+	go emitLogStoreMetrics(r.logs, []string{"raft", "leader"}, oldestLogGaugeInterval, stopCh)
+
 	// Cleanup state on step down
 	defer func() {
+		close(stopCh)
+
 		// Since we were the leader previously, we update our
 		// last contact time when we step down, so that we are not
 		// reporting a last contact time from before we were the
@@ -1094,6 +1101,7 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 		lastIndex++
 		applyLog.log.Index = lastIndex
 		applyLog.log.Term = term
+		applyLog.log.AppendedAt = now
 		logs[idx] = &applyLog.log
 		r.leaderState.inflight.PushBack(applyLog)
 	}
