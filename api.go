@@ -323,6 +323,7 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 			continue
 		}
 
+		start := time.Now()
 		err = fsm.Restore(source)
 		// Close the source after the restore has completed
 		source.Close()
@@ -330,6 +331,9 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 			// Same here, skip and try the next one.
 			continue
 		}
+		// Update the gauge for the time it took to restore.
+		metrics.SetGauge([]string{"raft", "fsm", "lastRestoreTime"},
+			float32(time.Since(start).Milliseconds()))
 
 		snapshotIndex = snapshot.Index
 		snapshotTerm = snapshot.Term
@@ -583,6 +587,11 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 // of them can be restored. This is called at initialization time, and is
 // completely unsafe to call at any other time.
 func (r *Raft) restoreSnapshot() error {
+	// Measure time from here since latency on listing snapshots or having to try
+	// multiple snapshots all adds to the restore time that matters i.e. how long
+	// the server takes to restart.
+	start := time.Now()
+
 	snapshots, err := r.snapshots.List()
 	if err != nil {
 		r.logger.Error("failed to list snapshots", "error", err)
@@ -608,6 +617,16 @@ func (r *Raft) restoreSnapshot() error {
 
 			r.logger.Info("restored from snapshot", "id", snapshot.ID)
 		}
+
+		// Update the gauge for the time it took to restore. We do this even if no
+		// actual restore happened since it's useful to always rely on the metric
+		// being set on startup. For persistent FSMs that use
+		// NoSnapshotRestoreOnStart this value will be low on initial startup, but
+		// could be set higher later if the node has to be restored from the
+		// leader. That's still useful information to see when operating a server.
+		metrics.SetGauge([]string{"raft", "fsm", "lastRestoreTime"},
+			float32(time.Since(start).Milliseconds()))
+
 		// Update the lastApplied so we don't replay old logs
 		r.setLastApplied(snapshot.Index)
 

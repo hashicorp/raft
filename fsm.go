@@ -185,6 +185,8 @@ func (r *Raft) runFSM() {
 		}
 		source.Close()
 		metrics.MeasureSince([]string{"raft", "fsm", "restore"}, start)
+		metrics.SetGauge([]string{"raft", "fsm", "lastRestoreTime"},
+			float32(time.Since(start).Milliseconds()))
 
 		// Update the last index and term
 		lastIndex = meta.Index
