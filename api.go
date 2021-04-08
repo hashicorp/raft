@@ -664,6 +664,19 @@ func (r *Raft) ReloadConfig(rc ReloadableConfig) error {
 	return nil
 }
 
+// ReloadableConfig returns the current state of the reloadable fields in Raft's
+// configuration. This is useful for programs to discover the current state for
+// reporting to users or tests. It is safe to call from any goroutine. It is
+// intended for reporting and testing purposes primarily; external
+// synchronization would be required to safely use this in a read-modify-write
+// pattern for reloadable configuration options.
+func (r *Raft) ReloadableConfig() ReloadableConfig {
+	cfg := r.config()
+	var rc ReloadableConfig
+	rc.fromConfig(cfg)
+	return rc
+}
+
 // BootstrapCluster is equivalent to non-member BootstrapCluster but can be
 // called on an un-bootstrapped Raft instance after it has been created. This
 // should only be called at the beginning of time for the cluster with an
