@@ -605,9 +605,11 @@ func (r *Raft) restoreSnapshot() error {
 			}
 
 			if err := fsmRestoreAndMeasure(r.fsm, source); err != nil {
+				source.Close()
 				r.logger.Error("failed to restore snapshot", "id", snapshot.ID, "error", err)
 				continue
 			}
+			source.Close()
 
 			r.logger.Info("restored from snapshot", "id", snapshot.ID)
 		}
