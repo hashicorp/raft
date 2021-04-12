@@ -347,10 +347,7 @@ func (r *Raft) setLeadershipTransferInProgress(v bool) {
 
 func (r *Raft) getLeadershipTransferInProgress() bool {
 	v := atomic.LoadInt32(&r.leaderState.leadershipTransferInProgress)
-	if v == 1 {
-		return true
-	}
-	return false
+	return v == 1
 }
 
 func (r *Raft) setupLeaderState() {
