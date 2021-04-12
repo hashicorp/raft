@@ -323,6 +323,12 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 			continue
 		}
 
+		// Note this is the one place we call fsm.Restore without the
+		// fsmRestoreAndMeasure wrapper since this function should only be called to
+		// reset state on disk and the FSM passed will not be used for a running
+		// server instance. If the same process will eventually become a Raft peer
+		// then it will call NewRaft and restore again from disk then which will
+		// report metrics.
 		err = fsm.Restore(source)
 		// Close the source after the restore has completed
 		source.Close()
@@ -598,16 +604,16 @@ func (r *Raft) restoreSnapshot() error {
 				continue
 			}
 
-			err = r.fsm.Restore(source)
-			// Close the source after the restore has completed
-			source.Close()
-			if err != nil {
+			if err := fsmRestoreAndMeasure(r.fsm, source); err != nil {
+				source.Close()
 				r.logger.Error("failed to restore snapshot", "id", snapshot.ID, "error", err)
 				continue
 			}
+			source.Close()
 
 			r.logger.Info("restored from snapshot", "id", snapshot.ID)
 		}
+
 		// Update the lastApplied so we don't replay old logs
 		r.setLastApplied(snapshot.Index)
 
