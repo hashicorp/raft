@@ -32,6 +32,8 @@ A pure Go backend using [BoltDB](https://github.com/boltdb/bolt) is also availab
 [raft-boltdb](https://github.com/hashicorp/raft-boltdb). It can also be used as a `LogStore`
 and `StableStore`.
 
+Looking for some example code? https://github.com/Jille/raft-grpc-example
+
 ## Tagged Releases
 
 As of September 2017, HashiCorp will start using tags for this library to clearly indicate
