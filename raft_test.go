@@ -123,7 +123,7 @@ func TestRaft_RecoverCluster(t *testing.T) {
 	// snapshot + log scenarios. By sweeping through the trailing logs value
 	// we will also hit the case where we have a snapshot only.
 	var err error
-	runRecover := func(applies int) {
+	runRecover := func(t *testing.T, applies int) {
 		conf := inmemConfig(t)
 		conf.TrailingLogs = 10
 		c := MakeCluster(3, t, conf)
@@ -213,7 +213,7 @@ func TestRaft_RecoverCluster(t *testing.T) {
 	}
 	for applies := 0; applies < 20; applies++ {
 		t.Run(fmt.Sprintf("%d applies", applies), func(t *testing.T) {
-			runRecover(applies)
+			runRecover(t, applies)
 		})
 	}
 }
