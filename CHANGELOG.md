@@ -1,5 +1,10 @@
 # UNRELEASED
 
+IMPROVEMENTS
+
+* Added metrics for `oldestLogAge` and `lastRestoreDuration` to monitor capacity issues that can cause unrecoverable cluster failure  [[GH-452](https://github.com/hashicorp/raft/pull/452)][[GH-454](https://github.com/hashicorp/raft/pull/454/files)]
+* Made `TrailingLogs`, `SnapshotInterval` and `SnapshotThreshold` reloadable at runtime using a new `ReloadConfig` method. This allows recovery from cases where there are not enough logs retained for followers to catchup after a restart. [[GH-444](https://github.com/hashicorp/raft/pull/444)]
+
 # 1.2.0 (October 5th, 2020)
 
 IMPROVEMENTS

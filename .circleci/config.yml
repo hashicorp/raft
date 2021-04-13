@@ -4,6 +4,8 @@ references:
   images:
     go-1.13: &GOLANG_1_13_IMAGE docker.mirror.hashicorp.services/circleci/golang:1.13
     go-1.14: &GOLANG_1_14_IMAGE docker.mirror.hashicorp.services/circleci/golang:1.14
+    go-1.15: &GOLANG_1_15_IMAGE docker.mirror.hashicorp.services/circleci/golang:1.15
+    go-1.16: &GOLANG_1_16_IMAGE docker.mirror.hashicorp.services/circleci/golang:1.16
 
   environment: &ENVIRONMENT
     TEST_RESULTS_DIR: &TEST_RESULTS_DIR /tmp/test-results # path to where test results are saved
@@ -108,6 +110,16 @@ workflows:
       - go-test:
           name: test go1.14
           go-version: *GOLANG_1_14_IMAGE
+          requires:
+            - go-fmt-and-vet
+      - go-test:
+          name: test go1.15
+          go-version: *GOLANG_1_15_IMAGE
+          requires:
+            - go-fmt-and-vet
+      - go-test:
+          name: test go1.16
+          go-version: *GOLANG_1_16_IMAGE
           requires:
             - go-fmt-and-vet
       - go-test-32bit:
