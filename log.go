@@ -1,7 +1,7 @@
 package raft
 
 import (
-  "fmt"
+	"fmt"
 	"time"
 
 	metrics "github.com/armon/go-metrics"
