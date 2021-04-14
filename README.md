@@ -33,7 +33,7 @@ A pure Go backend using [Bbolt](https://github.com/etcd-io/bbolt) is also availa
 and `StableStore`.
 
 
-## User Contributed Examples 
+## Community Contributed Examples 
 [Raft gRPC Example](https://github.com/Jille/raft-grpc-example) - Utilizing the Raft repository with gRPC
 
 
@@ -109,4 +109,3 @@ greatly sacrificing performance.
 In terms of performance, Raft is comparable to Paxos. Assuming stable leadership,
 committing a log entry requires a single round trip to half of the cluster.
 Thus performance is bound by disk I/O and network latency.
-
