@@ -92,4 +92,4 @@ v1.0.0 takes the changes that were staged in the library-v2-stage-one branch. Th
 
 # 0.1.0 (September 29th, 2017)
 
-v0.1.0 is the original stable version of the library that was in master and has been maintained with no breaking API changes. This was in use by Consul prior to version 0.7.0.
+v0.1.0 is the original stable version of the library that was in main and has been maintained with no breaking API changes. This was in use by Consul prior to version 0.7.0.
