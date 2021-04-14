@@ -28,11 +28,14 @@ To prevent complications with cgo, the primary backend `MDBStore` is in a separa
 called [raft-mdb](http://github.com/hashicorp/raft-mdb). That is the recommended implementation
 for the `LogStore` and `StableStore`.
 
-A pure Go backend using [BoltDB](https://github.com/boltdb/bolt) is also available called
+A pure Go backend using [Bbolt](https://github.com/etcd-io/bbolt) is also available called
 [raft-boltdb](https://github.com/hashicorp/raft-boltdb). It can also be used as a `LogStore`
 and `StableStore`.
 
-Looking for some example code? https://github.com/Jille/raft-grpc-example
+
+## Community Contributed Examples 
+[Raft gRPC Example](https://github.com/Jille/raft-grpc-example) - Utilizing the Raft repository with gRPC
+
 
 ## Tagged Releases
 
@@ -106,4 +109,3 @@ greatly sacrificing performance.
 In terms of performance, Raft is comparable to Paxos. Assuming stable leadership,
 committing a log entry requires a single round trip to half of the cluster.
 Thus performance is bound by disk I/O and network latency.
-
