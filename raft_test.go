@@ -2225,6 +2225,7 @@ func TestRaft_CacheLogWithStoreError(t *testing.T) {
 	}
 	n.Shutdown()
 }
+
 func TestRaft_ReloadConfig(t *testing.T) {
 	conf := inmemConfig(t)
 	c := MakeCluster(1, t, conf)
