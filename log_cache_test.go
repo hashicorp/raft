@@ -2,6 +2,7 @@ package raft
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -118,6 +119,7 @@ func (e *errorStore) failNext(count int) {
 }
 
 func TestLogCacheWithBackendStoreError(t *testing.T) {
+	var err error
 	store := NewInmemStore()
 	errStore := &errorStore{LogStore: store}
 	c, _ := NewLogCache(16, errStore)
@@ -128,16 +130,19 @@ func TestLogCacheWithBackendStoreError(t *testing.T) {
 	}
 	errStore.failNext(1)
 	log := &Log{Index: 5}
-	c.StoreLog(log)
+	err = c.StoreLog(log)
+	if !strings.Contains(err.Error(), "unable to store logs in log store") {
+		t.Fatalf("Should have returned unable to store logs in log store,  got err=%v", err)
+	}
 
 	var out Log
-	for i := 0; i < 4; i++ {
-		if err := c.GetLog(uint64(i+1), &out); err != nil {
+	for i := 1; i < 5; i++ {
+		if err := c.GetLog(uint64(i), &out); err != nil {
 			t.Fatalf("err: %v", err)
 		}
 	}
 	out = Log{}
-	if err := c.GetLog(5, &out); err != ErrLogNotFound {
+	if err = c.GetLog(5, &out); err != ErrLogNotFound {
 		t.Fatalf("Should have returned not found, got err=%v out=%+v", err, out)
 	}
 }
