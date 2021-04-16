@@ -54,7 +54,7 @@ func (c *LogCache) StoreLogs(logs []*Log) error {
 	err := c.store.StoreLogs(logs)
 	// Insert the logs into the ring buffer, but only on success
 	if err != nil {
-		return err
+		return fmt.Errorf("unable to store logs within log store, err: %q", err)
 	}
 	c.l.Lock()
 	for _, l := range logs {

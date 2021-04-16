@@ -131,8 +131,8 @@ func TestLogCacheWithBackendStoreError(t *testing.T) {
 	errStore.failNext(1)
 	log := &Log{Index: 5}
 	err = c.StoreLog(log)
-	if !strings.Contains(err.Error(), "unable to store logs in log store") {
-		t.Fatalf("Should have returned unable to store logs in log store,  got err=%v", err)
+	if !strings.Contains(err.Error(), "some error") {
+		t.Fatalf("wanted: some error,  got err=%v", err)
 	}
 
 	var out Log
