@@ -204,14 +204,14 @@ func TestRaft_RecoverCluster(t *testing.T) {
 			c.fsms[i] = r2.fsm.(*MockFSM)
 		}
 		c.FullyConnect()
-		time.Sleep(c.propagateTimeout)
+		time.Sleep(c.propagateTimeout * 3)
 
 		// Let things settle and make sure we recovered.
 		c.EnsureLeader(t, c.Leader().localAddr)
 		c.EnsureSame(t)
 		c.EnsureSamePeers(t)
 	}
-	for applies := 0; applies < 20; applies++ {
+	for applies := 0; applies < 10; applies++ {
 		t.Run(fmt.Sprintf("%d applies", applies), func(t *testing.T) {
 			runRecover(t, applies)
 		})
