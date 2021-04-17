@@ -1633,9 +1633,20 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	follower.setCurrentTerm(follower.getCurrentTerm() + 1)
 
 	// Verify we are leader
+
 	verify := leader.VerifyLeader()
 
 	// Wait for the leader to step down
+	select {
+	case v := <-leader.LeaderCh():
+		if !v {
+			break
+		}
+	case <-time.After(conf.HeartbeatTimeout * 3):
+		c.FailNowf("timeout waiting for leader to step down")
+	}
+
+	// Should we just delete this?
 	if err := verify.Error(); err != ErrNotLeader && err != ErrLeadershipLost {
 		c.FailNowf("err: %v", err)
 	}
