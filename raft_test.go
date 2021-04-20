@@ -1622,8 +1622,9 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	c := MakeCluster(2, t, conf)
 	defer c.Close()
 
-	// Get the leader
 	leader := c.Leader()
+	// Remove the leader election notification from the channel buffer
+	<-leader.LeaderCh()
 
 	// Wait until we have a followers
 	followers := c.Followers()
@@ -1632,10 +1633,19 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	follower := followers[0]
 	follower.setCurrentTerm(follower.getCurrentTerm() + 1)
 
+	// Wait for the leader to step down
+	select {
+	case v := <-leader.LeaderCh():
+		if v {
+			t.Fatalf("expected the leader to step down")
+		}
+	case <-time.After(conf.HeartbeatTimeout * 3):
+		c.FailNowf("timeout waiting for leader to step down")
+	}
+
 	// Verify we are leader
 	verify := leader.VerifyLeader()
 
-	// Wait for the leader to step down
 	if err := verify.Error(); err != ErrNotLeader && err != ErrLeadershipLost {
 		c.FailNowf("err: %v", err)
 	}
