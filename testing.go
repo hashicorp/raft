@@ -234,8 +234,8 @@ func (c *cluster) Failf(format string, args ...interface{}) {
 // other goroutines created during the test. Calling FailNowf does not stop
 // those other goroutines.
 func (c *cluster) FailNowf(format string, args ...interface{}) {
-	c.logger.Error(fmt.Sprintf(format, args...))
-	c.t.FailNow()
+	c.t.Helper()
+	c.t.Fatalf(format, args...)
 }
 
 // Close shuts down the cluster and cleans up.
@@ -433,6 +433,7 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 
 // Leader waits for the cluster to elect a leader and stay in a stable state.
 func (c *cluster) Leader() *Raft {
+	c.t.Helper()
 	leaders := c.GetInState(Leader)
 	if len(leaders) != 1 {
 		c.FailNowf("expected one leader: %v", leaders)
