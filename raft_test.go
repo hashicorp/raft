@@ -1633,7 +1633,6 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	follower.setCurrentTerm(follower.getCurrentTerm() + 1)
 
 	// Verify we are leader
-
 	verify := leader.VerifyLeader()
 
 	// Wait for the leader to step down
