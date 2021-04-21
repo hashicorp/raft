@@ -1,5 +1,7 @@
 # UNRELEASED
 
+# 1.3.0 
+
 IMPROVEMENTS
 
 * Added metrics for `oldestLogAge` and `lastRestoreDuration` to monitor capacity issues that can cause unrecoverable cluster failure  [[GH-452](https://github.com/hashicorp/raft/pull/452)][[GH-454](https://github.com/hashicorp/raft/pull/454/files)]
@@ -8,6 +10,7 @@ IMPROVEMENTS
 * Add option for a buffered `ApplyCh` if `MaxAppendEntries` is enabled [[GH-445](https://github.com/hashicorp/raft/pull/445)]
 * Add string to `LogType` for more human readable debugging [[GH-442](https://github.com/hashicorp/raft/pull/442)]
 * Extract fuzzy testing into it's own module [[GH-459](https://github.com/hashicorp/raft/pull/459)]
+* Replace `cluster.FailNowf` with `t.Fatalf` [[GH-463](https://github.com/hashicorp/raft/pull/463)]
 
 BUG FIXES
 
