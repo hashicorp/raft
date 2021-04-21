@@ -204,14 +204,14 @@ func TestRaft_RecoverCluster(t *testing.T) {
 			c.fsms[i] = r2.fsm.(*MockFSM)
 		}
 		c.FullyConnect()
-		time.Sleep(c.propagateTimeout)
+		time.Sleep(c.propagateTimeout * 3)
 
 		// Let things settle and make sure we recovered.
 		c.EnsureLeader(t, c.Leader().localAddr)
 		c.EnsureSame(t)
 		c.EnsureSamePeers(t)
 	}
-	for applies := 0; applies < 20; applies++ {
+	for applies := 0; applies < 10; applies++ {
 		t.Run(fmt.Sprintf("%d applies", applies), func(t *testing.T) {
 			runRecover(t, applies)
 		})
@@ -1622,8 +1622,9 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	c := MakeCluster(2, t, conf)
 	defer c.Close()
 
-	// Get the leader
 	leader := c.Leader()
+	// Remove the leader election notification from the channel buffer
+	<-leader.LeaderCh()
 
 	// Wait until we have a followers
 	followers := c.Followers()
@@ -1632,10 +1633,19 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	follower := followers[0]
 	follower.setCurrentTerm(follower.getCurrentTerm() + 1)
 
+	// Wait for the leader to step down
+	select {
+	case v := <-leader.LeaderCh():
+		if v {
+			t.Fatalf("expected the leader to step down")
+		}
+	case <-time.After(conf.HeartbeatTimeout * 3):
+		c.FailNowf("timeout waiting for leader to step down")
+	}
+
 	// Verify we are leader
 	verify := leader.VerifyLeader()
 
-	// Wait for the leader to step down
 	if err := verify.Error(); err != ErrNotLeader && err != ErrLeadershipLost {
 		c.FailNowf("err: %v", err)
 	}
@@ -2174,6 +2184,56 @@ func TestRaft_GetConfigurationNoBootstrap(t *testing.T) {
 	if !reflect.DeepEqual(observed, expected) {
 		t.Errorf("GetConfiguration result differ from Raft.GetConfiguration: observed %+v, expected %+v", observed, expected)
 	}
+}
+
+func TestRaft_CacheLogWithStoreError(t *testing.T) {
+	c := MakeCluster(2, t, nil)
+	defer c.Close()
+
+	// Should be one leader
+	follower := c.Followers()[0]
+	leader := c.Leader()
+	c.EnsureLeader(t, leader.localAddr)
+
+	// There is no lock to protect this assignment I am afraid.
+	es := &errorStore{LogStore: follower.logs}
+	cl, _ := NewLogCache(100, es)
+	follower.logs = cl
+
+	// Commit some logs
+	for i := 0; i < 5; i++ {
+		future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+		if err := future.Error(); err != nil {
+			c.FailNowf("[ERR] err: %v", err)
+		}
+	}
+
+	// Make the next fail
+	es.failNext(1)
+	leader.Apply([]byte("test6"), 0)
+
+	leader.Apply([]byte("test7"), 0)
+	future := leader.Apply([]byte("test8"), 0)
+
+	// Wait for the last future to apply
+	if err := future.Error(); err != nil {
+		c.FailNowf("[ERR] err: %v", err)
+	}
+
+	// Shutdown follower
+	if f := follower.Shutdown(); f.Error() != nil {
+		c.FailNowf("error shuting down follower: %v", f.Error())
+	}
+
+	// Try to restart the follower and make sure it does not fail with a LogNotFound error
+	_, trans := NewInmemTransport(follower.localAddr)
+	follower.logs = es.LogStore
+	conf := follower.config()
+	n, err := NewRaft(&conf, &MockFSM{}, follower.logs, follower.stable, follower.snapshots, trans)
+	if err != nil {
+		c.FailNowf("error restarting follower: %v", err)
+	}
+	n.Shutdown()
 }
 
 func TestRaft_ReloadConfig(t *testing.T) {
