@@ -4,6 +4,17 @@ IMPROVEMENTS
 
 * Added metrics for `oldestLogAge` and `lastRestoreDuration` to monitor capacity issues that can cause unrecoverable cluster failure  [[GH-452](https://github.com/hashicorp/raft/pull/452)][[GH-454](https://github.com/hashicorp/raft/pull/454/files)]
 * Made `TrailingLogs`, `SnapshotInterval` and `SnapshotThreshold` reloadable at runtime using a new `ReloadConfig` method. This allows recovery from cases where there are not enough logs retained for followers to catchup after a restart. [[GH-444](https://github.com/hashicorp/raft/pull/444)]
+* Inclusify the repository by switching to main [[GH-446](https://github.com/hashicorp/raft/pull/446)]
+* Add option for a buffered `ApplyCh` if `MaxAppendEntries` is enabled [[GH-445](https://github.com/hashicorp/raft/pull/445)]
+* Add string to `LogType` for more human readable debugging [[GH-442](https://github.com/hashicorp/raft/pull/442)]
+* Extract fuzzy testing into it's own module [[GH-459](https://github.com/hashicorp/raft/pull/459)]
+
+BUG FIXES
+
+* Increase timeout for `TestRaft_Integ` to make it more reliable [[GH-447](https://github.com/hashicorp/raft/pull/447)]
+* Update LogCache `StoreLogs()` to capture an error that would previously cause a panic [[460](https://github.com/hashicorp/raft/pull/460)]
+* Apply hotfix to `TestRaft_RecoverCluster` to make it more reliable [[GH-461](https://github.com/hashicorp/raft/pull/461)
+* Utilize LeaderCh in `TestRaft_VerifyLeader` to wait for leader response before verifying [[GH-462](https://github.com/hashicorp/raft/pull/462)]
 
 # 1.2.0 (October 5th, 2020)
 
