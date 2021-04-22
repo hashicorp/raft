@@ -12,7 +12,7 @@ IMPROVEMENTS
 * Extract fuzzy testing into its own module [[GH-459](https://github.com/hashicorp/raft/pull/459)]
 
 BUG FIXES
-* Update LogCache `StoreLogs()` to capture an error that would previously cause a panic [[460](https://github.com/hashicorp/raft/pull/460)]
+* Update LogCache `StoreLogs()` to capture an error that would previously cause a panic [[GH-460](https://github.com/hashicorp/raft/pull/460)]
 
 # 1.2.0 (October 5th, 2020)
 
