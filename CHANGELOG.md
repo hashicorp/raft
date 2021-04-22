@@ -9,7 +9,7 @@ IMPROVEMENTS
 * Inclusify the repository by switching to main [[GH-446](https://github.com/hashicorp/raft/pull/446)]
 * Add option for a buffered `ApplyCh` if `MaxAppendEntries` is enabled [[GH-445](https://github.com/hashicorp/raft/pull/445)]
 * Add string to `LogType` for more human readable debugging [[GH-442](https://github.com/hashicorp/raft/pull/442)]
-* Extract fuzzy testing into it's own module [[GH-459](https://github.com/hashicorp/raft/pull/459)]
+* Extract fuzzy testing into its own module [[GH-459](https://github.com/hashicorp/raft/pull/459)]
 
 BUG FIXES
 * Update LogCache `StoreLogs()` to capture an error that would previously cause a panic [[460](https://github.com/hashicorp/raft/pull/460)]
