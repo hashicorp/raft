@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/go-hclog"
 	"github.com/stretchr/testify/require"
 )
 
@@ -2316,3 +2317,24 @@ func TestRaft_ReloadConfigValidates(t *testing.T) {
 //
 // Storage errors handled properly.
 // Commit index updated properly.
+
+func TestRaft_InstallSnapshot_InvalidPeers(t *testing.T) {
+	_, transport := NewInmemTransport("")
+	r := &Raft{
+		trans:  transport,
+		logger: hclog.New(nil),
+	}
+
+	req := &InstallSnapshotRequest{
+		Peers: []byte("invalid msgpack"),
+	}
+	chResp := make(chan RPCResponse, 1)
+	rpc := RPC{
+		Reader:   new(bytes.Buffer),
+		RespChan: chResp,
+	}
+	r.installSnapshot(rpc, req)
+	resp := <-chResp
+	require.Error(t, resp.Error)
+	require.Contains(t, resp.Error.Error(), "failed to decode peers")
+}

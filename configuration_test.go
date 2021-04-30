@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 var sampleConfiguration = Configuration{
@@ -300,7 +302,8 @@ func TestConfiguration_encodeDecodePeers(t *testing.T) {
 	buf := encodePeers(configuration, trans)
 
 	// Decode from old format, as if reading an old log entry.
-	decoded := decodePeers(buf, trans)
+	decoded, err := decodePeers(buf, trans)
+	require.NoError(t, err)
 	if !reflect.DeepEqual(configuration, decoded) {
 		t.Fatalf("mismatch %v %v", configuration, decoded)
 	}
