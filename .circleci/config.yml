@@ -14,7 +14,7 @@ workflows:
           name: test go1.16 32bit
           version: "1.16"
           goarch: "386"
-          target: ci.test-norace
+          args: "" # remove -race
 
 executors:
   golang:
@@ -63,9 +63,9 @@ jobs:
       goarch:
         type: string
         default: amd64
-      target:
+      args:
         type: string
-        default: ci.integ
+        default: "-race"
     executor:
       name: golang
       version: <<parameters.version>>
@@ -74,7 +74,15 @@ jobs:
       - run: go env
       - checkout
       - run: mkdir -p $TEST_RESULTS_DIR
-      - run: make <<parameters.target>>
+      - run:
+          name: run tests
+          environment:
+            INTEG_TESTS: "yes"
+            GOTESTSUM_FORMAT: short-verbose
+          command: |
+            gotestsum --junitfile ${TEST_RESULTS_DIR}/junit.xml       -- -timeout=240s <<parameters.args>> .
+            gotestsum --junitfile ${TEST_RESULTS_DIR}/junit-batch.xml -- -timeout=240s <<parameters.args>> -tags batchtest .
+
       - store_test_results:
           path: /tmp/test-results
       - store_artifacts:
