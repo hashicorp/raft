@@ -1,37 +1,46 @@
 version: 2.1
 
-references:
-  images:
-    go-1.13: &GOLANG_1_13_IMAGE docker.mirror.hashicorp.services/circleci/golang:1.13
-    go-1.14: &GOLANG_1_14_IMAGE docker.mirror.hashicorp.services/circleci/golang:1.14
-    go-1.15: &GOLANG_1_15_IMAGE docker.mirror.hashicorp.services/circleci/golang:1.15
-    go-1.16: &GOLANG_1_16_IMAGE docker.mirror.hashicorp.services/circleci/golang:1.16
+workflows:
+  ci:
+    jobs:
+      - lint
+      - go-test:
+          name: test go1.15
+          version: "1.15"
+      - go-test:
+          name: test go1.16
+          version: "1.16"
+      - go-test:
+          name: test go1.16 32bit
+          version: "1.16"
+          goarch: "386"
+          target: ci.test-norace
 
-  environment: &ENVIRONMENT
-    TEST_RESULTS_DIR: &TEST_RESULTS_DIR /tmp/test-results # path to where test results are saved
-    GOTRACEBACK: "all"
-    GO111MODULE: "on"
-    GOMAXPROCS: 2
+executors:
+  golang:
+    parameters:
+      version:
+        type: string
+      goarch:
+        type: string
+        default: amd64
+    docker:
+      - image: docker.mirror.hashicorp.services/circleci/golang:<<parameters.version>>
+    environment:
+      TEST_RESULTS_DIR: /tmp/test-results
+      GOTRACEBACK: "all"
+      GO111MODULE: "on"
+      GOMAXPROCS: 2
+      GOARCH: <<parameters.goarch>>
 
 jobs:
-  go-fmt-and-vet:
-    docker:
-      - image: *GOLANG_1_14_IMAGE
+  lint:
+    executor:
+      name: golang
+      version: "1.16"
     steps:
       - checkout
-
-      # Restore go module cache if there is one
-      - restore_cache:
-          keys:
-            - raft-modcache-v1-{{ checksum "go.mod" }}
-
       - run: go mod download
-
-      # Save go module cache if the go.mod file has changed
-      - save_cache:
-          key: raft-modcache-v1-{{ checksum "go.mod" }}
-          paths:
-            - "/go/pkg/mod"
 
       # check go fmt output because it does not report non-zero when there are fmt changes
       - run:
@@ -48,87 +57,25 @@ jobs:
           go vet $PACKAGE_NAMES
 
   go-test:
-    description: Runs go tests
     parameters:
-      go-version:
-        description: what go version to use
+      version:
         type: string
-    docker:
-      - image: << parameters.go-version >>
-    environment: *ENVIRONMENT
+      goarch:
+        type: string
+        default: amd64
+      target:
+        type: string
+        default: ci.integ
+    executor:
+      name: golang
+      version: <<parameters.version>>
+      goarch: <<parameters.goarch>>
     steps:
+      - run: go env
       - checkout
       - run: mkdir -p $TEST_RESULTS_DIR
-
-      - restore_cache: # restore cache
-          keys:
-            - raft-modcache-v1-{{ checksum "go.mod" }}
-
-      # run go tests with gotestsum
-      - run: make ci.integ
+      - run: make <<parameters.target>>
       - store_test_results:
           path: /tmp/test-results
       - store_artifacts:
           path: /tmp/test-results
-
-  go-test-32bit:
-    description: Runs go tests - 32 bit
-    parameters:
-      go-version:
-        description: what go version to use
-        type: string
-    docker:
-      - image: << parameters.go-version >>
-    environment:
-      <<: *ENVIRONMENT
-      GOARCH: "386"
-    steps:
-      - checkout
-      - run: mkdir -p $TEST_RESULTS_DIR
-
-      - restore_cache: # restore cache
-          keys:
-            - raft-modcache-v1-{{ checksum "go.mod" }}
-
-      # run go tests with gotestsum
-      - run: make ci.test-norace
-      - store_test_results:
-          path: /tmp/test-results
-      - store_artifacts:
-          path: /tmp/test-results
-
-workflows:
-  version: 2
-  test-and-build:
-    jobs:
-      - go-fmt-and-vet
-      - go-test:
-          name: test go1.13
-          go-version: *GOLANG_1_13_IMAGE
-          requires:
-            - go-fmt-and-vet
-      - go-test:
-          name: test go1.14
-          go-version: *GOLANG_1_14_IMAGE
-          requires:
-            - go-fmt-and-vet
-      - go-test:
-          name: test go1.15
-          go-version: *GOLANG_1_15_IMAGE
-          requires:
-            - go-fmt-and-vet
-      - go-test:
-          name: test go1.16
-          go-version: *GOLANG_1_16_IMAGE
-          requires:
-            - go-fmt-and-vet
-      - go-test-32bit:
-          name: test go1.13 - 32bit
-          go-version: *GOLANG_1_13_IMAGE
-          requires:
-            - go-fmt-and-vet
-      - go-test-32bit:
-          name: test go1.14 - 32bit
-          go-version: *GOLANG_1_14_IMAGE
-          requires:
-            - go-fmt-and-vet
