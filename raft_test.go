@@ -215,8 +215,8 @@ func TestRaft_RecoverCluster(t *testing.T) {
 	t.Run("no snapshot, no trailing logs", func(t *testing.T) {
 		runRecover(t, 0)
 	})
-	t.Run("snapshot", func(t *testing.T) {
-		runRecover(t, snapshotThreshold)
+	t.Run("no snapshot, some trailing logs", func(t *testing.T) {
+		runRecover(t, snapshotThreshold-1)
 	})
 	t.Run("snapshot, with trailing logs", func(t *testing.T) {
 		runRecover(t, snapshotThreshold+20)
