@@ -388,6 +388,9 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 			case <-stopCh:
 			}
 		} else {
+			if failures > 0 {
+				r.observe(ResumedHeartbeatObservation{PeerID: s.peer.ID})
+			}
 			s.setLastContact()
 			failures = 0
 			labels := []metrics.Label{{Name: "peer_id", Value: string(s.peer.ID)}}
