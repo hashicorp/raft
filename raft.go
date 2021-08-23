@@ -507,9 +507,18 @@ func (r *Raft) startStopReplication() {
 			r.goFunc(func() { r.replicate(s) })
 			asyncNotifyCh(s.triggerCh)
 			r.observe(PeerObservation{Peer: server, Removed: false})
-		} else if ok && s.peer.Address != server.Address {
-			r.logger.Info("updating peer", "peer", server.ID)
-			s.peer = server
+		} else if ok {
+
+			s.peerLock.RLock()
+			peer := s.peer
+			s.peerLock.RUnlock()
+
+			if peer.Address != server.Address {
+				r.logger.Info("updating peer", "peer", server.ID)
+				s.peerLock.Lock()
+				s.peer = server
+				s.peerLock.Unlock()
+			}
 		}
 	}
 
