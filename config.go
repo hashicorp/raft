@@ -86,13 +86,16 @@ import (
 //    this protocol version, along with their server ID. The remove/add cycle
 //    is required to populate their server ID. Note that removing must be done
 //    by ID, which will be the old server's address.
+// 4: Adds pre-voting campaigns. It is expected that each node will be swapped
+//    out and then pre-voting turned on once all nodes are aware of pre-voting
+//    flags.
 type ProtocolVersion int
 
 const (
 	// ProtocolVersionMin is the minimum protocol version
 	ProtocolVersionMin ProtocolVersion = 0
 	// ProtocolVersionMax is the maximum protocol version
-	ProtocolVersionMax = 3
+	ProtocolVersionMax = 4
 )
 
 // SnapshotVersion is the version of snapshots that this server can understand.
@@ -219,6 +222,10 @@ type Config struct {
 	// raft's configuration and index values.
 	NoSnapshotRestoreOnStart bool
 
+	// PreVote enables a campaign algorithm to prevent leadership disruption
+	// during a network partion and a node attempts to rejoin the cluster.
+	PreVote bool
+
 	// skipStartup allows NewRaft() to bypass all background work goroutines
 	skipStartup bool
 }
@@ -293,6 +300,7 @@ func DefaultConfig() *Config {
 		SnapshotThreshold:  8192,
 		LeaderLeaseTimeout: 500 * time.Millisecond,
 		LogLevel:           "DEBUG",
+		PreVote:            false,
 	}
 }
 

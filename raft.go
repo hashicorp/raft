@@ -197,7 +197,7 @@ func (r *Raft) runFollower() {
 
 			// Check if we have had a successful contact
 			lastContact := r.LastContact()
-			if time.Now().Sub(lastContact) < hbTimeout {
+			if time.Since(lastContact) < hbTimeout {
 				continue
 			}
 
@@ -265,13 +265,15 @@ func (r *Raft) runCandidate() {
 	r.logger.Info("entering candidate state", "node", r, "term", r.getCurrentTerm()+1)
 	metrics.IncrCounter([]string{"raft", "state", "candidate"}, 1)
 
+	preVote := r.preVote
+CAMPAIGN:
 	// Start vote for us, and set a timeout
-	voteCh := r.electSelf()
+	voteCh := r.electSelf(preVote)
 
 	// Make sure the leadership transfer flag is reset after each run. Having this
-	// flag will set the field LeadershipTransfer in a RequestVoteRequst to true,
+	// flag will set the field LeadershipTransfer in a RequestVoteRequest to true,
 	// which will make other servers vote even though they have a leader already.
-	// It is important to reset that flag, because this priviledge could be abused
+	// It is important to reset that flag, because this privileged could be abused
 	// otherwise.
 	defer func() { r.candidateFromLeadershipTransfer = false }()
 
@@ -289,6 +291,7 @@ func (r *Raft) runCandidate() {
 
 		case vote := <-voteCh:
 			// Check if the term is greater than ours, bail
+
 			if vote.Term > r.getCurrentTerm() {
 				r.logger.Debug("newer term discovered, fallback to follower")
 				r.setState(Follower)
@@ -304,6 +307,13 @@ func (r *Raft) runCandidate() {
 
 			// Check if we've become the leader
 			if grantedVotes >= votesNeeded {
+				// If a pre-vote campaign has been won, then start a normal
+				// election.
+				if vote.PreVote {
+					preVote = false
+					goto CAMPAIGN
+				}
+
 				r.logger.Info("election won", "tally", grantedVotes)
 				r.setState(Leader)
 				r.setLeader(r.localAddr, r.localID)
@@ -339,7 +349,7 @@ func (r *Raft) runCandidate() {
 
 		case <-electionTimer:
 			// Election failed! Restart the election. We simply return,
-			// which will kick us back into runCandidate
+			// which will kick us back into runCandidate.
 			r.logger.Warn("Election timeout reached, restarting election")
 			return
 
@@ -1434,7 +1444,6 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	// Everything went well, set success
 	resp.Success = true
 	r.setLastContact()
-	return
 }
 
 // processConfigurationLogEntry takes a log entry and updates the latest
@@ -1467,6 +1476,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 		RPCHeader: r.getRPCHeader(),
 		Term:      r.getCurrentTerm(),
 		Granted:   false,
+		PreVote:   req.PreVote,
 	}
 	var rpcErr error
 	defer func() {
@@ -1520,6 +1530,10 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 
 	// Increase the term if we see a newer one
 	if req.Term > r.getCurrentTerm() {
+		if req.PreVote {
+			resp.Granted = true
+			return
+		}
 		// Ensure transition to follower
 		r.logger.Debug("lost leadership because received a requestVote with a newer term")
 		r.setState(Follower)
@@ -1575,7 +1589,6 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 
 	resp.Granted = true
 	r.setLastContact()
-	return
 }
 
 // installSnapshot is invoked when we get a InstallSnapshot RPC call.
@@ -1716,7 +1729,6 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	r.logger.Info("Installed remote snapshot")
 	resp.Success = true
 	r.setLastContact()
-	return
 }
 
 // setLastContact is used to set the last contact time to now
@@ -1735,12 +1747,17 @@ type voteResult struct {
 // ourself. This has the side affecting of incrementing the current term. The
 // response channel returned is used to wait for all the responses (including a
 // vote for ourself). This must only be called from the main thread.
-func (r *Raft) electSelf() <-chan *voteResult {
+func (r *Raft) electSelf(preVote bool) <-chan *voteResult {
 	// Create a response channel
 	respCh := make(chan *voteResult, len(r.configurations.latest.Servers))
 
+	// PreVote campaigns are sent on the next term.
+	term := r.getCurrentTerm() + 1
+	if preVote {
+		term += 1
+	}
 	// Increment the term
-	r.setCurrentTerm(r.getCurrentTerm() + 1)
+	r.setCurrentTerm(term)
 
 	// Construct the request
 	lastIdx, lastTerm := r.getLastEntry()
@@ -1752,13 +1769,17 @@ func (r *Raft) electSelf() <-chan *voteResult {
 		LastLogIndex:       lastIdx,
 		LastLogTerm:        lastTerm,
 		LeadershipTransfer: r.candidateFromLeadershipTransfer,
+		PreVote:            preVote,
 	}
 
 	// Construct a function to ask for a vote
 	askPeer := func(peer Server) {
 		r.goFunc(func() {
 			defer metrics.MeasureSince([]string{"raft", "candidate", "electSelf"}, time.Now())
-			resp := &voteResult{voterID: peer.ID}
+
+			resp := &voteResult{
+				voterID: peer.ID,
+			}
 			err := r.trans.RequestVote(peer.ID, peer.Address, req, &resp.RequestVoteResponse)
 			if err != nil {
 				r.logger.Error("failed to make requestVote RPC",
@@ -1786,6 +1807,7 @@ func (r *Raft) electSelf() <-chan *voteResult {
 						RPCHeader: r.getRPCHeader(),
 						Term:      req.Term,
 						Granted:   true,
+						PreVote:   req.PreVote,
 					},
 					voterID: r.localID,
 				}

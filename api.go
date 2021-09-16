@@ -201,6 +201,10 @@ type Raft struct {
 	// leadershipTransferCh is used to start a leadership transfer from outside of
 	// the main thread.
 	leadershipTransferCh chan *leadershipTransferFuture
+
+	// PreVote enables a campaign algorithm to prevent leadership disruption
+	// during a network partion and a node attempts to rejoin the cluster.
+	preVote bool
 }
 
 // BootstrapCluster initializes a server's storage with the given cluster
@@ -522,6 +526,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	// Create Raft struct.
 	r := &Raft{
 		protocolVersion:       protocolVersion,
+		preVote:               conf.PreVote,
 		applyCh:               applyCh,
 		fsm:                   fsm,
 		fsmMutateCh:           make(chan interface{}, 128),

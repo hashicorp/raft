@@ -2072,6 +2072,34 @@ func TestRaft_ProtocolVersion_Upgrade_2_3(t *testing.T) {
 	}
 }
 
+func TestRaft_ProtocolVersion_Upgrade_3_4(t *testing.T) {
+	// Make a cluster back on protocol version 3.
+	conf := inmemConfig(t)
+	conf.ProtocolVersion = 3
+	c := MakeCluster(3, t, conf)
+	defer c.Close()
+
+	// Set up another server speaking protocol version 4.
+	conf = inmemConfig(t)
+	conf.ProtocolVersion = 4
+	c1 := MakeClusterNoBootstrap(1, t, conf)
+
+	// Merge clusters.
+	c.Merge(c1)
+	c.FullyConnect()
+
+	// Use the new ID-based API to add the server with its ID.
+	future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 1*time.Second)
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Sanity check the cluster.
+	c.EnsureSame(t)
+	c.EnsureSamePeers(t)
+	c.EnsureLeader(t, c.Leader().localAddr)
+}
+
 func TestRaft_LeaderID_Propagated(t *testing.T) {
 	// Make a cluster on protocol version 3.
 	conf := inmemConfig(t)
