@@ -18,6 +18,7 @@ import (
 
 var (
 	userSnapshotErrorsOnNoData = true
+	usePreVotingCampaign       = false
 )
 
 // Return configurations optimized for in-memory
@@ -28,6 +29,7 @@ func inmemConfig(t *testing.T) *Config {
 	conf.LeaderLeaseTimeout = 50 * time.Millisecond
 	conf.CommitTimeout = 5 * time.Millisecond
 	conf.Logger = newTestLogger(t)
+	conf.PreVote = usePreVotingCampaign
 	return conf
 }
 
@@ -454,6 +456,12 @@ func (c *cluster) Leader() *Raft {
 // state.
 func (c *cluster) Followers() []*Raft {
 	expFollowers := len(c.rafts) - 1
+	return c.FollowersN(expFollowers)
+}
+
+// FollowersN waits for the cluster to have N-1 followers and stay in a stable
+// state.
+func (c *cluster) FollowersN(expFollowers int) []*Raft {
 	followers := c.GetInState(Follower)
 	if len(followers) != expFollowers {
 		c.t.Fatalf("timeout waiting for %d followers (followers are %v)", expFollowers, followers)

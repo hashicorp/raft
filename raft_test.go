@@ -20,6 +20,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestMain tests pre-voting campaigns with existing tests to ensure that there
+// aren't any regressions in the current code base. We first run the tests
+// without pre-voting, then we run them with.
+func TestMain(m *testing.M) {
+	usePreVotingCampaign = false
+	if exit := m.Run(); exit > 0 {
+		os.Exit(exit)
+	}
+
+	// Replicate testing.T output.
+	fmt.Println("=== RUN   Pre-Voting Campaign Tests")
+	usePreVotingCampaign = true
+	os.Exit(m.Run())
+}
+
 func TestRaft_StartStop(t *testing.T) {
 	c := MakeCluster(1, t, nil)
 	c.Close()
@@ -590,6 +605,90 @@ func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 		c.WaitEvent(nil, c.propagateTimeout)
 	}
 	t.Fatalf("Timeout waiting to detect apply timeouts")
+}
+
+func TestRaft_Prevote(t *testing.T) {
+	if !usePreVotingCampaign {
+		t.Skip("non pre-vote campaign")
+	}
+
+	// Make the cluster
+	c := MakeCluster(4, t, nil)
+	defer c.Close()
+
+	// Should be one leader
+	followers := c.Followers()
+	if len(followers) != 3 {
+		t.Fatalf("Expected 3 followers, got %d", len(followers))
+	}
+
+	// Partition the last follower.
+	t.Logf("[INFO] Partition follower %v", followers[2])
+	c.Partition([]ServerAddress{followers[2].localAddr})
+
+	// Tick the logs.
+	leader := c.Leader()
+	verify := leader.VerifyLeader()
+	if err := verify.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	future := leader.Apply([]byte("test"), c.conf.CommitTimeout)
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	leaderTerm := leader.getCurrentTerm()
+
+	// Reconnect the networks
+	t.Logf("[INFO] Reconnecting %v", followers[2])
+	c.FullyConnect()
+
+	// Wait to see if the leader changes.
+	limit := time.Now().Add(c.longstopTimeout)
+	var newLead *Raft
+	for time.Now().Before(limit) && newLead == nil {
+		c.WaitEvent(nil, c.conf.CommitTimeout)
+		leaders := c.GetInState(Leader)
+		if len(leaders) == 1 {
+			newLead = leaders[0]
+		}
+	}
+	if newLead == nil {
+		t.Fatalf("expected a leader")
+	}
+	// Ensure that if there is a new leader, that it isn't the one coming in
+	// from the partition. The pre-vote would have failed for this follower.
+	if newLead.Leader() == followers[2].localAddr {
+		t.Fatalf("expected leader to existing leader %v %v", leader, newLead)
+	}
+	if newLead.getCurrentTerm() <= leaderTerm {
+		t.Fatalf("expected newer term! %d %d (%v, %v)", newLead.getCurrentTerm(), leaderTerm, newLead, leader)
+	}
+
+	future = leader.Apply([]byte("apply"), c.conf.CommitTimeout)
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Wait for log replication.
+	c.EnsureSame(t)
+
+	// Check two entries are applied to the FSM
+	for _, fsmRaw := range c.fsms {
+		fsm := getMockFSM(fsmRaw)
+		fsm.Lock()
+		if len(fsm.logs) != 2 {
+			t.Fatalf("did not apply both to FSM! %v", fsm.logs)
+		}
+		if !bytes.Equal(fsm.logs[0], []byte("test")) {
+			t.Fatalf("first entry should be 'test'")
+		}
+		if !bytes.Equal(fsm.logs[1], []byte("apply")) {
+			t.Fatalf("first entry should be 'apply'")
+		}
+		fsm.Unlock()
+	}
 }
 
 func TestRaft_JoinNode(t *testing.T) {
