@@ -702,6 +702,72 @@ func TestRaft_RemoveFollower(t *testing.T) {
 	require.Equal(t, Follower, follower.getState())
 }
 
+func TestRaft_RemovedFollower_Vote(t *testing.T) {
+	// Make a cluster
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	// Get the leader
+	leader := c.Leader()
+
+	// Wait until we have 2 followers
+	limit := time.Now().Add(c.longstopTimeout)
+	var followers []*Raft
+	for time.Now().Before(limit) && len(followers) != 2 {
+		c.WaitEvent(nil, c.conf.CommitTimeout)
+		followers = c.GetInState(Follower)
+	}
+	if len(followers) != 2 {
+		t.Fatalf("expected two followers: %v", followers)
+	}
+
+	// Remove a followerRemoved
+	followerRemoved := followers[0]
+	future := leader.RemoveServer(followerRemoved.localID, 0, 0)
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Wait a while
+	time.Sleep(c.propagateTimeout)
+
+	// Other nodes should have fewer peers
+	if configuration := c.getConfiguration(leader); len(configuration.Servers) != 2 {
+		t.Fatalf("too many peers")
+	}
+	if configuration := c.getConfiguration(followers[1]); len(configuration.Servers) != 2 {
+		t.Fatalf("too many peers")
+	}
+	require.Equal(t, Follower, followerRemoved.getState())
+
+	follower := followers[1]
+
+	followerRemovedT := c.trans[c.IndexOf(followerRemoved)]
+	reqVote := RequestVoteRequest{
+		RPCHeader:          followerRemoved.getRPCHeader(),
+		Term:               followerRemoved.getCurrentTerm() + 10,
+		Candidate:          followerRemovedT.EncodePeer(followerRemoved.localID, followerRemoved.localAddr),
+		LastLogIndex:       followerRemoved.LastIndex(),
+		LastLogTerm:        followerRemoved.getCurrentTerm(),
+		LeadershipTransfer: false,
+	}
+	// a follower that thinks there's a leader should vote for that leader.
+	var resp RequestVoteResponse
+
+	//
+	c.Partition([]ServerAddress{leader.localAddr})
+
+	time.Sleep(c.propagateTimeout)
+	require.Equal(t, Candidate, follower.getState())
+	if err := followerRemovedT.RequestVote(follower.localID, follower.localAddr, &reqVote, &resp); err != nil {
+		t.Fatalf("RequestVote RPC failed %v", err)
+	}
+
+	if resp.Granted {
+		t.Fatalf("expected vote to not be granted, but it was %+v", resp)
+	}
+}
+
 func TestRaft_RemoveLeader(t *testing.T) {
 	// Make a cluster
 	c := MakeCluster(3, t, nil)
