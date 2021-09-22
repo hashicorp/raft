@@ -217,10 +217,13 @@ func (r *Raft) runFollower() {
 				if hasVote(r.configurations.latest, r.localID) {
 					r.logger.Warn("heartbeat timeout reached, starting election", "last-leader", lastLeader)
 					r.setState(Candidate)
+					return
 				} else {
-					r.logger.Warn("heartbeat timeout reached, not part of stable configuration, aborting election")
+					if !didWarn {
+						r.logger.Warn("heartbeat timeout reached, not part of stable configuration, aborting election")
+						didWarn = true
+					}
 				}
-				return
 			}
 
 		case <-r.shutdownCh:
