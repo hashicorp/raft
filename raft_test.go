@@ -760,6 +760,11 @@ func TestRaft_RemovedFollower_Vote(t *testing.T) {
 	time.Sleep(c.propagateTimeout)
 
 	// wait for the remaining follower to trigger an election
+	count := 0
+	for follower.getState() != Candidate && count < 1000 {
+		count++
+		time.Sleep(1 * time.Millisecond)
+	}
 	require.Equal(t, Candidate, follower.getState())
 
 	// send a vote request from the removed follower to the Candidate follower
