@@ -2382,6 +2382,7 @@ func TestRaft_RemovedFollower_Vote(t *testing.T) {
 	if configuration := c.getConfiguration(followers[1]); len(configuration.Servers) != 2 {
 		t.Fatalf("too many peers")
 	}
+
 	waitforState(followerRemoved, Follower)
 	// The removed node should be still in Follower state
 	require.Equal(t, Follower, followerRemoved.getState())
@@ -2421,8 +2422,8 @@ func TestRaft_RemovedFollower_Vote(t *testing.T) {
 
 func waitforState(follower *Raft, state RaftState) {
 	count := 0
-	for follower.getState() != state && count < 1000 {
+	for follower.getState() != state && count < 5000 {
 		count++
-		time.Sleep(1 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
 }
