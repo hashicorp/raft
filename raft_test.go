@@ -2345,3 +2345,79 @@ func TestRaft_InstallSnapshot_InvalidPeers(t *testing.T) {
 	require.Error(t, resp.Error)
 	require.Contains(t, resp.Error.Error(), "failed to decode peers")
 }
+
+func TestRaft_RemovedFollower_Vote(t *testing.T) {
+	// Make a cluster
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	// Get the leader
+	leader := c.Leader()
+
+	// Wait until we have 2 followers
+	limit := time.Now().Add(c.longstopTimeout)
+	var followers []*Raft
+	for time.Now().Before(limit) && len(followers) != 2 {
+		c.WaitEvent(nil, c.conf.CommitTimeout)
+		followers = c.GetInState(Follower)
+	}
+	if len(followers) != 2 {
+		t.Fatalf("expected two followers: %v", followers)
+	}
+
+	// Remove a follower
+	followerRemoved := followers[0]
+	future := leader.RemoveServer(followerRemoved.localID, 0, 0)
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Wait a while
+	time.Sleep(c.propagateTimeout)
+
+	// Other nodes should have fewer peers
+	if configuration := c.getConfiguration(leader); len(configuration.Servers) != 2 {
+		t.Fatalf("too many peers")
+	}
+	if configuration := c.getConfiguration(followers[1]); len(configuration.Servers) != 2 {
+		t.Fatalf("too many peers")
+	}
+	// The removed node should be still in Follower state
+	require.Equal(t, Follower, followerRemoved.getState())
+
+	// Prepare a Vote request from the removed follower
+	follower := followers[1]
+	followerRemovedT := c.trans[c.IndexOf(followerRemoved)]
+	reqVote := RequestVoteRequest{
+		RPCHeader:          followerRemoved.getRPCHeader(),
+		Term:               followerRemoved.getCurrentTerm() + 10,
+		Candidate:          followerRemovedT.EncodePeer(followerRemoved.localID, followerRemoved.localAddr),
+		LastLogIndex:       followerRemoved.LastIndex(),
+		LastLogTerm:        followerRemoved.getCurrentTerm(),
+		LeadershipTransfer: false,
+	}
+	// a follower that thinks there's a leader should vote for that leader.
+	var resp RequestVoteResponse
+
+	// partiton the leader to simulate an unstable cluster
+	c.Partition([]ServerAddress{leader.localAddr})
+	time.Sleep(c.propagateTimeout)
+
+	// wait for the remaining follower to trigger an election
+	count := 0
+	for follower.getState() != Candidate && count < 1000 {
+		count++
+		time.Sleep(1 * time.Millisecond)
+	}
+	require.Equal(t, Candidate, follower.getState())
+
+	// send a vote request from the removed follower to the Candidate follower
+	if err := followerRemovedT.RequestVote(follower.localID, follower.localAddr, &reqVote, &resp); err != nil {
+		t.Fatalf("RequestVote RPC failed %v", err)
+	}
+
+	// the vote request should not be granted, because the voter is not part of the cluster anymore
+	if resp.Granted {
+		t.Fatalf("expected vote to not be granted, but it was %+v", resp)
+	}
+}
