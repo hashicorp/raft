@@ -2382,6 +2382,7 @@ func TestRaft_RemovedFollower_Vote(t *testing.T) {
 	if configuration := c.getConfiguration(followers[1]); len(configuration.Servers) != 2 {
 		t.Fatalf("too many peers")
 	}
+	waitforState(followerRemoved, Follower)
 	// The removed node should be still in Follower state
 	require.Equal(t, Follower, followerRemoved.getState())
 
@@ -2404,11 +2405,7 @@ func TestRaft_RemovedFollower_Vote(t *testing.T) {
 	time.Sleep(c.propagateTimeout)
 
 	// wait for the remaining follower to trigger an election
-	count := 0
-	for follower.getState() != Candidate && count < 1000 {
-		count++
-		time.Sleep(1 * time.Millisecond)
-	}
+	waitforState(follower, Candidate)
 	require.Equal(t, Candidate, follower.getState())
 
 	// send a vote request from the removed follower to the Candidate follower
@@ -2419,5 +2416,13 @@ func TestRaft_RemovedFollower_Vote(t *testing.T) {
 	// the vote request should not be granted, because the voter is not part of the cluster anymore
 	if resp.Granted {
 		t.Fatalf("expected vote to not be granted, but it was %+v", resp)
+	}
+}
+
+func waitforState(follower *Raft, state RaftState) {
+	count := 0
+	for follower.getState() != state && count < 1000 {
+		count++
+		time.Sleep(1 * time.Millisecond)
 	}
 }
