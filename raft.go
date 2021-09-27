@@ -214,7 +214,7 @@ func (r *Raft) runFollower() {
 				}
 			} else {
 				metrics.IncrCounter([]string{"raft", "transition", "heartbeat_timeout"}, 1)
-				if hasVote(r.configurations.latest, r.localID) {
+				if inConfig(r.configurations.latest, r.localID) {
 					r.logger.Warn("heartbeat timeout reached, starting election", "last-leader", lastLeader)
 					r.setState(Candidate)
 					return
