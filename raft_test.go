@@ -1740,6 +1740,53 @@ func TestRaft_Voting(t *testing.T) {
 		RPCHeader:          ldr.getRPCHeader(),
 		Term:               ldr.getCurrentTerm() + 10,
 		Candidate:          ldrT.EncodePeer(ldr.localID, ldr.localAddr),
+		ID:                 ldrT.EncodeID(ldr.localID),
+		LastLogIndex:       ldr.LastIndex(),
+		LastLogTerm:        ldr.getCurrentTerm(),
+		LeadershipTransfer: false,
+	}
+	// a follower that thinks there's a leader should vote for that leader.
+	var resp RequestVoteResponse
+	if err := ldrT.RequestVote(followers[0].localID, followers[0].localAddr, &reqVote, &resp); err != nil {
+		t.Fatalf("RequestVote RPC failed %v", err)
+	}
+	if !resp.Granted {
+		t.Fatalf("expected vote to be granted, but wasn't %+v", resp)
+	}
+	// a follower that thinks there's a leader shouldn't vote for a different candidate
+	reqVote.Candidate = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
+	if err := ldrT.RequestVote(followers[1].localID, followers[1].localAddr, &reqVote, &resp); err != nil {
+		t.Fatalf("RequestVote RPC failed %v", err)
+	}
+	if resp.Granted {
+		t.Fatalf("expected vote not to be granted, but was %+v", resp)
+	}
+	// a follower that thinks there's a leader, but the request has the leadership transfer flag, should
+	// vote for a different candidate
+	reqVote.LeadershipTransfer = true
+	reqVote.Candidate = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
+	if err := ldrT.RequestVote(followers[1].localID, followers[1].localAddr, &reqVote, &resp); err != nil {
+		t.Fatalf("RequestVote RPC failed %v", err)
+	}
+	if !resp.Granted {
+		t.Fatalf("expected vote to be granted, but wasn't %+v", resp)
+	}
+}
+
+func TestRaft_Voting_portocolVersion3(t *testing.T) {
+	conf := inmemConfig(t)
+	conf.ProtocolVersion = 3
+	c := MakeCluster(3, t, conf)
+	defer c.Close()
+	followers := c.Followers()
+	ldr := c.Leader()
+	ldrT := c.trans[c.IndexOf(ldr)]
+
+	reqVote := RequestVoteRequest{
+		RPCHeader:          ldr.getRPCHeader(),
+		Term:               ldr.getCurrentTerm() + 10,
+		Candidate:          ldrT.EncodePeer(ldr.localID, ldr.localAddr),
+		ID:                 ldrT.EncodeID(ldr.localID),
 		LastLogIndex:       ldr.LastIndex(),
 		LastLogTerm:        ldr.getCurrentTerm(),
 		LeadershipTransfer: false,
@@ -2349,6 +2396,7 @@ func TestRaft_InstallSnapshot_InvalidPeers(t *testing.T) {
 func TestRaft_RemovedFollower_Vote(t *testing.T) {
 	// Make a cluster
 	c := MakeCluster(3, t, nil)
+
 	defer c.Close()
 
 	// Get the leader
@@ -2393,6 +2441,7 @@ func TestRaft_RemovedFollower_Vote(t *testing.T) {
 		RPCHeader:          followerRemoved.getRPCHeader(),
 		Term:               followerRemoved.getCurrentTerm() + 10,
 		Candidate:          followerRemovedT.EncodePeer(followerRemoved.localID, followerRemoved.localAddr),
+		ID:                 followerRemovedT.EncodeID(followerRemoved.localID),
 		LastLogIndex:       followerRemoved.LastIndex(),
 		LastLogTerm:        followerRemoved.getCurrentTerm(),
 		LeadershipTransfer: false,

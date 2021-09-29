@@ -466,6 +466,16 @@ func (n *NetworkTransport) DecodePeer(buf []byte) ServerAddress {
 	return ServerAddress(buf)
 }
 
+// EncodeID implements the Transport interface.
+func (n *NetworkTransport) EncodeID(id ServerID) []byte {
+	return []byte(id)
+}
+
+// DecodeID implements the Transport interface.
+func (n *NetworkTransport) DecodeID(buf []byte) ServerID {
+	return ServerID(buf)
+}
+
 // TimeoutNow implements the Transport interface.
 func (n *NetworkTransport) TimeoutNow(id ServerID, target ServerAddress, args *TimeoutNowRequest, resp *TimeoutNowResponse) error {
 	return n.genericRPC(id, target, rpcTimeoutNow, args, resp)

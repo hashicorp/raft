@@ -1480,6 +1480,19 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// there is a known leader. But if the leader initiated a leadership transfer,
 	// vote!
 	candidate := r.trans.DecodePeer(req.Candidate)
+
+	// Prior to version 4 the peer ID is not part of `RequestVoteRequest`,
+	// We assume that the peer is part of the configuration and skip this check
+	if r.protocolVersion > 3 {
+		candidateID := r.trans.DecodeID(req.ID)
+		// if the Servers list is empty that mean the cluster is very likely trying to bootstrap,
+		// Grant the vote
+		if len(r.configurations.latest.Servers) > 0 && !inConfig(r.configurations.latest, candidateID) {
+			r.logger.Warn("rejecting vote request since voter not part of the configuration",
+				"from", candidate)
+			return
+		}
+	}
 	if leader := r.Leader(); leader != "" && leader != candidate && !req.LeadershipTransfer {
 		r.logger.Warn("rejecting vote request since we have a leader",
 			"from", candidate,
@@ -1712,6 +1725,7 @@ func (r *Raft) electSelf() <-chan *voteResult {
 		RPCHeader:          r.getRPCHeader(),
 		Term:               r.getCurrentTerm(),
 		Candidate:          r.trans.EncodePeer(r.localID, r.localAddr),
+		ID:                 r.trans.EncodeID(r.localID),
 		LastLogIndex:       lastIdx,
 		LastLogTerm:        lastTerm,
 		LeadershipTransfer: r.candidateFromLeadershipTransfer,

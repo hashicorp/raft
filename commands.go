@@ -73,6 +73,7 @@ type RequestVoteRequest struct {
 	Term      uint64
 	Candidate []byte
 
+	ID []byte
 	// Used to ensure safety
 	LastLogIndex uint64
 	LastLogTerm  uint64

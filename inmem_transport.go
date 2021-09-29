@@ -194,6 +194,16 @@ func (i *InmemTransport) DecodePeer(buf []byte) ServerAddress {
 	return ServerAddress(buf)
 }
 
+// EncodePeer implements the Transport interface.
+func (i *InmemTransport) EncodeID(id ServerID) []byte {
+	return []byte(id)
+}
+
+// DecodePeer implements the Transport interface.
+func (i *InmemTransport) DecodeID(buf []byte) ServerID {
+	return ServerID(buf)
+}
+
 // Connect is used to connect this transport to another transport for
 // a given peer name. This allows for local routing.
 func (i *InmemTransport) Connect(peer ServerAddress, t Transport) {

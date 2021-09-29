@@ -91,7 +91,7 @@ const (
 	// ProtocolVersionMin is the minimum protocol version
 	ProtocolVersionMin ProtocolVersion = 0
 	// ProtocolVersionMax is the maximum protocol version
-	ProtocolVersionMax = 3
+	ProtocolVersionMax = 4
 )
 
 // SnapshotVersion is the version of snapshots that this server can understand.
