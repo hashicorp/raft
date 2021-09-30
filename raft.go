@@ -1483,7 +1483,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 
 	// Prior to version 4 the peer ID is not part of `RequestVoteRequest`,
 	// We assume that the peer is part of the configuration and skip this check
-	if r.protocolVersion > 3 {
+	if req.ProtocolVersion > 3 {
 		candidateID := r.trans.DecodeID(req.ID)
 		// if the Servers list is empty that mean the cluster is very likely trying to bootstrap,
 		// Grant the vote
