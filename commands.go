@@ -8,6 +8,8 @@ type RPCHeader struct {
 	// ProtocolVersion is the version of the protocol the sender is
 	// speaking.
 	ProtocolVersion ProtocolVersion
+	ID              []byte
+	Addr            []byte
 }
 
 // WithRPCHeader is an interface that exposes the RPC header.
@@ -73,7 +75,6 @@ type RequestVoteRequest struct {
 	Term      uint64
 	Candidate []byte
 
-	ID []byte
 	// Used to ensure safety
 	LastLogIndex uint64
 	LastLogTerm  uint64

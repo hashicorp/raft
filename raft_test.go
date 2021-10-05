@@ -1739,8 +1739,6 @@ func TestRaft_Voting(t *testing.T) {
 	reqVote := RequestVoteRequest{
 		RPCHeader:          ldr.getRPCHeader(),
 		Term:               ldr.getCurrentTerm() + 10,
-		Candidate:          ldrT.EncodePeer(ldr.localID, ldr.localAddr),
-		ID:                 ldrT.EncodeID(ldr.localID),
 		LastLogIndex:       ldr.LastIndex(),
 		LastLogTerm:        ldr.getCurrentTerm(),
 		LeadershipTransfer: false,
@@ -1754,7 +1752,7 @@ func TestRaft_Voting(t *testing.T) {
 		t.Fatalf("expected vote to be granted, but wasn't %+v", resp)
 	}
 	// a follower that thinks there's a leader shouldn't vote for a different candidate
-	reqVote.Candidate = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
+	reqVote.Addr = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
 	if err := ldrT.RequestVote(followers[1].localID, followers[1].localAddr, &reqVote, &resp); err != nil {
 		t.Fatalf("RequestVote RPC failed %v", err)
 	}
@@ -1764,7 +1762,7 @@ func TestRaft_Voting(t *testing.T) {
 	// a follower that thinks there's a leader, but the request has the leadership transfer flag, should
 	// vote for a different candidate
 	reqVote.LeadershipTransfer = true
-	reqVote.Candidate = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
+	reqVote.Addr = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
 	if err := ldrT.RequestVote(followers[1].localID, followers[1].localAddr, &reqVote, &resp); err != nil {
 		t.Fatalf("RequestVote RPC failed %v", err)
 	}
@@ -1785,9 +1783,8 @@ func TestRaft_Voting_portocolVersion3(t *testing.T) {
 	reqVote := RequestVoteRequest{
 		RPCHeader:          ldr.getRPCHeader(),
 		Term:               ldr.getCurrentTerm() + 10,
-		Candidate:          ldrT.EncodePeer(ldr.localID, ldr.localAddr),
-		ID:                 ldrT.EncodeID(ldr.localID),
 		LastLogIndex:       ldr.LastIndex(),
+		Candidate:          ldrT.EncodePeer(ldr.localID, ldr.localAddr),
 		LastLogTerm:        ldr.getCurrentTerm(),
 		LeadershipTransfer: false,
 	}
@@ -1800,6 +1797,7 @@ func TestRaft_Voting_portocolVersion3(t *testing.T) {
 		t.Fatalf("expected vote to be granted, but wasn't %+v", resp)
 	}
 	// a follower that thinks there's a leader shouldn't vote for a different candidate
+	reqVote.Addr = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
 	reqVote.Candidate = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
 	if err := ldrT.RequestVote(followers[1].localID, followers[1].localAddr, &reqVote, &resp); err != nil {
 		t.Fatalf("RequestVote RPC failed %v", err)
@@ -1810,6 +1808,7 @@ func TestRaft_Voting_portocolVersion3(t *testing.T) {
 	// a follower that thinks there's a leader, but the request has the leadership transfer flag, should
 	// vote for a different candidate
 	reqVote.LeadershipTransfer = true
+	reqVote.Addr = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
 	reqVote.Candidate = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
 	if err := ldrT.RequestVote(followers[1].localID, followers[1].localAddr, &reqVote, &resp); err != nil {
 		t.Fatalf("RequestVote RPC failed %v", err)
@@ -1829,9 +1828,9 @@ func TestRaft_ProtocolVersion_RejectRPC(t *testing.T) {
 	reqVote := RequestVoteRequest{
 		RPCHeader: RPCHeader{
 			ProtocolVersion: ProtocolVersionMax + 1,
+			Addr:            ldrT.EncodePeer(ldr.localID, ldr.localAddr),
 		},
 		Term:         ldr.getCurrentTerm() + 10,
-		Candidate:    ldrT.EncodePeer(ldr.localID, ldr.localAddr),
 		LastLogIndex: ldr.LastIndex(),
 		LastLogTerm:  ldr.getCurrentTerm(),
 	}
@@ -2440,8 +2439,6 @@ func TestRaft_RemovedFollower_Vote(t *testing.T) {
 	reqVote := RequestVoteRequest{
 		RPCHeader:          followerRemoved.getRPCHeader(),
 		Term:               followerRemoved.getCurrentTerm() + 10,
-		Candidate:          followerRemovedT.EncodePeer(followerRemoved.localID, followerRemoved.localAddr),
-		ID:                 followerRemovedT.EncodeID(followerRemoved.localID),
 		LastLogIndex:       followerRemoved.LastIndex(),
 		LastLogTerm:        followerRemoved.getCurrentTerm(),
 		LeadershipTransfer: false,

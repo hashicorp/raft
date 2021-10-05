@@ -320,13 +320,15 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 		RPCHeader:          r.getRPCHeader(),
 		SnapshotVersion:    meta.Version,
 		Term:               s.currentTerm,
-		Leader:             r.trans.EncodePeer(r.localID, r.localAddr),
 		LastLogIndex:       meta.Index,
 		LastLogTerm:        meta.Term,
 		Peers:              meta.Peers,
 		Size:               meta.Size,
 		Configuration:      EncodeConfiguration(meta.Configuration),
 		ConfigurationIndex: meta.ConfigurationIndex,
+	}
+	if req.ProtocolVersion <= 3 {
+		req.Leader = r.trans.EncodePeer(r.localID, r.localAddr)
 	}
 
 	s.peerLock.RLock()
@@ -381,7 +383,9 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 	req := AppendEntriesRequest{
 		RPCHeader: r.getRPCHeader(),
 		Term:      s.currentTerm,
-		Leader:    r.trans.EncodePeer(r.localID, r.localAddr),
+	}
+	if req.ProtocolVersion <= 3 {
+		req.Leader = r.trans.EncodePeer(r.localID, r.localAddr)
 	}
 	var resp AppendEntriesResponse
 	for {
@@ -552,7 +556,10 @@ func (r *Raft) pipelineDecode(s *followerReplication, p AppendPipeline, stopCh, 
 func (r *Raft) setupAppendEntries(s *followerReplication, req *AppendEntriesRequest, nextIndex, lastIndex uint64) error {
 	req.RPCHeader = r.getRPCHeader()
 	req.Term = s.currentTerm
-	req.Leader = r.trans.EncodePeer(r.localID, r.localAddr)
+	if req.ProtocolVersion <= 3 {
+		req.Leader = r.trans.EncodePeer(r.localID, r.localAddr)
+	}
+
 	req.LeaderCommitIndex = r.getCommitIndex()
 	if err := r.setPreviousLog(req, nextIndex); err != nil {
 		return err

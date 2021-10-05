@@ -35,7 +35,6 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 	// Make the RPC request
 	args := AppendEntriesRequest{
 		Term:         10,
-		Leader:       []byte("cartman"),
 		PrevLogEntry: 100,
 		PrevLogTerm:  4,
 		Entries: []*Log{
@@ -47,6 +46,8 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 		},
 		LeaderCommitIndex: 90,
 	}
+	args.Addr = []byte("cartman")
+
 	resp := AppendEntriesResponse{
 		Term:    4,
 		LastLog: 90,
@@ -138,9 +139,11 @@ func TestNetworkTransport_Heartbeat_FastPath(t *testing.T) {
 
 	// Make the RPC request
 	args := AppendEntriesRequest{
-		Term:   10,
-		Leader: []byte("cartman"),
+		Term: 10,
 	}
+	args.ProtocolVersion = ProtocolVersionMax
+	args.Addr = []byte("cartman")
+	args.Leader = []byte("cartman")
 	resp := AppendEntriesResponse{
 		Term:    4,
 		LastLog: 90,
@@ -197,7 +200,6 @@ func TestNetworkTransport_AppendEntries(t *testing.T) {
 		// Make the RPC request
 		args := AppendEntriesRequest{
 			Term:         10,
-			Leader:       []byte("cartman"),
 			PrevLogEntry: 100,
 			PrevLogTerm:  4,
 			Entries: []*Log{
@@ -209,6 +211,7 @@ func TestNetworkTransport_AppendEntries(t *testing.T) {
 			},
 			LeaderCommitIndex: 90,
 		}
+		args.Addr = []byte("cartman")
 		resp := AppendEntriesResponse{
 			Term:    4,
 			LastLog: 90,
@@ -267,7 +270,6 @@ func TestNetworkTransport_AppendEntriesPipeline(t *testing.T) {
 		// Make the RPC request
 		args := AppendEntriesRequest{
 			Term:         10,
-			Leader:       []byte("cartman"),
 			PrevLogEntry: 100,
 			PrevLogTerm:  4,
 			Entries: []*Log{
@@ -279,6 +281,7 @@ func TestNetworkTransport_AppendEntriesPipeline(t *testing.T) {
 			},
 			LeaderCommitIndex: 90,
 		}
+		args.Addr = []byte("cartman")
 		resp := AppendEntriesResponse{
 			Term:    4,
 			LastLog: 90,
@@ -352,7 +355,6 @@ func TestNetworkTransport_AppendEntriesPipeline_CloseStreams(t *testing.T) {
 	// Make the RPC request
 	args := AppendEntriesRequest{
 		Term:         10,
-		Leader:       []byte("cartman"),
 		PrevLogEntry: 100,
 		PrevLogTerm:  4,
 		Entries: []*Log{
@@ -364,6 +366,7 @@ func TestNetworkTransport_AppendEntriesPipeline_CloseStreams(t *testing.T) {
 		},
 		LeaderCommitIndex: 90,
 	}
+	args.Addr = []byte("cartman")
 	resp := AppendEntriesResponse{
 		Term:    4,
 		LastLog: 90,
@@ -462,10 +465,10 @@ func TestNetworkTransport_RequestVote(t *testing.T) {
 		// Make the RPC request
 		args := RequestVoteRequest{
 			Term:         20,
-			Candidate:    []byte("butters"),
 			LastLogIndex: 100,
 			LastLogTerm:  19,
 		}
+		args.Addr = []byte("butters")
 		resp := RequestVoteResponse{
 			Term:    100,
 			Granted: false,
@@ -523,12 +526,12 @@ func TestNetworkTransport_InstallSnapshot(t *testing.T) {
 		// Make the RPC request
 		args := InstallSnapshotRequest{
 			Term:         10,
-			Leader:       []byte("kyle"),
 			LastLogIndex: 100,
 			LastLogTerm:  9,
 			Peers:        []byte("blah blah"),
 			Size:         10,
 		}
+		args.Addr = []byte("kyle")
 		resp := InstallSnapshotResponse{
 			Term:    10,
 			Success: true,
@@ -631,7 +634,6 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 	// Make the RPC request
 	args := AppendEntriesRequest{
 		Term:         10,
-		Leader:       []byte("cartman"),
 		PrevLogEntry: 100,
 		PrevLogTerm:  4,
 		Entries: []*Log{
@@ -643,6 +645,7 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 		},
 		LeaderCommitIndex: 90,
 	}
+	args.Addr = []byte("cartman")
 	resp := AppendEntriesResponse{
 		Term:    4,
 		LastLog: 90,
