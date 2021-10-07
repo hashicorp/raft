@@ -1670,7 +1670,7 @@ func TestRaft_StartAsLeader(t *testing.T) {
 		if !v {
 			c.FailNowf("should become leader")
 		}
-	case <-time.After(c.conf.HeartbeatTimeout * 4):
+	case <-time.After(c.conf.HeartbeatTimeout * 10):
 		// Longer than you think as possibility of multiple elections
 		c.FailNowf("timeout becoming leader")
 	}
