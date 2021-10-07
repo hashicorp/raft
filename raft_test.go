@@ -697,6 +697,9 @@ func TestRaft_RemoveFollower(t *testing.T) {
 	if configuration := c.getConfiguration(followers[1]); len(configuration.Servers) != 2 {
 		t.Fatalf("too many peers")
 	}
+
+	// The removed node should remain in a follower state
+	require.Equal(t, Follower, follower.getState())
 }
 
 func TestRaft_RemoveLeader(t *testing.T) {
