@@ -19,7 +19,8 @@ type Observation struct {
 
 // LeaderObservation is used for the data when leadership changes.
 type LeaderObservation struct {
-	Leader ServerAddress
+	LeaderAddr ServerAddress
+	LeaderID   ServerID
 }
 
 // PeerObservation is sent to observers when peers change.
@@ -28,7 +29,7 @@ type PeerObservation struct {
 	Peer    Server
 }
 
-// FailedHeartbeatObservation is sent when a node fails to heartbeat with the leader
+// FailedHeartbeatObservation is sent when a node fails to heartbeat with the leader Address and ID
 type FailedHeartbeatObservation struct {
 	PeerID      ServerID
 	LastContact time.Time

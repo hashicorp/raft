@@ -92,14 +92,16 @@ type leaderState struct {
 	stepDown                     chan struct{}
 }
 
-// setLeader is used to modify the current leader of the cluster
-func (r *Raft) setLeader(leader ServerAddress) {
+// setLeader is used to modify the current leader Address and ID of the cluster
+func (r *Raft) setLeader(leaderAddr ServerAddress, leaderID ServerID) {
 	r.leaderLock.Lock()
-	oldLeader := r.leader
-	r.leader = leader
+	oldLeaderAddr := r.leaderAddr
+	r.leaderAddr = leaderAddr
+	oldLeaderID := r.leaderID
+	r.leaderID = leaderID
 	r.leaderLock.Unlock()
-	if oldLeader != leader {
-		r.observe(LeaderObservation{Leader: leader})
+	if oldLeaderAddr != leaderAddr || oldLeaderID != leaderID {
+		r.observe(LeaderObservation{LeaderAddr: leaderAddr, LeaderID: leaderID})
 	}
 }
 
@@ -132,7 +134,7 @@ func (r *Raft) run() {
 		select {
 		case <-r.shutdownCh:
 			// Clear the leader to prevent forwarding
-			r.setLeader("")
+			r.setLeader("", "")
 			return
 		default:
 		}
@@ -152,7 +154,8 @@ func (r *Raft) run() {
 // runFollower runs the FSM for a follower.
 func (r *Raft) runFollower() {
 	didWarn := false
-	r.logger.Info("entering follower state", "follower", r, "leader", r.Leader())
+	leaderAddr, _ := r.Leader()
+	r.logger.Info("entering follower state", "follower", r, "leader", leaderAddr)
 	metrics.IncrCounter([]string{"raft", "state", "follower"}, 1)
 	heartbeatTimer := randomTimeout(r.config().HeartbeatTimeout)
 
@@ -200,8 +203,8 @@ func (r *Raft) runFollower() {
 			}
 
 			// Heartbeat failed! Transition to the candidate state
-			lastLeader := r.Leader()
-			r.setLeader("")
+			lastLeader, _ := r.Leader()
+			r.setLeader("", "")
 
 			if r.configurations.latestIndex == 0 {
 				if !didWarn {
@@ -302,7 +305,7 @@ func (r *Raft) runCandidate() {
 			if grantedVotes >= votesNeeded {
 				r.logger.Info("election won", "tally", grantedVotes)
 				r.setState(Leader)
-				r.setLeader(r.localAddr)
+				r.setLeader(r.localAddr, r.localID)
 				return
 			}
 
@@ -437,8 +440,8 @@ func (r *Raft) runLeader() {
 		// We may have stepped down due to an RPC call, which would
 		// provide the leader, so we cannot always blank this out.
 		r.leaderLock.Lock()
-		if r.leader == r.localAddr {
-			r.leader = ""
+		if r.leaderAddr == r.localAddr {
+			r.leaderAddr = ""
 		}
 		r.leaderLock.Unlock()
 
@@ -1323,9 +1326,9 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 
 	// Save the current leader
 	if a.ProtocolVersion > 3 {
-		r.setLeader(r.trans.DecodePeer(a.Addr))
+		r.setLeader(r.trans.DecodePeer(a.Addr), r.trans.DecodeID(a.ID))
 	} else {
-		r.setLeader(r.trans.DecodePeer(a.Leader))
+		r.setLeader(r.trans.DecodePeer(a.Leader), "")
 	}
 	// Verify the last log entry
 	if a.PrevLogEntry > 0 {
@@ -1506,10 +1509,10 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 			return
 		}
 	}
-	if leader := r.Leader(); leader != "" && leader != candidate && !req.LeadershipTransfer {
+	if leaderAddr, _ := r.Leader(); leaderAddr != "" && leaderAddr != candidate && !req.LeadershipTransfer {
 		r.logger.Warn("rejecting vote request since we have a leader",
 			"from", candidate,
-			"leader", leader)
+			"leaderAddr", leaderAddr)
 		return
 	}
 
@@ -1620,9 +1623,9 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 
 	// Save the current leader
 	if req.ProtocolVersion > 3 {
-		r.setLeader(r.trans.DecodePeer(req.Addr))
+		r.setLeader(r.trans.DecodePeer(req.Addr), r.trans.DecodeID(req.ID))
 	} else {
-		r.setLeader(r.trans.DecodePeer(req.Leader))
+		r.setLeader(r.trans.DecodePeer(req.Leader), "")
 	}
 
 	// Create a new snapshot
@@ -1823,7 +1826,7 @@ func (r *Raft) setCurrentTerm(t uint64) {
 // transition causes the known leader to be cleared. This means
 // that leader should be set only after updating the state.
 func (r *Raft) setState(state RaftState) {
-	r.setLeader("")
+	r.setLeader("", "")
 	oldState := r.raftState.getState()
 	r.raftState.setState(state)
 	if oldState != state {
@@ -1880,7 +1883,7 @@ func (r *Raft) initiateLeadershipTransfer(id *ServerID, address *ServerAddress) 
 
 // timeoutNow is what happens when a server receives a TimeoutNowRequest.
 func (r *Raft) timeoutNow(rpc RPC, req *TimeoutNowRequest) {
-	r.setLeader("")
+	r.setLeader("", "")
 	r.setState(Candidate)
 	r.candidateFromLeadershipTransfer = true
 	rpc.Respond(&TimeoutNowResponse{}, nil)

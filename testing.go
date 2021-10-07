@@ -529,15 +529,16 @@ func (c *cluster) EnsureLeader(t *testing.T, expect ServerAddress) {
 	// think the leader is correct
 	fail := false
 	for _, r := range c.rafts {
-		leader := ServerAddress(r.Leader())
-		if leader != expect {
-			if leader == "" {
-				leader = "[none]"
+		leaderAddr, _ := r.Leader()
+
+		if leaderAddr != expect {
+			if leaderAddr == "" {
+				leaderAddr = "[none]"
 			}
 			if expect == "" {
-				c.logger.Error("peer sees incorrect leader", "peer", r, "leader", leader, "expected-leader", "[none]")
+				c.logger.Error("peer sees incorrect leader", "peer", r, "leader", leaderAddr, "expected-leader", "[none]")
 			} else {
-				c.logger.Error("peer sees incorrect leader", "peer", r, "leader", leader, "expected-leader", expect)
+				c.logger.Error("peer sees incorrect leader", "peer", r, "leader", leaderAddr, "expected-leader", expect)
 			}
 			fail = true
 		}

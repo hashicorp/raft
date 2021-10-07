@@ -1554,10 +1554,10 @@ LOOP:
 	}
 
 	// Ensure both have cleared their leader
-	if l := leader.Leader(); l != "" {
+	if l, id := leader.Leader(); l != "" && id != "" {
 		t.Fatalf("bad: %v", l)
 	}
-	if l := follower.Leader(); l != "" {
+	if l, id := follower.Leader(); l != "" && id != "" {
 		t.Fatalf("bad: %v", l)
 	}
 }
@@ -1659,7 +1659,7 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	}
 
 	// Ensure the known leader is cleared
-	if l := leader.Leader(); l != "" {
+	if l, _ := leader.Leader(); l != "" {
 		t.Fatalf("bad: %v", l)
 	}
 }

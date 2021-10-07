@@ -111,8 +111,10 @@ type Raft struct {
 	lastContact     time.Time
 	lastContactLock sync.RWMutex
 
-	// Leader is the current cluster leader
-	leader     ServerAddress
+	// leaderAddr is the current cluster leader Address
+	leaderAddr ServerAddress
+	// LeaderID is the current cluster leader ID
+	leaderID   ServerID
 	leaderLock sync.RWMutex
 
 	// leaderCh is used to notify of leadership changes
@@ -716,11 +718,12 @@ func (r *Raft) BootstrapCluster(configuration Configuration) Future {
 // Leader is used to return the current leader of the cluster.
 // It may return empty string if there is no current leader
 // or the leader is unknown.
-func (r *Raft) Leader() ServerAddress {
+func (r *Raft) Leader() (ServerAddress, ServerID) {
 	r.leaderLock.RLock()
-	leader := r.leader
+	leaderAddr := r.leaderAddr
+	leaderID := r.leaderID
 	r.leaderLock.RUnlock()
-	return leader
+	return leaderAddr, leaderID
 }
 
 // Apply is used to apply a command to the FSM in a highly consistent
