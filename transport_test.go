@@ -66,12 +66,12 @@ func TestTransport_AppendEntries(t *testing.T) {
 				// Verify the command
 				req := rpc.Command.(*AppendEntriesRequest)
 				if !reflect.DeepEqual(req, &args) {
-					t.Fatalf("command mismatch: %#v %#v", *req, args)
+					t.Errorf("command mismatch: %#v %#v", *req, args)
 				}
 				rpc.Respond(&resp, nil)
 
 			case <-time.After(200 * time.Millisecond):
-				t.Fatalf("timeout")
+				t.Errorf("timeout")
 			}
 		}()
 
@@ -129,12 +129,12 @@ func TestTransport_AppendEntriesPipeline(t *testing.T) {
 					// Verify the command
 					req := rpc.Command.(*AppendEntriesRequest)
 					if !reflect.DeepEqual(req, &args) {
-						t.Fatalf("command mismatch: %#v %#v", *req, args)
+						t.Errorf("command mismatch: %#v %#v", *req, args)
 					}
 					rpc.Respond(&resp, nil)
 
 				case <-time.After(200 * time.Millisecond):
-					t.Fatalf("timeout")
+					t.Errorf("timeout")
 				}
 			}
 		}()
@@ -198,13 +198,13 @@ func TestTransport_RequestVote(t *testing.T) {
 				// Verify the command
 				req := rpc.Command.(*RequestVoteRequest)
 				if !reflect.DeepEqual(req, &args) {
-					t.Fatalf("command mismatch: %#v %#v", *req, args)
+					t.Errorf("command mismatch: %#v %#v", *req, args)
 				}
 
 				rpc.Respond(&resp, nil)
 
 			case <-time.After(200 * time.Millisecond):
-				t.Fatalf("timeout")
+				t.Errorf("timeout")
 			}
 		}()
 
@@ -254,7 +254,7 @@ func TestTransport_InstallSnapshot(t *testing.T) {
 				// Verify the command
 				req := rpc.Command.(*InstallSnapshotRequest)
 				if !reflect.DeepEqual(req, &args) {
-					t.Fatalf("command mismatch: %#v %#v", *req, args)
+					t.Errorf("command mismatch: %#v %#v", *req, args)
 				}
 
 				// Try to read the bytes
@@ -263,13 +263,13 @@ func TestTransport_InstallSnapshot(t *testing.T) {
 
 				// Compare
 				if bytes.Compare(buf, []byte("0123456789")) != 0 {
-					t.Fatalf("bad buf %v", buf)
+					t.Errorf("bad buf %v", buf)
 				}
 
 				rpc.Respond(&resp, nil)
 
 			case <-time.After(200 * time.Millisecond):
-				t.Fatalf("timeout")
+				t.Errorf("timeout")
 			}
 		}()
 

@@ -3,6 +3,7 @@ package raft
 import (
 	"bytes"
 	"fmt"
+	"github.com/stretchr/testify/require"
 	"io/ioutil"
 	"os"
 	"path/filepath"
