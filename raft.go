@@ -154,8 +154,8 @@ func (r *Raft) run() {
 // runFollower runs the FSM for a follower.
 func (r *Raft) runFollower() {
 	didWarn := false
-	leaderAddr, _ := r.Leader()
-	r.logger.Info("entering follower state", "follower", r, "leader", leaderAddr)
+	leaderAddr, leaderID := r.Leader()
+	r.logger.Info("entering follower state", "follower", r, "leader (", leaderAddr, leaderID, ")")
 	metrics.IncrCounter([]string{"raft", "state", "follower"}, 1)
 	heartbeatTimer := randomTimeout(r.config().HeartbeatTimeout)
 
@@ -1509,10 +1509,10 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 			return
 		}
 	}
-	if leaderAddr, _ := r.Leader(); leaderAddr != "" && leaderAddr != candidate && !req.LeadershipTransfer {
+	if leaderAddr, leaderID := r.Leader(); leaderAddr != "" && leaderAddr != candidate && !req.LeadershipTransfer {
 		r.logger.Warn("rejecting vote request since we have a leader",
 			"from", candidate,
-			"leaderAddr", leaderAddr)
+			"leader (", leaderAddr, leaderID, ")")
 		return
 	}
 
@@ -1748,9 +1748,9 @@ func (r *Raft) electSelf() <-chan *voteResult {
 		LastLogTerm:        lastTerm,
 		LeadershipTransfer: r.candidateFromLeadershipTransfer,
 	}
-	if req.ProtocolVersion <= 3 {
-		req.Candidate = r.trans.EncodePeer(r.localID, r.localAddr)
-	}
+
+	// this is needed for retro compatibility with protocolVersion = 3
+	req.Candidate = r.trans.EncodePeer(r.localID, r.localAddr)
 
 	// Construct a function to ask for a vote
 	askPeer := func(peer Server) {

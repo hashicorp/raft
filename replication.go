@@ -327,9 +327,8 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 		Configuration:      EncodeConfiguration(meta.Configuration),
 		ConfigurationIndex: meta.ConfigurationIndex,
 	}
-	if req.ProtocolVersion <= 3 {
-		req.Leader = r.trans.EncodePeer(r.localID, r.localAddr)
-	}
+	// this is needed for retro compatibility with protocolVersion = 3
+	req.Leader = r.trans.EncodePeer(r.localID, r.localAddr)
 
 	s.peerLock.RLock()
 	peer := s.peer
@@ -384,9 +383,10 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 		RPCHeader: r.getRPCHeader(),
 		Term:      s.currentTerm,
 	}
-	if req.ProtocolVersion <= 3 {
-		req.Leader = r.trans.EncodePeer(r.localID, r.localAddr)
-	}
+
+	// this is needed for retro compatibility with protocolVersion = 3
+	req.Leader = r.trans.EncodePeer(r.localID, r.localAddr)
+
 	var resp AppendEntriesResponse
 	for {
 		// Wait for the next heartbeat interval or forced notify
@@ -556,9 +556,8 @@ func (r *Raft) pipelineDecode(s *followerReplication, p AppendPipeline, stopCh, 
 func (r *Raft) setupAppendEntries(s *followerReplication, req *AppendEntriesRequest, nextIndex, lastIndex uint64) error {
 	req.RPCHeader = r.getRPCHeader()
 	req.Term = s.currentTerm
-	if req.ProtocolVersion <= 3 {
-		req.Leader = r.trans.EncodePeer(r.localID, r.localAddr)
-	}
+	// this is needed for retro compatibility with protocolVersion = 3
+	req.Leader = r.trans.EncodePeer(r.localID, r.localAddr)
 
 	req.LeaderCommitIndex = r.getCommitIndex()
 	if err := r.setPreviousLog(req, nextIndex); err != nil {
