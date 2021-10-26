@@ -155,7 +155,7 @@ func (r *Raft) run() {
 func (r *Raft) runFollower() {
 	didWarn := false
 	leaderAddr, leaderID := r.Leader()
-	r.logger.Info("entering follower state", "follower", r, "leader (", leaderAddr, leaderID, ")")
+	r.logger.Info("entering follower state", "follower", r, "leader (", leaderAddr, string(leaderID), ")")
 	metrics.IncrCounter([]string{"raft", "state", "follower"}, 1)
 	heartbeatTimer := randomTimeout(r.config().HeartbeatTimeout)
 
@@ -1512,7 +1512,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	if leaderAddr, leaderID := r.Leader(); leaderAddr != "" && leaderAddr != candidate && !req.LeadershipTransfer {
 		r.logger.Warn("rejecting vote request since we have a leader",
 			"from", candidate,
-			"leader (", leaderAddr, leaderID, ")")
+			"leader (", leaderAddr, string(leaderID), ")")
 		return
 	}
 
