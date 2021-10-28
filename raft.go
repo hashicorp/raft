@@ -31,7 +31,7 @@ var (
 func (r *Raft) getRPCHeader() RPCHeader {
 	return RPCHeader{
 		ProtocolVersion: r.config().ProtocolVersion,
-		ID:              r.trans.EncodeID(r.config().LocalID),
+		ID:              []byte(r.config().LocalID),
 		Addr:            r.trans.EncodePeer(r.config().LocalID, r.localAddr),
 	}
 }
@@ -1326,7 +1326,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 
 	// Save the current leader
 	if a.ProtocolVersion > 3 {
-		r.setLeader(r.trans.DecodePeer(a.Addr), r.trans.DecodeID(a.ID))
+		r.setLeader(r.trans.DecodePeer(a.Addr), ServerID(a.ID))
 	} else {
 		r.setLeader(r.trans.DecodePeer(a.Leader), "")
 	}
@@ -1500,7 +1500,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// Prior to version 4 the peer ID is not part of `RequestVoteRequest`,
 	// We assume that the peer is part of the configuration and skip this check
 	if req.ProtocolVersion > 3 {
-		candidateID := r.trans.DecodeID(req.ID)
+		candidateID := ServerID(req.ID)
 		// if the Servers list is empty that mean the cluster is very likely trying to bootstrap,
 		// Grant the vote
 		if len(r.configurations.latest.Servers) > 0 && !inConfig(r.configurations.latest, candidateID) {
@@ -1623,7 +1623,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 
 	// Save the current leader
 	if req.ProtocolVersion > 3 {
-		r.setLeader(r.trans.DecodePeer(req.Addr), r.trans.DecodeID(req.ID))
+		r.setLeader(r.trans.DecodePeer(req.Addr), ServerID(req.ID))
 	} else {
 		r.setLeader(r.trans.DecodePeer(req.Leader), "")
 	}

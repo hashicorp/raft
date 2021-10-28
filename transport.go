@@ -53,12 +53,6 @@ type Transport interface {
 	// DecodePeer is used to deserialize a peer's address.
 	DecodePeer([]byte) ServerAddress
 
-	// EncodeID is used to serialize a server ID.
-	EncodeID(id ServerID) []byte
-
-	// DecodeID is used to deserialize a server ID.
-	DecodeID([]byte) ServerID
-
 	// SetHeartbeatHandler is used to setup a heartbeat handler
 	// as a fast-pass. This is to avoid head-of-line blocking from
 	// disk IO. If a Transport does not support this, it can simply
