@@ -8,8 +8,10 @@ type RPCHeader struct {
 	// ProtocolVersion is the version of the protocol the sender is
 	// speaking.
 	ProtocolVersion ProtocolVersion
-	ID              []byte
-	Addr            []byte
+	// ID is the ServerID of the node sending the RPC Request or Response
+	ID []byte
+	// Addr is the ServerAddr of the node sending the RPC Request or Response
+	Addr []byte
 }
 
 // WithRPCHeader is an interface that exposes the RPC header.
