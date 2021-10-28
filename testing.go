@@ -203,6 +203,15 @@ func (c *cluster) Merge(other *cluster) {
 	c.rafts = append(c.rafts, other.rafts...)
 }
 
+func (c *cluster) RemoveServer(id ServerID) {
+	for i, n := range c.rafts {
+		if n.localID == id {
+			c.rafts = append(c.rafts[:i], c.rafts[i+1:]...)
+			return
+		}
+	}
+}
+
 // notifyFailed will close the failed channel which can signal the goroutine
 // running the test that another goroutine has detected a failure in order to
 // terminate the test.

@@ -2,6 +2,7 @@ package raft
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -1927,6 +1928,95 @@ func TestRaft_ProtocolVersion_Upgrade_2_3(t *testing.T) {
 	}
 }
 
+func TestRaft_ProtocolVersion_Upgrade_3_4(t *testing.T) {
+	// Make a cluster back on protocol version 2.
+	conf := inmemConfig(t)
+	conf.ProtocolVersion = 3
+	c := MakeCluster(2, t, conf)
+	defer c.Close()
+	oldFollower := c.Followers()[0]
+
+	// Set up another server speaking protocol version 3.
+	conf = inmemConfig(t)
+	conf.ProtocolVersion = 4
+	c1 := MakeClusterNoBootstrap(1, t, conf)
+	newFollower := c1.rafts[0]
+
+	// Merge clusters.
+	c.Merge(c1)
+	c.FullyConnect()
+
+	// Use the new ID-based API to add the server with its ID.
+	future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 1*time.Second)
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Sanity check the cluster.
+	c.EnsureSame(t)
+	c.EnsureSamePeers(t)
+	c.EnsureLeader(t, c.Leader().localAddr)
+
+	addr, id := oldFollower.Leader()
+	require.Empty(t, id)
+	require.NotEmpty(t, addr)
+
+	addr, id = newFollower.Leader()
+	require.Empty(t, id)
+	require.NotEmpty(t, addr)
+	//replace all protocol 3 nodes with protocol 4 (rolling upgrade)
+	followers := c.Followers()
+	for _, n := range followers {
+		if n.protocolVersion == 3 {
+			conf = inmemConfig(t)
+			conf.ProtocolVersion = 4
+			c1 := MakeClusterNoBootstrap(1, t, conf)
+			// Merge clusters.
+			c.Merge(c1)
+			c.FullyConnect()
+			future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 1*time.Second)
+			if err := future.Error(); err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			c.Leader().RemoveServer(id, 0, 300*time.Millisecond)
+			c.RemoveServer(n.localID)
+		}
+	}
+	err := waitForLeader(c)
+	require.NoError(t, err)
+	v3Leader := c.Leader()
+	{
+		c1 := MakeClusterNoBootstrap(1, t, conf)
+		// Merge clusters.
+		c.Merge(c1)
+		c.FullyConnect()
+		future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 1*time.Second)
+		if err := future.Error(); err != nil {
+			t.Fatalf("err: %v", err)
+		}
+	}
+	v3Leader.RemoveServer(v3Leader.leaderID, 0, 0)
+	c.RemoveServer(v3Leader.localID)
+	err = waitForNewLeader(c, v3Leader.localID)
+	require.NoError(t, err)
+	// Commit some logs
+
+	for i := 0; i < 5; i++ {
+		future := c.Leader().Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+		if err := future.Error(); err != nil {
+			t.Fatalf("[ERR] err: %v", err)
+		}
+	}
+
+	for _, n := range c.rafts {
+		require.Equal(t, ProtocolVersion(4), n.protocolVersion)
+		addr, id = n.Leader()
+		require.NotEmpty(t, id)
+		require.NotEmpty(t, addr)
+	}
+
+}
+
 func TestRaft_LeadershipTransferInProgress(t *testing.T) {
 	r := &Raft{leaderState: leaderState{}}
 	r.setupLeaderState()
@@ -2429,7 +2519,7 @@ func TestRaft_RemovedFollower_Vote(t *testing.T) {
 	if configuration := c.getConfiguration(followers[1]); len(configuration.Servers) != 2 {
 		t.Fatalf("too many peers")
 	}
-	waitforState(followerRemoved, Follower)
+	waitForState(followerRemoved, Follower)
 	// The removed node should be still in Follower state
 	require.Equal(t, Follower, followerRemoved.getState())
 
@@ -2451,7 +2541,7 @@ func TestRaft_RemovedFollower_Vote(t *testing.T) {
 	time.Sleep(c.propagateTimeout)
 
 	// wait for the remaining follower to trigger an election
-	waitforState(follower, Candidate)
+	waitForState(follower, Candidate)
 	require.Equal(t, Candidate, follower.getState())
 
 	// send a vote request from the removed follower to the Candidate follower
@@ -2465,10 +2555,36 @@ func TestRaft_RemovedFollower_Vote(t *testing.T) {
 	}
 }
 
-func waitforState(follower *Raft, state RaftState) {
+func waitForState(follower *Raft, state RaftState) {
 	count := 0
 	for follower.getState() != state && count < 1000 {
 		count++
 		time.Sleep(1 * time.Millisecond)
 	}
+}
+
+func waitForLeader(c *cluster) error {
+	count := 0
+	for count < 100 {
+		r := c.GetInState(Leader)
+		if len(r) >= 1 {
+			return nil
+		}
+		count++
+		time.Sleep(50 * time.Millisecond)
+	}
+	return errors.New("no leader elected")
+}
+
+func waitForNewLeader(c *cluster, id ServerID) error {
+	count := 0
+	for count < 100 {
+		r := c.GetInState(Leader)
+		if len(r) >= 1 && r[0].localID != id {
+			return nil
+		}
+		count++
+		time.Sleep(50 * time.Millisecond)
+	}
+	return errors.New("no leader elected")
 }
