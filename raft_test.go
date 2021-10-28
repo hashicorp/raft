@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1928,93 +1929,106 @@ func TestRaft_ProtocolVersion_Upgrade_2_3(t *testing.T) {
 	}
 }
 
-func TestRaft_ProtocolVersion_Upgrade_3_4(t *testing.T) {
+func TestRaft_LeaderID_Propagated(t *testing.T) {
 	// Make a cluster back on protocol version 2.
 	conf := inmemConfig(t)
-	conf.ProtocolVersion = 3
-	c := MakeCluster(2, t, conf)
+	c := MakeCluster(3, t, conf)
 	defer c.Close()
-	oldFollower := c.Followers()[0]
-
-	// Set up another server speaking protocol version 3.
-	conf = inmemConfig(t)
-	conf.ProtocolVersion = 4
-	c1 := MakeClusterNoBootstrap(1, t, conf)
-	newFollower := c1.rafts[0]
-
-	// Merge clusters.
-	c.Merge(c1)
-	c.FullyConnect()
-
-	// Use the new ID-based API to add the server with its ID.
-	future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 1*time.Second)
-	if err := future.Error(); err != nil {
-		t.Fatalf("err: %v", err)
-	}
-
-	// Sanity check the cluster.
-	c.EnsureSame(t)
-	c.EnsureSamePeers(t)
-	c.EnsureLeader(t, c.Leader().localAddr)
-
-	addr, id := oldFollower.Leader()
-	require.Empty(t, id)
-	require.NotEmpty(t, addr)
-
-	addr, id = newFollower.Leader()
-	require.Empty(t, id)
-	require.NotEmpty(t, addr)
-	//replace all protocol 3 nodes with protocol 4 (rolling upgrade)
-	followers := c.Followers()
-	for _, n := range followers {
-		if n.protocolVersion == 3 {
-			conf = inmemConfig(t)
-			conf.ProtocolVersion = 4
-			c1 := MakeClusterNoBootstrap(1, t, conf)
-			// Merge clusters.
-			c.Merge(c1)
-			c.FullyConnect()
-			future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 1*time.Second)
-			if err := future.Error(); err != nil {
-				t.Fatalf("err: %v", err)
-			}
-			c.Leader().RemoveServer(id, 0, 300*time.Millisecond)
-			c.RemoveServer(n.localID)
-		}
-	}
 	err := waitForLeader(c)
 	require.NoError(t, err)
-	v3Leader := c.Leader()
-	{
-		c1 := MakeClusterNoBootstrap(1, t, conf)
-		// Merge clusters.
-		c.Merge(c1)
-		c.FullyConnect()
-		future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 1*time.Second)
-		if err := future.Error(); err != nil {
-			t.Fatalf("err: %v", err)
-		}
-	}
-	v3Leader.RemoveServer(v3Leader.leaderID, 0, 0)
-	c.RemoveServer(v3Leader.localID)
-	err = waitForNewLeader(c, v3Leader.localID)
-	require.NoError(t, err)
-	// Commit some logs
 
+	for _, n := range c.rafts {
+		require.Equal(t, ProtocolVersion(4), n.protocolVersion)
+		addr, id := n.Leader()
+		require.NotEmpty(t, id)
+		require.NotEmpty(t, addr)
+	}
 	for i := 0; i < 5; i++ {
 		future := c.Leader().Apply([]byte(fmt.Sprintf("test%d", i)), 0)
 		if err := future.Error(); err != nil {
 			t.Fatalf("[ERR] err: %v", err)
 		}
 	}
+	// Wait a while
+	time.Sleep(c.propagateTimeout)
 
-	for _, n := range c.rafts {
-		require.Equal(t, ProtocolVersion(4), n.protocolVersion)
-		addr, id = n.Leader()
-		require.NotEmpty(t, id)
-		require.NotEmpty(t, addr)
+	// Sanity check the cluster.
+	c.EnsureSame(t)
+	c.EnsureSamePeers(t)
+	c.EnsureLeader(t, c.Leader().localAddr)
+}
+
+func TestRaft_MixedCluster_Stable_v3Leader(t *testing.T) {
+	// Make a cluster back on protocol version 1.
+	conf := inmemConfig(t)
+	conf.ProtocolVersion = 3
+	c := MakeCluster(2, t, conf)
+	defer c.Close()
+
+	// Set up another server speaking protocol version 2.
+	conf = inmemConfig(t)
+	conf.ProtocolVersion = 4
+	c1 := MakeClusterNoBootstrap(1, t, conf)
+
+	// Merge clusters.
+	c.Merge(c1)
+	c.FullyConnect()
+
+	future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 1*time.Second)
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
 	}
+	err := waitForLeader(c)
+	require.NoError(t, err)
+	for i := 0; i < 5; i++ {
+		future := c.Leader().Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+		if err := future.Error(); err != nil {
+			t.Fatalf("[ERR] err: %v", err)
+		}
+	}
+	// Wait a while
+	time.Sleep(c.propagateTimeout)
 
+	// Sanity check the cluster.
+	c.EnsureSame(t)
+	c.EnsureSamePeers(t)
+	c.EnsureLeader(t, c.Leader().localAddr)
+}
+
+func TestRaft_MixedCluster_Stable_v4Leader(t *testing.T) {
+	// Make a cluster back on protocol version 1.
+	conf := inmemConfig(t)
+	conf.ProtocolVersion = 4
+	c := MakeCluster(2, t, conf)
+	defer c.Close()
+
+	// Set up another server speaking protocol version 2.
+	conf = inmemConfig(t)
+	conf.ProtocolVersion = 3
+	c1 := MakeClusterNoBootstrap(1, t, conf)
+
+	// Merge clusters.
+	c.Merge(c1)
+	c.FullyConnect()
+	future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 1*time.Second)
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	err := waitForLeader(c)
+	require.NoError(t, err)
+	for i := 0; i < 5; i++ {
+		future := c.Leader().Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+		if err := future.Error(); err != nil {
+			t.Fatalf("[ERR] err: %v", err)
+		}
+	}
+	// Wait a while
+	c.WaitForReplication(5)
+
+	// Sanity check the cluster.
+	c.EnsureSame(t)
+	c.EnsureSamePeers(t)
+	c.EnsureLeader(t, c.Leader().localAddr)
 }
 
 func TestRaft_LeadershipTransferInProgress(t *testing.T) {
@@ -2582,6 +2596,12 @@ func waitForNewLeader(c *cluster, id ServerID) error {
 		r := c.GetInState(Leader)
 		if len(r) >= 1 && r[0].localID != id {
 			return nil
+		} else {
+			if len(r) == 0 {
+				log.Println("no leader yet")
+			} else {
+				log.Printf("leader still %s\n", id)
+			}
 		}
 		count++
 		time.Sleep(100 * time.Millisecond)

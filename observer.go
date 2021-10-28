@@ -29,7 +29,7 @@ type PeerObservation struct {
 	Peer    Server
 }
 
-// FailedHeartbeatObservation is sent when a node fails to heartbeat with the leader Address and ID
+// FailedHeartbeatObservation is sent when a node fails to heartbeat with the leader
 type FailedHeartbeatObservation struct {
 	PeerID      ServerID
 	LastContact time.Time

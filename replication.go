@@ -317,9 +317,11 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 
 	// Setup the request
 	req := InstallSnapshotRequest{
-		RPCHeader:          r.getRPCHeader(),
-		SnapshotVersion:    meta.Version,
-		Term:               s.currentTerm,
+		RPCHeader:       r.getRPCHeader(),
+		SnapshotVersion: meta.Version,
+		Term:            s.currentTerm,
+		// this is needed for retro compatibility with protocolVersion = 3
+		Leader:             r.trans.EncodePeer(r.localID, r.localAddr),
 		LastLogIndex:       meta.Index,
 		LastLogTerm:        meta.Term,
 		Peers:              meta.Peers,
@@ -327,8 +329,6 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 		Configuration:      EncodeConfiguration(meta.Configuration),
 		ConfigurationIndex: meta.ConfigurationIndex,
 	}
-	// this is needed for retro compatibility with protocolVersion = 3
-	req.Leader = r.trans.EncodePeer(r.localID, r.localAddr)
 
 	s.peerLock.RLock()
 	peer := s.peer
@@ -382,10 +382,9 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 	req := AppendEntriesRequest{
 		RPCHeader: r.getRPCHeader(),
 		Term:      s.currentTerm,
+		// this is needed for retro compatibility with protocolVersion = 3
+		Leader: r.trans.EncodePeer(r.localID, r.localAddr),
 	}
-
-	// this is needed for retro compatibility with protocolVersion = 3
-	req.Leader = r.trans.EncodePeer(r.localID, r.localAddr)
 
 	var resp AppendEntriesResponse
 	for {
@@ -558,7 +557,6 @@ func (r *Raft) setupAppendEntries(s *followerReplication, req *AppendEntriesRequ
 	req.Term = s.currentTerm
 	// this is needed for retro compatibility with protocolVersion = 3
 	req.Leader = r.trans.EncodePeer(r.localID, r.localAddr)
-
 	req.LeaderCommitIndex = r.getCommitIndex()
 	if err := r.setPreviousLog(req, nextIndex); err != nil {
 		return err

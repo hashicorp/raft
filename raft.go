@@ -203,7 +203,7 @@ func (r *Raft) runFollower() {
 			}
 
 			// Heartbeat failed! Transition to the candidate state
-			lastLeader, _ := r.Leader()
+			lastLeaderAddr, lastLeaderID := r.Leader()
 			r.setLeader("", "")
 
 			if r.configurations.latestIndex == 0 {
@@ -220,7 +220,7 @@ func (r *Raft) runFollower() {
 			} else {
 				metrics.IncrCounter([]string{"raft", "transition", "heartbeat_timeout"}, 1)
 				if inConfig(r.configurations.latest, r.localID) {
-					r.logger.Warn("heartbeat timeout reached, starting election", "last-leader", lastLeader)
+					r.logger.Warn("heartbeat timeout reached, starting election", "last-leader (", lastLeaderAddr, ",", lastLeaderID, ")")
 					r.setState(Candidate)
 					return
 				} else {
@@ -440,7 +440,7 @@ func (r *Raft) runLeader() {
 		// We may have stepped down due to an RPC call, which would
 		// provide the leader, so we cannot always blank this out.
 		r.leaderLock.Lock()
-		if r.leaderAddr == r.localAddr {
+		if r.leaderAddr == r.localAddr && r.leaderID == r.localID {
 			r.leaderAddr = ""
 			r.leaderID = ""
 		}
@@ -1329,7 +1329,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	if a.ProtocolVersion > 3 {
 		r.setLeader(r.trans.DecodePeer(a.Addr), ServerID(a.ID))
 	} else {
-		r.setLeader(r.trans.DecodePeer(a.Leader), "")
+		r.setLeader(r.trans.DecodePeer(a.Leader), ServerID(a.ID))
 	}
 	// Verify the last log entry
 	if a.PrevLogEntry > 0 {
@@ -1626,7 +1626,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	if req.ProtocolVersion > 3 {
 		r.setLeader(r.trans.DecodePeer(req.Addr), ServerID(req.ID))
 	} else {
-		r.setLeader(r.trans.DecodePeer(req.Leader), "")
+		r.setLeader(r.trans.DecodePeer(req.Leader), ServerID(req.ID))
 	}
 
 	// Create a new snapshot
@@ -1743,15 +1743,14 @@ func (r *Raft) electSelf() <-chan *voteResult {
 	// Construct the request
 	lastIdx, lastTerm := r.getLastEntry()
 	req := &RequestVoteRequest{
-		RPCHeader:          r.getRPCHeader(),
-		Term:               r.getCurrentTerm(),
+		RPCHeader: r.getRPCHeader(),
+		Term:      r.getCurrentTerm(),
+		// this is needed for retro compatibility with protocolVersion = 3
+		Candidate:          r.trans.EncodePeer(r.localID, r.localAddr),
 		LastLogIndex:       lastIdx,
 		LastLogTerm:        lastTerm,
 		LeadershipTransfer: r.candidateFromLeadershipTransfer,
 	}
-
-	// this is needed for retro compatibility with protocolVersion = 3
-	req.Candidate = r.trans.EncodePeer(r.localID, r.localAddr)
 
 	// Construct a function to ask for a vote
 	askPeer := func(peer Server) {
@@ -1775,13 +1774,7 @@ func (r *Raft) electSelf() <-chan *voteResult {
 		if server.Suffrage == Voter {
 			if server.ID == r.localID {
 				// Persist a vote for ourselves
-				var candidate []byte
-				if req.ProtocolVersion > 3 {
-					candidate = req.Addr
-				} else {
-					candidate = req.Candidate
-				}
-				if err := r.persistVote(req.Term, candidate); err != nil {
+				if err := r.persistVote(req.Term, req.Addr); err != nil {
 					r.logger.Error("failed to persist vote", "error", err)
 					return nil
 				}
