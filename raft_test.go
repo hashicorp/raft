@@ -2584,7 +2584,7 @@ func waitForNewLeader(c *cluster, id ServerID) error {
 			return nil
 		}
 		count++
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
 	return errors.New("no leader elected")
 }
