@@ -442,6 +442,7 @@ func (r *Raft) runLeader() {
 		r.leaderLock.Lock()
 		if r.leaderAddr == r.localAddr {
 			r.leaderAddr = ""
+			r.leaderID = ""
 		}
 		r.leaderLock.Unlock()
 
