@@ -1996,7 +1996,7 @@ func TestRaft_MixedCluster_Stable_v3Leader(t *testing.T) {
 }
 
 func TestRaft_MixedCluster_Stable_v4Leader(t *testing.T) {
-	// Make a cluster back on protocol version 1.
+	// Make a cluster on protocol version 4.
 	conf := inmemConfig(t)
 	conf.ProtocolVersion = 4
 	c := MakeCluster(2, t, conf)
