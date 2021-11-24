@@ -1930,7 +1930,7 @@ func TestRaft_ProtocolVersion_Upgrade_2_3(t *testing.T) {
 }
 
 func TestRaft_LeaderID_Propagated(t *testing.T) {
-	// Make a cluster back on protocol version 2.
+	// Make a cluster on protocol version 3.
 	conf := inmemConfig(t)
 	c := MakeCluster(3, t, conf)
 	defer c.Close()
@@ -1965,7 +1965,7 @@ func TestRaft_MixedCluster_Stable_v3Leader(t *testing.T) {
 	c := MakeCluster(2, t, conf)
 	defer c.Close()
 
-	// Set up another server speaking protocol version 2.
+	// Set up another server speaking protocol version 4.
 	conf = inmemConfig(t)
 	conf.ProtocolVersion = 4
 	c1 := MakeClusterNoBootstrap(1, t, conf)
@@ -2002,7 +2002,7 @@ func TestRaft_MixedCluster_Stable_v4Leader(t *testing.T) {
 	c := MakeCluster(2, t, conf)
 	defer c.Close()
 
-	// Set up another server speaking protocol version 2.
+	// Set up another server speaking protocol version 3.
 	conf = inmemConfig(t)
 	conf.ProtocolVersion = 3
 	c1 := MakeClusterNoBootstrap(1, t, conf)

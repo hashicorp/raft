@@ -155,7 +155,7 @@ func (r *Raft) run() {
 func (r *Raft) runFollower() {
 	didWarn := false
 	leaderAddr, leaderID := r.Leader()
-	r.logger.Info("entering follower state", "follower", r, "leader (", leaderAddr, string(leaderID), ")")
+	r.logger.Info("entering follower state", "follower", r, "leader-address", leaderAddr, "leader-id", leaderID)
 	metrics.IncrCounter([]string{"raft", "state", "follower"}, 1)
 	heartbeatTimer := randomTimeout(r.config().HeartbeatTimeout)
 
@@ -220,7 +220,7 @@ func (r *Raft) runFollower() {
 			} else {
 				metrics.IncrCounter([]string{"raft", "transition", "heartbeat_timeout"}, 1)
 				if inConfig(r.configurations.latest, r.localID) {
-					r.logger.Warn("heartbeat timeout reached, starting election", "last-leader (", lastLeaderAddr, ",", lastLeaderID, ")")
+					r.logger.Warn("heartbeat timeout reached, starting election", "last-leader-addr", lastLeaderAddr, "last-leader-id", lastLeaderID)
 					r.setState(Candidate)
 					return
 				} else {
