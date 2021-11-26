@@ -51,8 +51,9 @@ func TestTransport_AppendEntries(t *testing.T) {
 				},
 			},
 			LeaderCommitIndex: 90,
+			RPCHeader:         RPCHeader{Addr: []byte("cartman")},
 		}
-		args.Addr = []byte("cartman")
+
 		resp := AppendEntriesResponse{
 			Term:    4,
 			LastLog: 90,
@@ -114,8 +115,9 @@ func TestTransport_AppendEntriesPipeline(t *testing.T) {
 				},
 			},
 			LeaderCommitIndex: 90,
+			RPCHeader:         RPCHeader{Addr: []byte("cartman")},
 		}
-		args.Addr = []byte("cartman")
+
 		resp := AppendEntriesResponse{
 			Term:    4,
 			LastLog: 90,
@@ -187,8 +189,8 @@ func TestTransport_RequestVote(t *testing.T) {
 			Term:         20,
 			LastLogIndex: 100,
 			LastLogTerm:  19,
+			RPCHeader:    RPCHeader{Addr: []byte("butters")},
 		}
-		args.Addr = []byte("butters")
 		resp := RequestVoteResponse{
 			Term:    100,
 			Granted: false,
@@ -244,8 +246,9 @@ func TestTransport_InstallSnapshot(t *testing.T) {
 			LastLogTerm:  9,
 			Peers:        []byte("blah blah"),
 			Size:         10,
+			RPCHeader:    RPCHeader{Addr: []byte("kyle")},
 		}
-		args.Addr = []byte("kyle")
+
 		resp := InstallSnapshotResponse{
 			Term:    10,
 			Success: true,

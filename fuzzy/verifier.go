@@ -47,7 +47,7 @@ func (v *appendEntriesVerifier) PreAppendEntries(src, target string, req *raft.A
 	term := req.Term
 	var ldr string
 	if req.ProtocolVersion > 3 {
-		ldr = string(req.Addr)
+		ldr = string(req.RPCHeader.Addr)
 	} else {
 		ldr = string(req.Leader)
 	}

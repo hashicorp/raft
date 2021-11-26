@@ -45,8 +45,8 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 			},
 		},
 		LeaderCommitIndex: 90,
+		RPCHeader:         RPCHeader{Addr: []byte("cartman")},
 	}
-	args.Addr = []byte("cartman")
 
 	resp := AppendEntriesResponse{
 		Term:    4,
@@ -139,11 +139,11 @@ func TestNetworkTransport_Heartbeat_FastPath(t *testing.T) {
 
 	// Make the RPC request
 	args := AppendEntriesRequest{
-		Term: 10,
+		Term:      10,
+		RPCHeader: RPCHeader{ProtocolVersion: ProtocolVersionMax, Addr: []byte("cartman")},
+		Leader:    []byte("cartman"),
 	}
-	args.ProtocolVersion = ProtocolVersionMax
-	args.Addr = []byte("cartman")
-	args.Leader = []byte("cartman")
+
 	resp := AppendEntriesResponse{
 		Term:    4,
 		LastLog: 90,
@@ -210,8 +210,9 @@ func TestNetworkTransport_AppendEntries(t *testing.T) {
 				},
 			},
 			LeaderCommitIndex: 90,
+			RPCHeader:         RPCHeader{Addr: []byte("cartman")},
 		}
-		args.Addr = []byte("cartman")
+
 		resp := AppendEntriesResponse{
 			Term:    4,
 			LastLog: 90,
@@ -280,8 +281,9 @@ func TestNetworkTransport_AppendEntriesPipeline(t *testing.T) {
 				},
 			},
 			LeaderCommitIndex: 90,
+			RPCHeader:         RPCHeader{Addr: []byte("cartman")},
 		}
-		args.Addr = []byte("cartman")
+
 		resp := AppendEntriesResponse{
 			Term:    4,
 			LastLog: 90,
@@ -365,8 +367,9 @@ func TestNetworkTransport_AppendEntriesPipeline_CloseStreams(t *testing.T) {
 			},
 		},
 		LeaderCommitIndex: 90,
+		RPCHeader:         RPCHeader{Addr: []byte("cartman")},
 	}
-	args.Addr = []byte("cartman")
+
 	resp := AppendEntriesResponse{
 		Term:    4,
 		LastLog: 90,
@@ -467,8 +470,9 @@ func TestNetworkTransport_RequestVote(t *testing.T) {
 			Term:         20,
 			LastLogIndex: 100,
 			LastLogTerm:  19,
+			RPCHeader:    RPCHeader{Addr: []byte("butters")},
 		}
-		args.Addr = []byte("butters")
+
 		resp := RequestVoteResponse{
 			Term:    100,
 			Granted: false,
@@ -530,8 +534,9 @@ func TestNetworkTransport_InstallSnapshot(t *testing.T) {
 			LastLogTerm:  9,
 			Peers:        []byte("blah blah"),
 			Size:         10,
+			RPCHeader:    RPCHeader{Addr: []byte("kyle")},
 		}
-		args.Addr = []byte("kyle")
+
 		resp := InstallSnapshotResponse{
 			Term:    10,
 			Success: true,
@@ -644,8 +649,9 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 			},
 		},
 		LeaderCommitIndex: 90,
+		RPCHeader:         RPCHeader{Addr: []byte("cartman")},
 	}
-	args.Addr = []byte("cartman")
+
 	resp := AppendEntriesResponse{
 		Term:    4,
 		LastLog: 90,

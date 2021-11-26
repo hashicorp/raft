@@ -1491,8 +1491,8 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	var candidate ServerAddress
 	var candidateBytes []byte
 	if req.ProtocolVersion > 3 {
-		candidate = r.trans.DecodePeer(req.Addr)
-		candidateBytes = req.Addr
+		candidate = r.trans.DecodePeer(req.RPCHeader.Addr)
+		candidateBytes = req.RPCHeader.Addr
 	} else {
 		candidate = r.trans.DecodePeer(req.Candidate)
 		candidateBytes = req.Candidate
@@ -1513,7 +1513,8 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	if leaderAddr, leaderID := r.Leader(); leaderAddr != "" && leaderAddr != candidate && !req.LeadershipTransfer {
 		r.logger.Warn("rejecting vote request since we have a leader",
 			"from", candidate,
-			"leader (", leaderAddr, string(leaderID), ")")
+			"leader", leaderAddr,
+			"leader-id", string(leaderID))
 		return
 	}
 
@@ -1624,7 +1625,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 
 	// Save the current leader
 	if req.ProtocolVersion > 3 {
-		r.setLeader(r.trans.DecodePeer(req.Addr), ServerID(req.ID))
+		r.setLeader(r.trans.DecodePeer(req.RPCHeader.Addr), ServerID(req.ID))
 	} else {
 		r.setLeader(r.trans.DecodePeer(req.Leader), ServerID(req.ID))
 	}
@@ -1774,7 +1775,7 @@ func (r *Raft) electSelf() <-chan *voteResult {
 		if server.Suffrage == Voter {
 			if server.ID == r.localID {
 				// Persist a vote for ourselves
-				if err := r.persistVote(req.Term, req.Addr); err != nil {
+				if err := r.persistVote(req.Term, req.RPCHeader.Addr); err != nil {
 					r.logger.Error("failed to persist vote", "error", err)
 					return nil
 				}
