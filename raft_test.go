@@ -1773,6 +1773,65 @@ func TestRaft_Voting(t *testing.T) {
 	}
 }
 
+func TestRaft_AppendEntry(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+	followers := c.Followers()
+	ldr := c.Leader()
+	ldrT := c.trans[c.IndexOf(ldr)]
+
+	reqAppendEntries := AppendEntriesRequest{
+		RPCHeader:    ldr.getRPCHeader(),
+		Term:         ldr.getCurrentTerm() + 1,
+		PrevLogEntry: 0,
+		PrevLogTerm:  ldr.getCurrentTerm(),
+		Leader:       nil,
+		Entries: []*Log{
+			{
+				Index: 1,
+				Term:  ldr.getCurrentTerm() + 1,
+				Type:  LogCommand,
+				Data:  []byte("log 1"),
+			},
+		},
+		LeaderCommitIndex: 90,
+	}
+	// a follower that thinks there's a leader should vote for that leader.
+	var resp AppendEntriesResponse
+	if err := ldrT.AppendEntries(followers[0].localID, followers[0].localAddr, &reqAppendEntries, &resp); err != nil {
+		t.Fatalf("RequestVote RPC failed %v", err)
+	}
+
+	require.True(t, resp.Success)
+
+	headers := ldr.getRPCHeader()
+	headers.ID = nil
+	headers.Addr = nil
+	reqAppendEntries = AppendEntriesRequest{
+		RPCHeader:    headers,
+		Term:         ldr.getCurrentTerm() + 1,
+		PrevLogEntry: 0,
+		PrevLogTerm:  ldr.getCurrentTerm(),
+		Leader:       ldr.trans.EncodePeer(ldr.config().LocalID, ldr.localAddr),
+		Entries: []*Log{
+			{
+				Index: 1,
+				Term:  ldr.getCurrentTerm() + 1,
+				Type:  LogCommand,
+				Data:  []byte("log 1"),
+			},
+		},
+		LeaderCommitIndex: 90,
+	}
+	// a follower that thinks there's a leader should vote for that leader.
+	var resp2 AppendEntriesResponse
+	if err := ldrT.AppendEntries(followers[0].localID, followers[0].localAddr, &reqAppendEntries, &resp2); err != nil {
+		t.Fatalf("RequestVote RPC failed %v", err)
+	}
+
+	require.True(t, resp2.Success)
+}
+
 func TestRaft_Voting_portocolVersion3(t *testing.T) {
 	conf := inmemConfig(t)
 	conf.ProtocolVersion = 3
@@ -1938,7 +1997,7 @@ func TestRaft_LeaderID_Propagated(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, n := range c.rafts {
-		require.Equal(t, ProtocolVersion(4), n.protocolVersion)
+		require.Equal(t, ProtocolVersion(3), n.protocolVersion)
 		addr, id := n.Leader()
 		require.NotEmpty(t, id)
 		require.NotEmpty(t, addr)
@@ -1951,79 +2010,6 @@ func TestRaft_LeaderID_Propagated(t *testing.T) {
 	}
 	// Wait a while
 	time.Sleep(c.propagateTimeout)
-
-	// Sanity check the cluster.
-	c.EnsureSame(t)
-	c.EnsureSamePeers(t)
-	c.EnsureLeader(t, c.Leader().localAddr)
-}
-
-func TestRaft_MixedCluster_Stable_v3Leader(t *testing.T) {
-	// Make a cluster back on protocol version 1.
-	conf := inmemConfig(t)
-	conf.ProtocolVersion = 3
-	c := MakeCluster(2, t, conf)
-	defer c.Close()
-
-	// Set up another server speaking protocol version 4.
-	conf = inmemConfig(t)
-	conf.ProtocolVersion = 4
-	c1 := MakeClusterNoBootstrap(1, t, conf)
-
-	// Merge clusters.
-	c.Merge(c1)
-	c.FullyConnect()
-
-	future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 1*time.Second)
-	if err := future.Error(); err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	err := waitForLeader(c)
-	require.NoError(t, err)
-	for i := 0; i < 5; i++ {
-		future := c.Leader().Apply([]byte(fmt.Sprintf("test%d", i)), 0)
-		if err := future.Error(); err != nil {
-			t.Fatalf("[ERR] err: %v", err)
-		}
-	}
-	// Wait a while
-	time.Sleep(c.propagateTimeout)
-
-	// Sanity check the cluster.
-	c.EnsureSame(t)
-	c.EnsureSamePeers(t)
-	c.EnsureLeader(t, c.Leader().localAddr)
-}
-
-func TestRaft_MixedCluster_Stable_v4Leader(t *testing.T) {
-	// Make a cluster on protocol version 4.
-	conf := inmemConfig(t)
-	conf.ProtocolVersion = 4
-	c := MakeCluster(2, t, conf)
-	defer c.Close()
-
-	// Set up another server speaking protocol version 3.
-	conf = inmemConfig(t)
-	conf.ProtocolVersion = 3
-	c1 := MakeClusterNoBootstrap(1, t, conf)
-
-	// Merge clusters.
-	c.Merge(c1)
-	c.FullyConnect()
-	future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 1*time.Second)
-	if err := future.Error(); err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	err := waitForLeader(c)
-	require.NoError(t, err)
-	for i := 0; i < 5; i++ {
-		future := c.Leader().Apply([]byte(fmt.Sprintf("test%d", i)), 0)
-		if err := future.Error(); err != nil {
-			t.Fatalf("[ERR] err: %v", err)
-		}
-	}
-	// Wait a while
-	c.WaitForReplication(5)
 
 	// Sanity check the cluster.
 	c.EnsureSame(t)
@@ -2565,6 +2551,60 @@ func TestRaft_RemovedFollower_Vote(t *testing.T) {
 
 	// the vote request should not be granted, because the voter is not part of the cluster anymore
 	if resp.Granted {
+		t.Fatalf("expected vote to not be granted, but it was %+v", resp)
+	}
+}
+
+func TestRaft_VoteWithNoIDNoAddr(t *testing.T) {
+	// Make a cluster
+	c := MakeCluster(3, t, nil)
+
+	defer c.Close()
+	waitForLeader(c)
+
+	leader := c.Leader()
+
+	// Wait until we have 2 followers
+	limit := time.Now().Add(c.longstopTimeout)
+	var followers []*Raft
+	for time.Now().Before(limit) && len(followers) != 2 {
+		c.WaitEvent(nil, c.conf.CommitTimeout)
+		followers = c.GetInState(Follower)
+	}
+	if len(followers) != 2 {
+		t.Fatalf("expected two followers: %v", followers)
+	}
+
+	follower := followers[0]
+
+	headers := follower.getRPCHeader()
+	headers.ID = nil
+	headers.Addr = nil
+	reqVote := RequestVoteRequest{
+		RPCHeader:          headers,
+		Term:               follower.getCurrentTerm() + 10,
+		LastLogIndex:       follower.LastIndex(),
+		LastLogTerm:        follower.getCurrentTerm(),
+		Candidate:          follower.trans.EncodePeer(follower.config().LocalID, follower.localAddr),
+		LeadershipTransfer: false,
+	}
+	// a follower that thinks there's a leader should vote for that leader.
+	var resp RequestVoteResponse
+	followerT := c.trans[c.IndexOf(followers[1])]
+	c.Partition([]ServerAddress{leader.localAddr})
+	time.Sleep(c.propagateTimeout)
+
+	// wait for the remaining follower to trigger an election
+	waitForState(follower, Candidate)
+	require.Equal(t, Candidate, follower.getState())
+	// send a vote request from the removed follower to the Candidate follower
+
+	if err := followerT.RequestVote(follower.localID, follower.localAddr, &reqVote, &resp); err != nil {
+		t.Fatalf("RequestVote RPC failed %v", err)
+	}
+
+	// the vote request should not be granted, because the voter is not part of the cluster anymore
+	if !resp.Granted {
 		t.Fatalf("expected vote to not be granted, but it was %+v", resp)
 	}
 }

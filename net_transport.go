@@ -567,19 +567,16 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 		}
 		rpc.Command = &req
 
+		leaderAddr := req.RPCHeader.Addr
+		if len(leaderAddr) == 0 {
+			leaderAddr = req.Leader
+		}
+
 		// Check if this is a heartbeat
-		if req.ProtocolVersion > 3 {
-			if req.Term != 0 && req.RPCHeader.Addr != nil &&
-				req.PrevLogEntry == 0 && req.PrevLogTerm == 0 &&
-				len(req.Entries) == 0 && req.LeaderCommitIndex == 0 {
-				isHeartbeat = true
-			}
-		} else {
-			if req.Term != 0 && req.Leader != nil &&
-				req.PrevLogEntry == 0 && req.PrevLogTerm == 0 &&
-				len(req.Entries) == 0 && req.LeaderCommitIndex == 0 {
-				isHeartbeat = true
-			}
+		if req.Term != 0 && leaderAddr != nil &&
+			req.PrevLogEntry == 0 && req.PrevLogTerm == 0 &&
+			len(req.Entries) == 0 && req.LeaderCommitIndex == 0 {
+			isHeartbeat = true
 		}
 
 	case rpcRequestVote:

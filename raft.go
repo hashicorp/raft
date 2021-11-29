@@ -1326,7 +1326,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	}
 
 	// Save the current leader
-	if a.ProtocolVersion > 3 {
+	if len(a.Addr) > 0 {
 		r.setLeader(r.trans.DecodePeer(a.Addr), ServerID(a.ID))
 	} else {
 		r.setLeader(r.trans.DecodePeer(a.Leader), ServerID(a.ID))
@@ -1490,7 +1490,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// vote!
 	var candidate ServerAddress
 	var candidateBytes []byte
-	if req.ProtocolVersion > 3 {
+	if len(req.RPCHeader.Addr) > 0 {
 		candidate = r.trans.DecodePeer(req.RPCHeader.Addr)
 		candidateBytes = req.RPCHeader.Addr
 	} else {
@@ -1498,9 +1498,9 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 		candidateBytes = req.Candidate
 	}
 
-	// Prior to version 4 the peer ID is not part of `RequestVoteRequest`,
+	// For older raft version ID is not part of the packed message
 	// We assume that the peer is part of the configuration and skip this check
-	if req.ProtocolVersion > 3 {
+	if len(req.ID) > 0 {
 		candidateID := ServerID(req.ID)
 		// if the Servers list is empty that mean the cluster is very likely trying to bootstrap,
 		// Grant the vote
@@ -1624,7 +1624,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	}
 
 	// Save the current leader
-	if req.ProtocolVersion > 3 {
+	if len(req.ID) > 0 {
 		r.setLeader(r.trans.DecodePeer(req.RPCHeader.Addr), ServerID(req.ID))
 	} else {
 		r.setLeader(r.trans.DecodePeer(req.Leader), ServerID(req.ID))
