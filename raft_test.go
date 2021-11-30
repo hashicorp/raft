@@ -1556,10 +1556,10 @@ LOOP:
 	}
 
 	// Ensure both have cleared their leader
-	if l, id := leader.Leader(); l != "" && id != "" {
+	if l, id := leader.LeaderWithID(); l != "" && id != "" {
 		t.Fatalf("bad: %v", l)
 	}
-	if l, id := follower.Leader(); l != "" && id != "" {
+	if l, id := follower.LeaderWithID(); l != "" && id != "" {
 		t.Fatalf("bad: %v", l)
 	}
 }
@@ -1661,7 +1661,7 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	}
 
 	// Ensure the known leader is cleared
-	if l, _ := leader.Leader(); l != "" {
+	if l, _ := leader.LeaderWithID(); l != "" {
 		t.Fatalf("bad: %v", l)
 	}
 }
@@ -1998,7 +1998,7 @@ func TestRaft_LeaderID_Propagated(t *testing.T) {
 
 	for _, n := range c.rafts {
 		require.Equal(t, ProtocolVersion(3), n.protocolVersion)
-		addr, id := n.Leader()
+		addr, id := n.LeaderWithID()
 		require.NotEmpty(t, id)
 		require.NotEmpty(t, addr)
 	}

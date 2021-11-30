@@ -539,7 +539,7 @@ func (c *cluster) EnsureLeader(t *testing.T, expect ServerAddress) {
 	// think the leader is correct
 	fail := false
 	for _, r := range c.rafts {
-		leaderAddr, _ := r.Leader()
+		leaderAddr, _ := r.LeaderWithID()
 
 		if leaderAddr != expect {
 			if leaderAddr == "" {

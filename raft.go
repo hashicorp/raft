@@ -154,7 +154,7 @@ func (r *Raft) run() {
 // runFollower runs the FSM for a follower.
 func (r *Raft) runFollower() {
 	didWarn := false
-	leaderAddr, leaderID := r.Leader()
+	leaderAddr, leaderID := r.LeaderWithID()
 	r.logger.Info("entering follower state", "follower", r, "leader-address", leaderAddr, "leader-id", leaderID)
 	metrics.IncrCounter([]string{"raft", "state", "follower"}, 1)
 	heartbeatTimer := randomTimeout(r.config().HeartbeatTimeout)
@@ -203,7 +203,7 @@ func (r *Raft) runFollower() {
 			}
 
 			// Heartbeat failed! Transition to the candidate state
-			lastLeaderAddr, lastLeaderID := r.Leader()
+			lastLeaderAddr, lastLeaderID := r.LeaderWithID()
 			r.setLeader("", "")
 
 			if r.configurations.latestIndex == 0 {
@@ -1510,7 +1510,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 			return
 		}
 	}
-	if leaderAddr, leaderID := r.Leader(); leaderAddr != "" && leaderAddr != candidate && !req.LeadershipTransfer {
+	if leaderAddr, leaderID := r.LeaderWithID(); leaderAddr != "" && leaderAddr != candidate && !req.LeadershipTransfer {
 		r.logger.Warn("rejecting vote request since we have a leader",
 			"from", candidate,
 			"leader", leaderAddr,
