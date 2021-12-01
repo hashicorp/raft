@@ -334,7 +334,6 @@ CHECK:
 				num := len(fsm.logs)
 				fsm.Unlock()
 				if num != fsmLength {
-					fmt.Printf("fsm len : %d\n", num)
 					continue CHECK
 				}
 			}

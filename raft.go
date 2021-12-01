@@ -1746,7 +1746,7 @@ func (r *Raft) electSelf() <-chan *voteResult {
 	req := &RequestVoteRequest{
 		RPCHeader: r.getRPCHeader(),
 		Term:      r.getCurrentTerm(),
-		// this is needed for retro compatibility with protocolVersion = 3
+		// this is needed for retro compatibility, before RPCHeader.Addr was added
 		Candidate:          r.trans.EncodePeer(r.localID, r.localAddr),
 		LastLogIndex:       lastIdx,
 		LastLogTerm:        lastTerm,

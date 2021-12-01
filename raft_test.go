@@ -1731,48 +1731,6 @@ func TestRaft_NotifyCh(t *testing.T) {
 	}
 }
 
-func TestRaft_Voting(t *testing.T) {
-	c := MakeCluster(3, t, nil)
-	defer c.Close()
-	followers := c.Followers()
-	ldr := c.Leader()
-	ldrT := c.trans[c.IndexOf(ldr)]
-
-	reqVote := RequestVoteRequest{
-		RPCHeader:          ldr.getRPCHeader(),
-		Term:               ldr.getCurrentTerm() + 10,
-		LastLogIndex:       ldr.LastIndex(),
-		LastLogTerm:        ldr.getCurrentTerm(),
-		LeadershipTransfer: false,
-	}
-	// a follower that thinks there's a leader should vote for that leader.
-	var resp RequestVoteResponse
-	if err := ldrT.RequestVote(followers[0].localID, followers[0].localAddr, &reqVote, &resp); err != nil {
-		t.Fatalf("RequestVote RPC failed %v", err)
-	}
-	if !resp.Granted {
-		t.Fatalf("expected vote to be granted, but wasn't %+v", resp)
-	}
-	// a follower that thinks there's a leader shouldn't vote for a different candidate
-	reqVote.Addr = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
-	if err := ldrT.RequestVote(followers[1].localID, followers[1].localAddr, &reqVote, &resp); err != nil {
-		t.Fatalf("RequestVote RPC failed %v", err)
-	}
-	if resp.Granted {
-		t.Fatalf("expected vote not to be granted, but was %+v", resp)
-	}
-	// a follower that thinks there's a leader, but the request has the leadership transfer flag, should
-	// vote for a different candidate
-	reqVote.LeadershipTransfer = true
-	reqVote.Addr = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
-	if err := ldrT.RequestVote(followers[1].localID, followers[1].localAddr, &reqVote, &resp); err != nil {
-		t.Fatalf("RequestVote RPC failed %v", err)
-	}
-	if !resp.Granted {
-		t.Fatalf("expected vote to be granted, but wasn't %+v", resp)
-	}
-}
-
 func TestRaft_AppendEntry(t *testing.T) {
 	c := MakeCluster(3, t, nil)
 	defer c.Close()
@@ -1832,7 +1790,7 @@ func TestRaft_AppendEntry(t *testing.T) {
 	require.True(t, resp2.Success)
 }
 
-func TestRaft_Voting_portocolVersion3(t *testing.T) {
+func TestRaft_VotingGrant_WhenLeaderAvailable(t *testing.T) {
 	conf := inmemConfig(t)
 	conf.ProtocolVersion = 3
 	c := MakeCluster(3, t, conf)
@@ -2482,7 +2440,7 @@ func TestRaft_InstallSnapshot_InvalidPeers(t *testing.T) {
 	require.Contains(t, resp.Error.Error(), "failed to decode peers")
 }
 
-func TestRaft_RemovedFollower_Vote(t *testing.T) {
+func TestRaft_VoteNotGranted_WhenNodeNotInCluster(t *testing.T) {
 	// Make a cluster
 	c := MakeCluster(3, t, nil)
 
