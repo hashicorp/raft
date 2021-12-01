@@ -25,7 +25,9 @@ type AppendEntriesRequest struct {
 	RPCHeader
 
 	// Provide the current term and leader
-	Term   uint64
+	Term uint64
+
+	//Deprecated, use RPCHeader.Addr instead
 	Leader []byte
 
 	// Provide the previous entries for integrity checking
@@ -74,7 +76,9 @@ type RequestVoteRequest struct {
 	RPCHeader
 
 	// Provide the term and our id
-	Term      uint64
+	Term uint64
+
+	//Deprecated, use RPCHeader.Addr instead
 	Candidate []byte
 
 	// Used to ensure safety
