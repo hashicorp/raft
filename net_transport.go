@@ -8,9 +8,11 @@ import (
 	"io"
 	"net"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
+	metrics "github.com/armon/go-metrics"
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-msgpack/codec"
 )
@@ -27,6 +29,9 @@ const (
 	// rpcMaxPipeline controls the maximum number of outstanding
 	// AppendEntries RPC calls.
 	rpcMaxPipeline = 128
+
+	// connReceiveBufferSize is the size of the buffer we will use for reading RPC requests into
+	connReceiveBufferSize = 256 * 1024 // 256KB
 )
 
 var (
@@ -517,7 +522,7 @@ func (n *NetworkTransport) listen() {
 // closed.
 func (n *NetworkTransport) handleConn(connCtx context.Context, conn net.Conn) {
 	defer conn.Close()
-	r := bufio.NewReader(conn)
+	r := bufio.NewReaderSize(conn, connReceiveBufferSize)
 	w := bufio.NewWriter(conn)
 	dec := codec.NewDecoder(r, &codec.MsgpackHandle{})
 	enc := codec.NewEncoder(w, &codec.MsgpackHandle{})
@@ -545,11 +550,18 @@ func (n *NetworkTransport) handleConn(connCtx context.Context, conn net.Conn) {
 
 // handleCommand is used to decode and dispatch a single command.
 func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, enc *codec.Encoder) error {
+	getTypeStart := time.Now()
+
 	// Get the rpc type
 	rpcType, err := r.ReadByte()
 	if err != nil {
 		return err
 	}
+
+	// measuring the time to get the first byte separately because the heartbeat conn will hang out here
+	// for a good while waiting for a heartbeat whereas the append entries/rpc conn should not.
+	metrics.MeasureSince([]string{"raft", "net", "getRPCType"}, getTypeStart)
+	decodeStart := time.Now()
 
 	// Create the RPC object
 	respCh := make(chan RPCResponse, 1)
@@ -559,6 +571,7 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 
 	// Decode the command
 	isHeartbeat := false
+	var labels []metrics.Label
 	switch rpcType {
 	case rpcAppendEntries:
 		var req AppendEntriesRequest
@@ -574,13 +587,23 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 			isHeartbeat = true
 		}
 
+		labels = []metrics.Label{
+			{
+				Name:  "rpcType",
+				Value: "AppendEntries",
+			},
+			{
+				Name:  "heartbeat",
+				Value: strconv.FormatBool(isHeartbeat),
+			},
+		}
 	case rpcRequestVote:
 		var req RequestVoteRequest
 		if err := dec.Decode(&req); err != nil {
 			return err
 		}
 		rpc.Command = &req
-
+		labels = []metrics.Label{{Name: "rpcType", Value: "RequestVote"}}
 	case rpcInstallSnapshot:
 		var req InstallSnapshotRequest
 		if err := dec.Decode(&req); err != nil {
@@ -588,17 +611,21 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 		}
 		rpc.Command = &req
 		rpc.Reader = io.LimitReader(r, req.Size)
-
+		labels = []metrics.Label{{Name: "rpcType", Value: "InstallSnapshot"}}
 	case rpcTimeoutNow:
 		var req TimeoutNowRequest
 		if err := dec.Decode(&req); err != nil {
 			return err
 		}
 		rpc.Command = &req
-
+		labels = []metrics.Label{{Name: "rpcType", Value: "TimeoutNow"}}
 	default:
 		return fmt.Errorf("unknown rpc type %d", rpcType)
 	}
+
+	metrics.MeasureSinceWithLabels([]string{"raft", "net", "rpcDecode"}, decodeStart, labels)
+
+	processStart := time.Now()
 
 	// Check for heartbeat fast-path
 	if isHeartbeat {
@@ -620,8 +647,12 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 
 	// Wait for response
 RESP:
+	// we will differentiate the heartbeat fast path from normal RPCs with labels
+	metrics.MeasureSinceWithLabels([]string{"raft", "net", "rpcEnqueue"}, processStart, labels)
+	respWaitStart := time.Now()
 	select {
 	case resp := <-respCh:
+		defer metrics.MeasureSinceWithLabels([]string{"raft", "net", "rpcRespond"}, respWaitStart, labels)
 		// Send the error first
 		respErr := ""
 		if resp.Error != nil {
