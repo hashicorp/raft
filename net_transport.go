@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"strconv"
 	"sync"
 	"time"
 
@@ -31,7 +30,12 @@ const (
 	rpcMaxPipeline = 128
 
 	// connReceiveBufferSize is the size of the buffer we will use for reading RPC requests into
+	// on followers
 	connReceiveBufferSize = 256 * 1024 // 256KB
+
+	// connSendBufferSize is the size of the buffer we will use for sending RPC request data from
+	// the leader to followers.
+	connSendBufferSize = 256 * 1024 // 256KB
 )
 
 var (
@@ -349,7 +353,7 @@ func (n *NetworkTransport) getConn(target ServerAddress) (*netConn, error) {
 		target: target,
 		conn:   conn,
 		dec:    codec.NewDecoder(bufio.NewReader(conn), &codec.MsgpackHandle{}),
-		w:      bufio.NewWriter(conn),
+		w:      bufio.NewWriterSize(conn, connSendBufferSize),
 	}
 
 	netConn.enc = codec.NewEncoder(netConn.w, &codec.MsgpackHandle{})
@@ -587,15 +591,10 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 			isHeartbeat = true
 		}
 
-		labels = []metrics.Label{
-			{
-				Name:  "rpcType",
-				Value: "AppendEntries",
-			},
-			{
-				Name:  "heartbeat",
-				Value: strconv.FormatBool(isHeartbeat),
-			},
+		if isHeartbeat {
+			labels = []metrics.Label{{Name: "rpcType", Value: "Heartbeat"}}
+		} else {
+			labels = []metrics.Label{{Name: "rpcType", Value: "AppendEntries"}}
 		}
 	case rpcRequestVote:
 		var req RequestVoteRequest
