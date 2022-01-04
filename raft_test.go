@@ -2371,19 +2371,12 @@ func TestRaft_runFollower_State_Transition(t *testing.T) {
 			tt.fields.conf.CommitTimeout = 5 * time.Millisecond
 			tt.fields.conf.SnapshotThreshold = 100
 			tt.fields.conf.TrailingLogs = 10
+			tt.fields.conf.skipStartup = true
 
 			// Create a raft instance and set the latest configuration
 			env1 := MakeRaft(t, tt.fields.conf, false)
-			env1.raft.configurations.latest.Servers = tt.fields.servers
-			env1.raft.configurations.latestIndex = 1
-			env1.raft.state = Follower
-
-			// stop the main raft loop `run`
-			close(env1.raft.shutdownCh)
-			// wait for the loop to stop
-			time.Sleep(tt.fields.conf.HeartbeatTimeout * 3)
-			// create a new shutdown channel to avoid `runFollower` return an error
-			env1.raft.shutdownCh = make(chan struct{})
+			env1.raft.setLatestConfiguration(Configuration{Servers: tt.fields.servers}, 1)
+			env1.raft.setState(Follower)
 
 			// run the follower loop exclusively
 			go env1.raft.runFollower()
