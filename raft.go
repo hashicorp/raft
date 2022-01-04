@@ -219,7 +219,7 @@ func (r *Raft) runFollower() {
 					r.setState(Candidate)
 					return
 				} else if !didWarn {
-					r.logger.Warn("heartbeat timeout reached, not part of stable configuration, not triggering a leader election")
+					r.logger.Warn("heartbeat timeout reached, not part of a stable configuration or a non-voter, not triggering a leader election")
 					didWarn = true
 				}
 			}
