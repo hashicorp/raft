@@ -2345,3 +2345,47 @@ func TestRaft_InstallSnapshot_InvalidPeers(t *testing.T) {
 	require.Error(t, resp.Error)
 	require.Contains(t, resp.Error.Error(), "failed to decode peers")
 }
+
+func TestRaft_runFollower_State_Transition(t *testing.T) {
+	type fields struct {
+		conf     *Config
+		servers  []Server
+		serverID ServerID
+	}
+	tests := []struct {
+		name          string
+		fields        fields
+		expectedState RaftState
+	}{
+		{"NonVoter", fields{conf: DefaultConfig(), servers: []Server{{Nonvoter, "first", ""}}, serverID: "first"}, Follower},
+		{"Voter", fields{conf: DefaultConfig(), servers: []Server{{Voter, "first", ""}}, serverID: "first"}, Candidate},
+		{"Not in Config", fields{conf: DefaultConfig(), servers: []Server{{Voter, "second", ""}}, serverID: "first"}, Follower},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// set timeout to tests specific
+			tt.fields.conf.LocalID = tt.fields.serverID
+			tt.fields.conf.HeartbeatTimeout = 50 * time.Millisecond
+			tt.fields.conf.ElectionTimeout = 50 * time.Millisecond
+			tt.fields.conf.LeaderLeaseTimeout = 50 * time.Millisecond
+			tt.fields.conf.CommitTimeout = 5 * time.Millisecond
+			tt.fields.conf.SnapshotThreshold = 100
+			tt.fields.conf.TrailingLogs = 10
+			tt.fields.conf.skipStartup = true
+
+			// Create a raft instance and set the latest configuration
+			env1 := MakeRaft(t, tt.fields.conf, false)
+			env1.raft.setLatestConfiguration(Configuration{Servers: tt.fields.servers}, 1)
+			env1.raft.setState(Follower)
+
+			// run the follower loop exclusively
+			go env1.raft.runFollower()
+
+			// wait enough time to have HeartbeatTimeout
+			time.Sleep(tt.fields.conf.HeartbeatTimeout * 3)
+
+			// Check the follower loop set the right state
+			require.Equal(t, tt.expectedState, env1.raft.getState())
+		})
+	}
+}
