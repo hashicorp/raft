@@ -158,6 +158,8 @@ func (i *InmemTransport) makeRPC(target ServerAddress, args interface{}, r io.Re
 		return
 	}
 
+	timer := newTimer(timeout)
+
 	// Send the RPC over
 	respCh := make(chan RPCResponse, 1)
 	req := RPC{
@@ -167,8 +169,10 @@ func (i *InmemTransport) makeRPC(target ServerAddress, args interface{}, r io.Re
 	}
 	select {
 	case peer.consumerCh <- req:
-	case <-time.After(timeout):
+	case <-timer.C:
 		err = fmt.Errorf("send timed out")
+
+		timer.Stop()
 		return
 	}
 
@@ -178,9 +182,11 @@ func (i *InmemTransport) makeRPC(target ServerAddress, args interface{}, r io.Re
 		if rpcResp.Error != nil {
 			err = rpcResp.Error
 		}
-	case <-time.After(timeout):
+	case <-timer.C:
 		err = fmt.Errorf("command timed out")
 	}
+
+	timer.Stop()
 	return
 }
 
@@ -259,13 +265,12 @@ func (i *inmemPipeline) decodeResponses() {
 	for {
 		select {
 		case inp := <-i.inprogressCh:
-			var timeoutCh <-chan time.Time
-			if timeout > 0 {
-				timeoutCh = time.After(timeout)
-			}
+			timer := newTimer(timeout)
 
 			select {
 			case rpcResp := <-inp.respCh:
+				timer.Stop()
+
 				// Copy the result back
 				*inp.future.resp = *rpcResp.Response.(*AppendEntriesResponse)
 				inp.future.respond(rpcResp.Error)
@@ -276,7 +281,7 @@ func (i *inmemPipeline) decodeResponses() {
 					return
 				}
 
-			case <-timeoutCh:
+			case <-timer.C:
 				inp.future.respond(fmt.Errorf("command timed out"))
 				select {
 				case i.doneCh <- inp.future:
@@ -285,6 +290,7 @@ func (i *inmemPipeline) decodeResponses() {
 				}
 
 			case <-i.shutdownCh:
+				timer.Stop()
 				return
 			}
 		case <-i.shutdownCh:
@@ -303,10 +309,8 @@ func (i *inmemPipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEn
 	future.init()
 
 	// Handle a timeout
-	var timeout <-chan time.Time
-	if i.trans.timeout > 0 {
-		timeout = time.After(i.trans.timeout)
-	}
+	timeout := newTimer(i.trans.timeout)
+	defer timeout.Stop()
 
 	// Send the RPC over
 	respCh := make(chan RPCResponse, 1)
@@ -327,7 +331,7 @@ func (i *inmemPipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEn
 
 	select {
 	case i.peer.consumerCh <- rpc:
-	case <-timeout:
+	case <-timeout.C:
 		return nil, fmt.Errorf("command enqueue timeout")
 	case <-i.shutdownCh:
 		return nil, ErrPipelineShutdown

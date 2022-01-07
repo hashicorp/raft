@@ -737,10 +737,8 @@ func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
 func (r *Raft) ApplyLog(log Log, timeout time.Duration) ApplyFuture {
 	metrics.IncrCounter([]string{"raft", "apply"}, 1)
 
-	var timer <-chan time.Time
-	if timeout > 0 {
-		timer = time.After(timeout)
-	}
+	timer := newTimer(timeout)
+	defer timer.Stop()
 
 	// Create a log future, no index or term yet
 	logFuture := &logFuture{
@@ -753,7 +751,7 @@ func (r *Raft) ApplyLog(log Log, timeout time.Duration) ApplyFuture {
 	logFuture.init()
 
 	select {
-	case <-timer:
+	case <-timer.C:
 		return errorFuture{ErrEnqueueTimeout}
 	case <-r.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
@@ -769,10 +767,9 @@ func (r *Raft) ApplyLog(log Log, timeout time.Duration) ApplyFuture {
 // must be run on the leader or it will fail.
 func (r *Raft) Barrier(timeout time.Duration) Future {
 	metrics.IncrCounter([]string{"raft", "barrier"}, 1)
-	var timer <-chan time.Time
-	if timeout > 0 {
-		timer = time.After(timeout)
-	}
+
+	timer := newTimer(timeout)
+	defer timer.Stop()
 
 	// Create a log future, no index or term yet
 	logFuture := &logFuture{
@@ -783,7 +780,7 @@ func (r *Raft) Barrier(timeout time.Duration) Future {
 	logFuture.init()
 
 	select {
-	case <-timer:
+	case <-timer.C:
 		return errorFuture{ErrEnqueueTimeout}
 	case <-r.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
@@ -968,10 +965,9 @@ func (r *Raft) Snapshot() SnapshotFuture {
 // recovery into a fresh cluster, and should not be used in normal operations.
 func (r *Raft) Restore(meta *SnapshotMeta, reader io.Reader, timeout time.Duration) error {
 	metrics.IncrCounter([]string{"raft", "restore"}, 1)
-	var timer <-chan time.Time
-	if timeout > 0 {
-		timer = time.After(timeout)
-	}
+
+	timer := newTimer(timeout)
+	defer timer.Stop()
 
 	// Perform the restore.
 	restore := &userRestoreFuture{
@@ -980,7 +976,7 @@ func (r *Raft) Restore(meta *SnapshotMeta, reader io.Reader, timeout time.Durati
 	}
 	restore.init()
 	select {
-	case <-timer:
+	case <-timer.C:
 		return ErrEnqueueTimeout
 	case <-r.shutdownCh:
 		return ErrRaftShutdown
@@ -1002,7 +998,7 @@ func (r *Raft) Restore(meta *SnapshotMeta, reader io.Reader, timeout time.Durati
 	}
 	noop.init()
 	select {
-	case <-timer:
+	case <-timer.C:
 		return ErrEnqueueTimeout
 	case <-r.shutdownCh:
 		return ErrRaftShutdown

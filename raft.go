@@ -105,16 +105,15 @@ func (r *Raft) setLeader(leader ServerAddress) {
 // configuration change requests. 'req' describes the change. For timeout,
 // see AddVoter.
 func (r *Raft) requestConfigChange(req configurationChangeRequest, timeout time.Duration) IndexFuture {
-	var timer <-chan time.Time
-	if timeout > 0 {
-		timer = time.After(timeout)
-	}
+	timer := newTimer(timeout)
+	defer timer.Stop()
+
 	future := &configurationChangeFuture{
 		req: req,
 	}
 	future.init()
 	select {
-	case <-timer:
+	case <-timer.C:
 		return errorFuture{ErrEnqueueTimeout}
 	case r.configurationChangeCh <- future:
 		return future
@@ -152,7 +151,9 @@ func (r *Raft) runFollower() {
 	didWarn := false
 	r.logger.Info("entering follower state", "follower", r, "leader", r.Leader())
 	metrics.IncrCounter([]string{"raft", "state", "follower"}, 1)
+
 	heartbeatTimer := randomTimeout(r.config().HeartbeatTimeout)
+	defer heartbeatTimer.Stop()
 
 	for r.getState() == Follower {
 		select {
@@ -186,7 +187,7 @@ func (r *Raft) runFollower() {
 		case b := <-r.bootstrapCh:
 			b.respond(r.liveBootstrap(b.configuration))
 
-		case <-heartbeatTimer:
+		case <-heartbeatTimer.C:
 			// Restart the heartbeat timer
 			hbTimeout := r.config().HeartbeatTimeout
 			heartbeatTimer = randomTimeout(hbTimeout)
@@ -260,14 +261,17 @@ func (r *Raft) runCandidate() {
 	// Start vote for us, and set a timeout
 	voteCh := r.electSelf()
 
+	electionTimer := randomTimeout(r.config().ElectionTimeout)
+
 	// Make sure the leadership transfer flag is reset after each run. Having this
 	// flag will set the field LeadershipTransfer in a RequestVoteRequst to true,
 	// which will make other servers vote even though they have a leader already.
 	// It is important to reset that flag, because this priviledge could be abused
 	// otherwise.
-	defer func() { r.candidateFromLeadershipTransfer = false }()
-
-	electionTimer := randomTimeout(r.config().ElectionTimeout)
+	defer func() {
+		electionTimer.Stop()
+		r.candidateFromLeadershipTransfer = false
+	}()
 
 	// Tally the votes, need a simple majority
 	grantedVotes := 0
@@ -329,7 +333,7 @@ func (r *Raft) runCandidate() {
 		case b := <-r.bootstrapCh:
 			b.respond(ErrCantBootstrap)
 
-		case <-electionTimer:
+		case <-electionTimer.C:
 			// Election failed! Restart the election. We simply return,
 			// which will kick us back into runCandidate
 			r.logger.Warn("Election timeout reached, restarting election")
@@ -574,7 +578,8 @@ func (r *Raft) leaderLoop() {
 	stepDown := false
 	// This is only used for the first lease check, we reload lease below
 	// based on the current config value.
-	lease := time.After(r.config().LeaderLeaseTimeout)
+	lease := newTimer(r.config().LeaderLeaseTimeout)
+	defer lease.Stop()
 
 	for r.getState() == Leader {
 		select {
@@ -608,8 +613,11 @@ func (r *Raft) leaderLoop() {
 			// The leadershipTransfer function is controlled with
 			// the stopCh and doneCh.
 			go func() {
+				timer := newTimer(r.config().ElectionTimeout)
+				defer timer.Stop()
+
 				select {
-				case <-time.After(r.config().ElectionTimeout):
+				case <-timer.C:
 					close(stopCh)
 					err := fmt.Errorf("leadership transfer timeout")
 					r.logger.Debug(err.Error())
@@ -671,7 +679,7 @@ func (r *Raft) leaderLoop() {
 
 			start := time.Now()
 			var groupReady []*list.Element
-			var groupFutures = make(map[uint64]*logFuture)
+			groupFutures := make(map[uint64]*logFuture)
 			var lastIdxInGroup uint64
 
 			// Pull all inflight logs that are committed off the queue.
@@ -719,7 +727,6 @@ func (r *Raft) leaderLoop() {
 			if v.quorumSize == 0 {
 				// Just dispatched, start the verification
 				r.verifyLeader(v)
-
 			} else if v.votes < v.quorumSize {
 				// Early return, means there must be a new leader
 				r.logger.Warn("new leader elected, stepping down")
@@ -796,7 +803,7 @@ func (r *Raft) leaderLoop() {
 				r.dispatchLogs(ready)
 			}
 
-		case <-lease:
+		case <-lease.C:
 			// Check if we've exceeded the lease, potentially stepping down
 			maxDiff := r.checkLeaderLease()
 
@@ -808,7 +815,7 @@ func (r *Raft) leaderLoop() {
 			}
 
 			// Renew the lease timer
-			lease = time.After(checkInterval)
+			lease.Reset(checkInterval)
 
 		case <-r.shutdownCh:
 			return
@@ -844,7 +851,6 @@ func (r *Raft) verifyLeader(v *verifyFuture) {
 
 // leadershipTransfer is doing the heavy lifting for the leadership transfer.
 func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress, repl *followerReplication, stopCh chan struct{}, doneCh chan error) {
-
 	// make sure we are not already stopped
 	select {
 	case <-stopCh:
@@ -1327,7 +1333,6 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		var prevLogTerm uint64
 		if a.PrevLogEntry == lastIdx {
 			prevLogTerm = lastTerm
-
 		} else {
 			var prevLog Log
 			if err := r.logs.GetLog(a.PrevLogEntry, &prevLog); err != nil {

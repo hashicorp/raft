@@ -137,8 +137,8 @@ func TestLogCacheWithBackendStoreError(t *testing.T) {
 
 	var out Log
 	for i := 1; i < 5; i++ {
-		if err := c.GetLog(uint64(i), &out); err != nil {
-			t.Fatalf("err: %v", err)
+		if e := c.GetLog(uint64(i), &out); e != nil {
+			t.Fatalf("err: %v", e)
 		}
 	}
 	out = Log{}

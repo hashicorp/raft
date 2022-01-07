@@ -140,12 +140,15 @@ func (r *Raft) replicate(s *followerReplication) {
 RPC:
 	shouldStop := false
 	for !shouldStop {
+		timer := randomTimeout(r.config().CommitTimeout)
+
 		select {
 		case maxIndex := <-s.stopCh:
 			// Make a best effort to replicate up to this index
 			if maxIndex > 0 {
 				r.replicateTo(s, maxIndex)
 			}
+			timer.Stop()
 			return
 		case deferErr := <-s.triggerDeferErrorCh:
 			lastLogIdx, _ := r.getLastLog()
@@ -163,10 +166,12 @@ RPC:
 		// raft commits stop flowing naturally. The actual heartbeats
 		// can't do this to keep them unblocked by disk IO on the
 		// follower. See https://github.com/hashicorp/raft/issues/282.
-		case <-randomTimeout(r.config().CommitTimeout):
+		case <-timer.C:
 			lastLogIdx, _ := r.getLastLog()
 			shouldStop = r.replicateTo(s, lastLogIdx)
 		}
+
+		timer.Stop()
 
 		// If things looks healthy, switch to pipeline mode
 		if !shouldStop && s.allowPipeline {
@@ -206,9 +211,11 @@ func (r *Raft) replicateTo(s *followerReplication, lastIndex uint64) (shouldStop
 START:
 	// Prevent an excessive retry rate on errors
 	if s.failures > 0 {
+		timer := newTimer(backoff(failureWait, s.failures, maxFailureScale))
 		select {
-		case <-time.After(backoff(failureWait, s.failures, maxFailureScale)):
+		case <-timer.C:
 		case <-r.shutdownCh:
+			timer.Stop()
 		}
 	}
 
@@ -385,13 +392,18 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 	}
 	var resp AppendEntriesResponse
 	for {
+		randTimer := randomTimeout(r.config().HeartbeatTimeout / 10)
+
 		// Wait for the next heartbeat interval or forced notify
 		select {
 		case <-s.notifyCh:
-		case <-randomTimeout(r.config().HeartbeatTimeout / 10):
+		case <-randTimer.C:
 		case <-stopCh:
+			randTimer.Stop()
 			return
 		}
+
+		randTimer.Stop()
 
 		s.peerLock.RLock()
 		peer := s.peer
@@ -402,9 +414,12 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 			r.logger.Error("failed to heartbeat to", "peer", peer.Address, "error", err)
 			r.observe(FailedHeartbeatObservation{PeerID: peer.ID, LastContact: s.LastContact()})
 			failures++
+
+			timer := newTimer(backoff(failureWait, failures, maxFailureScale))
 			select {
-			case <-time.After(backoff(failureWait, failures, maxFailureScale)):
+			case <-timer.C:
 			case <-stopCh:
+				timer.Stop()
 			}
 		} else {
 			if failures > 0 {
@@ -454,14 +469,18 @@ func (r *Raft) pipelineReplicate(s *followerReplication) error {
 	shouldStop := false
 SEND:
 	for !shouldStop {
+		randTimer := randomTimeout(r.config().CommitTimeout)
+
 		select {
 		case <-finishCh:
+			randTimer.Stop()
 			break SEND
 		case maxIndex := <-s.stopCh:
 			// Make a best effort to replicate up to this index
 			if maxIndex > 0 {
 				r.pipelineSend(s, pipeline, &nextIndex, maxIndex)
 			}
+			randTimer.Stop()
 			break SEND
 		case deferErr := <-s.triggerDeferErrorCh:
 			lastLogIdx, _ := r.getLastLog()
@@ -474,10 +493,12 @@ SEND:
 		case <-s.triggerCh:
 			lastLogIdx, _ := r.getLastLog()
 			shouldStop = r.pipelineSend(s, pipeline, &nextIndex, lastLogIdx)
-		case <-randomTimeout(r.config().CommitTimeout):
+		case <-randTimer.C:
 			lastLogIdx, _ := r.getLastLog()
 			shouldStop = r.pipelineSend(s, pipeline, &nextIndex, lastLogIdx)
 		}
+
+		randTimer.Stop()
 	}
 
 	// Stop our decoder, and wait for it to finish

@@ -9,9 +9,10 @@ import (
 func TestRandomTimeout(t *testing.T) {
 	start := time.Now()
 	timeout := randomTimeout(time.Millisecond)
+	defer timeout.Stop()
 
 	select {
-	case <-timeout:
+	case <-timeout.C:
 		diff := time.Now().Sub(start)
 		if diff < time.Millisecond {
 			t.Fatalf("fired early")
@@ -29,13 +30,6 @@ func TestNewSeed(t *testing.T) {
 			t.Fatal("newSeed() return a value it'd previously returned")
 		}
 		vals[seed] = true
-	}
-}
-
-func TestRandomTimeout_NoTime(t *testing.T) {
-	timeout := randomTimeout(0)
-	if timeout != nil {
-		t.Fatalf("expected nil channel")
 	}
 }
 
@@ -144,4 +138,39 @@ func TestOverrideNotifyBool(t *testing.T) {
 		t.Fatalf("unexpected receive: %v", v)
 	default:
 	}
+}
+
+func TestTimer(t *testing.T) {
+	t.Run("NoTimeout", func(t *testing.T) {
+		timer := newTimer(0)
+		defer timer.Stop()
+
+		select {
+		case <-timer.C:
+			t.Fatalf("timer is invalid")
+		case <-time.After(50 * time.Millisecond):
+		}
+	})
+
+	t.Run("Timeout", func(t *testing.T) {
+		timer := newTimer(10 * time.Millisecond)
+		defer timer.Stop()
+
+		select {
+		case <-timer.C:
+		case <-time.After(100 * time.Millisecond):
+			t.Fatalf("invalid timeout")
+		}
+
+		timer.Reset(100 * time.Millisecond)
+		if timer.C != timer.t.C { // check the reference after reset
+			t.FailNow()
+		}
+
+		select {
+		case <-timer.C:
+			t.Fatalf("invalid timeout")
+		case <-time.After(20 * time.Millisecond):
+		}
+	})
 }

@@ -504,10 +504,13 @@ func (n *NetworkTransport) listen() {
 				n.logger.Error("failed to accept connection", "error", err)
 			}
 
+			timer := newTimer(loopDelay)
+
 			select {
 			case <-n.shutdownCh:
+				timer.Stop()
 				return
-			case <-time.After(loopDelay):
+			case <-timer.C:
 				continue
 			}
 		}

@@ -160,8 +160,9 @@ func oldestLog(s LogStore) (Log, error) {
 
 func emitLogStoreMetrics(s LogStore, prefix []string, interval time.Duration, stopCh <-chan struct{}) {
 	for {
+		timer := newTimer(interval)
 		select {
-		case <-time.After(interval):
+		case <-timer.C:
 			// In error case emit 0 as the age
 			ageMs := float32(0.0)
 			l, err := oldestLog(s)
@@ -170,6 +171,7 @@ func emitLogStoreMetrics(s LogStore, prefix []string, interval time.Duration, st
 			}
 			metrics.SetGauge(append(prefix, "oldestLogAge"), ageMs)
 		case <-stopCh:
+			timer.Stop()
 			return
 		}
 	}

@@ -28,12 +28,12 @@ func newSeed() int64 {
 }
 
 // randomTimeout returns a value that is between the minVal and 2x minVal.
-func randomTimeout(minVal time.Duration) <-chan time.Time {
+func randomTimeout(minVal time.Duration) timerWrapper {
 	if minVal == 0 {
-		return nil
+		return newTimer(0)
 	}
 	extra := (time.Duration(rand.Int63()) % minVal)
-	return time.After(minVal + extra)
+	return newTimer(minVal + extra)
 }
 
 // min returns the minimum.
@@ -150,3 +150,30 @@ type uint64Slice []uint64
 func (p uint64Slice) Len() int           { return len(p) }
 func (p uint64Slice) Less(i, j int) bool { return p[i] < p[j] }
 func (p uint64Slice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
+
+type timerWrapper struct {
+	t *time.Timer
+	C <-chan time.Time
+}
+
+func newTimer(timeout time.Duration) (t timerWrapper) {
+	if timeout > 0 {
+		t.t = time.NewTimer(timeout)
+		t.C = t.t.C
+	}
+	return
+}
+
+func (t *timerWrapper) Reset(timeout time.Duration) {
+	if t.t != nil {
+		t.t.Reset(timeout)
+	}
+}
+
+// Stop the timer.
+func (t *timerWrapper) Stop() bool {
+	if t.t != nil {
+		return t.t.Stop()
+	}
+	return true
+}
