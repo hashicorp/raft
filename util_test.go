@@ -155,6 +155,7 @@ func TestTimer(t *testing.T) {
 	t.Run("Timeout", func(t *testing.T) {
 		timer := newTimer(10 * time.Millisecond)
 		defer timer.Stop()
+		defer timer.Stop() // check if we able to stop twice
 
 		select {
 		case <-timer.C:

@@ -170,7 +170,6 @@ func (t *timerWrapper) Reset(timeout time.Duration) {
 	}
 }
 
-// Stop the timer.
 func (t *timerWrapper) Stop() bool {
 	if t.t != nil {
 		return t.t.Stop()

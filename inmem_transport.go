@@ -171,8 +171,6 @@ func (i *InmemTransport) makeRPC(target ServerAddress, args interface{}, r io.Re
 	case peer.consumerCh <- req:
 	case <-timer.C:
 		err = fmt.Errorf("send timed out")
-
-		timer.Stop()
 		return
 	}
 
