@@ -174,3 +174,39 @@ func TestTimer(t *testing.T) {
 		}
 	})
 }
+
+const timerBenchAttempt = 10000
+
+// goos: linux
+// goarch: amd64
+// pkg: github.com/hashicorp/raft
+// BenchmarkTimeAfter-16                295           3968892 ns/op         2100006 B/op      30000 allocs/op
+// BenchmarkTimer-16                    451           2738084 ns/op         2000056 B/op      30000 allocs/op
+
+func BenchmarkTimeAfter(b *testing.B) {
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for attempt := 0; attempt < timerBenchAttempt; attempt++ {
+			select {
+			case <-time.After(50 * time.Millisecond):
+			default:
+			}
+		}
+	}
+}
+
+func BenchmarkTimer(b *testing.B) {
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for attempt := 0; attempt < timerBenchAttempt; attempt++ {
+			timer := newTimer(50 * time.Millisecond)
+			select {
+			case <-timer.C:
+			default:
+				timer.Stop()
+			}
+		}
+	}
+}
