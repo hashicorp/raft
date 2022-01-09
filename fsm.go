@@ -72,7 +72,7 @@ func (r *Raft) runFSM() {
 	batchingFSM, batchingEnabled := r.fsm.(BatchingFSM)
 	configStore, configStoreEnabled := r.fsm.(ConfigurationStore)
 
-	commitSingle := func(req *commitTuple) {
+	applySingle := func(req *commitTuple) {
 		// Apply the log if a command or config change
 		var resp interface{}
 		// Make sure we send a response
@@ -107,10 +107,10 @@ func (r *Raft) runFSM() {
 		lastTerm = req.log.Term
 	}
 
-	commitBatch := func(reqs []*commitTuple) {
+	applyBatch := func(reqs []*commitTuple) {
 		if !batchingEnabled {
 			for _, ct := range reqs {
-				commitSingle(ct)
+				applySingle(ct)
 			}
 			return
 		}
@@ -213,7 +213,7 @@ func (r *Raft) runFSM() {
 		case ptr := <-r.fsmMutateCh:
 			switch req := ptr.(type) {
 			case []*commitTuple:
-				commitBatch(req)
+				applyBatch(req)
 
 			case *restoreFuture:
 				restore(req)
