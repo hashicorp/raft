@@ -123,7 +123,7 @@ func (r *Raft) requestConfigChange(req configurationChangeRequest, timeout time.
 	}
 }
 
-// run is a long running goroutine that runs the Raft FSM.
+// run the main thread that handles leadership, and RPCs.
 func (r *Raft) run() {
 	for {
 		// Check if we are doing a shutdown
@@ -135,7 +135,6 @@ func (r *Raft) run() {
 		default:
 		}
 
-		// Enter into a sub-FSM
 		switch r.getState() {
 		case Follower:
 			r.runFollower()
@@ -147,7 +146,7 @@ func (r *Raft) run() {
 	}
 }
 
-// runFollower runs the FSM for a follower.
+// runFollower runs the main loop while in the follower state.
 func (r *Raft) runFollower() {
 	didWarn := false
 	r.logger.Info("entering follower state", "follower", r, "leader", r.Leader())
@@ -236,8 +235,7 @@ func (r *Raft) runFollower() {
 func (r *Raft) liveBootstrap(configuration Configuration) error {
 	// Use the pre-init API to make the static updates.
 	cfg := r.config()
-	err := BootstrapCluster(&cfg, r.logs, r.stable, r.snapshots,
-		r.trans, configuration)
+	err := BootstrapCluster(&cfg, r.logs, r.stable, r.snapshots, r.trans, configuration)
 	if err != nil {
 		return err
 	}
@@ -252,7 +250,7 @@ func (r *Raft) liveBootstrap(configuration Configuration) error {
 	return r.processConfigurationLogEntry(&entry)
 }
 
-// runCandidate runs the FSM for a candidate.
+// runCandidate runs the main loop while in the candidate state.
 func (r *Raft) runCandidate() {
 	r.logger.Info("entering candidate state", "node", r, "term", r.getCurrentTerm()+1)
 	metrics.IncrCounter([]string{"raft", "state", "candidate"}, 1)
@@ -365,7 +363,7 @@ func (r *Raft) setupLeaderState() {
 	r.leaderState.stepDown = make(chan struct{}, 1)
 }
 
-// runLeader runs the FSM for a leader. Do the setup here and drop into
+// runLeader runs the main loop while in leader state. Do the setup here and drop into
 // the leaderLoop for the hot loop.
 func (r *Raft) runLeader() {
 	r.logger.Info("entering leader state", "leader", r)
@@ -464,11 +462,7 @@ func (r *Raft) runLeader() {
 	// an unbounded number of uncommitted configurations in the log. We now
 	// maintain that there exists at most one uncommitted configuration entry in
 	// any log, so we have to do proper no-ops here.
-	noop := &logFuture{
-		log: Log{
-			Type: LogNoop,
-		},
-	}
+	noop := &logFuture{log: Log{Type: LogNoop}}
 	r.dispatchLogs([]*logFuture{noop})
 
 	// Sit in the leader loop until we step down
@@ -659,7 +653,7 @@ func (r *Raft) leaderLoop() {
 			commitIndex := r.leaderState.commitment.getCommitIndex()
 			r.setCommitIndex(commitIndex)
 
-			// New configration has been committed, set it as the committed
+			// New configuration has been committed, set it as the committed
 			// value.
 			if r.configurations.latestIndex > oldCommitIndex &&
 				r.configurations.latestIndex <= commitIndex {
@@ -1451,7 +1445,7 @@ func (r *Raft) processConfigurationLogEntry(entry *Log) error {
 	return nil
 }
 
-// requestVote is invoked when we get an request vote RPC call.
+// requestVote is invoked when we get a request vote RPC call.
 func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "requestVote"}, time.Now())
 	r.observe(*req)

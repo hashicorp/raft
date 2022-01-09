@@ -132,17 +132,18 @@ type Config struct {
 	// can _understand_.
 	ProtocolVersion ProtocolVersion
 
-	// HeartbeatTimeout specifies the time in follower state without
-	// a leader before we attempt an election.
+	// HeartbeatTimeout specifies the time in follower state without contact
+	// from a leader before we attempt an election.
 	HeartbeatTimeout time.Duration
 
-	// ElectionTimeout specifies the time in candidate state without
-	// a leader before we attempt an election.
+	// ElectionTimeout specifies the time in candidate state without contact
+	// from a leader before we attempt an election.
 	ElectionTimeout time.Duration
 
-	// CommitTimeout controls the time without an Apply() operation
-	// before we heartbeat to ensure a timely commit. Due to random
-	// staggering, may be delayed as much as 2x this value.
+	// CommitTimeout specifies the time without an Apply operation before the
+	// leader send an AppendEntry RPC to followers, to ensure a timely commit of
+	// log entries.
+	// Due to random staggering, may be delayed as much as 2x this value.
 	CommitTimeout time.Duration
 
 	// MaxAppendEntries controls the maximum number of append entries
