@@ -141,7 +141,7 @@ type Config struct {
 	ElectionTimeout time.Duration
 
 	// CommitTimeout specifies the time without an Apply operation before the
-	// leader send an AppendEntry RPC to followers, to ensure a timely commit of
+	// leader sends an AppendEntry RPC to followers, to ensure a timely commit of
 	// log entries.
 	// Due to random staggering, may be delayed as much as 2x this value.
 	CommitTimeout time.Duration
