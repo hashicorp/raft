@@ -289,7 +289,8 @@ func (i *inmemPipeline) decodeResponses() {
 				return
 			}
 
-			timer.Stop() // out of scope -> stop the timer
+			timer.Stop()
+
 		case <-i.shutdownCh:
 			return
 		}

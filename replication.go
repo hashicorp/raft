@@ -211,7 +211,7 @@ START:
 		case <-timer.C:
 		case <-r.shutdownCh:
 		}
-		timer.Stop() // stop timer due to out of scope
+		timer.Stop()
 	}
 
 	s.peerLock.RLock()
@@ -410,7 +410,7 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 			case <-timer.C:
 			case <-stopCh:
 			}
-			timer.Stop() // stop timer due to out of scope
+			timer.Stop()
 		} else {
 			if failures > 0 {
 				r.observe(ResumedHeartbeatObservation{PeerID: peer.ID})
