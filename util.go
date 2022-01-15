@@ -28,12 +28,12 @@ func newSeed() int64 {
 }
 
 // randomTimeout returns a value that is between the minVal and 2x minVal.
-func randomTimeout(minVal time.Duration) timerWrapper {
+func randomTimeout(minVal time.Duration) <-chan time.Time {
 	if minVal == 0 {
-		return newTimer(0)
+		return nil
 	}
 	extra := (time.Duration(rand.Int63()) % minVal)
-	return newTimer(minVal + extra)
+	return time.After(minVal + extra)
 }
 
 // min returns the minimum.
@@ -164,15 +164,18 @@ func newTimer(timeout time.Duration) (t timerWrapper) {
 	return
 }
 
-func (t *timerWrapper) Reset(timeout time.Duration) {
+func (t *timerWrapper) Reset(d time.Duration) {
+	t.Stop()
 	if t.t != nil {
-		t.t.Reset(timeout)
+		t.t.Reset(d)
 	}
 }
 
-func (t *timerWrapper) Stop() bool {
-	if t.t != nil {
-		return t.t.Stop()
+func (t *timerWrapper) Stop() {
+	if t.t != nil && !t.t.Stop() {
+		select {
+		case <-t.C:
+		default:
+		}
 	}
-	return true
 }

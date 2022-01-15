@@ -151,9 +151,7 @@ func (r *Raft) runFollower() {
 	didWarn := false
 	r.logger.Info("entering follower state", "follower", r, "leader", r.Leader())
 	metrics.IncrCounter([]string{"raft", "state", "follower"}, 1)
-
 	heartbeatTimer := randomTimeout(r.config().HeartbeatTimeout)
-	defer heartbeatTimer.Stop()
 
 	for r.getState() == Follower {
 		select {
@@ -187,7 +185,7 @@ func (r *Raft) runFollower() {
 		case b := <-r.bootstrapCh:
 			b.respond(r.liveBootstrap(b.configuration))
 
-		case <-heartbeatTimer.C:
+		case <-heartbeatTimer:
 			// Restart the heartbeat timer
 			hbTimeout := r.config().HeartbeatTimeout
 			heartbeatTimer = randomTimeout(hbTimeout)
@@ -261,17 +259,14 @@ func (r *Raft) runCandidate() {
 	// Start vote for us, and set a timeout
 	voteCh := r.electSelf()
 
-	electionTimer := randomTimeout(r.config().ElectionTimeout)
-
 	// Make sure the leadership transfer flag is reset after each run. Having this
 	// flag will set the field LeadershipTransfer in a RequestVoteRequst to true,
 	// which will make other servers vote even though they have a leader already.
 	// It is important to reset that flag, because this priviledge could be abused
 	// otherwise.
-	defer func() {
-		electionTimer.Stop()
-		r.candidateFromLeadershipTransfer = false
-	}()
+	defer func() { r.candidateFromLeadershipTransfer = false }()
+
+	electionTimer := randomTimeout(r.config().ElectionTimeout)
 
 	// Tally the votes, need a simple majority
 	grantedVotes := 0
@@ -333,7 +328,7 @@ func (r *Raft) runCandidate() {
 		case b := <-r.bootstrapCh:
 			b.respond(ErrCantBootstrap)
 
-		case <-electionTimer.C:
+		case <-electionTimer:
 			// Election failed! Restart the election. We simply return,
 			// which will kick us back into runCandidate
 			r.logger.Warn("Election timeout reached, restarting election")

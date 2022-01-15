@@ -158,8 +158,6 @@ func (i *InmemTransport) makeRPC(target ServerAddress, args interface{}, r io.Re
 		return
 	}
 
-	timer := newTimer(timeout)
-
 	// Send the RPC over
 	respCh := make(chan RPCResponse, 1)
 	req := RPC{
@@ -167,6 +165,10 @@ func (i *InmemTransport) makeRPC(target ServerAddress, args interface{}, r io.Re
 		Reader:   r,
 		RespChan: respCh,
 	}
+
+	timer := newTimer(timeout)
+	defer timer.Stop()
+
 	select {
 	case peer.consumerCh <- req:
 	case <-timer.C:
@@ -183,8 +185,6 @@ func (i *InmemTransport) makeRPC(target ServerAddress, args interface{}, r io.Re
 	case <-timer.C:
 		err = fmt.Errorf("command timed out")
 	}
-
-	timer.Stop()
 	return
 }
 
@@ -260,15 +260,15 @@ func newInmemPipeline(trans *InmemTransport, peer *InmemTransport, addr ServerAd
 
 func (i *inmemPipeline) decodeResponses() {
 	timeout := i.trans.timeout
+	timer := newTimer(timeout)
+	defer timer.Stop()
 	for {
 		select {
 		case inp := <-i.inprogressCh:
-			timer := newTimer(timeout)
+			timer.Reset(timeout)
 
 			select {
 			case rpcResp := <-inp.respCh:
-				timer.Stop()
-
 				// Copy the result back
 				*inp.future.resp = *rpcResp.Response.(*AppendEntriesResponse)
 				inp.future.respond(rpcResp.Error)
@@ -288,7 +288,6 @@ func (i *inmemPipeline) decodeResponses() {
 				}
 
 			case <-i.shutdownCh:
-				timer.Stop()
 				return
 			}
 		case <-i.shutdownCh:
@@ -307,8 +306,8 @@ func (i *inmemPipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEn
 	future.init()
 
 	// Handle a timeout
-	timeout := newTimer(i.trans.timeout)
-	defer timeout.Stop()
+	timer := newTimer(i.trans.timeout)
+	defer timer.Stop()
 
 	// Send the RPC over
 	respCh := make(chan RPCResponse, 1)
@@ -329,7 +328,7 @@ func (i *inmemPipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEn
 
 	select {
 	case i.peer.consumerCh <- rpc:
-	case <-timeout.C:
+	case <-timer.C:
 		return nil, fmt.Errorf("command enqueue timeout")
 	case <-i.shutdownCh:
 		return nil, ErrPipelineShutdown

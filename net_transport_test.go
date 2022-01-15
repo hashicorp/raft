@@ -84,16 +84,16 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 		wg := &sync.WaitGroup{}
 		wg.Add(5)
 
-		var errCounter int32
 		appendFunc := func() {
 			defer wg.Done()
 			var out AppendEntriesResponse
 			if err := trans2.AppendEntries("id1", trans1.LocalAddr(), &args, &out); err != nil {
-				atomic.AddInt32(&errCounter, 1)
-				t.Errorf("err: %v", err)
-			} else if !reflect.DeepEqual(resp, out) { // Verify the response
-				atomic.AddInt32(&errCounter, 1)
-				t.Errorf("command mismatch: %#v %#v", resp, out)
+				t.Fatalf("err: %v", err)
+			}
+
+			// Verify the response
+			if !reflect.DeepEqual(resp, out) {
+				t.Fatalf("command mismatch: %#v %#v", resp, out)
 			}
 		}
 
@@ -104,10 +104,6 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 
 		// Wait for the routines to finish
 		wg.Wait()
-
-		if atomic.LoadInt32(&errCounter) != 0 {
-			t.FailNow()
-		}
 
 		// Check the conn pool size
 		addr := trans1.LocalAddr()
@@ -188,6 +184,7 @@ func TestNetworkTransport_Heartbeat_FastPath(t *testing.T) {
 }
 
 func TestNetworkTransport_AppendEntries(t *testing.T) {
+
 	for _, useAddrProvider := range []bool{true, false} {
 		// Transport 1 is consumer
 		trans1, err := makeTransport(t, useAddrProvider, "localhost:0")
@@ -257,6 +254,7 @@ func TestNetworkTransport_AppendEntries(t *testing.T) {
 }
 
 func TestNetworkTransport_AppendEntriesPipeline(t *testing.T) {
+
 	for _, useAddrProvider := range []bool{true, false} {
 		// Transport 1 is consumer
 		trans1, err := makeTransport(t, useAddrProvider, "localhost:0")
@@ -451,6 +449,7 @@ func TestNetworkTransport_AppendEntriesPipeline_CloseStreams(t *testing.T) {
 }
 
 func TestNetworkTransport_RequestVote(t *testing.T) {
+
 	for _, useAddrProvider := range []bool{true, false} {
 		// Transport 1 is consumer
 		trans1, err := makeTransport(t, useAddrProvider, "localhost:0")
@@ -511,6 +510,7 @@ func TestNetworkTransport_RequestVote(t *testing.T) {
 }
 
 func TestNetworkTransport_InstallSnapshot(t *testing.T) {
+
 	for _, useAddrProvider := range []bool{true, false} {
 		// Transport 1 is consumer
 		trans1, err := makeTransport(t, useAddrProvider, "localhost:0")
@@ -603,12 +603,7 @@ func TestNetworkTransport_EncodeDecode(t *testing.T) {
 
 func TestNetworkTransport_EncodeDecode_AddressProvider(t *testing.T) {
 	addressOverride := "localhost:11111"
-	config := &NetworkTransportConfig{
-		MaxPool:               2,
-		Timeout:               time.Second,
-		Logger:                newTestLogger(t),
-		ServerAddressProvider: &testAddrProvider{addressOverride},
-	}
+	config := &NetworkTransportConfig{MaxPool: 2, Timeout: time.Second, Logger: newTestLogger(t), ServerAddressProvider: &testAddrProvider{addressOverride}}
 	trans1, err := NewTCPTransportWithConfig("localhost:0", nil, config)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -684,16 +679,16 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 	wg := &sync.WaitGroup{}
 	wg.Add(5)
 
-	var errCounter int32
 	appendFunc := func() {
 		defer wg.Done()
 		var out AppendEntriesResponse
 		if err := trans2.AppendEntries("id1", trans1.LocalAddr(), &args, &out); err != nil {
-			atomic.AddInt32(&errCounter, 1)
-			t.Errorf("err: %v", err)
-		} else if !reflect.DeepEqual(resp, out) { // Verify the response
-			atomic.AddInt32(&errCounter, 1)
-			t.Errorf("command mismatch: %#v %#v", resp, out)
+			t.Fatalf("err: %v", err)
+		}
+
+		// Verify the response
+		if !reflect.DeepEqual(resp, out) {
+			t.Fatalf("command mismatch: %#v %#v", resp, out)
 		}
 	}
 
@@ -705,10 +700,6 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 	// Wait for the routines to finish
 	wg.Wait()
 
-	if atomic.LoadInt32(&errCounter) != 0 {
-		t.FailNow()
-	}
-
 	// Check the conn pool size
 	addr := trans1.LocalAddr()
 	if len(trans2.connPool[addr]) != 3 {
@@ -718,12 +709,7 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 
 func makeTransport(t *testing.T, useAddrProvider bool, addressOverride string) (*NetworkTransport, error) {
 	if useAddrProvider {
-		config := &NetworkTransportConfig{
-			MaxPool:               2,
-			Timeout:               time.Second,
-			Logger:                newTestLogger(t),
-			ServerAddressProvider: &testAddrProvider{addressOverride},
-		}
+		config := &NetworkTransportConfig{MaxPool: 2, Timeout: time.Second, Logger: newTestLogger(t), ServerAddressProvider: &testAddrProvider{addressOverride}}
 		return NewTCPTransportWithConfig("localhost:0", nil, config)
 	}
 	return NewTCPTransportWithLogger("localhost:0", nil, 2, time.Second, newTestLogger(t))
@@ -768,6 +754,7 @@ func (sl testCountingStreamLayer) Dial(address ServerAddress, timeout time.Durat
 // do not result in a tight loop and spam the log. We verify this here by counting the number
 // of calls against Accept() and the logger
 func TestNetworkTransport_ListenBackoff(t *testing.T) {
+
 	// testTime is the amount of time we will allow NetworkTransport#listen() to run
 	// This needs to be long enough that to verify that maxDelay is in force,
 	// but not so long as to be obnoxious when running the test suite.

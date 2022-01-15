@@ -9,10 +9,9 @@ import (
 func TestRandomTimeout(t *testing.T) {
 	start := time.Now()
 	timeout := randomTimeout(time.Millisecond)
-	defer timeout.Stop()
 
 	select {
-	case <-timeout.C:
+	case <-timeout:
 		diff := time.Now().Sub(start)
 		if diff < time.Millisecond {
 			t.Fatalf("fired early")
@@ -30,6 +29,13 @@ func TestNewSeed(t *testing.T) {
 			t.Fatal("newSeed() return a value it'd previously returned")
 		}
 		vals[seed] = true
+	}
+}
+
+func TestRandomTimeout_NoTime(t *testing.T) {
+	timeout := randomTimeout(0)
+	if timeout != nil {
+		t.Fatalf("expected nil channel")
 	}
 }
 
@@ -163,10 +169,8 @@ func TestTimer(t *testing.T) {
 			t.Fatalf("invalid timeout")
 		}
 
+		timer.Stop()
 		timer.Reset(100 * time.Millisecond)
-		if timer.C != timer.t.C { // check the reference after reset
-			t.FailNow()
-		}
 
 		select {
 		case <-timer.C:
@@ -176,13 +180,13 @@ func TestTimer(t *testing.T) {
 	})
 }
 
-const timerBenchAttempt = 10000
-
 // goos: linux
 // goarch: amd64
 // pkg: github.com/hashicorp/raft
 // BenchmarkTimeAfter-16                295           3968892 ns/op         2100006 B/op      30000 allocs/op
 // BenchmarkTimer-16                    451           2738084 ns/op         2000056 B/op      30000 allocs/op
+
+const timerBenchAttempt = 10000
 
 func BenchmarkTimeAfter(b *testing.B) {
 	b.ReportAllocs()

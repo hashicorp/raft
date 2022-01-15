@@ -68,10 +68,8 @@ type SnapshotSink interface {
 // main goroutines, so that snapshots do not block normal operation.
 func (r *Raft) runSnapshots() {
 	for {
-		randTimer := randomTimeout(r.config().SnapshotInterval)
-
 		select {
-		case <-randTimer.C:
+		case <-randomTimeout(r.config().SnapshotInterval):
 			// Check if we should snapshot
 			if !r.shouldSnapshot() {
 				continue
@@ -83,8 +81,6 @@ func (r *Raft) runSnapshots() {
 			}
 
 		case future := <-r.userSnapshotCh:
-			randTimer.Stop()
-
 			// User-triggered, run immediately
 			id, err := r.takeSnapshot()
 			if err != nil {
@@ -97,7 +93,6 @@ func (r *Raft) runSnapshots() {
 			future.respond(err)
 
 		case <-r.shutdownCh:
-			randTimer.Stop()
 			return
 		}
 	}

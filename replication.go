@@ -140,15 +140,12 @@ func (r *Raft) replicate(s *followerReplication) {
 RPC:
 	shouldStop := false
 	for !shouldStop {
-		timer := randomTimeout(r.config().CommitTimeout)
-
 		select {
 		case maxIndex := <-s.stopCh:
 			// Make a best effort to replicate up to this index
 			if maxIndex > 0 {
 				r.replicateTo(s, maxIndex)
 			}
-			timer.Stop()
 			return
 		case deferErr := <-s.triggerDeferErrorCh:
 			lastLogIdx, _ := r.getLastLog()
@@ -166,12 +163,10 @@ RPC:
 		// raft commits stop flowing naturally. The actual heartbeats
 		// can't do this to keep them unblocked by disk IO on the
 		// follower. See https://github.com/hashicorp/raft/issues/282.
-		case <-timer.C:
+		case <-randomTimeout(r.config().CommitTimeout):
 			lastLogIdx, _ := r.getLastLog()
 			shouldStop = r.replicateTo(s, lastLogIdx)
 		}
-
-		timer.Stop()
 
 		// If things looks healthy, switch to pipeline mode
 		if !shouldStop && s.allowPipeline {
@@ -215,8 +210,8 @@ START:
 		select {
 		case <-timer.C:
 		case <-r.shutdownCh:
-			timer.Stop()
 		}
+		timer.Stop() // stop timer due to out of scope
 	}
 
 	s.peerLock.RLock()
@@ -392,18 +387,13 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 	}
 	var resp AppendEntriesResponse
 	for {
-		randTimer := randomTimeout(r.config().HeartbeatTimeout / 10)
-
 		// Wait for the next heartbeat interval or forced notify
 		select {
 		case <-s.notifyCh:
-		case <-randTimer.C:
+		case <-randomTimeout(r.config().HeartbeatTimeout / 10):
 		case <-stopCh:
-			randTimer.Stop()
 			return
 		}
-
-		randTimer.Stop()
 
 		s.peerLock.RLock()
 		peer := s.peer
@@ -419,8 +409,8 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 			select {
 			case <-timer.C:
 			case <-stopCh:
-				timer.Stop()
 			}
+			timer.Stop() // stop timer due to out of scope
 		} else {
 			if failures > 0 {
 				r.observe(ResumedHeartbeatObservation{PeerID: peer.ID})
@@ -469,18 +459,14 @@ func (r *Raft) pipelineReplicate(s *followerReplication) error {
 	shouldStop := false
 SEND:
 	for !shouldStop {
-		randTimer := randomTimeout(r.config().CommitTimeout)
-
 		select {
 		case <-finishCh:
-			randTimer.Stop()
 			break SEND
 		case maxIndex := <-s.stopCh:
 			// Make a best effort to replicate up to this index
 			if maxIndex > 0 {
 				r.pipelineSend(s, pipeline, &nextIndex, maxIndex)
 			}
-			randTimer.Stop()
 			break SEND
 		case deferErr := <-s.triggerDeferErrorCh:
 			lastLogIdx, _ := r.getLastLog()
@@ -493,12 +479,10 @@ SEND:
 		case <-s.triggerCh:
 			lastLogIdx, _ := r.getLastLog()
 			shouldStop = r.pipelineSend(s, pipeline, &nextIndex, lastLogIdx)
-		case <-randTimer.C:
+		case <-randomTimeout(r.config().CommitTimeout):
 			lastLogIdx, _ := r.getLastLog()
 			shouldStop = r.pipelineSend(s, pipeline, &nextIndex, lastLogIdx)
 		}
-
-		randTimer.Stop()
 	}
 
 	// Stop our decoder, and wait for it to finish
