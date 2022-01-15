@@ -260,12 +260,10 @@ func newInmemPipeline(trans *InmemTransport, peer *InmemTransport, addr ServerAd
 
 func (i *inmemPipeline) decodeResponses() {
 	timeout := i.trans.timeout
-	timer := newTimer(timeout)
-	defer timer.Stop()
 	for {
 		select {
 		case inp := <-i.inprogressCh:
-			timer.Reset(timeout)
+			timer := newTimer(timeout)
 
 			select {
 			case rpcResp := <-inp.respCh:
@@ -290,6 +288,8 @@ func (i *inmemPipeline) decodeResponses() {
 			case <-i.shutdownCh:
 				return
 			}
+
+			timer.Stop() // out of scope -> stop the timer
 		case <-i.shutdownCh:
 			return
 		}

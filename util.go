@@ -165,17 +165,13 @@ func newTimer(timeout time.Duration) (t timerWrapper) {
 }
 
 func (t *timerWrapper) Reset(d time.Duration) {
-	t.Stop()
 	if t.t != nil {
 		t.t.Reset(d)
 	}
 }
 
 func (t *timerWrapper) Stop() {
-	if t.t != nil && !t.t.Stop() {
-		select {
-		case <-t.C:
-		default:
-		}
+	if t.t != nil {
+		t.t.Stop()
 	}
 }
