@@ -1370,9 +1370,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 				return
 			}
 			if entry.Term != storeEntry.Term {
-				r.logger.Warn("clearing log suffix",
-					"from", entry.Index,
-					"to", lastLogIdx)
+				r.logger.Warn("clearing log suffix", "from", entry.Index, "to", lastLogIdx)
 				if err := r.logs.DeleteRange(entry.Index, lastLogIdx); err != nil {
 					r.logger.Error("failed to clear log suffix", "error", err)
 					return

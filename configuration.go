@@ -13,10 +13,9 @@ const (
 	// Nonvoter is a server that receives log entries but is not considered for
 	// elections or commitment purposes.
 	Nonvoter
-	// Staging is a server that acts like a nonvoter with one exception: once a
-	// staging server receives enough log entries to be sufficiently caught up to
-	// the leader's log, the leader will invoke a  membership change to change
-	// the Staging server to a Voter.
+	// Staging is a server that acts like a Nonvoter. A configuration change
+	// with a ConfigurationChangeCommand of Promote can change a Staging server
+	// into a Voter.
 	Staging
 )
 
@@ -95,8 +94,8 @@ const (
 	DemoteVoter
 	// RemoveServer removes a server entirely from the cluster membership.
 	RemoveServer
-	// Promote is created automatically by a leader; it turns a Staging server
-	// into a Voter.
+	// Promote changes a server from Staging to Voter. The command will be a
+	// no-op if the server is not Staging.
 	Promote
 )
 
