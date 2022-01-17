@@ -16,6 +16,7 @@ const (
 	// Staging is a server that acts like a Nonvoter. A configuration change
 	// with a ConfigurationChangeCommand of Promote can change a Staging server
 	// into a Voter.
+	// Deprecated: use Nonvoter instead.
 	Staging
 )
 
@@ -86,8 +87,8 @@ func (c *Configuration) Clone() (copy Configuration) {
 type ConfigurationChangeCommand uint8
 
 const (
-	// AddStaging makes a server Staging unless its Voter.
-	AddStaging ConfigurationChangeCommand = iota
+	// AddVoter adds a server with Suffrage of Voter.
+	AddVoter ConfigurationChangeCommand = iota
 	// AddNonvoter makes a server Nonvoter unless its Staging or Voter.
 	AddNonvoter
 	// DemoteVoter makes a server Nonvoter unless its absent.
@@ -96,13 +97,17 @@ const (
 	RemoveServer
 	// Promote changes a server from Staging to Voter. The command will be a
 	// no-op if the server is not Staging.
+	// Deprecated: use AddVoter instead.
 	Promote
+	// AddStaging makes a server a Voter.
+	// Deprecated: AddStaging was actually AddVoter. Use AddVoter instead.
+	AddStaging = 0 // explicit 0 to preserve the old value.
 )
 
 func (c ConfigurationChangeCommand) String() string {
 	switch c {
-	case AddStaging:
-		return "AddStaging"
+	case AddVoter:
+		return "AddVoter"
 	case AddNonvoter:
 		return "AddNonvoter"
 	case DemoteVoter:
@@ -121,7 +126,7 @@ func (c ConfigurationChangeCommand) String() string {
 type configurationChangeRequest struct {
 	command       ConfigurationChangeCommand
 	serverID      ServerID
-	serverAddress ServerAddress // only present for AddStaging, AddNonvoter
+	serverAddress ServerAddress // only present for AddVoter, AddNonvoter
 	// prevIndex, if nonzero, is the index of the only configuration upon which
 	// this change may be applied; if another configuration entry has been
 	// added in the meantime, this request will fail.
@@ -213,15 +218,8 @@ func nextConfiguration(current Configuration, currentIndex uint64, change config
 
 	configuration := current.Clone()
 	switch change.command {
-	case AddStaging:
-		// TODO: barf on new address?
+	case AddVoter:
 		newServer := Server{
-			// TODO: This should add the server as Staging, to be automatically
-			// promoted to Voter later. However, the promotion to Voter is not yet
-			// implemented, and doing so is not trivial with the way the leader loop
-			// coordinates with the replication goroutines today. So, for now, the
-			// server will have a vote right away, and the Promote case below is
-			// unused.
 			Suffrage: Voter,
 			ID:       change.serverID,
 			Address:  change.serverAddress,

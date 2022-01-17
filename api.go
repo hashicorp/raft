@@ -825,7 +825,7 @@ func (r *Raft) AddPeer(peer ServerAddress) Future {
 	}
 
 	return r.requestConfigChange(configurationChangeRequest{
-		command:       AddStaging,
+		command:       AddVoter,
 		serverID:      ServerID(peer),
 		serverAddress: peer,
 		prevIndex:     0,
@@ -862,7 +862,7 @@ func (r *Raft) AddVoter(id ServerID, address ServerAddress, prevIndex uint64, ti
 	}
 
 	return r.requestConfigChange(configurationChangeRequest{
-		command:       AddStaging,
+		command:       AddVoter,
 		serverID:      id,
 		serverAddress: address,
 		prevIndex:     prevIndex,
