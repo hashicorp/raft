@@ -179,6 +179,16 @@ var nextConfigurationTests = []struct {
 	// AddStaging: was Nonvoter.
 	{oneOfEach, AddStaging, 3, "{[{Voter id1 addr1x} {Staging id2 addr2x} {Voter id3 addr3}]}"},
 
+	// AddVoter: was missing.
+	{Configuration{}, AddVoter, 1, "{[{Voter id1 addr1}]}"},
+	{singleServer, AddVoter, 2, "{[{Voter id1 addr1x} {Voter id2 addr2}]}"},
+	// AddVoter: was Voter.
+	{singleServer, AddVoter, 1, "{[{Voter id1 addr1}]}"},
+	// AddVoter: was Staging.
+	{oneOfEach, AddVoter, 2, "{[{Voter id1 addr1x} {Voter id2 addr2} {Nonvoter id3 addr3x}]}"},
+	// AddVoter: was Nonvoter.
+	{oneOfEach, AddVoter, 3, "{[{Voter id1 addr1x} {Staging id2 addr2x} {Voter id3 addr3}]}"},
+
 	// AddNonvoter: was missing.
 	{singleServer, AddNonvoter, 2, "{[{Voter id1 addr1x} {Nonvoter id2 addr2}]}"},
 	// AddNonvoter: was Voter.
@@ -238,7 +248,7 @@ func TestConfiguration_nextConfiguration_table(t *testing.T) {
 func TestConfiguration_nextConfiguration_prevIndex(t *testing.T) {
 	// Stale prevIndex.
 	req := configurationChangeRequest{
-		command:       AddStaging,
+		command:       AddVoter,
 		serverID:      ServerID("id1"),
 		serverAddress: ServerAddress("addr1"),
 		prevIndex:     1,
@@ -250,7 +260,7 @@ func TestConfiguration_nextConfiguration_prevIndex(t *testing.T) {
 
 	// Current prevIndex.
 	req = configurationChangeRequest{
-		command:       AddStaging,
+		command:       AddVoter,
 		serverID:      ServerID("id2"),
 		serverAddress: ServerAddress("addr2"),
 		prevIndex:     2,
@@ -262,7 +272,7 @@ func TestConfiguration_nextConfiguration_prevIndex(t *testing.T) {
 
 	// Zero prevIndex.
 	req = configurationChangeRequest{
-		command:       AddStaging,
+		command:       AddVoter,
 		serverID:      ServerID("id3"),
 		serverAddress: ServerAddress("addr3"),
 		prevIndex:     0,
