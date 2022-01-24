@@ -123,7 +123,7 @@ func (r *Raft) requestConfigChange(req configurationChangeRequest, timeout time.
 	}
 }
 
-// run the main thread that handles leadership, and RPC requests.
+// run the main thread that handles leadership and RPC requests.
 func (r *Raft) run() {
 	for {
 		// Check if we are doing a shutdown

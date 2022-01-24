@@ -22,8 +22,8 @@ const (
 	// within the library. As the library is enhanced this value may change
 	// over time to reflect current suggested maximums.
 	//
-	// Applying logs entries with data greater than this size risks RPC IO taking
-	// too long and preventing timely heartbeat signals which are sent in serial
+	// Applying log entries with data greater than this size risks RPC IO taking
+	// too long and preventing timely heartbeat signals.  These signals are sent in serial
 	// in current transports, potentially causing leadership instability.
 	SuggestedMaxDataSize = 512 * 1024
 )
