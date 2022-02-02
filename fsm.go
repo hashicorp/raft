@@ -224,8 +224,12 @@ func (r *Raft) runFSM() {
 	}
 
 	for {
+		r.fsmThreadSaturation.sleeping()
+
 		select {
 		case ptr := <-r.fsmMutateCh:
+			r.fsmThreadSaturation.working()
+
 			switch req := ptr.(type) {
 			case []*commitTuple:
 				applyBatch(req)
@@ -238,6 +242,8 @@ func (r *Raft) runFSM() {
 			}
 
 		case req := <-r.fsmSnapshotCh:
+			r.fsmThreadSaturation.working()
+
 			snapshot(req)
 
 		case <-r.shutdownCh:
