@@ -195,6 +195,10 @@ type Raft struct {
 	// leadershipTransferCh is used to start a leadership transfer from outside of
 	// the main thread.
 	leadershipTransferCh chan *leadershipTransferFuture
+
+	// thread saturation metric recorders.
+	mainThreadSaturation *saturationMetric
+	fsmThreadSaturation  *saturationMetric
 }
 
 // BootstrapCluster initializes a server's storage with the given cluster
@@ -540,6 +544,8 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		bootstrapCh:           make(chan *bootstrapFuture),
 		observers:             make(map[uint64]*Observer),
 		leadershipTransferCh:  make(chan *leadershipTransferFuture, 1),
+		mainThreadSaturation:  newSaturationMetric([]string{"raft", "mainThreadSaturation"}, 1*time.Second),
+		fsmThreadSaturation:   newSaturationMetric([]string{"raft", "fsm", "threadSaturation"}, 1*time.Second),
 	}
 
 	r.conf.Store(*conf)
