@@ -570,6 +570,10 @@ func (r *Raft) leaderLoop() {
 	// based on the current config value.
 	lease := time.After(r.config().LeaderLeaseTimeout)
 
+	// This would unset leadershipTransferInProgress
+	// in case it was set during the loop
+	defer func() { r.setLeadershipTransferInProgress(false) }()
+
 	for r.getState() == Leader {
 		select {
 		case rpc := <-r.rpcCh:
@@ -644,7 +648,7 @@ func (r *Raft) leaderLoop() {
 				doneCh <- fmt.Errorf("cannot find replication state for %v", id)
 				continue
 			}
-
+			r.setLeadershipTransferInProgress(true)
 			go r.leadershipTransfer(*id, *address, state, stopCh, doneCh)
 
 		case <-r.leaderState.commitCh:
@@ -846,10 +850,6 @@ func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress, repl *foll
 		return
 	default:
 	}
-
-	// Step 1: set this field which stops this leader from responding to any client requests.
-	r.setLeadershipTransferInProgress(true)
-	defer func() { r.setLeadershipTransferInProgress(false) }()
 
 	for atomic.LoadUint64(&repl.nextIndex) <= r.getLastIndex() {
 		err := &deferError{}
@@ -1304,7 +1304,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 
 	// Increase the term if we see a newer one, also transition to follower
 	// if we ever get an appendEntries call
-	if a.Term > r.getCurrentTerm() || r.getState() != Follower {
+	if a.Term > r.getCurrentTerm() || (r.getState() != Follower && !r.candidateFromLeadershipTransfer) {
 		// Ensure transition to follower
 		r.setState(Follower)
 		r.setCurrentTerm(a.Term)
