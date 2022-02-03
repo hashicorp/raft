@@ -1,7 +1,6 @@
 package raft
 
 import (
-	"math"
 	"time"
 
 	"github.com/armon/go-metrics"
@@ -21,19 +20,7 @@ type saturationMetric struct {
 	// updated (it may be less frequent if the caller is idle).
 	reportInterval time.Duration
 
-	// index of the current sample. We rely on it wrapping-around on overflow and
-	// underflow, to implement a circular buffer (note the matching size of the
-	// samples array).
-	index uint8
-
-	// samples is a fixed-size array of samples (similar to a circular buffer)
-	// where elements at even-numbered indexes contain time spent sleeping, and
-	// elements at odd-numbered indexes contain time spent working.
-	samples [math.MaxUint8 + 1]struct {
-		v time.Duration // measurement
-		t time.Time     // time at which the measurement was captured
-	}
-
+	totalSleep, lostTime  time.Duration
 	sleepBegan, workBegan time.Time
 	lastReport            time.Time
 
@@ -56,84 +43,55 @@ func newSaturationMetric(name []string, reportInterval time.Duration) *saturatio
 // sleeping records the time at which the caller began waiting for work. After
 // the initial call it must always be proceeded by a call to working.
 func (s *saturationMetric) sleeping() {
-	s.sleepBegan = s.nowFn()
+	now := s.nowFn()
 
-	// Caller should've called working (we've probably missed a branch of a
-	// select). Reset sleepBegan without recording a sample to "lose" time
-	// instead of recording nonsense data.
-	if s.index%2 == 1 {
-		return
+	if !s.sleepBegan.IsZero() {
+		s.lostTime += now.Sub(s.sleepBegan)
 	}
 
-	if !s.workBegan.IsZero() {
-		sample := &s.samples[s.index-1]
-		sample.v = s.sleepBegan.Sub(s.workBegan)
-		sample.t = s.sleepBegan
-	}
-
-	s.index++
+	s.sleepBegan = now
+	s.workBegan = time.Time{}
 	s.report()
 }
 
 // working records the time at which the caller began working. It must always
 // be proceeded by a call to sleeping.
 func (s *saturationMetric) working() {
-	s.workBegan = s.nowFn()
+	now := s.nowFn()
 
-	// Caller should've called sleeping. Reset workBegan without recording a
-	// sample to "lose" time instead of recording nonsense data.
-	if s.index%2 == 0 {
-		return
+	if s.workBegan.IsZero() {
+		if s.sleepBegan.IsZero() {
+			s.lostTime += now.Sub(s.lastReport)
+		} else {
+			s.totalSleep += now.Sub(s.sleepBegan)
+		}
+	} else {
+		s.lostTime += now.Sub(s.workBegan)
 	}
 
-	sample := &s.samples[s.index-1]
-	sample.v = s.workBegan.Sub(s.sleepBegan)
-	sample.t = s.workBegan
-
-	s.index++
+	s.workBegan = now
+	s.sleepBegan = time.Time{}
 	s.report()
 }
 
 // report updates the gauge if reportInterval has passed since our last report.
 func (s *saturationMetric) report() {
-	if s.nowFn().Sub(s.lastReport) < s.reportInterval {
+	now := s.nowFn()
+	timeElapsed := now.Sub(s.lastReport)
+
+	if timeElapsed < s.reportInterval {
 		return
 	}
 
-	workSamples := make([]time.Duration, 0, len(s.samples)/2)
-	sleepSamples := make([]time.Duration, 0, len(s.samples)/2)
-
-	for idx, sample := range s.samples {
-		if !sample.t.After(s.lastReport) {
-			continue
-		}
-
-		if idx%2 == 0 {
-			sleepSamples = append(sleepSamples, sample.v)
-		} else {
-			workSamples = append(workSamples, sample.v)
-		}
-	}
-
-	// Ensure we take an equal number of work and sleep samples to avoid
-	// over/under reporting.
-	take := len(workSamples)
-	if len(sleepSamples) < take {
-		take = len(sleepSamples)
-	}
+	total := timeElapsed - s.lostTime
 
 	var saturation float32
-	if take != 0 {
-		var work, sleep time.Duration
-		for _, s := range workSamples[0:take] {
-			work += s
-		}
-		for _, s := range sleepSamples[0:take] {
-			sleep += s
-		}
-		saturation = float32(work) / float32(work+sleep)
+	if total != 0 {
+		saturation = float32(total-s.totalSleep) / float32(total)
 	}
-
 	s.reportFn(saturation)
-	s.lastReport = s.nowFn()
+
+	s.lastReport = now
+	s.totalSleep = 0
+	s.lostTime = 0
 }

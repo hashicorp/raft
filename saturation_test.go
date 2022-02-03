@@ -10,13 +10,12 @@ import (
 func TestSaturationMetric(t *testing.T) {
 	sat := newSaturationMetric([]string{"metric"}, 100*time.Millisecond)
 
-	var now time.Time
+	now := sat.lastReport
 	sat.nowFn = func() time.Time { return now }
 
 	var reported float32
 	sat.reportFn = func(val float32) { reported = val }
 
-	now = time.Now()
 	sat.sleeping()
 
 	now = now.Add(50 * time.Millisecond)
@@ -41,28 +40,11 @@ func TestSaturationMetric(t *testing.T) {
 	require.Equal(t, float32(0), reported)
 }
 
-func TestSaturationMetric_IndexWraparound(t *testing.T) {
-	sat := newSaturationMetric([]string{"metric"}, 100*time.Millisecond)
-
-	now := time.Now()
-	sat.nowFn = func() time.Time { return now }
-
-	for i := 0; i < 1024; i++ {
-		now = now.Add(25 * time.Millisecond)
-
-		if i%2 == 0 {
-			require.NotPanics(t, sat.sleeping)
-		} else {
-			require.NotPanics(t, sat.working)
-		}
-	}
-}
-
 func TestSaturationMetric_IncorrectUsage(t *testing.T) {
 	t.Run("calling sleeping() consecutively", func(t *testing.T) {
 		sat := newSaturationMetric([]string{"metric"}, 50*time.Millisecond)
 
-		now := time.Now()
+		now := sat.lastReport
 		sat.nowFn = func() time.Time { return now }
 
 		var reported float32
@@ -102,7 +84,7 @@ func TestSaturationMetric_IncorrectUsage(t *testing.T) {
 	t.Run("calling working() consecutively", func(t *testing.T) {
 		sat := newSaturationMetric([]string{"metric"}, 30*time.Millisecond)
 
-		now := time.Now()
+		now := sat.lastReport
 		sat.nowFn = func() time.Time { return now }
 
 		var reported float32
@@ -128,6 +110,27 @@ func TestSaturationMetric_IncorrectUsage(t *testing.T) {
 		now = now.Add(10 * time.Millisecond)
 		sat.sleeping()
 
+		require.Equal(t, float32(0.5), reported)
+	})
+
+	t.Run("calling working() first", func(t *testing.T) {
+		sat := newSaturationMetric([]string{"metric"}, 10*time.Millisecond)
+
+		now := sat.lastReport.Add(10 * time.Millisecond)
+		sat.nowFn = func() time.Time { return now }
+
+		var reported float32
+		sat.reportFn = func(v float32) { reported = v }
+
+		// Time from lastReport until working() is treated as lost.
+		sat.working()
+		require.Equal(t, float32(0), reported)
+
+		sat.sleeping()
+		now = now.Add(5 * time.Millisecond)
+		sat.working()
+		now = now.Add(5 * time.Millisecond)
+		sat.sleeping()
 		require.Equal(t, float32(0.5), reported)
 	})
 }
