@@ -8,61 +8,80 @@ import (
 )
 
 func TestSaturationMetric(t *testing.T) {
-	sat := newSaturationMetric([]string{"metric"}, 100*time.Millisecond)
+	t.Run("without smoothing", func(t *testing.T) {
+		sat := newSaturationMetric([]string{"metric"}, 100*time.Millisecond, 0)
 
-	var now time.Time
-	sat.nowFn = func() time.Time { return now }
+		now := sat.buckets[0].beginning
+		sat.nowFn = func() time.Time { return now }
 
-	var reported float32
-	sat.reportFn = func(val float32) { reported = val }
+		var reported float32
+		sat.reportFn = func(val float32) { reported = val }
 
-	now = time.Now()
-	sat.sleeping()
+		sat.sleeping()
 
-	now = now.Add(50 * time.Millisecond)
-	sat.working()
+		// First window: 50ms sleeping + 75ms working.
+		now = now.Add(50 * time.Millisecond)
+		sat.working()
 
-	now = now.Add(75 * time.Millisecond)
-	sat.sleeping()
+		now = now.Add(75 * time.Millisecond)
+		sat.sleeping()
 
-	require.Equal(t, float32(0.6), reported)
+		// Should be 60% saturation.
+		require.Equal(t, float32(0.6), reported)
 
-	now = now.Add(90 * time.Millisecond)
-	sat.working()
+		// Second window: 90ms sleeping + 10ms working.
+		now = now.Add(90 * time.Millisecond)
+		sat.working()
 
-	now = now.Add(10 * time.Millisecond)
-	sat.sleeping()
+		now = now.Add(10 * time.Millisecond)
+		sat.sleeping()
 
-	require.Equal(t, float32(0.1), reported)
+		// Should be 10% saturation.
+		require.Equal(t, float32(0.1), reported)
 
-	now = now.Add(100 * time.Millisecond)
-	sat.working()
+		// Third window: 100ms sleeping + 0ms working.
+		now = now.Add(100 * time.Millisecond)
+		sat.working()
 
-	require.Equal(t, float32(0), reported)
-}
+		// Should be 0% saturation.
+		require.Equal(t, float32(0), reported)
+	})
 
-func TestSaturationMetric_IndexWraparound(t *testing.T) {
-	sat := newSaturationMetric([]string{"metric"}, 100*time.Millisecond)
+	t.Run("with smoothing", func(t *testing.T) {
+		sat := newSaturationMetric([]string{"metric"}, 100*time.Millisecond, 1)
 
-	now := time.Now()
-	sat.nowFn = func() time.Time { return now }
+		now := sat.buckets[0].beginning
+		sat.nowFn = func() time.Time { return now }
 
-	for i := 0; i < 1024; i++ {
-		now = now.Add(25 * time.Millisecond)
+		var reported float32
+		sat.reportFn = func(val float32) { reported = val }
 
-		if i%2 == 0 {
-			require.NotPanics(t, sat.sleeping)
-		} else {
-			require.NotPanics(t, sat.working)
-		}
-	}
+		// First report window: 50ms sleeping + 75ms working.
+		sat.sleeping()
+
+		now = now.Add(50 * time.Millisecond)
+		sat.working()
+
+		now = now.Add(75 * time.Millisecond)
+		sat.sleeping()
+
+		// Second report window: 75ms sleeping + 50ms working.
+		now = now.Add(75 * time.Millisecond)
+		sat.working()
+
+		now = now.Add(50 * time.Millisecond)
+		sat.sleeping()
+
+		// Should average out to 50% saturation.
+		require.Equal(t, float32(0.5), reported)
+	})
 }
 
 func TestSaturationMetric_IncorrectUsage(t *testing.T) {
 	t.Run("calling sleeping() consecutively", func(t *testing.T) {
-		sat := newSaturationMetric([]string{"metric"}, 50*time.Millisecond)
+		sat := newSaturationMetric([]string{"metric"}, 50*time.Millisecond, 0)
 
-		now := time.Now()
+		now := sat.buckets[0].beginning
 		sat.nowFn = func() time.Time { return now }
 
 		var reported float32
@@ -100,9 +119,9 @@ func TestSaturationMetric_IncorrectUsage(t *testing.T) {
 	})
 
 	t.Run("calling working() consecutively", func(t *testing.T) {
-		sat := newSaturationMetric([]string{"metric"}, 30*time.Millisecond)
+		sat := newSaturationMetric([]string{"metric"}, 30*time.Millisecond, 0)
 
-		now := time.Now()
+		now := sat.buckets[0].beginning
 		sat.nowFn = func() time.Time { return now }
 
 		var reported float32
@@ -128,6 +147,27 @@ func TestSaturationMetric_IncorrectUsage(t *testing.T) {
 		now = now.Add(10 * time.Millisecond)
 		sat.sleeping()
 
+		require.Equal(t, float32(0.5), reported)
+	})
+
+	t.Run("calling working() first", func(t *testing.T) {
+		sat := newSaturationMetric([]string{"metric"}, 10*time.Millisecond, 0)
+
+		now := sat.buckets[0].beginning.Add(10 * time.Millisecond)
+		sat.nowFn = func() time.Time { return now }
+
+		var reported float32
+		sat.reportFn = func(v float32) { reported = v }
+
+		// Time from start until working() is treated as lost.
+		sat.working()
+		require.Equal(t, float32(0), reported)
+
+		sat.sleeping()
+		now = now.Add(5 * time.Millisecond)
+		sat.working()
+		now = now.Add(5 * time.Millisecond)
+		sat.sleeping()
 		require.Equal(t, float32(0.5), reported)
 	})
 }
