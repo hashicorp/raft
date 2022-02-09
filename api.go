@@ -314,6 +314,9 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 	if err != nil {
 		return fmt.Errorf("failed to list snapshots: %v", err)
 	}
+
+	logger := conf.getOrCreateLogger()
+
 	for _, snapshot := range snapshots {
 		var source io.ReadCloser
 		_, source, err = snaps.Open(snapshot.ID)
@@ -329,9 +332,18 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 		// server instance. If the same process will eventually become a Raft peer
 		// then it will call NewRaft and restore again from disk then which will
 		// report metrics.
-		err = fsm.Restore(source)
+		snapLogger := logger.With(
+			"id", snapshot.ID,
+			"last-index", snapshot.Index,
+			"last-term", snapshot.Term,
+			"size-in-bytes", snapshot.Size,
+		)
+		crc := newCountingReadCloser(source)
+		monitor := startSnapshotRestoreMonitor(snapLogger, crc, snapshot.Size)
+		err = fsm.Restore(crc)
 		// Close the source after the restore has completed
 		source.Close()
+		monitor.StopAndWait()
 		if err != nil {
 			// Same here, skip and try the next one.
 			continue

@@ -251,11 +251,18 @@ func (r *Raft) runFSM() {
 // on the source in all cases.
 func fsmRestoreAndMeasure(logger hclog.Logger, fsm FSM, source io.ReadCloser, snapshotSize int64) error {
 	start := time.Now()
-	if err := fsm.Restore(source); err != nil {
+
+	crc := newCountingReadCloser(source)
+
+	monitor := startSnapshotRestoreMonitor(logger, crc, snapshotSize)
+	defer monitor.StopAndWait()
+
+	if err := fsm.Restore(crc); err != nil {
 		return err
 	}
 	metrics.MeasureSince([]string{"raft", "fsm", "restore"}, start)
 	metrics.SetGauge([]string{"raft", "fsm", "lastRestoreDuration"},
 		float32(time.Since(start).Milliseconds()))
+
 	return nil
 }
