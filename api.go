@@ -586,21 +586,8 @@ func (r *Raft) restoreSnapshot() error {
 
 	// Try to load in order of newest to oldest
 	for _, snapshot := range snapshots {
-		if !r.config().NoSnapshotRestoreOnStart {
-			_, source, err := r.snapshots.Open(snapshot.ID)
-			if err != nil {
-				r.logger.Error("failed to open snapshot", "id", snapshot.ID, "error", err)
-				continue
-			}
-
-			if err := fsmRestoreAndMeasure(r.fsm, source); err != nil {
-				source.Close()
-				r.logger.Error("failed to restore snapshot", "id", snapshot.ID, "error", err)
-				continue
-			}
-			source.Close()
-
-			r.logger.Info("restored from snapshot", "id", snapshot.ID)
+		if success := r.tryRestoreSingleSnapshot(snapshot); !success {
+			continue
 		}
 
 		// Update the lastApplied so we don't replay old logs
@@ -634,6 +621,29 @@ func (r *Raft) restoreSnapshot() error {
 		return fmt.Errorf("failed to load any existing snapshots")
 	}
 	return nil
+}
+
+func (r *Raft) tryRestoreSingleSnapshot(snapshot *SnapshotMeta) bool {
+	if r.config().NoSnapshotRestoreOnStart {
+		return true
+	}
+
+	_, source, err := r.snapshots.Open(snapshot.ID)
+	if err != nil {
+		r.logger.Error("failed to open snapshot", "id", snapshot.ID, "error", err)
+		return false
+	}
+
+	if err := fsmRestoreAndMeasure(r.fsm, source); err != nil {
+		source.Close()
+		r.logger.Error("failed to restore snapshot", "id", snapshot.ID, "error", err)
+		return false
+	}
+	source.Close()
+
+	r.logger.Info("restored from snapshot", "id", snapshot.ID)
+
+	return true
 }
 
 func (r *Raft) config() Config {
