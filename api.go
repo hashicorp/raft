@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -463,20 +462,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	}
 
 	// Ensure we have a LogOutput.
-	var logger hclog.Logger
-	if conf.Logger != nil {
-		logger = conf.Logger
-	} else {
-		if conf.LogOutput == nil {
-			conf.LogOutput = os.Stderr
-		}
-
-		logger = hclog.New(&hclog.LoggerOptions{
-			Name:   "raft",
-			Level:  hclog.LevelFromString(conf.LogLevel),
-			Output: conf.LogOutput,
-		})
-	}
+	logger := conf.getOrCreateLogger()
 
 	// Try to restore the current term.
 	currentTerm, err := stable.GetUint64(keyCurrentTerm)
