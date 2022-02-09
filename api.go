@@ -628,20 +628,29 @@ func (r *Raft) tryRestoreSingleSnapshot(snapshot *SnapshotMeta) bool {
 		return true
 	}
 
+	snapLogger := r.logger.With(
+		"id", snapshot.ID,
+		"last-index", snapshot.Index,
+		"last-term", snapshot.Term,
+		"size-in-bytes", snapshot.Size,
+	)
+
+	snapLogger.Info("starting restore from snapshot")
+
 	_, source, err := r.snapshots.Open(snapshot.ID)
 	if err != nil {
-		r.logger.Error("failed to open snapshot", "id", snapshot.ID, "error", err)
+		snapLogger.Error("failed to open snapshot", "error", err)
 		return false
 	}
 
-	if err := fsmRestoreAndMeasure(r.fsm, source); err != nil {
+	if err := fsmRestoreAndMeasure(snapLogger, r.fsm, source, snapshot.Size); err != nil {
 		source.Close()
-		r.logger.Error("failed to restore snapshot", "id", snapshot.ID, "error", err)
+		snapLogger.Error("failed to restore snapshot", "error", err)
 		return false
 	}
 	source.Close()
 
-	r.logger.Info("restored from snapshot", "id", snapshot.ID)
+	snapLogger.Info("restored from snapshot")
 
 	return true
 }
