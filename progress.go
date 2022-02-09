@@ -14,24 +14,31 @@ const (
 )
 
 type snapshotRestoreMonitor struct {
-	logger hclog.Logger
-	cr     CountingReader
-	size   int64
+	logger          hclog.Logger
+	cr              CountingReader
+	size            int64
+	networkTransfer bool
 
 	once   sync.Once
 	cancel func()
 	doneCh chan struct{}
 }
 
-func startSnapshotRestoreMonitor(logger hclog.Logger, cr CountingReader, size int64) *snapshotRestoreMonitor {
+func startSnapshotRestoreMonitor(
+	logger hclog.Logger,
+	cr CountingReader,
+	size int64,
+	networkTransfer bool,
+) *snapshotRestoreMonitor {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	m := &snapshotRestoreMonitor{
-		logger: logger,
-		cr:     cr,
-		size:   size,
-		cancel: cancel,
-		doneCh: make(chan struct{}),
+		logger:          logger,
+		cr:              cr,
+		size:            size,
+		networkTransfer: networkTransfer,
+		cancel:          cancel,
+		doneCh:          make(chan struct{}),
 	}
 	go m.run(ctx)
 	return m
@@ -43,12 +50,17 @@ func (m *snapshotRestoreMonitor) run(ctx context.Context) {
 	ticker := time.NewTicker(snapshotRestoreMonitorInterval)
 	defer ticker.Stop()
 
+	ranOnce := false
 	for {
 		select {
 		case <-ctx.Done():
+			if !ranOnce {
+				m.runOnce()
+			}
 			return
 		case <-ticker.C:
 			m.runOnce()
+			ranOnce = true
 		}
 	}
 }
@@ -57,7 +69,12 @@ func (m *snapshotRestoreMonitor) runOnce() {
 	readBytes := m.cr.Count()
 	pct := float64(100*readBytes) / float64(m.size)
 
-	m.logger.Info("snapshot restoration progress",
+	message := "snapshot restore progress"
+	if m.networkTransfer {
+		message = "snapshot network transfer progress"
+	}
+
+	m.logger.Info(message,
 		"read-bytes", readBytes,
 		"percent-complete", hclog.Fmt("%0.2f%%", pct),
 	)

@@ -254,7 +254,7 @@ func fsmRestoreAndMeasure(logger hclog.Logger, fsm FSM, source io.ReadCloser, sn
 
 	crc := newCountingReadCloser(source)
 
-	monitor := startSnapshotRestoreMonitor(logger, crc, snapshotSize)
+	monitor := startSnapshotRestoreMonitor(logger, crc, snapshotSize, false)
 	defer monitor.StopAndWait()
 
 	if err := fsm.Restore(crc); err != nil {

@@ -339,7 +339,7 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 			"size-in-bytes", snapshot.Size,
 		)
 		crc := newCountingReadCloser(source)
-		monitor := startSnapshotRestoreMonitor(snapLogger, crc, snapshot.Size)
+		monitor := startSnapshotRestoreMonitor(snapLogger, crc, snapshot.Size, false)
 		err = fsm.Restore(crc)
 		// Close the source after the restore has completed
 		source.Close()

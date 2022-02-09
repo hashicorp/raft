@@ -1608,8 +1608,14 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 		return
 	}
 
+	// Separately track the progress of streaming a snapshot over the network
+	// because this too can take a long time.
+	countingRPCReader := newCountingReader(rpc.Reader)
+
 	// Spill the remote snapshot to disk
-	n, err := io.Copy(sink, rpc.Reader)
+	transferMonitor := startSnapshotRestoreMonitor(r.logger, countingRPCReader, req.Size, true)
+	n, err := io.Copy(sink, countingRPCReader)
+	transferMonitor.StopAndWait()
 	if err != nil {
 		sink.Cancel()
 		r.logger.Error("failed to copy snapshot", "error", err)
