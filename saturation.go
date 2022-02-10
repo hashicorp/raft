@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"math"
 	"time"
 
 	"github.com/armon/go-metrics"
@@ -128,11 +129,12 @@ func (s *saturationMetric) report() {
 
 	total := now.Sub(beginning) - lost
 
-	var saturation float32
+	var saturation float64
 	if total != 0 {
-		saturation = float32(total-slept) / float32(total)
+		saturation = float64(total-slept) / float64(total)
+		saturation = math.Round(saturation*100) / 100
 	}
-	s.reportFn(saturation)
+	s.reportFn(float32(saturation))
 
 	s.currentBucket++
 	if s.currentBucket >= len(s.buckets) {
