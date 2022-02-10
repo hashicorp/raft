@@ -87,36 +87,6 @@ func (m *snapshotRestoreMonitor) StopAndWait() {
 	})
 }
 
-func reportProgress(
-	ctx context.Context,
-	interval time.Duration,
-	reportOnceFn func(last bool),
-) <-chan struct{} {
-	done := make(chan struct{})
-
-	go func() {
-		defer func() {
-			reportOnceFn(true)
-			close(done)
-		}()
-
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-			}
-
-			reportOnceFn(false)
-		}
-	}()
-
-	return done
-}
-
 type CountingReader interface {
 	io.Reader
 	Count() int64
