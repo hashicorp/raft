@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -315,6 +314,9 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 	if err != nil {
 		return fmt.Errorf("failed to list snapshots: %v", err)
 	}
+
+	logger := conf.getOrCreateLogger()
+
 	for _, snapshot := range snapshots {
 		var source io.ReadCloser
 		_, source, err = snaps.Open(snapshot.ID)
@@ -330,9 +332,18 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 		// server instance. If the same process will eventually become a Raft peer
 		// then it will call NewRaft and restore again from disk then which will
 		// report metrics.
-		err = fsm.Restore(source)
+		snapLogger := logger.With(
+			"id", snapshot.ID,
+			"last-index", snapshot.Index,
+			"last-term", snapshot.Term,
+			"size-in-bytes", snapshot.Size,
+		)
+		crc := newCountingReadCloser(source)
+		monitor := startSnapshotRestoreMonitor(snapLogger, crc, snapshot.Size, false)
+		err = fsm.Restore(crc)
 		// Close the source after the restore has completed
 		source.Close()
+		monitor.StopAndWait()
 		if err != nil {
 			// Same here, skip and try the next one.
 			continue
@@ -463,20 +474,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	}
 
 	// Ensure we have a LogOutput.
-	var logger hclog.Logger
-	if conf.Logger != nil {
-		logger = conf.Logger
-	} else {
-		if conf.LogOutput == nil {
-			conf.LogOutput = os.Stderr
-		}
-
-		logger = hclog.New(&hclog.LoggerOptions{
-			Name:   "raft",
-			Level:  hclog.LevelFromString(conf.LogLevel),
-			Output: conf.LogOutput,
-		})
-	}
+	logger := conf.getOrCreateLogger()
 
 	// Try to restore the current term.
 	currentTerm, err := stable.GetUint64(keyCurrentTerm)
@@ -600,21 +598,8 @@ func (r *Raft) restoreSnapshot() error {
 
 	// Try to load in order of newest to oldest
 	for _, snapshot := range snapshots {
-		if !r.config().NoSnapshotRestoreOnStart {
-			_, source, err := r.snapshots.Open(snapshot.ID)
-			if err != nil {
-				r.logger.Error("failed to open snapshot", "id", snapshot.ID, "error", err)
-				continue
-			}
-
-			if err := fsmRestoreAndMeasure(r.fsm, source); err != nil {
-				source.Close()
-				r.logger.Error("failed to restore snapshot", "id", snapshot.ID, "error", err)
-				continue
-			}
-			source.Close()
-
-			r.logger.Info("restored from snapshot", "id", snapshot.ID)
+		if success := r.tryRestoreSingleSnapshot(snapshot); !success {
+			continue
 		}
 
 		// Update the lastApplied so we don't replay old logs
@@ -648,6 +633,38 @@ func (r *Raft) restoreSnapshot() error {
 		return fmt.Errorf("failed to load any existing snapshots")
 	}
 	return nil
+}
+
+func (r *Raft) tryRestoreSingleSnapshot(snapshot *SnapshotMeta) bool {
+	if r.config().NoSnapshotRestoreOnStart {
+		return true
+	}
+
+	snapLogger := r.logger.With(
+		"id", snapshot.ID,
+		"last-index", snapshot.Index,
+		"last-term", snapshot.Term,
+		"size-in-bytes", snapshot.Size,
+	)
+
+	snapLogger.Info("starting restore from snapshot")
+
+	_, source, err := r.snapshots.Open(snapshot.ID)
+	if err != nil {
+		snapLogger.Error("failed to open snapshot", "error", err)
+		return false
+	}
+
+	if err := fsmRestoreAndMeasure(snapLogger, r.fsm, source, snapshot.Size); err != nil {
+		source.Close()
+		snapLogger.Error("failed to restore snapshot", "error", err)
+		return false
+	}
+	source.Close()
+
+	snapLogger.Info("restored from snapshot")
+
+	return true
 }
 
 func (r *Raft) config() Config {

@@ -3,6 +3,7 @@ package raft
 import (
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"github.com/hashicorp/go-hclog"
@@ -220,6 +221,21 @@ type Config struct {
 
 	// skipStartup allows NewRaft() to bypass all background work goroutines
 	skipStartup bool
+}
+
+func (conf *Config) getOrCreateLogger() hclog.Logger {
+	if conf.Logger != nil {
+		return conf.Logger
+	}
+	if conf.LogOutput == nil {
+		conf.LogOutput = os.Stderr
+	}
+
+	return hclog.New(&hclog.LoggerOptions{
+		Name:   "raft",
+		Level:  hclog.LevelFromString(conf.LogLevel),
+		Output: conf.LogOutput,
+	})
 }
 
 // ReloadableConfig is the subset of Config that may be reconfigured during

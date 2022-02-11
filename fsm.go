@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/armon/go-metrics"
+	hclog "github.com/hashicorp/go-hclog"
 )
 
 // FSM is implemented by clients to make use of the replicated log.
@@ -184,8 +185,15 @@ func (r *Raft) runFSM() {
 		}
 		defer source.Close()
 
+		snapLogger := r.logger.With(
+			"id", req.ID,
+			"last-index", meta.Index,
+			"last-term", meta.Term,
+			"size-in-bytes", meta.Size,
+		)
+
 		// Attempt to restore
-		if err := fsmRestoreAndMeasure(r.fsm, source); err != nil {
+		if err := fsmRestoreAndMeasure(snapLogger, r.fsm, source, meta.Size); err != nil {
 			req.respond(fmt.Errorf("failed to restore snapshot %v: %v", req.ID, err))
 			return
 		}
@@ -241,13 +249,20 @@ func (r *Raft) runFSM() {
 // fsmRestoreAndMeasure wraps the Restore call on an FSM to consistently measure
 // and report timing metrics. The caller is still responsible for calling Close
 // on the source in all cases.
-func fsmRestoreAndMeasure(fsm FSM, source io.ReadCloser) error {
+func fsmRestoreAndMeasure(logger hclog.Logger, fsm FSM, source io.ReadCloser, snapshotSize int64) error {
 	start := time.Now()
-	if err := fsm.Restore(source); err != nil {
+
+	crc := newCountingReadCloser(source)
+
+	monitor := startSnapshotRestoreMonitor(logger, crc, snapshotSize, false)
+	defer monitor.StopAndWait()
+
+	if err := fsm.Restore(crc); err != nil {
 		return err
 	}
 	metrics.MeasureSince([]string{"raft", "fsm", "restore"}, start)
 	metrics.SetGauge([]string{"raft", "fsm", "lastRestoreDuration"},
 		float32(time.Since(start).Milliseconds()))
+
 	return nil
 }
