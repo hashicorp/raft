@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"io/ioutil"
@@ -986,6 +987,106 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 	if last := r.getLastApplied(); last != snap.Index {
 		t.Fatalf("bad last index: %d, expecting %d", last, snap.Index)
 	}
+}
+
+func TestRaft_SnapshotRestore_Progress(t *testing.T) {
+	// Make the cluster
+	conf := inmemConfig(t)
+	conf.TrailingLogs = 10
+	c := MakeCluster(1, t, conf)
+	defer c.Close()
+
+	// Commit a lot of things
+	leader := c.Leader()
+	var future Future
+	for i := 0; i < 100; i++ {
+		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	// Wait for the last future to apply
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Take a snapshot
+	snapFuture := leader.Snapshot()
+	if err := snapFuture.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Check for snapshot
+	snaps, _ := leader.snapshots.List()
+	if len(snaps) != 1 {
+		t.Fatalf("should have a snapshot")
+	}
+	snap := snaps[0]
+
+	// Logs should be trimmed
+	if idx, _ := leader.logs.FirstIndex(); idx != snap.Index-conf.TrailingLogs+1 {
+		t.Fatalf("should trim logs to %d: but is %d", snap.Index-conf.TrailingLogs+1, idx)
+	}
+
+	// Shutdown
+	shutdown := leader.Shutdown()
+	if err := shutdown.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Restart the Raft
+	r := leader
+	// Can't just reuse the old transport as it will be closed
+	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
+	cfg := r.config()
+
+	// Intercept logs and look for specific log messages.
+	var logbuf lockedBytesBuffer
+	cfg.Logger = hclog.New(&hclog.LoggerOptions{
+		Name:   "test",
+		Level:  hclog.Info,
+		Output: &logbuf,
+	})
+	r, err := NewRaft(&cfg, r.fsm, r.logs, r.stable, r.snapshots, trans2)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	c.rafts[0] = r
+
+	// We should have restored from the snapshot!
+	if last := r.getLastApplied(); last != snap.Index {
+		t.Fatalf("bad last index: %d, expecting %d", last, snap.Index)
+	}
+
+	{
+		scan := bufio.NewScanner(strings.NewReader(logbuf.String()))
+		found := false
+		for scan.Scan() {
+			line := scan.Text()
+			if strings.Contains(line, "snapshot restore progress") && strings.Contains(line, "percent-complete=100.00%") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("could not find a log line indicating that snapshot restore progress was being logged")
+		}
+	}
+}
+
+type lockedBytesBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBytesBuffer) Write(p []byte) (n int, err error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBytesBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 // TODO: Need a test that has a previous format Snapshot and check that it can
