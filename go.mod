@@ -7,4 +7,5 @@ require (
 	github.com/hashicorp/go-hclog v0.9.1
 	github.com/hashicorp/go-msgpack v0.5.5
 	github.com/stretchr/testify v1.3.0
+	golang.org/x/sync v0.0.0-20181108010431-42b317875d0f
 )

@@ -1,6 +1,10 @@
 package raft
 
 import (
+	"context"
+	"fmt"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/errgroup"
 	"regexp"
 	"testing"
 	"time"
@@ -144,4 +148,32 @@ func TestOverrideNotifyBool(t *testing.T) {
 		t.Fatalf("unexpected receive: %v", v)
 	default:
 	}
+}
+
+func TestOverrideNotifyBool_Race(t *testing.T) {
+	ch := make(chan bool, 1)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	g, ctx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		for ctx.Err() == nil {
+			overrideNotifyBool(ch, true)
+		}
+		return nil
+	})
+
+	g.Go(func() error {
+		for ctx.Err() == nil {
+			select {
+			case leader := <-ch:
+				fmt.Println(leader)
+			case <-ctx.Done():
+			}
+		}
+		return nil
+	})
+
+	require.NoError(t, g.Wait())
 }
