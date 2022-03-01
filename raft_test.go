@@ -99,6 +99,31 @@ func TestRaft_LiveBootstrap(t *testing.T) {
 	}
 }
 
+func TestRaft_LiveBootstrap_From_NonVoter(t *testing.T) {
+	// Make the cluster.
+	c := MakeClusterNoBootstrap(2, t, nil)
+	defer c.Close()
+
+	// Build the configuration.
+	configuration := Configuration{}
+	for i, r := range c.rafts {
+		server := Server{
+			ID:      r.localID,
+			Address: r.localAddr,
+		}
+		if i == 0 {
+			server.Suffrage = Nonvoter
+		}
+		configuration.Servers = append(configuration.Servers, server)
+	}
+
+	// Bootstrap one of the nodes live (the non-voter).
+	boot := c.rafts[0].BootstrapCluster(configuration)
+	if err := boot.Error(); err != ErrNotVoter {
+		t.Fatalf("bootstrap should have failed: %v", err)
+	}
+}
+
 func TestRaft_RecoverCluster_NoState(t *testing.T) {
 	c := MakeClusterNoBootstrap(1, t, nil)
 	defer c.Close()
