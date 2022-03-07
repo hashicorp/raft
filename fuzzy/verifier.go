@@ -45,7 +45,13 @@ func (v *appendEntriesVerifier) PreRequestVote(src, target string, rv *raft.Requ
 
 func (v *appendEntriesVerifier) PreAppendEntries(src, target string, req *raft.AppendEntriesRequest) (*raft.AppendEntriesResponse, error) {
 	term := req.Term
-	ldr := string(req.Leader)
+	var ldr string
+	if len(req.RPCHeader.Addr) > 0 {
+		ldr = string(req.RPCHeader.Addr)
+	} else {
+		ldr = string(req.Leader)
+	}
+
 	if ldr != src {
 		v.Lock()
 		defer v.Unlock()

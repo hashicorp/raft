@@ -317,9 +317,10 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 
 	// Setup the request
 	req := InstallSnapshotRequest{
-		RPCHeader:          r.getRPCHeader(),
-		SnapshotVersion:    meta.Version,
-		Term:               s.currentTerm,
+		RPCHeader:       r.getRPCHeader(),
+		SnapshotVersion: meta.Version,
+		Term:            s.currentTerm,
+		// this is needed for retro compatibility, before RPCHeader.Addr was added
 		Leader:             r.trans.EncodePeer(r.localID, r.localAddr),
 		LastLogIndex:       meta.Index,
 		LastLogTerm:        meta.Term,
@@ -381,8 +382,10 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 	req := AppendEntriesRequest{
 		RPCHeader: r.getRPCHeader(),
 		Term:      s.currentTerm,
-		Leader:    r.trans.EncodePeer(r.localID, r.localAddr),
+		// this is needed for retro compatibility, before RPCHeader.Addr was added
+		Leader: r.trans.EncodePeer(r.localID, r.localAddr),
 	}
+
 	var resp AppendEntriesResponse
 	for {
 		// Wait for the next heartbeat interval or forced notify
@@ -552,6 +555,7 @@ func (r *Raft) pipelineDecode(s *followerReplication, p AppendPipeline, stopCh, 
 func (r *Raft) setupAppendEntries(s *followerReplication, req *AppendEntriesRequest, nextIndex, lastIndex uint64) error {
 	req.RPCHeader = r.getRPCHeader()
 	req.Term = s.currentTerm
+	// this is needed for retro compatibility, before RPCHeader.Addr was added
 	req.Leader = r.trans.EncodePeer(r.localID, r.localAddr)
 	req.LeaderCommitIndex = r.getCommitIndex()
 	if err := r.setPreviousLog(req, nextIndex); err != nil {

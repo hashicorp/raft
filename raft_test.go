@@ -3,8 +3,10 @@ package raft
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1680,10 +1682,10 @@ LOOP:
 	}
 
 	// Ensure both have cleared their leader
-	if l := leader.Leader(); l != "" {
+	if l, id := leader.LeaderWithID(); l != "" && id != "" {
 		t.Fatalf("bad: %v", l)
 	}
-	if l := follower.Leader(); l != "" {
+	if l, id := follower.LeaderWithID(); l != "" && id != "" {
 		t.Fatalf("bad: %v", l)
 	}
 }
@@ -1785,7 +1787,7 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	}
 
 	// Ensure the known leader is cleared
-	if l := leader.Leader(); l != "" {
+	if l, _ := leader.LeaderWithID(); l != "" {
 		t.Fatalf("bad: %v", l)
 	}
 }
@@ -1855,8 +1857,69 @@ func TestRaft_NotifyCh(t *testing.T) {
 	}
 }
 
-func TestRaft_Voting(t *testing.T) {
+func TestRaft_AppendEntry(t *testing.T) {
 	c := MakeCluster(3, t, nil)
+	defer c.Close()
+	followers := c.Followers()
+	ldr := c.Leader()
+	ldrT := c.trans[c.IndexOf(ldr)]
+
+	reqAppendEntries := AppendEntriesRequest{
+		RPCHeader:    ldr.getRPCHeader(),
+		Term:         ldr.getCurrentTerm() + 1,
+		PrevLogEntry: 0,
+		PrevLogTerm:  ldr.getCurrentTerm(),
+		Leader:       nil,
+		Entries: []*Log{
+			{
+				Index: 1,
+				Term:  ldr.getCurrentTerm() + 1,
+				Type:  LogCommand,
+				Data:  []byte("log 1"),
+			},
+		},
+		LeaderCommitIndex: 90,
+	}
+	// a follower that thinks there's a leader should vote for that leader.
+	var resp AppendEntriesResponse
+	if err := ldrT.AppendEntries(followers[0].localID, followers[0].localAddr, &reqAppendEntries, &resp); err != nil {
+		t.Fatalf("RequestVote RPC failed %v", err)
+	}
+
+	require.True(t, resp.Success)
+
+	headers := ldr.getRPCHeader()
+	headers.ID = nil
+	headers.Addr = nil
+	reqAppendEntries = AppendEntriesRequest{
+		RPCHeader:    headers,
+		Term:         ldr.getCurrentTerm() + 1,
+		PrevLogEntry: 0,
+		PrevLogTerm:  ldr.getCurrentTerm(),
+		Leader:       ldr.trans.EncodePeer(ldr.config().LocalID, ldr.localAddr),
+		Entries: []*Log{
+			{
+				Index: 1,
+				Term:  ldr.getCurrentTerm() + 1,
+				Type:  LogCommand,
+				Data:  []byte("log 1"),
+			},
+		},
+		LeaderCommitIndex: 90,
+	}
+	// a follower that thinks there's a leader should vote for that leader.
+	var resp2 AppendEntriesResponse
+	if err := ldrT.AppendEntries(followers[0].localID, followers[0].localAddr, &reqAppendEntries, &resp2); err != nil {
+		t.Fatalf("RequestVote RPC failed %v", err)
+	}
+
+	require.True(t, resp2.Success)
+}
+
+func TestRaft_VotingGrant_WhenLeaderAvailable(t *testing.T) {
+	conf := inmemConfig(t)
+	conf.ProtocolVersion = 3
+	c := MakeCluster(3, t, conf)
 	defer c.Close()
 	followers := c.Followers()
 	ldr := c.Leader()
@@ -1865,8 +1928,8 @@ func TestRaft_Voting(t *testing.T) {
 	reqVote := RequestVoteRequest{
 		RPCHeader:          ldr.getRPCHeader(),
 		Term:               ldr.getCurrentTerm() + 10,
-		Candidate:          ldrT.EncodePeer(ldr.localID, ldr.localAddr),
 		LastLogIndex:       ldr.LastIndex(),
+		Candidate:          ldrT.EncodePeer(ldr.localID, ldr.localAddr),
 		LastLogTerm:        ldr.getCurrentTerm(),
 		LeadershipTransfer: false,
 	}
@@ -1879,6 +1942,7 @@ func TestRaft_Voting(t *testing.T) {
 		t.Fatalf("expected vote to be granted, but wasn't %+v", resp)
 	}
 	// a follower that thinks there's a leader shouldn't vote for a different candidate
+	reqVote.Addr = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
 	reqVote.Candidate = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
 	if err := ldrT.RequestVote(followers[1].localID, followers[1].localAddr, &reqVote, &resp); err != nil {
 		t.Fatalf("RequestVote RPC failed %v", err)
@@ -1889,6 +1953,7 @@ func TestRaft_Voting(t *testing.T) {
 	// a follower that thinks there's a leader, but the request has the leadership transfer flag, should
 	// vote for a different candidate
 	reqVote.LeadershipTransfer = true
+	reqVote.Addr = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
 	reqVote.Candidate = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
 	if err := ldrT.RequestVote(followers[1].localID, followers[1].localAddr, &reqVote, &resp); err != nil {
 		t.Fatalf("RequestVote RPC failed %v", err)
@@ -1908,9 +1973,9 @@ func TestRaft_ProtocolVersion_RejectRPC(t *testing.T) {
 	reqVote := RequestVoteRequest{
 		RPCHeader: RPCHeader{
 			ProtocolVersion: ProtocolVersionMax + 1,
+			Addr:            ldrT.EncodePeer(ldr.localID, ldr.localAddr),
 		},
 		Term:         ldr.getCurrentTerm() + 10,
-		Candidate:    ldrT.EncodePeer(ldr.localID, ldr.localAddr),
 		LastLogIndex: ldr.LastIndex(),
 		LastLogTerm:  ldr.getCurrentTerm(),
 	}
@@ -2005,6 +2070,35 @@ func TestRaft_ProtocolVersion_Upgrade_2_3(t *testing.T) {
 	if future := c.Leader().RemovePeer(oldAddr); future.Error() != nil {
 		t.Fatalf("err: %v", future.Error())
 	}
+}
+
+func TestRaft_LeaderID_Propagated(t *testing.T) {
+	// Make a cluster on protocol version 3.
+	conf := inmemConfig(t)
+	c := MakeCluster(3, t, conf)
+	defer c.Close()
+	err := waitForLeader(c)
+	require.NoError(t, err)
+
+	for _, n := range c.rafts {
+		require.Equal(t, ProtocolVersion(3), n.protocolVersion)
+		addr, id := n.LeaderWithID()
+		require.NotEmpty(t, id)
+		require.NotEmpty(t, addr)
+	}
+	for i := 0; i < 5; i++ {
+		future := c.Leader().Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+		if err := future.Error(); err != nil {
+			t.Fatalf("[ERR] err: %v", err)
+		}
+	}
+	// Wait a while
+	time.Sleep(c.propagateTimeout)
+
+	// Sanity check the cluster.
+	c.EnsureSame(t)
+	c.EnsureSamePeers(t)
+	c.EnsureLeader(t, c.Leader().localAddr)
 }
 
 func TestRaft_LeadershipTransferInProgress(t *testing.T) {
@@ -2470,6 +2564,173 @@ func TestRaft_InstallSnapshot_InvalidPeers(t *testing.T) {
 	resp := <-chResp
 	require.Error(t, resp.Error)
 	require.Contains(t, resp.Error.Error(), "failed to decode peers")
+}
+
+func TestRaft_VoteNotGranted_WhenNodeNotInCluster(t *testing.T) {
+	// Make a cluster
+	c := MakeCluster(3, t, nil)
+
+	defer c.Close()
+
+	// Get the leader
+	leader := c.Leader()
+
+	// Wait until we have 2 followers
+	limit := time.Now().Add(c.longstopTimeout)
+	var followers []*Raft
+	for time.Now().Before(limit) && len(followers) != 2 {
+		c.WaitEvent(nil, c.conf.CommitTimeout)
+		followers = c.GetInState(Follower)
+	}
+	if len(followers) != 2 {
+		t.Fatalf("expected two followers: %v", followers)
+	}
+
+	// Remove a follower
+	followerRemoved := followers[0]
+	future := leader.RemoveServer(followerRemoved.localID, 0, 0)
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Wait a while
+	time.Sleep(c.propagateTimeout)
+
+	// Other nodes should have fewer peers
+	if configuration := c.getConfiguration(leader); len(configuration.Servers) != 2 {
+		t.Fatalf("too many peers")
+	}
+	if configuration := c.getConfiguration(followers[1]); len(configuration.Servers) != 2 {
+		t.Fatalf("too many peers")
+	}
+	waitForState(followerRemoved, Follower)
+	// The removed node should be still in Follower state
+	require.Equal(t, Follower, followerRemoved.getState())
+
+	// Prepare a Vote request from the removed follower
+	follower := followers[1]
+	followerRemovedT := c.trans[c.IndexOf(followerRemoved)]
+	reqVote := RequestVoteRequest{
+		RPCHeader:          followerRemoved.getRPCHeader(),
+		Term:               followerRemoved.getCurrentTerm() + 10,
+		LastLogIndex:       followerRemoved.LastIndex(),
+		LastLogTerm:        followerRemoved.getCurrentTerm(),
+		LeadershipTransfer: false,
+	}
+	// a follower that thinks there's a leader should vote for that leader.
+	var resp RequestVoteResponse
+
+	// partiton the leader to simulate an unstable cluster
+	c.Partition([]ServerAddress{leader.localAddr})
+	time.Sleep(c.propagateTimeout)
+
+	// wait for the remaining follower to trigger an election
+	waitForState(follower, Candidate)
+	require.Equal(t, Candidate, follower.getState())
+
+	// send a vote request from the removed follower to the Candidate follower
+	if err := followerRemovedT.RequestVote(follower.localID, follower.localAddr, &reqVote, &resp); err != nil {
+		t.Fatalf("RequestVote RPC failed %v", err)
+	}
+
+	// the vote request should not be granted, because the voter is not part of the cluster anymore
+	if resp.Granted {
+		t.Fatalf("expected vote to not be granted, but it was %+v", resp)
+	}
+}
+
+func TestRaft_VoteWithNoIDNoAddr(t *testing.T) {
+	// Make a cluster
+	c := MakeCluster(3, t, nil)
+
+	defer c.Close()
+	waitForLeader(c)
+
+	leader := c.Leader()
+
+	// Wait until we have 2 followers
+	limit := time.Now().Add(c.longstopTimeout)
+	var followers []*Raft
+	for time.Now().Before(limit) && len(followers) != 2 {
+		c.WaitEvent(nil, c.conf.CommitTimeout)
+		followers = c.GetInState(Follower)
+	}
+	if len(followers) != 2 {
+		t.Fatalf("expected two followers: %v", followers)
+	}
+
+	follower := followers[0]
+
+	headers := follower.getRPCHeader()
+	headers.ID = nil
+	headers.Addr = nil
+	reqVote := RequestVoteRequest{
+		RPCHeader:          headers,
+		Term:               follower.getCurrentTerm() + 10,
+		LastLogIndex:       follower.LastIndex(),
+		LastLogTerm:        follower.getCurrentTerm(),
+		Candidate:          follower.trans.EncodePeer(follower.config().LocalID, follower.localAddr),
+		LeadershipTransfer: false,
+	}
+	// a follower that thinks there's a leader should vote for that leader.
+	var resp RequestVoteResponse
+	followerT := c.trans[c.IndexOf(followers[1])]
+	c.Partition([]ServerAddress{leader.localAddr})
+	time.Sleep(c.propagateTimeout)
+
+	// wait for the remaining follower to trigger an election
+	waitForState(follower, Candidate)
+	require.Equal(t, Candidate, follower.getState())
+	// send a vote request from the removed follower to the Candidate follower
+
+	if err := followerT.RequestVote(follower.localID, follower.localAddr, &reqVote, &resp); err != nil {
+		t.Fatalf("RequestVote RPC failed %v", err)
+	}
+
+	// the vote request should not be granted, because the voter is not part of the cluster anymore
+	if !resp.Granted {
+		t.Fatalf("expected vote to not be granted, but it was %+v", resp)
+	}
+}
+
+func waitForState(follower *Raft, state RaftState) {
+	count := 0
+	for follower.getState() != state && count < 1000 {
+		count++
+		time.Sleep(1 * time.Millisecond)
+	}
+}
+
+func waitForLeader(c *cluster) error {
+	count := 0
+	for count < 100 {
+		r := c.GetInState(Leader)
+		if len(r) >= 1 {
+			return nil
+		}
+		count++
+		time.Sleep(50 * time.Millisecond)
+	}
+	return errors.New("no leader elected")
+}
+
+func waitForNewLeader(c *cluster, id ServerID) error {
+	count := 0
+	for count < 100 {
+		r := c.GetInState(Leader)
+		if len(r) >= 1 && r[0].localID != id {
+			return nil
+		} else {
+			if len(r) == 0 {
+				log.Println("no leader yet")
+			} else {
+				log.Printf("leader still %s\n", id)
+			}
+		}
+		count++
+		time.Sleep(100 * time.Millisecond)
+	}
+	return errors.New("no leader elected")
 }
 
 func TestRaft_runFollower_State_Transition(t *testing.T) {

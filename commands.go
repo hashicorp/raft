@@ -8,6 +8,10 @@ type RPCHeader struct {
 	// ProtocolVersion is the version of the protocol the sender is
 	// speaking.
 	ProtocolVersion ProtocolVersion
+	// ID is the ServerID of the node sending the RPC Request or Response
+	ID []byte
+	// Addr is the ServerAddr of the node sending the RPC Request or Response
+	Addr []byte
 }
 
 // WithRPCHeader is an interface that exposes the RPC header.
@@ -21,7 +25,9 @@ type AppendEntriesRequest struct {
 	RPCHeader
 
 	// Provide the current term and leader
-	Term   uint64
+	Term uint64
+
+	// Deprecated: use RPCHeader.Addr instead
 	Leader []byte
 
 	// Provide the previous entries for integrity checking
@@ -70,7 +76,9 @@ type RequestVoteRequest struct {
 	RPCHeader
 
 	// Provide the term and our id
-	Term      uint64
+	Term uint64
+
+	// Deprecated: use RPCHeader.Addr instead
 	Candidate []byte
 
 	// Used to ensure safety
@@ -122,9 +130,10 @@ type InstallSnapshotRequest struct {
 	LastLogIndex uint64
 	LastLogTerm  uint64
 
-	// Peer Set in the snapshot. This is deprecated in favor of Configuration
+	// Peer Set in the snapshot.
 	// but remains here in case we receive an InstallSnapshot from a leader
 	// that's running old code.
+	// Deprecated: This is deprecated in favor of Configuration
 	Peers []byte
 
 	// Cluster membership.
