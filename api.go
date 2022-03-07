@@ -716,9 +716,10 @@ func (r *Raft) BootstrapCluster(configuration Configuration) Future {
 }
 
 // Leader is used to return the current leader of the cluster.
+// Deprecated: use LeaderWithID instead
 // It may return empty string if there is no current leader
 // or the leader is unknown.
-// Deprecated: Leader is deprecated, use LeaderWithID instead.
+// Deprecated: use LeaderWithID instead.
 func (r *Raft) Leader() ServerAddress {
 	r.leaderLock.RLock()
 	leaderAddr := r.leaderAddr
