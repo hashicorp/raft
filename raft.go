@@ -581,10 +581,6 @@ func (r *Raft) leaderLoop() {
 	// based on the current config value.
 	lease := time.After(r.config().LeaderLeaseTimeout)
 
-	// This would unset leadershipTransferInProgress
-	// in case it was set during the loop
-	defer func() { r.setLeadershipTransferInProgress(false) }()
-
 	for r.getState() == Leader {
 		select {
 		case rpc := <-r.rpcCh:
@@ -616,7 +612,18 @@ func (r *Raft) leaderLoop() {
 			// in case eg the timer expires.
 			// The leadershipTransfer function is controlled with
 			// the stopCh and doneCh.
+			// No matter how this exits, have this function set
+			// leadership transfer to false before we return
+			//
+			// Note that this leaves a window where callers of
+			// LeadershipTransfer() and LeadershipTransferToServer()
+			// may start executing after they get their future but before
+			// this routine has set leadershipTransferInProgress back to false.
+			// It may be safe to modify things such that setLeadershipTransferInProgress
+			// is set to false before calling future.Respond, but that still needs
+			// to be tested and this situation mirrors what callers already had to deal with.
 			go func() {
+				defer r.setLeadershipTransferInProgress(false)
 				select {
 				case <-time.After(r.config().ElectionTimeout):
 					close(stopCh)
@@ -853,7 +860,6 @@ func (r *Raft) verifyLeader(v *verifyFuture) {
 
 // leadershipTransfer is doing the heavy lifting for the leadership transfer.
 func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress, repl *followerReplication, stopCh chan struct{}, doneCh chan error) {
-
 	// make sure we are not already stopped
 	select {
 	case <-stopCh:
