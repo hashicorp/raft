@@ -407,7 +407,7 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 			failures++
 			select {
 			case <-time.After(cappedExponentialBackoff(failureWait, failures, maxFailureScale,
-				r.config().HeartbeatTimeout/2)):
+				r.config().HeartbeatTimeout)):
 			case <-stopCh:
 				return
 			}
