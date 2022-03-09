@@ -406,8 +406,10 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 			r.observe(FailedHeartbeatObservation{PeerID: peer.ID, LastContact: s.LastContact()})
 			failures++
 			select {
-			case <-time.After(backoff(failureWait, failures, maxFailureScale)):
+			case <-time.After(cappedExponentialBackoff(failureWait, failures, maxFailureScale,
+				r.config().HeartbeatTimeout/2)):
 			case <-stopCh:
+				return
 			}
 		} else {
 			if failures > 0 {
