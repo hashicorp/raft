@@ -2639,6 +2639,51 @@ func TestRaft_VoteNotGranted_WhenNodeNotInCluster(t *testing.T) {
 	}
 }
 
+// ROY
+// Verifies that when a follower is taken out of rotation for heartbeat timeout
+// a leader election does not occur.
+func TestRaft_FollowerRemovalNoElection(t *testing.T) {
+	// Make a cluster
+	c := MakeCluster(3, t, nil)
+
+	defer c.Close()
+	waitForLeader(c)
+
+	// Wait until we have 2 followers
+	limit := time.Now().Add(c.longstopTimeout)
+	var followers []*Raft
+	for time.Now().Before(limit) && len(followers) != 2 {
+		c.WaitEvent(nil, c.conf.CommitTimeout)
+		followers = c.GetInState(Follower)
+	}
+	if len(followers) != 2 {
+		t.Fatalf("expected two followers: %v", followers)
+	}
+	// leaderTerm := c.Leader().getCurrentTerm()
+	// Disconnect one of the followers and wait for the heartbeat timeout
+	t.Logf("[INFO] Disconnecting %v", followers[0])
+	c.Disconnect(followers[0].localAddr)
+	time.Sleep(2 * time.Second)
+	nodes := c.GetInState(Candidate)
+	fmt.Printf("leader is %+v\n", c.Leader())
+	fmt.Printf("followers are %+v\n", followers)
+	fmt.Printf("candidates are %+v\n", nodes)
+	t.Fatalf("oops")
+
+	// var newLead *Raft
+	// for time.Now().Before(limit) && newLead == nil {
+	// 	c.WaitEvent(nil, c.conf.CommitTimeout)
+	// 	leaders := c.GetInState(Leader)
+	// 	if len(leaders) == 1 {
+	// 		newLead = leaders[0]
+	// 	}
+	// }
+	// Ensure the term is greater
+	// if newLead.getCurrentTerm() <= leaderTerm {
+	// 	t.Fatalf("expected newer term! %d %d", newLead.getCurrentTerm(), leaderTerm)
+	// }
+}
+
 func TestRaft_VoteWithNoIDNoAddr(t *testing.T) {
 	// Make a cluster
 	c := MakeCluster(3, t, nil)
