@@ -105,15 +105,20 @@ func (r *Raft) setLeader(leader ServerAddress) {
 // configuration change requests. 'req' describes the change. For timeout,
 // see AddVoter.
 func (r *Raft) requestConfigChange(req configurationChangeRequest, timeout time.Duration) IndexFuture {
-	timer := newTimer(timeout)
-	defer timer.Stop()
+	// Handle a timeout
+	var timeoutCh <-chan time.Time
+	if timeout > 0 {
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		timeoutCh = timer.C
+	}
 
 	future := &configurationChangeFuture{
 		req: req,
 	}
 	future.init()
 	select {
-	case <-timer.C:
+	case <-timeoutCh:
 		return errorFuture{ErrEnqueueTimeout}
 	case r.configurationChangeCh <- future:
 		return future
@@ -571,10 +576,16 @@ func (r *Raft) leaderLoop() {
 	// only a single peer (ourself) and replicating to an undefined set
 	// of peers.
 	stepDown := false
+
 	// This is only used for the first lease check, we reload lease below
 	// based on the current config value.
-	lease := newTimer(r.config().LeaderLeaseTimeout)
-	defer lease.Stop()
+	var lease <-chan time.Time
+	var leaseTimer *time.Timer
+	if timeout := r.config().LeaderLeaseTimeout; timeout > 0 {
+		leaseTimer = time.NewTimer(timeout)
+		defer leaseTimer.Stop()
+		lease = leaseTimer.C
+	}
 
 	for r.getState() == Leader {
 		select {
@@ -608,11 +619,15 @@ func (r *Raft) leaderLoop() {
 			// The leadershipTransfer function is controlled with
 			// the stopCh and doneCh.
 			go func() {
-				timer := newTimer(r.config().ElectionTimeout)
-				defer timer.Stop()
+				var electionTimeoutCh <-chan time.Time
+				if timeout := r.config().ElectionTimeout; timeout > 0 {
+					timer := time.NewTimer(timeout)
+					defer timer.Stop()
+					electionTimeoutCh = timer.C
+				}
 
 				select {
-				case <-timer.C:
+				case <-electionTimeoutCh:
 					close(stopCh)
 					err := fmt.Errorf("leadership transfer timeout")
 					r.logger.Debug(err.Error())
@@ -798,7 +813,7 @@ func (r *Raft) leaderLoop() {
 				r.dispatchLogs(ready)
 			}
 
-		case <-lease.C:
+		case <-lease:
 			// Check if we've exceeded the lease, potentially stepping down
 			maxDiff := r.checkLeaderLease()
 
@@ -810,7 +825,7 @@ func (r *Raft) leaderLoop() {
 			}
 
 			// Renew the lease timer
-			lease.Reset(checkInterval)
+			leaseTimer.Reset(checkInterval)
 
 		case <-r.shutdownCh:
 			return

@@ -206,12 +206,9 @@ func (r *Raft) replicateTo(s *followerReplication, lastIndex uint64) (shouldStop
 START:
 	// Prevent an excessive retry rate on errors
 	if s.failures > 0 {
-		timer := newTimer(backoff(failureWait, s.failures, maxFailureScale))
-		select {
-		case <-timer.C:
-		case <-r.shutdownCh:
+		if isTerminated(r.shutdownCh, backoff(failureWait, s.failures, maxFailureScale)) {
+			return
 		}
-		timer.Stop()
 	}
 
 	s.peerLock.RLock()
@@ -405,12 +402,9 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 			r.observe(FailedHeartbeatObservation{PeerID: peer.ID, LastContact: s.LastContact()})
 			failures++
 
-			timer := newTimer(backoff(failureWait, failures, maxFailureScale))
-			select {
-			case <-timer.C:
-			case <-stopCh:
+			if isTerminated(stopCh, backoff(failureWait, failures, maxFailureScale)) {
+				return
 			}
-			timer.Stop()
 		} else {
 			if failures > 0 {
 				r.observe(ResumedHeartbeatObservation{PeerID: peer.ID})
@@ -645,4 +639,20 @@ func updateLastAppended(s *followerReplication, req *AppendEntriesRequest) {
 
 	// Notify still leader
 	s.notifyAll(true)
+}
+
+func isTerminated(signal chan struct{}, timeout time.Duration) bool {
+	var timeoutCh <-chan time.Time
+	if timeout > 0 {
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		timeoutCh = timer.C
+	}
+
+	select {
+	case <-signal:
+		return true
+	case <-timeoutCh:
+		return false
+	}
 }

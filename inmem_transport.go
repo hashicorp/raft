@@ -166,12 +166,16 @@ func (i *InmemTransport) makeRPC(target ServerAddress, args interface{}, r io.Re
 		RespChan: respCh,
 	}
 
-	timer := newTimer(timeout)
-	defer timer.Stop()
+	var timeoutCh <-chan time.Time
+	if timeout > 0 {
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		timeoutCh = timer.C
+	}
 
 	select {
 	case peer.consumerCh <- req:
-	case <-timer.C:
+	case <-timeoutCh:
 		err = fmt.Errorf("send timed out")
 		return
 	}
@@ -182,7 +186,7 @@ func (i *InmemTransport) makeRPC(target ServerAddress, args interface{}, r io.Re
 		if rpcResp.Error != nil {
 			err = rpcResp.Error
 		}
-	case <-timer.C:
+	case <-timeoutCh:
 		err = fmt.Errorf("command timed out")
 	}
 	return
@@ -263,7 +267,12 @@ func (i *inmemPipeline) decodeResponses() {
 	for {
 		select {
 		case inp := <-i.inprogressCh:
-			timer := newTimer(timeout)
+			var timeoutCh <-chan time.Time
+			var timer *time.Timer
+			if timeout > 0 {
+				timer = time.NewTimer(timeout)
+				timeoutCh = timer.C
+			}
 
 			select {
 			case rpcResp := <-inp.respCh:
@@ -277,7 +286,7 @@ func (i *inmemPipeline) decodeResponses() {
 					return
 				}
 
-			case <-timer.C:
+			case <-timeoutCh:
 				inp.future.respond(fmt.Errorf("command timed out"))
 				select {
 				case i.doneCh <- inp.future:
@@ -289,7 +298,9 @@ func (i *inmemPipeline) decodeResponses() {
 				return
 			}
 
-			timer.Stop()
+			if timer != nil {
+				timer.Stop()
+			}
 
 		case <-i.shutdownCh:
 			return
@@ -307,8 +318,12 @@ func (i *inmemPipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEn
 	future.init()
 
 	// Handle a timeout
-	timer := newTimer(i.trans.timeout)
-	defer timer.Stop()
+	var timeoutCh <-chan time.Time
+	if i.trans.timeout > 0 {
+		timer := time.NewTimer(i.trans.timeout)
+		defer timer.Stop()
+		timeoutCh = timer.C
+	}
 
 	// Send the RPC over
 	respCh := make(chan RPCResponse, 1)
@@ -329,7 +344,7 @@ func (i *inmemPipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEn
 
 	select {
 	case i.peer.consumerCh <- rpc:
-	case <-timer.C:
+	case <-timeoutCh:
 		return nil, fmt.Errorf("command enqueue timeout")
 	case <-i.shutdownCh:
 		return nil, ErrPipelineShutdown

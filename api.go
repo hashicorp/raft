@@ -210,7 +210,8 @@ type Raft struct {
 // listing just itself as a Voter, then invoke AddVoter() on it to add other
 // servers to the cluster.
 func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
-	snaps SnapshotStore, trans Transport, configuration Configuration) error {
+	snaps SnapshotStore, trans Transport, configuration Configuration,
+) error {
 	// Validate the Raft server config.
 	if err := ValidateConfig(conf); err != nil {
 		return err
@@ -283,7 +284,8 @@ func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
 // the sole voter, and then join up other new clean-state peer servers using
 // the usual APIs in order to bring the cluster back into a known state.
 func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
-	snaps SnapshotStore, trans Transport, configuration Configuration) error {
+	snaps SnapshotStore, trans Transport, configuration Configuration,
+) error {
 	// Validate the Raft server config.
 	if err := ValidateConfig(conf); err != nil {
 		return err
@@ -402,7 +404,8 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 // without starting a Raft instance or connecting to the cluster. This function
 // has identical behavior to Raft.GetConfiguration.
 func GetConfiguration(conf *Config, fsm FSM, logs LogStore, stable StableStore,
-	snaps SnapshotStore, trans Transport) (Configuration, error) {
+	snaps SnapshotStore, trans Transport,
+) (Configuration, error) {
 	conf.skipStartup = true
 	r, err := NewRaft(conf, fsm, logs, stable, snaps, trans)
 	if err != nil {
@@ -737,8 +740,12 @@ func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
 func (r *Raft) ApplyLog(log Log, timeout time.Duration) ApplyFuture {
 	metrics.IncrCounter([]string{"raft", "apply"}, 1)
 
-	timer := newTimer(timeout)
-	defer timer.Stop()
+	var timeoutCh <-chan time.Time
+	if timeout > 0 {
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		timeoutCh = timer.C
+	}
 
 	// Create a log future, no index or term yet
 	logFuture := &logFuture{
@@ -751,7 +758,7 @@ func (r *Raft) ApplyLog(log Log, timeout time.Duration) ApplyFuture {
 	logFuture.init()
 
 	select {
-	case <-timer.C:
+	case <-timeoutCh:
 		return errorFuture{ErrEnqueueTimeout}
 	case <-r.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
@@ -768,8 +775,12 @@ func (r *Raft) ApplyLog(log Log, timeout time.Duration) ApplyFuture {
 func (r *Raft) Barrier(timeout time.Duration) Future {
 	metrics.IncrCounter([]string{"raft", "barrier"}, 1)
 
-	timer := newTimer(timeout)
-	defer timer.Stop()
+	var timeoutCh <-chan time.Time
+	if timeout > 0 {
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		timeoutCh = timer.C
+	}
 
 	// Create a log future, no index or term yet
 	logFuture := &logFuture{
@@ -780,7 +791,7 @@ func (r *Raft) Barrier(timeout time.Duration) Future {
 	logFuture.init()
 
 	select {
-	case <-timer.C:
+	case <-timeoutCh:
 		return errorFuture{ErrEnqueueTimeout}
 	case <-r.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
@@ -966,8 +977,12 @@ func (r *Raft) Snapshot() SnapshotFuture {
 func (r *Raft) Restore(meta *SnapshotMeta, reader io.Reader, timeout time.Duration) error {
 	metrics.IncrCounter([]string{"raft", "restore"}, 1)
 
-	timer := newTimer(timeout)
-	defer timer.Stop()
+	var timeoutCh <-chan time.Time
+	if timeout > 0 {
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		timeoutCh = timer.C
+	}
 
 	// Perform the restore.
 	restore := &userRestoreFuture{
@@ -976,7 +991,7 @@ func (r *Raft) Restore(meta *SnapshotMeta, reader io.Reader, timeout time.Durati
 	}
 	restore.init()
 	select {
-	case <-timer.C:
+	case <-timeoutCh:
 		return ErrEnqueueTimeout
 	case <-r.shutdownCh:
 		return ErrRaftShutdown
@@ -998,7 +1013,7 @@ func (r *Raft) Restore(meta *SnapshotMeta, reader io.Reader, timeout time.Durati
 	}
 	noop.init()
 	select {
-	case <-timer.C:
+	case <-timeoutCh:
 		return ErrEnqueueTimeout
 	case <-r.shutdownCh:
 		return ErrRaftShutdown
