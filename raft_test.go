@@ -2639,9 +2639,7 @@ func TestRaft_VoteNotGranted_WhenNodeNotInCluster(t *testing.T) {
 	}
 }
 
-// ROY
-// Verifies that when a follower is taken out of rotation for heartbeat timeout
-// a leader election does not occur.
+// This test is currently a stub
 func TestRaft_FollowerRemovalNoElection(t *testing.T) {
 	// Make a cluster
 	c := MakeCluster(3, t, nil)
@@ -2659,29 +2657,36 @@ func TestRaft_FollowerRemovalNoElection(t *testing.T) {
 	if len(followers) != 2 {
 		t.Fatalf("expected two followers: %v", followers)
 	}
-	// leaderTerm := c.Leader().getCurrentTerm()
-	// Disconnect one of the followers and wait for the heartbeat timeout
-	t.Logf("[INFO] Disconnecting %v", followers[0])
-	c.Disconnect(followers[0].localAddr)
-	time.Sleep(2 * time.Second)
-	nodes := c.GetInState(Candidate)
-	fmt.Printf("leader is %+v\n", c.Leader())
-	fmt.Printf("followers are %+v\n", followers)
-	fmt.Printf("candidates are %+v\n", nodes)
-	t.Fatalf("oops")
 
-	// var newLead *Raft
-	// for time.Now().Before(limit) && newLead == nil {
-	// 	c.WaitEvent(nil, c.conf.CommitTimeout)
-	// 	leaders := c.GetInState(Leader)
-	// 	if len(leaders) == 1 {
-	// 		newLead = leaders[0]
-	// 	}
-	// }
-	// Ensure the term is greater
-	// if newLead.getCurrentTerm() <= leaderTerm {
-	// 	t.Fatalf("expected newer term! %d %d", newLead.getCurrentTerm(), leaderTerm)
-	// }
+	// Disconnect one of the followers and wait for the heartbeat timeout
+	i := 0
+	follower := c.rafts[i]
+	if follower == c.Leader() {
+		i = 1
+		follower = c.rafts[i]
+	}
+	logs := follower.logs
+	t.Logf("[INFO] restarting %v", follower)
+	// Shutdown follower
+	if f := follower.Shutdown(); f.Error() != nil {
+		t.Fatalf("error shuting down follower: %v", f.Error())
+	}
+	time.Sleep(3 * time.Second)
+
+	_, trans := NewInmemTransport(follower.localAddr)
+	conf := follower.config()
+	n, err := NewRaft(&conf, &MockFSM{}, logs, follower.stable, follower.snapshots, trans)
+	if err != nil {
+		t.Fatalf("error restarting follower: %v", err)
+	}
+	c.rafts[i] = n
+	c.trans[i] = n.trans.(*InmemTransport)
+	c.fsms[i] = n.fsm.(*MockFSM)
+	c.FullyConnect()
+	// There should be no re-election during this sleep
+	time.Sleep(2 * time.Second)
+	n.Shutdown()
+	t.Fatalf("exit")
 }
 
 func TestRaft_VoteWithNoIDNoAddr(t *testing.T) {

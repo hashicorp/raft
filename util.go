@@ -150,7 +150,7 @@ func cappedExponentialBackoff(base time.Duration, round, limit uint64, cap time.
 	power := min(round, limit)
 	for power > 2 {
 		if base > cap {
-			return base
+			return cap
 		}
 		base *= 2
 		power--
