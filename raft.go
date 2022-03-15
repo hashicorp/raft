@@ -1751,13 +1751,9 @@ func (r *Raft) electSelf(preVote bool) <-chan *voteResult {
 	// Create a response channel
 	respCh := make(chan *voteResult, len(r.configurations.latest.Servers))
 
-	// PreVote campaigns are sent on the next term.
-	term := r.getCurrentTerm() + 1
-	if preVote {
-		term += 1
-	}
 	// Increment the term
-	r.setCurrentTerm(term)
+	// PreVote campaigns are sent on the same term.
+	r.setCurrentTerm(r.getCurrentTerm() + 1)
 
 	// Construct the request
 	lastIdx, lastTerm := r.getLastEntry()
