@@ -2639,13 +2639,19 @@ func TestRaft_VoteNotGranted_WhenNodeNotInCluster(t *testing.T) {
 	}
 }
 
-// This test is currently a stub
+// TestRaft_FollowerRemovalNoElection ensures that a leader election is not
+// started when a standby is shut down and restarted.
 func TestRaft_FollowerRemovalNoElection(t *testing.T) {
 	// Make a cluster
-	c := MakeCluster(3, t, nil)
+	inmemConf := inmemConfig(t)
+	inmemConf.HeartbeatTimeout = 500 * time.Millisecond
+	inmemConf.ElectionTimeout = 500 * time.Millisecond
+	c := MakeCluster(3, t, inmemConf)
 
 	defer c.Close()
 	waitForLeader(c)
+
+	leader := c.Leader()
 
 	// Wait until we have 2 followers
 	limit := time.Now().Add(c.longstopTimeout)
@@ -2685,8 +2691,12 @@ func TestRaft_FollowerRemovalNoElection(t *testing.T) {
 	c.FullyConnect()
 	// There should be no re-election during this sleep
 	time.Sleep(2 * time.Second)
+
+	// Let things settle and make sure we recovered.
+	c.EnsureLeader(t, leader.localAddr)
+	c.EnsureSame(t)
+	c.EnsureSamePeers(t)
 	n.Shutdown()
-	t.Fatalf("exit")
 }
 
 func TestRaft_VoteWithNoIDNoAddr(t *testing.T) {
