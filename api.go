@@ -201,6 +201,9 @@ type Raft struct {
 	// leadershipTransferCh is used to start a leadership transfer from outside of
 	// the main thread.
 	leadershipTransferCh chan *leadershipTransferFuture
+
+	// notifyCh is used to tell followers that config has changed
+	followerNotifyCh chan struct{}
 }
 
 // BootstrapCluster initializes a server's storage with the given cluster
@@ -545,6 +548,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		bootstrapCh:           make(chan *bootstrapFuture),
 		observers:             make(map[uint64]*Observer),
 		leadershipTransferCh:  make(chan *leadershipTransferFuture, 1),
+		followerNotifyCh:      make(chan struct{}),
 	}
 
 	r.conf.Store(*conf)
@@ -696,6 +700,15 @@ func (r *Raft) ReloadConfig(rc ReloadableConfig) error {
 		return err
 	}
 	r.conf.Store(newCfg)
+
+	// On leader, ensure replication loops running with a longer
+	// timeout than what we want now discover the change.
+	if rc.HeartbeatTimeout < oldCfg.HeartbeatTimeout {
+		for _, repl := range r.leaderState.replState {
+			asyncNotifyCh(repl.notifyCh)
+		}
+		asyncNotifyCh(r.followerNotifyCh)
+	}
 	return nil
 }
 

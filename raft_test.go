@@ -2466,6 +2466,7 @@ func TestRaft_CacheLogWithStoreError(t *testing.T) {
 
 func TestRaft_ReloadConfig(t *testing.T) {
 	conf := inmemConfig(t)
+	conf.LeaderLeaseTimeout = 40 * time.Millisecond
 	c := MakeCluster(1, t, conf)
 	defer c.Close()
 	raft := c.rafts[0]
@@ -2480,6 +2481,8 @@ func TestRaft_ReloadConfig(t *testing.T) {
 		TrailingLogs:      12345,
 		SnapshotInterval:  234 * time.Second,
 		SnapshotThreshold: 6789,
+		HeartbeatTimeout:  45 * time.Millisecond,
+		ElectionTimeout:   46 * time.Millisecond,
 	}
 
 	require.NoError(t, raft.ReloadConfig(newCfg))
@@ -2488,6 +2491,8 @@ func TestRaft_ReloadConfig(t *testing.T) {
 	require.Equal(t, newCfg.TrailingLogs, raft.config().TrailingLogs)
 	require.Equal(t, newCfg.SnapshotInterval, raft.config().SnapshotInterval)
 	require.Equal(t, newCfg.SnapshotThreshold, raft.config().SnapshotThreshold)
+	require.Equal(t, newCfg.HeartbeatTimeout, raft.config().HeartbeatTimeout)
+	require.Equal(t, newCfg.ElectionTimeout, raft.config().ElectionTimeout)
 }
 
 func TestRaft_ReloadConfigValidates(t *testing.T) {

@@ -260,6 +260,14 @@ type ReloadableConfig struct {
 	// we perform a snapshot. This is to prevent excessive snapshots when we can
 	// just replay a small set of logs.
 	SnapshotThreshold uint64
+
+	// HeartbeatTimeout specifies the time in follower state without
+	// a leader before we attempt an election.
+	HeartbeatTimeout time.Duration
+
+	// ElectionTimeout specifies the time in candidate state without
+	// a leader before we attempt an election.
+	ElectionTimeout time.Duration
 }
 
 // apply sets the reloadable fields on the passed Config to the values in
@@ -269,6 +277,8 @@ func (rc *ReloadableConfig) apply(to Config) Config {
 	to.TrailingLogs = rc.TrailingLogs
 	to.SnapshotInterval = rc.SnapshotInterval
 	to.SnapshotThreshold = rc.SnapshotThreshold
+	to.HeartbeatTimeout = rc.HeartbeatTimeout
+	to.ElectionTimeout = rc.ElectionTimeout
 	return to
 }
 
@@ -277,6 +287,8 @@ func (rc *ReloadableConfig) fromConfig(from Config) {
 	rc.TrailingLogs = from.TrailingLogs
 	rc.SnapshotInterval = from.SnapshotInterval
 	rc.SnapshotThreshold = from.SnapshotThreshold
+	rc.HeartbeatTimeout = from.HeartbeatTimeout
+	rc.ElectionTimeout = from.ElectionTimeout
 }
 
 // DefaultConfig returns a Config with usable defaults.
@@ -334,10 +346,10 @@ func ValidateConfig(config *Config) error {
 		return fmt.Errorf("LeaderLeaseTimeout is too low")
 	}
 	if config.LeaderLeaseTimeout > config.HeartbeatTimeout {
-		return fmt.Errorf("LeaderLeaseTimeout cannot be larger than heartbeat timeout")
+		return fmt.Errorf("LeaderLeaseTimeout (%s) cannot be larger than heartbeat timeout (%s)", config.LeaderLeaseTimeout, config.HeartbeatTimeout)
 	}
 	if config.ElectionTimeout < config.HeartbeatTimeout {
-		return fmt.Errorf("ElectionTimeout must be equal or greater than Heartbeat Timeout")
+		return fmt.Errorf("ElectionTimeout (%s) must be equal or greater than Heartbeat Timeout (%s)", config.ElectionTimeout, config.HeartbeatTimeout)
 	}
 	return nil
 }
