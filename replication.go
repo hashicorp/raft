@@ -402,7 +402,7 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 
 		start := time.Now()
 		if err := r.trans.AppendEntries(peer.ID, peer.Address, &req, &resp); err != nil {
-			nextBackoffTime := cappedExponentialBackoff(failureWait, s.failures, maxFailureScale, r.config().HeartbeatTimeout/2)
+			nextBackoffTime := cappedExponentialBackoff(failureWait, failures, maxFailureScale, r.config().HeartbeatTimeout/2)
 			r.logger.Error("failed to heartbeat to", "peer", peer.Address, "backoff time",
 				nextBackoffTime, "error", err)
 			r.observe(FailedHeartbeatObservation{PeerID: peer.ID, LastContact: s.LastContact()})
