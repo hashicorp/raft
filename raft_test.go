@@ -2781,3 +2781,37 @@ func TestRaft_runFollower_State_Transition(t *testing.T) {
 		})
 	}
 }
+
+func TestRaft_runFollower_ReloadTimeoutConfigs(t *testing.T) {
+	conf := DefaultConfig()
+	conf.LocalID = ServerID("first")
+	conf.HeartbeatTimeout = 500 * time.Millisecond
+	conf.ElectionTimeout = 500 * time.Millisecond
+	conf.LeaderLeaseTimeout = 50 * time.Millisecond
+	conf.CommitTimeout = 5 * time.Millisecond
+	conf.SnapshotThreshold = 100
+	conf.TrailingLogs = 10
+	conf.skipStartup = true
+
+	env := MakeRaft(t, conf, false)
+	servers := []Server{{Voter, "first", ""}}
+	env.raft.setLatestConfiguration(Configuration{Servers: servers}, 1)
+	env.raft.setState(Follower)
+
+	// run the follower loop exclusively
+	go env.raft.runFollower()
+
+	newCfg := ReloadableConfig{
+		TrailingLogs:      conf.TrailingLogs,
+		SnapshotInterval:  conf.SnapshotInterval,
+		SnapshotThreshold: conf.SnapshotThreshold,
+		HeartbeatTimeout:  50 * time.Millisecond,
+		ElectionTimeout:   50 * time.Millisecond,
+	}
+	require.NoError(t, env.raft.ReloadConfig(newCfg))
+	// wait enough time to have HeartbeatTimeout
+	time.Sleep(3 * newCfg.HeartbeatTimeout)
+
+	// Check the follower loop set the right state
+	require.Equal(t, Candidate, env.raft.getState())
+}

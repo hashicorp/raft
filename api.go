@@ -548,7 +548,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		bootstrapCh:           make(chan *bootstrapFuture),
 		observers:             make(map[uint64]*Observer),
 		leadershipTransferCh:  make(chan *leadershipTransferFuture, 1),
-		followerNotifyCh:      make(chan struct{}),
+		followerNotifyCh:      make(chan struct{}, 1),
 	}
 
 	r.conf.Store(*conf)
@@ -701,12 +701,13 @@ func (r *Raft) ReloadConfig(rc ReloadableConfig) error {
 	}
 	r.conf.Store(newCfg)
 
-	// On leader, ensure replication loops running with a longer
-	// timeout than what we want now discover the change.
 	if rc.HeartbeatTimeout < oldCfg.HeartbeatTimeout {
+		// On leader, ensure replication loops running with a longer
+		// timeout than what we want now discover the change.
 		for _, repl := range r.leaderState.replState {
 			asyncNotifyCh(repl.notifyCh)
 		}
+		// On follower, update current timer to use the shorter new value.
 		asyncNotifyCh(r.followerNotifyCh)
 	}
 	return nil
