@@ -365,7 +365,7 @@ func TestRaft_RestartFollower_LongInitialHeartbeat(t *testing.T) {
 		restartInitialTimeouts time.Duration
 		expectNewLeader        bool
 	}{
-		//{"Default", 0, true},
+		{"Default", 0, true},
 		{"InitialHigher", time.Second, false},
 	}
 	for _, tt := range tests {
@@ -471,13 +471,14 @@ func TestRaft_RestartFollower_LongInitialHeartbeat(t *testing.T) {
 				// Stop the leader, ensure that we don't see a request vote within the first 50ms
 				// (original config of the non-restarted follower), but that we do see one within
 				// the 250ms both followers should now be using for heartbeat timeout.  Well, not
-				// quite: we wait for two heartbeat intervals, because the first time around,
-				// last contact will have been recent enough that no vote will be triggered.
+				// quite: we wait for two heartbeat intervals (plus a fudge factor), because the
+				// first time around, last contact will have been recent enough that no vote will
+				// be triggered.
 				env1.logger.Info("stopping leader")
 				env1.Shutdown()
 				time.Sleep(50 * time.Millisecond)
 				require.Equal(t, uint32(0), atomic.LoadUint32(requestVotes))
-				time.Sleep(500 * time.Millisecond)
+				time.Sleep(600 * time.Millisecond)
 				require.NotEqual(t, uint32(0), atomic.LoadUint32(requestVotes))
 			}
 

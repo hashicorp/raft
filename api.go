@@ -202,7 +202,10 @@ type Raft struct {
 	// the main thread.
 	leadershipTransferCh chan *leadershipTransferFuture
 
-	// notifyCh is used to tell followers that config has changed
+	// leaderNotifyCh is used to tell leader that config has changed
+	leaderNotifyCh chan struct{}
+
+	// followerNotifyCh is used to tell followers that config has changed
 	followerNotifyCh chan struct{}
 }
 
@@ -548,6 +551,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		bootstrapCh:           make(chan *bootstrapFuture),
 		observers:             make(map[uint64]*Observer),
 		leadershipTransferCh:  make(chan *leadershipTransferFuture, 1),
+		leaderNotifyCh:        make(chan struct{}, 1),
 		followerNotifyCh:      make(chan struct{}, 1),
 	}
 
@@ -704,9 +708,7 @@ func (r *Raft) ReloadConfig(rc ReloadableConfig) error {
 	if rc.HeartbeatTimeout < oldCfg.HeartbeatTimeout {
 		// On leader, ensure replication loops running with a longer
 		// timeout than what we want now discover the change.
-		for _, repl := range r.leaderState.replState {
-			asyncNotifyCh(repl.notifyCh)
-		}
+		asyncNotifyCh(r.leaderNotifyCh)
 		// On follower, update current timer to use the shorter new value.
 		asyncNotifyCh(r.followerNotifyCh)
 	}
