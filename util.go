@@ -155,6 +155,9 @@ func cappedExponentialBackoff(base time.Duration, round, limit uint64, cap time.
 		base *= 2
 		power--
 	}
+	if base > cap {
+		return cap
+	}
 	return base
 }
 
