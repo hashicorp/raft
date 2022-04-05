@@ -430,7 +430,7 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 // has identical behavior to Raft.GetConfiguration.
 func GetConfiguration(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 	snaps SnapshotStore, trans Transport) (Configuration, error) {
-	conf.skipStartup = true
+	conf.SkipStartup = true
 	r, err := NewRaft(conf, fsm, logs, stable, snaps, trans)
 	if err != nil {
 		return Configuration{}, err
@@ -594,14 +594,18 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	// to be called concurrently with a blocking RPC.
 	trans.SetHeartbeatHandler(r.processHeartbeat)
 
-	if conf.skipStartup {
+	if conf.SkipStartup {
 		return r, nil
 	}
-	// Start the background work.
+	r.Start()
+	return r, nil
+}
+
+// Start the background work.
+func (r *Raft) Start() {
 	r.goFunc(r.run)
 	r.goFunc(r.runFSM)
 	r.goFunc(r.runSnapshots)
-	return r, nil
 }
 
 // restoreSnapshot attempts to restore the latest snapshots, and fails if none
