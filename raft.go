@@ -344,6 +344,9 @@ func (r *Raft) runCandidate() {
 		case b := <-r.bootstrapCh:
 			b.respond(ErrCantBootstrap)
 
+		case <-r.leaderNotifyCh:
+			//  Ignore since we are not the leader
+
 		case <-r.followerNotifyCh:
 			if electionTimeout != r.config().ElectionTimeout {
 				electionTimeout = r.config().ElectionTimeout
