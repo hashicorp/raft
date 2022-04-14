@@ -10,7 +10,7 @@ type Observation struct {
 	// Raft holds the Raft instance generating the observation.
 	Raft *Raft
 	// Data holds observation-specific data. Possible types are
-	// *RequestVoteRequest
+	// RequestVoteRequest
 	// RaftState
 	// PeerObservation
 	// LeaderObservation

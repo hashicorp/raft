@@ -190,6 +190,12 @@ func (r *Raft) runFollower() {
 		case b := <-r.bootstrapCh:
 			b.respond(r.liveBootstrap(b.configuration))
 
+		case <-r.leaderNotifyCh:
+			//  Ignore since we are not the leader
+
+		case <-r.followerNotifyCh:
+			heartbeatTimer = time.After(0)
+
 		case <-heartbeatTimer:
 			// Restart the heartbeat timer
 			hbTimeout := r.config().HeartbeatTimeout
@@ -275,7 +281,8 @@ func (r *Raft) runCandidate() {
 	// otherwise.
 	defer func() { r.candidateFromLeadershipTransfer = false }()
 
-	electionTimer := randomTimeout(r.config().ElectionTimeout)
+	electionTimeout := r.config().ElectionTimeout
+	electionTimer := randomTimeout(electionTimeout)
 
 	// Tally the votes, need a simple majority
 	grantedVotes := 0
@@ -336,6 +343,15 @@ func (r *Raft) runCandidate() {
 
 		case b := <-r.bootstrapCh:
 			b.respond(ErrCantBootstrap)
+
+		case <-r.leaderNotifyCh:
+			//  Ignore since we are not the leader
+
+		case <-r.followerNotifyCh:
+			if electionTimeout != r.config().ElectionTimeout {
+				electionTimeout = r.config().ElectionTimeout
+				electionTimer = randomTimeout(electionTimeout)
+			}
 
 		case <-electionTimer:
 			// Election failed! Restart the election. We simply return,
@@ -825,6 +841,14 @@ func (r *Raft) leaderLoop() {
 
 			// Renew the lease timer
 			lease = time.After(checkInterval)
+
+		case <-r.leaderNotifyCh:
+			for _, repl := range r.leaderState.replState {
+				asyncNotifyCh(repl.notifyCh)
+			}
+
+		case <-r.followerNotifyCh:
+			//  Ignore since we are not a follower
 
 		case <-r.shutdownCh:
 			return

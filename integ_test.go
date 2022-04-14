@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/hashicorp/go-hclog"
+	"github.com/stretchr/testify/require"
 )
 
 // CheckInteg will skip a test if integration testing is not enabled.
@@ -353,5 +355,136 @@ func TestRaft_Integ(t *testing.T) {
 
 	for _, e := range envs {
 		e.Release()
+	}
+}
+
+func TestRaft_RestartFollower_LongInitialHeartbeat(t *testing.T) {
+	CheckInteg(t)
+	tests := []struct {
+		name                   string
+		restartInitialTimeouts time.Duration
+		expectNewLeader        bool
+	}{
+		{"Default", 0, true},
+		{"InitialHigher", time.Second, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conf := DefaultConfig()
+			conf.LocalID = ServerID("first")
+			conf.HeartbeatTimeout = 50 * time.Millisecond
+			conf.ElectionTimeout = 50 * time.Millisecond
+			conf.LeaderLeaseTimeout = 50 * time.Millisecond
+			conf.CommitTimeout = 5 * time.Millisecond
+			conf.SnapshotThreshold = 100
+			conf.TrailingLogs = 10
+
+			// Create a single node
+			env1 := MakeRaft(t, conf, true)
+			NoErr(WaitFor(env1, Leader), t)
+
+			// Join a few nodes!
+			var envs []*RaftEnv
+			for i := 0; i < 2; i++ {
+				conf.LocalID = ServerID(fmt.Sprintf("next-batch-%d", i))
+				env := MakeRaft(t, conf, false)
+				addr := env.trans.LocalAddr()
+				NoErr(WaitFuture(env1.raft.AddVoter(conf.LocalID, addr, 0, 0), t), t)
+				envs = append(envs, env)
+			}
+			allEnvs := append([]*RaftEnv{env1}, envs...)
+
+			// Wait for a leader
+			_, err := WaitForAny(Leader, append([]*RaftEnv{env1}, envs...))
+			NoErr(err, t)
+
+			CheckConsistent(append([]*RaftEnv{env1}, envs...), t)
+			// TODO without this sleep, the restarted follower doesn't have any stored config
+			// and aborts the election because it doesn't know of any peers.  Shouldn't
+			// CheckConsistent prevent that?
+			time.Sleep(time.Second)
+
+			// shutdown a follower
+			disconnected := envs[len(envs)-1]
+			disconnected.logger.Info("stopping follower")
+			disconnected.Shutdown()
+
+			seeNewLeader := func(o *Observation) bool { _, ok := o.Data.(LeaderObservation); return ok }
+			leaderCh := make(chan Observation)
+			// TODO Closing this channel results in panics, even though we're calling Release.
+			//defer close(leaderCh)
+			leaderChanges := new(uint32)
+			go func() {
+				for range leaderCh {
+					atomic.AddUint32(leaderChanges, 1)
+				}
+			}()
+
+			requestVoteCh := make(chan Observation)
+			seeRequestVote := func(o *Observation) bool { _, ok := o.Data.(RequestVoteRequest); return ok }
+			requestVotes := new(uint32)
+			go func() {
+				for range requestVoteCh {
+					atomic.AddUint32(requestVotes, 1)
+				}
+			}()
+
+			for _, env := range allEnvs {
+				env.raft.RegisterObserver(NewObserver(leaderCh, false, seeNewLeader))
+			}
+
+			// Unfortunately we need to wait for the leader to start backing off RPCs to the down follower
+			// such that when the follower comes back up it'll run an election before it gets an rpc from
+			// the leader
+			time.Sleep(time.Second * 5)
+
+			if tt.restartInitialTimeouts != 0 {
+				disconnected.conf.HeartbeatTimeout = tt.restartInitialTimeouts
+				disconnected.conf.ElectionTimeout = tt.restartInitialTimeouts
+			}
+			disconnected.logger.Info("restarting follower")
+			disconnected.Restart(t)
+
+			time.Sleep(time.Second * 2)
+
+			if tt.expectNewLeader {
+				require.NotEqual(t, 0, atomic.LoadUint32(leaderChanges))
+			} else {
+				require.Equal(t, uint32(0), atomic.LoadUint32(leaderChanges))
+			}
+
+			if tt.restartInitialTimeouts != 0 {
+				for _, env := range envs {
+					env.raft.RegisterObserver(NewObserver(requestVoteCh, false, seeRequestVote))
+					NoErr(env.raft.ReloadConfig(ReloadableConfig{
+						TrailingLogs:      conf.TrailingLogs,
+						SnapshotInterval:  conf.SnapshotInterval,
+						SnapshotThreshold: conf.SnapshotThreshold,
+						HeartbeatTimeout:  250 * time.Millisecond,
+						ElectionTimeout:   250 * time.Millisecond,
+					}), t)
+				}
+				// Make sure that reload by itself doesn't trigger a vote
+				time.Sleep(300 * time.Millisecond)
+				require.Equal(t, uint32(0), atomic.LoadUint32(requestVotes))
+
+				// Stop the leader, ensure that we don't see a request vote within the first 50ms
+				// (original config of the non-restarted follower), but that we do see one within
+				// the 250ms both followers should now be using for heartbeat timeout.  Well, not
+				// quite: we wait for two heartbeat intervals (plus a fudge factor), because the
+				// first time around, last contact will have been recent enough that no vote will
+				// be triggered.
+				env1.logger.Info("stopping leader")
+				env1.Shutdown()
+				time.Sleep(50 * time.Millisecond)
+				require.Equal(t, uint32(0), atomic.LoadUint32(requestVotes))
+				time.Sleep(600 * time.Millisecond)
+				require.NotEqual(t, uint32(0), atomic.LoadUint32(requestVotes))
+			}
+
+			for _, e := range allEnvs {
+				e.Release()
+			}
+		})
 	}
 }
