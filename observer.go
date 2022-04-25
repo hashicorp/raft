@@ -19,6 +19,8 @@ type Observation struct {
 
 // LeaderObservation is used for the data when leadership changes.
 type LeaderObservation struct {
+	// DEPRECATED The LeaderAddr field should now be used
+	Leader     ServerAddress
 	LeaderAddr ServerAddress
 	LeaderID   ServerID
 }
