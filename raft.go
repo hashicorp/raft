@@ -101,7 +101,7 @@ func (r *Raft) setLeader(leaderAddr ServerAddress, leaderID ServerID) {
 	r.leaderID = leaderID
 	r.leaderLock.Unlock()
 	if oldLeaderAddr != leaderAddr || oldLeaderID != leaderID {
-		r.observe(LeaderObservation{LeaderAddr: leaderAddr, LeaderID: leaderID})
+		r.observe(LeaderObservation{Leader: leaderAddr, LeaderAddr: leaderAddr, LeaderID: leaderID})
 	}
 }
 
