@@ -119,12 +119,28 @@ func newCountingReader(r io.Reader) *countingReader {
 
 type countingReadCloser struct {
 	*countingReader
-	io.Closer
+	readCloser io.ReadCloser
 }
 
 func newCountingReadCloser(rc io.ReadCloser) *countingReadCloser {
 	return &countingReadCloser{
 		countingReader: newCountingReader(rc),
-		Closer:         rc,
+		readCloser:     rc,
 	}
 }
+
+func (c countingReadCloser) Close() error {
+	return c.readCloser.Close()
+}
+
+func (c countingReadCloser) WrappedReadCloser() io.ReadCloser {
+	return c.readCloser
+}
+
+// ReadCloserWrapper allows access to an underlying ReadCloser from a wrapper.
+type ReadCloserWrapper interface {
+	io.ReadCloser
+	WrappedReadCloser() io.ReadCloser
+}
+
+var _ ReadCloserWrapper = &countingReadCloser{}
