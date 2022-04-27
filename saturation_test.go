@@ -9,9 +9,9 @@ import (
 
 func TestSaturationMetric(t *testing.T) {
 	t.Run("without smoothing", func(t *testing.T) {
-		sat := newSaturationMetric([]string{"metric"}, 100*time.Millisecond, 0)
+		sat := newSaturationMetric([]string{"metric"}, 100*time.Millisecond)
 
-		now := sat.buckets[0].beginning
+		now := sat.lastReport
 		sat.nowFn = func() time.Time { return now }
 
 		var reported float32
@@ -46,42 +46,13 @@ func TestSaturationMetric(t *testing.T) {
 		// Should be 0% saturation.
 		require.Equal(t, float32(0), reported)
 	})
-
-	t.Run("with smoothing", func(t *testing.T) {
-		sat := newSaturationMetric([]string{"metric"}, 100*time.Millisecond, 1)
-
-		now := sat.buckets[0].beginning
-		sat.nowFn = func() time.Time { return now }
-
-		var reported float32
-		sat.reportFn = func(val float32) { reported = val }
-
-		// First report window: 50ms sleeping + 75ms working.
-		sat.sleeping()
-
-		now = now.Add(50 * time.Millisecond)
-		sat.working()
-
-		now = now.Add(75 * time.Millisecond)
-		sat.sleeping()
-
-		// Second report window: 75ms sleeping + 50ms working.
-		now = now.Add(75 * time.Millisecond)
-		sat.working()
-
-		now = now.Add(50 * time.Millisecond)
-		sat.sleeping()
-
-		// Should average out to 50% saturation.
-		require.Equal(t, float32(0.5), reported)
-	})
 }
 
 func TestSaturationMetric_IncorrectUsage(t *testing.T) {
 	t.Run("calling sleeping() consecutively", func(t *testing.T) {
-		sat := newSaturationMetric([]string{"metric"}, 50*time.Millisecond, 0)
+		sat := newSaturationMetric([]string{"metric"}, 50*time.Millisecond)
 
-		now := sat.buckets[0].beginning
+		now := sat.lastReport
 		sat.nowFn = func() time.Time { return now }
 
 		var reported float32
@@ -119,9 +90,9 @@ func TestSaturationMetric_IncorrectUsage(t *testing.T) {
 	})
 
 	t.Run("calling working() consecutively", func(t *testing.T) {
-		sat := newSaturationMetric([]string{"metric"}, 30*time.Millisecond, 0)
+		sat := newSaturationMetric([]string{"metric"}, 30*time.Millisecond)
 
-		now := sat.buckets[0].beginning
+		now := sat.lastReport
 		sat.nowFn = func() time.Time { return now }
 
 		var reported float32
@@ -151,9 +122,9 @@ func TestSaturationMetric_IncorrectUsage(t *testing.T) {
 	})
 
 	t.Run("calling working() first", func(t *testing.T) {
-		sat := newSaturationMetric([]string{"metric"}, 10*time.Millisecond, 0)
+		sat := newSaturationMetric([]string{"metric"}, 10*time.Millisecond)
 
-		now := sat.buckets[0].beginning.Add(10 * time.Millisecond)
+		now := sat.lastReport
 		sat.nowFn = func() time.Time { return now }
 
 		var reported float32

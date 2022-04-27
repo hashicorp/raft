@@ -19,44 +19,32 @@ import (
 type saturationMetric struct {
 	reportInterval time.Duration
 
-	// buckets contains measurements for both the current, and a configurable
-	// number of previous periods (to smooth out spikes).
-	buckets       []saturationMetricBucket
-	currentBucket int
+	// slept contains time for which the event processing loop was sleeping rather
+	// than working in the last period.
+	slept time.Duration
 
-	sleepBegan, workBegan time.Time
+	// lost contains time that was lost due to incorrect instrumentation of the
+	// event processing loop (e.g. calling sleeping() or working() multiple times
+	// in succession) in the last period.
+	lost time.Duration
+
+	lastReport, sleepBegan, workBegan time.Time
 
 	// These are overwritten in tests.
 	nowFn    func() time.Time
 	reportFn func(float32)
 }
 
-// saturationMetricBucket contains the measurements for a period.
-type saturationMetricBucket struct {
-	// beginning of the period for which this bucket contains measurements.
-	beginning time.Time
-
-	// slept contains time for which the event processing loop was sleeping rather
-	// than working.
-	slept time.Duration
-
-	// lost contains time that was lost due to incorrect instrumentation of the
-	// event processing loop (e.g. calling sleeping() or working() multiple times
-	// in succession).
-	lost time.Duration
-}
-
 // newSaturationMetric creates a saturationMetric that will update the gauge
 // with the given name at the given reportInterval. keepPrev determines the
 // number of previous measurements that will be used to smooth out spikes.
-func newSaturationMetric(name []string, reportInterval time.Duration, keepPrev uint) *saturationMetric {
+func newSaturationMetric(name []string, reportInterval time.Duration) *saturationMetric {
 	m := &saturationMetric{
 		reportInterval: reportInterval,
-		buckets:        make([]saturationMetricBucket, 1+keepPrev),
 		nowFn:          time.Now,
-		reportFn:       func(sat float32) { metrics.SetGauge(name, sat) },
+		lastReport:     time.Now(),
+		reportFn:       func(sat float32) { metrics.AddSample(name, sat) },
 	}
-	m.buckets[0].beginning = time.Now()
 	return m
 }
 
@@ -68,7 +56,7 @@ func (s *saturationMetric) sleeping() {
 	if !s.sleepBegan.IsZero() {
 		// sleeping called twice in succession. Count that time as lost rather than
 		// measuring nonsense.
-		s.buckets[s.currentBucket].lost += now.Sub(s.sleepBegan)
+		s.lost += now.Sub(s.sleepBegan)
 	}
 
 	s.sleepBegan = now
@@ -80,20 +68,19 @@ func (s *saturationMetric) sleeping() {
 // proceeded by a call to sleeping.
 func (s *saturationMetric) working() {
 	now := s.nowFn()
-	bucket := &s.buckets[s.currentBucket]
 
 	if s.workBegan.IsZero() {
 		if s.sleepBegan.IsZero() {
 			// working called before the initial call to sleeping. Count that time as
 			// lost rather than measuring nonsense.
-			bucket.lost += now.Sub(bucket.beginning)
+			s.lost += now.Sub(s.lastReport)
 		} else {
-			bucket.slept += now.Sub(s.sleepBegan)
+			s.slept += now.Sub(s.sleepBegan)
 		}
 	} else {
 		// working called twice in succession. Count that time as lost rather than
 		// measuring nonsense.
-		bucket.lost += now.Sub(s.workBegan)
+		s.lost += now.Sub(s.workBegan)
 	}
 
 	s.workBegan = now
@@ -104,45 +91,21 @@ func (s *saturationMetric) working() {
 // report updates the gauge if reportInterval has passed since our last report.
 func (s *saturationMetric) report() {
 	now := s.nowFn()
-	timeSinceLastReport := now.Sub(s.buckets[s.currentBucket].beginning)
+	timeSinceLastReport := now.Sub(s.lastReport)
 
 	if timeSinceLastReport < s.reportInterval {
 		return
 	}
 
-	var (
-		beginning   time.Time
-		slept, lost time.Duration
-	)
-	for _, bucket := range s.buckets {
-		if bucket.beginning.IsZero() {
-			continue
-		}
-
-		if beginning.IsZero() || bucket.beginning.Before(beginning) {
-			beginning = bucket.beginning
-		}
-
-		slept += bucket.slept
-		lost += bucket.lost
-	}
-
-	total := now.Sub(beginning) - lost
-
 	var saturation float64
+	total := timeSinceLastReport - s.lost
 	if total != 0 {
-		saturation = float64(total-slept) / float64(total)
+		saturation = float64(total-s.slept) / float64(total)
 		saturation = math.Round(saturation*100) / 100
 	}
 	s.reportFn(float32(saturation))
 
-	s.currentBucket++
-	if s.currentBucket >= len(s.buckets) {
-		s.currentBucket = 0
-	}
-
-	bucket := &s.buckets[s.currentBucket]
-	bucket.slept = 0
-	bucket.lost = 0
-	bucket.beginning = now
+	s.slept = 0
+	s.lost = 0
+	s.lastReport = now
 }

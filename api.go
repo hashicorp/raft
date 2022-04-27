@@ -556,7 +556,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		leadershipTransferCh:  make(chan *leadershipTransferFuture, 1),
 		leaderNotifyCh:        make(chan struct{}, 1),
 		followerNotifyCh:      make(chan struct{}, 1),
-		mainThreadSaturation:  newSaturationMetric([]string{"raft", "thread", "main", "saturation"}, 1*time.Second, 5),
+		mainThreadSaturation:  newSaturationMetric([]string{"raft", "thread", "main", "saturation"}, 1*time.Second),
 	}
 
 	r.conf.Store(*conf)

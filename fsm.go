@@ -223,7 +223,7 @@ func (r *Raft) runFSM() {
 		req.respond(err)
 	}
 
-	saturation := newSaturationMetric([]string{"raft", "thread", "fsm", "saturation"}, 1*time.Second, 5)
+	saturation := newSaturationMetric([]string{"raft", "thread", "fsm", "saturation"}, 1*time.Second)
 
 	for {
 		saturation.sleeping()
