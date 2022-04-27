@@ -14,18 +14,18 @@ import (
 // Callers must instrument their loop with calls to sleeping and working, starting
 // with a call to sleeping.
 //
-// Note: it is expected that the caller is single-threaded and is not safe for
+// Note: the caller must be single-threaded and saturationMetric is not safe for
 // concurrent use by multiple goroutines.
 type saturationMetric struct {
 	reportInterval time.Duration
 
 	// slept contains time for which the event processing loop was sleeping rather
-	// than working in the last period.
+	// than working in the period since lastReport.
 	slept time.Duration
 
-	// lost contains time that was lost due to incorrect instrumentation of the
-	// event processing loop (e.g. calling sleeping() or working() multiple times
-	// in succession) in the last period.
+	// lost contains time that is considered lost due to incorrect use of
+	// saturationMetricBucket (e.g. calling sleeping() or working() multiple
+	// times in succession) in the period since lastReport.
 	lost time.Duration
 
 	lastReport, sleepBegan, workBegan time.Time
