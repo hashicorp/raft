@@ -159,35 +159,45 @@ func (r *Raft) runFollower() {
 	heartbeatTimer := randomTimeout(r.config().HeartbeatTimeout)
 
 	for r.getState() == Follower {
+		r.mainThreadSaturation.sleeping()
+
 		select {
 		case rpc := <-r.rpcCh:
+			r.mainThreadSaturation.working()
 			r.processRPC(rpc)
 
 		case c := <-r.configurationChangeCh:
+			r.mainThreadSaturation.working()
 			// Reject any operations since we are not the leader
 			c.respond(ErrNotLeader)
 
 		case a := <-r.applyCh:
+			r.mainThreadSaturation.working()
 			// Reject any operations since we are not the leader
 			a.respond(ErrNotLeader)
 
 		case v := <-r.verifyCh:
+			r.mainThreadSaturation.working()
 			// Reject any operations since we are not the leader
 			v.respond(ErrNotLeader)
 
-		case r := <-r.userRestoreCh:
+		case ur := <-r.userRestoreCh:
+			r.mainThreadSaturation.working()
 			// Reject any restores since we are not the leader
-			r.respond(ErrNotLeader)
+			ur.respond(ErrNotLeader)
 
-		case r := <-r.leadershipTransferCh:
+		case l := <-r.leadershipTransferCh:
+			r.mainThreadSaturation.working()
 			// Reject any operations since we are not the leader
-			r.respond(ErrNotLeader)
+			l.respond(ErrNotLeader)
 
 		case c := <-r.configurationsCh:
+			r.mainThreadSaturation.working()
 			c.configurations = r.configurations.Clone()
 			c.respond(nil)
 
 		case b := <-r.bootstrapCh:
+			r.mainThreadSaturation.working()
 			b.respond(r.liveBootstrap(b.configuration))
 
 		case <-r.leaderNotifyCh:
@@ -197,6 +207,7 @@ func (r *Raft) runFollower() {
 			heartbeatTimer = time.After(0)
 
 		case <-heartbeatTimer:
+			r.mainThreadSaturation.working()
 			// Restart the heartbeat timer
 			hbTimeout := r.config().HeartbeatTimeout
 			heartbeatTimer = randomTimeout(hbTimeout)
@@ -290,11 +301,15 @@ func (r *Raft) runCandidate() {
 	r.logger.Debug("votes", "needed", votesNeeded)
 
 	for r.getState() == Candidate {
+		r.mainThreadSaturation.sleeping()
+
 		select {
 		case rpc := <-r.rpcCh:
+			r.mainThreadSaturation.working()
 			r.processRPC(rpc)
 
 		case vote := <-voteCh:
+			r.mainThreadSaturation.working()
 			// Check if the term is greater than ours, bail
 			if vote.Term > r.getCurrentTerm() {
 				r.logger.Debug("newer term discovered, fallback to follower")
@@ -318,30 +333,37 @@ func (r *Raft) runCandidate() {
 			}
 
 		case c := <-r.configurationChangeCh:
+			r.mainThreadSaturation.working()
 			// Reject any operations since we are not the leader
 			c.respond(ErrNotLeader)
 
 		case a := <-r.applyCh:
+			r.mainThreadSaturation.working()
 			// Reject any operations since we are not the leader
 			a.respond(ErrNotLeader)
 
 		case v := <-r.verifyCh:
+			r.mainThreadSaturation.working()
 			// Reject any operations since we are not the leader
 			v.respond(ErrNotLeader)
 
-		case r := <-r.userRestoreCh:
+		case ur := <-r.userRestoreCh:
+			r.mainThreadSaturation.working()
 			// Reject any restores since we are not the leader
-			r.respond(ErrNotLeader)
+			ur.respond(ErrNotLeader)
 
-		case r := <-r.leadershipTransferCh:
+		case l := <-r.leadershipTransferCh:
+			r.mainThreadSaturation.working()
 			// Reject any operations since we are not the leader
-			r.respond(ErrNotLeader)
+			l.respond(ErrNotLeader)
 
 		case c := <-r.configurationsCh:
+			r.mainThreadSaturation.working()
 			c.configurations = r.configurations.Clone()
 			c.respond(nil)
 
 		case b := <-r.bootstrapCh:
+			r.mainThreadSaturation.working()
 			b.respond(ErrCantBootstrap)
 
 		case <-r.leaderNotifyCh:
@@ -354,6 +376,7 @@ func (r *Raft) runCandidate() {
 			}
 
 		case <-electionTimer:
+			r.mainThreadSaturation.working()
 			// Election failed! Restart the election. We simply return,
 			// which will kick us back into runCandidate
 			r.logger.Warn("Election timeout reached, restarting election")
@@ -598,14 +621,19 @@ func (r *Raft) leaderLoop() {
 	lease := time.After(r.config().LeaderLeaseTimeout)
 
 	for r.getState() == Leader {
+		r.mainThreadSaturation.sleeping()
+
 		select {
 		case rpc := <-r.rpcCh:
+			r.mainThreadSaturation.working()
 			r.processRPC(rpc)
 
 		case <-r.leaderState.stepDown:
+			r.mainThreadSaturation.working()
 			r.setState(Follower)
 
 		case future := <-r.leadershipTransferCh:
+			r.mainThreadSaturation.working()
 			if r.getLeadershipTransferInProgress() {
 				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
 				future.respond(ErrLeadershipTransferInProgress)
@@ -686,6 +714,7 @@ func (r *Raft) leaderLoop() {
 			go r.leadershipTransfer(*id, *address, state, stopCh, doneCh)
 
 		case <-r.leaderState.commitCh:
+			r.mainThreadSaturation.working()
 			// Process the newly committed entries
 			oldCommitIndex := r.getCommitIndex()
 			commitIndex := r.leaderState.commitment.getCommitIndex()
@@ -748,6 +777,7 @@ func (r *Raft) leaderLoop() {
 			}
 
 		case v := <-r.verifyCh:
+			r.mainThreadSaturation.working()
 			if v.quorumSize == 0 {
 				// Just dispatched, start the verification
 				r.verifyLeader(v)
@@ -772,6 +802,7 @@ func (r *Raft) leaderLoop() {
 			}
 
 		case future := <-r.userRestoreCh:
+			r.mainThreadSaturation.working()
 			if r.getLeadershipTransferInProgress() {
 				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
 				future.respond(ErrLeadershipTransferInProgress)
@@ -781,6 +812,7 @@ func (r *Raft) leaderLoop() {
 			future.respond(err)
 
 		case future := <-r.configurationsCh:
+			r.mainThreadSaturation.working()
 			if r.getLeadershipTransferInProgress() {
 				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
 				future.respond(ErrLeadershipTransferInProgress)
@@ -790,6 +822,7 @@ func (r *Raft) leaderLoop() {
 			future.respond(nil)
 
 		case future := <-r.configurationChangeChIfStable():
+			r.mainThreadSaturation.working()
 			if r.getLeadershipTransferInProgress() {
 				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
 				future.respond(ErrLeadershipTransferInProgress)
@@ -798,9 +831,11 @@ func (r *Raft) leaderLoop() {
 			r.appendConfigurationEntry(future)
 
 		case b := <-r.bootstrapCh:
+			r.mainThreadSaturation.working()
 			b.respond(ErrCantBootstrap)
 
 		case newLog := <-r.applyCh:
+			r.mainThreadSaturation.working()
 			if r.getLeadershipTransferInProgress() {
 				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
 				newLog.respond(ErrLeadershipTransferInProgress)
@@ -829,6 +864,7 @@ func (r *Raft) leaderLoop() {
 			}
 
 		case <-lease:
+			r.mainThreadSaturation.working()
 			// Check if we've exceeded the lease, potentially stepping down
 			maxDiff := r.checkLeaderLease()
 

@@ -207,6 +207,9 @@ type Raft struct {
 
 	// followerNotifyCh is used to tell followers that config has changed
 	followerNotifyCh chan struct{}
+
+	// mainThreadSaturation measures the saturation of the main raft goroutine.
+	mainThreadSaturation *saturationMetric
 }
 
 // BootstrapCluster initializes a server's storage with the given cluster
@@ -553,6 +556,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		leadershipTransferCh:  make(chan *leadershipTransferFuture, 1),
 		leaderNotifyCh:        make(chan struct{}, 1),
 		followerNotifyCh:      make(chan struct{}, 1),
+		mainThreadSaturation:  newSaturationMetric([]string{"raft", "thread", "main", "saturation"}, 1*time.Second),
 	}
 
 	r.conf.Store(*conf)

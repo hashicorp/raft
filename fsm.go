@@ -223,9 +223,15 @@ func (r *Raft) runFSM() {
 		req.respond(err)
 	}
 
+	saturation := newSaturationMetric([]string{"raft", "thread", "fsm", "saturation"}, 1*time.Second)
+
 	for {
+		saturation.sleeping()
+
 		select {
 		case ptr := <-r.fsmMutateCh:
+			saturation.working()
+
 			switch req := ptr.(type) {
 			case []*commitTuple:
 				applyBatch(req)
@@ -238,6 +244,8 @@ func (r *Raft) runFSM() {
 			}
 
 		case req := <-r.fsmSnapshotCh:
+			saturation.working()
+
 			snapshot(req)
 
 		case <-r.shutdownCh:
