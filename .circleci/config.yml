@@ -5,14 +5,19 @@ workflows:
     jobs:
       - lint
       - go-test:
-          name: test go1.15
-          version: "1.15"
-      - go-test:
           name: test go1.16
           version: "1.16"
       - go-test:
           name: test go1.16 32bit
           version: "1.16"
+          goarch: "386"
+          args: "" # remove -race
+      - go-test:
+          name: test go1.17
+          version: "1.17"
+      - go-test:
+          name: test go1.17 32bit
+          version: "1.17"
           goarch: "386"
           args: "" # remove -race
 
@@ -37,7 +42,7 @@ jobs:
   lint:
     executor:
       name: golang
-      version: "1.16"
+      version: "1.17"
     steps:
       - checkout
       - run: go mod download

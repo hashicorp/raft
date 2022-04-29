@@ -12,7 +12,7 @@ fault tolerance as well.
 
 ## Building
 
-If you wish to build raft you'll need Go version 1.2+ installed.
+If you wish to build raft you'll need Go version 1.16+ installed.
 
 Please check your installation with:
 

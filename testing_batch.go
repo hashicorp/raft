@@ -1,3 +1,4 @@
+//go:build batchtest
 // +build batchtest
 
 package raft
