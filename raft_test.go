@@ -2644,6 +2644,65 @@ func TestRaft_VoteNotGranted_WhenNodeNotInCluster(t *testing.T) {
 	}
 }
 
+// TestRaft_FollowerRemovalNoElection ensures that a leader election is not
+// started when a standby is shut down and restarted.
+func TestRaft_FollowerRemovalNoElection(t *testing.T) {
+	// Make a cluster
+	inmemConf := inmemConfig(t)
+	inmemConf.HeartbeatTimeout = 100 * time.Millisecond
+	inmemConf.ElectionTimeout = 100 * time.Millisecond
+	c := MakeCluster(3, t, inmemConf)
+
+	defer c.Close()
+	waitForLeader(c)
+
+	leader := c.Leader()
+
+	// Wait until we have 2 followers
+	limit := time.Now().Add(c.longstopTimeout)
+	var followers []*Raft
+	for time.Now().Before(limit) && len(followers) != 2 {
+		c.WaitEvent(nil, c.conf.CommitTimeout)
+		followers = c.GetInState(Follower)
+	}
+	if len(followers) != 2 {
+		t.Fatalf("expected two followers: %v", followers)
+	}
+
+	// Disconnect one of the followers and wait for the heartbeat timeout
+	i := 0
+	follower := c.rafts[i]
+	if follower == c.Leader() {
+		i = 1
+		follower = c.rafts[i]
+	}
+	logs := follower.logs
+	t.Logf("[INFO] restarting %v", follower)
+	// Shutdown follower
+	if f := follower.Shutdown(); f.Error() != nil {
+		t.Fatalf("error shuting down follower: %v", f.Error())
+	}
+
+	_, trans := NewInmemTransport(follower.localAddr)
+	conf := follower.config()
+	n, err := NewRaft(&conf, &MockFSM{}, logs, follower.stable, follower.snapshots, trans)
+	if err != nil {
+		t.Fatalf("error restarting follower: %v", err)
+	}
+	c.rafts[i] = n
+	c.trans[i] = n.trans.(*InmemTransport)
+	c.fsms[i] = n.fsm.(*MockFSM)
+	c.FullyConnect()
+	// There should be no re-election during this sleep
+	time.Sleep(250 * time.Millisecond)
+
+	// Let things settle and make sure we recovered.
+	c.EnsureLeader(t, leader.localAddr)
+	c.EnsureSame(t)
+	c.EnsureSamePeers(t)
+	n.Shutdown()
+}
+
 func TestRaft_VoteWithNoIDNoAddr(t *testing.T) {
 	// Make a cluster
 	c := MakeCluster(3, t, nil)
