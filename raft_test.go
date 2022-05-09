@@ -2644,8 +2644,8 @@ func TestRaft_VoteNotGranted_WhenNodeNotInCluster(t *testing.T) {
 func TestRaft_FollowerRemovalNoElection(t *testing.T) {
 	// Make a cluster
 	inmemConf := inmemConfig(t)
-	inmemConf.HeartbeatTimeout = 500 * time.Millisecond
-	inmemConf.ElectionTimeout = 500 * time.Millisecond
+	inmemConf.HeartbeatTimeout = 100 * time.Millisecond
+	inmemConf.ElectionTimeout = 100 * time.Millisecond
 	c := MakeCluster(3, t, inmemConf)
 
 	defer c.Close()
@@ -2677,7 +2677,6 @@ func TestRaft_FollowerRemovalNoElection(t *testing.T) {
 	if f := follower.Shutdown(); f.Error() != nil {
 		t.Fatalf("error shuting down follower: %v", f.Error())
 	}
-	time.Sleep(3 * time.Second)
 
 	_, trans := NewInmemTransport(follower.localAddr)
 	conf := follower.config()
@@ -2690,7 +2689,7 @@ func TestRaft_FollowerRemovalNoElection(t *testing.T) {
 	c.fsms[i] = n.fsm.(*MockFSM)
 	c.FullyConnect()
 	// There should be no re-election during this sleep
-	time.Sleep(2 * time.Second)
+	time.Sleep(250 * time.Millisecond)
 
 	// Let things settle and make sure we recovered.
 	c.EnsureLeader(t, leader.localAddr)
