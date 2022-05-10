@@ -808,6 +808,7 @@ func (r *Raft) ApplyLog(log Log, timeout time.Duration) ApplyFuture {
 		},
 	}
 	logFuture.init()
+	logFuture.deferError.ShutdownCh = r.shutdownCh
 
 	select {
 	case <-timer:
