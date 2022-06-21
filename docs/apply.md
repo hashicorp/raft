@@ -1,7 +1,8 @@
 # Raft Apply
 
-Apply is the primary operation provided by raft.
-
+Apply is the primary operation provided by raft. A client calls `raft.Apply` to apply
+a command to the FSM. If no error is returned, the applied command is commited to a
+quorum of the raft nodes.
 
 This sequence diagram shows the steps involved in a `raft.Apply` operation. Each box
 across the top is a separate thread. The name in the box identifies the state of the peer
@@ -23,7 +24,7 @@ sequenceDiagram
    leadermain->>leadermain: store logs to disk
  
    leadermain-)leaderreplicate: triggerCh
-   leaderreplicate-->>followermain: AppendEntries RPC
+   leaderreplicate-->>followermain: Transport.AppendEntries RPC
  
    followermain->>followermain: store logs to disk
  
@@ -43,3 +44,45 @@ sequenceDiagram
    end
 
 ```
+
+Following is the description of each step as shown in the above diagram
+
+1. The raft node handles the `raft.Apply` call by creating a new log entry and send the entry
+to the `applyCh` channel.
+
+2. If the node is not a leader, the method will return an error of `ErrNotLeader`. Otherwise,
+the main loop of the leader node calls `raft.dispatchLogs` to write the log entry locally.
+
+3. `raft.dispatchLogs` also sends a notification to the `f.triggerCh` of each follower (`map[ServerID]*followerReplication`) to start replicating log entries to the followers.
+
+4. For each follower, the leader has started a long running routine (`replicate`) to
+replicates log entries. On receiving a log entry to the `triggerCh`, the `replicate`
+routine makes the `Transport.AppendEntries` RPC call to do the replicatioin.
+
+5. The follower which receives the `appendEntries` RPC calls invokes `raft.appendEntries` to handle
+the request. It appends any new entries to the local log store.
+
+6. In the same method on the follower as step 5, if the LeaderCommitIndex > this follower's
+commitIndex, start `processLogs` to send all the committed entries that haven't been applied
+to fsm (`fsmMutateCh <- batch`).
+
+7. The peer applies the commited entries to the FSM.
+
+8. If all went well, the follower responds success (`resp.Success = true`) to the 
+`appendEntries` RPC call.
+
+9. On receiving the successful response from `Transport.AppendEntries`, the leader needs to
+update the fsm based on the replicated log entries. Specifically, the leader finds the
+highest log entry index that has been replicated to a quorum of the servers (
+`if quorumMatchIndex > c.commitIndex`), update `commitIndex` to that index, and
+notify through the `commitCh` channel.
+
+10. The leader receives the notification on the  `r.leaderState.commitCh` channel and starts
+grouping the entries that can be applied to the fsm.
+
+11. `processLogs` applies all the committed entries that haven't been applied by batching the log entries and forwarding them through the `fsmMutateCh` channel to fsm.
+
+12. The actual place applying the commited log entries is in the main loop of `runFSM()`.
+
+13. After the log entries that contains the client req are applied to the fsm, the fsm
+module will set the reponses to the client request (`req.future.respond(nil)`).
