@@ -57,7 +57,7 @@ the main loop of the leader node calls `raft.dispatchLogs` to write the log entr
 
 4. For each follower, the leader has started a long running routine (`replicate`) to
 replicates log entries. On receiving a log entry to the `triggerCh`, the `replicate`
-routine makes the `Transport.AppendEntries` RPC call to do the replicatioin.
+routine makes the `Transport.AppendEntries` RPC call to do the replication.
 
 5. The follower which receives the `appendEntries` RPC calls invokes `raft.appendEntries` to handle
 the request. It appends any new entries to the local log store.
