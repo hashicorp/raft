@@ -1,8 +1,8 @@
 # Raft Apply
 
 Apply is the primary operation provided by raft. A client calls `raft.Apply` to apply
-a command to the FSM. If no error is returned, the applied command is commited to a
-quorum of the raft nodes.
+a command to the FSM. The command will first be commited, i.e., duraly stored on a
+quorum of raft nodes. Then, the committed command is applied to fsm.
 
 This sequence diagram shows the steps involved in a `raft.Apply` operation. Each box
 across the top is a separate thread. The name in the box identifies the state of the peer
@@ -85,4 +85,6 @@ grouping the entries that can be applied to the fsm.
 12. The actual place applying the commited log entries is in the main loop of `runFSM()`.
 
 13. After the log entries that contains the client req are applied to the fsm, the fsm
-module will set the reponses to the client request (`req.future.respond(nil)`).
+module will set the reponses to the client request (`req.future.respond(nil)`). From the
+client's point of view, the future returned by `raft.Apply` should now be unblocked and
+calls to `Error()` or `Response()` should return the data at this point.
