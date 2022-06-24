@@ -1,7 +1,7 @@
 # Raft Apply
 
 Apply is the primary operation provided by raft. A client calls `raft.Apply` to apply
-a command to the FSM. The command will first be commited, i.e., duraly stored on a
+a command to the FSM. A command will first be commited, i.e., duraly stored on a
 quorum of raft nodes. Then, the committed command is applied to fsm.
 
 This sequence diagram shows the steps involved in a `raft.Apply` operation. Each box
@@ -57,14 +57,40 @@ the main loop of the leader node calls `raft.dispatchLogs` to write the log entr
 
 4. For each follower, the leader has started a long running routine (`replicate`) to
 replicates log entries. On receiving a log entry to the `triggerCh`, the `replicate`
-routine makes the `Transport.AppendEntries` RPC call to do the replication.
+routine makes the `Transport.AppendEntries` RPC call to do the replication. The log entries
+to be replicated are from the follower's nextIndex to min(nextIndex + maxAppendEntries, 
+leader's lastIndex). Another parameter to AppendEntries is the LeaderCommitIndex. Following
+is some examples:
+
+```
+AppenEntries(Log: 1..5, LeaderCommitIndex: 0)    // Replicating log entries 1..5, 
+                                                 // the leader hasn't committed any log entry;
+AppendEntries(Log: 6..8, LeaderCommitIndex: 4)   // Replicating log entries 6..8,
+                                                 // log 0..4 are committed after the leader receives
+                                                 // a quorum of responses
+AppendEntries(Log: 9, LeaderCommitIndex: 8)      // Replicating log entry 9,
+                                                 // log 5..8 are committed.
+AppendEntries(Log: , LeaderCommitIndex: 9)       // no new log, bumping the commit index
+                                                 // to let the follower stay up to date of the
+                                                 // latest committed entries
+```
 
 5. The follower which receives the `appendEntries` RPC calls invokes `raft.appendEntries` to handle
 the request. It appends any new entries to the local log store.
 
 6. In the same method on the follower as step 5, if the LeaderCommitIndex > this follower's
-commitIndex, start `processLogs` to send all the committed entries that haven't been applied
-to fsm (`fsmMutateCh <- batch`).
+commitIndex, the follower updates it's commitIndex to min(LeaderCommitIndex, index of its last
+log entries). In the first `AppendEntries` call of the above example, the follower won't
+update it's commitIndex, because LeaderCommitIndex is 0. The last RPC call doesn't contain
+any new log, whereas the follower will update its commitIndex to 9.
+
+Further, the follower start `processLogs` to send all the committed entries that haven't been
+applied to fsm (`fsmMutateCh <- batch`). Otherwise (i.e., `commitIndex <= lastApplied`),
+the appendEntries RPC call returns success.
+
+Therefore, it's possible that a very small window of time exists when all followers have
+committed the log to disk, the write has been realized in the FSM of the leader but the
+followers have not yet applied the log to their FSM.
 
 7. The peer applies the commited entries to the FSM.
 
