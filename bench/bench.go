@@ -6,8 +6,9 @@ package raftbench
 // makes comparing backend performance easier by sharing the tests.
 
 import (
-	"github.com/hashicorp/raft"
 	"testing"
+
+	"github.com/hashicorp/raft"
 )
 
 func FirstIndex(b *testing.B, store raft.LogStore) {
@@ -164,7 +165,7 @@ func GetUint64(b *testing.B, store raft.StableStore) {
 
 	// Run GetUint64 a number of times
 	for n := 0; n < b.N; n++ {
-		if _, err := store.Get([]byte{0x05}); err != nil {
+		if _, err := store.GetUint64([]byte{0x05}); err != nil {
 			b.Fatalf("err: %s", err)
 		}
 	}
