@@ -279,7 +279,8 @@ func (r *Raft) liveBootstrap(configuration Configuration) error {
 
 // runCandidate runs the main loop while in the candidate state.
 func (r *Raft) runCandidate() {
-	r.logger.Info("entering candidate state", "node", r, "term", r.getCurrentTerm()+1)
+	term := r.getCurrentTerm() + 1
+	r.logger.Info("entering candidate state", "node", r, "term", term)
 	metrics.IncrCounter([]string{"raft", "state", "candidate"}, 1)
 
 	// Start vote for us, and set a timeout
@@ -298,7 +299,7 @@ func (r *Raft) runCandidate() {
 	// Tally the votes, need a simple majority
 	grantedVotes := 0
 	votesNeeded := r.quorumSize()
-	r.logger.Debug("votes", "needed", votesNeeded)
+	r.logger.Debug("calculated votes needed", "needed", votesNeeded, "term", term)
 
 	for r.getState() == Candidate {
 		r.mainThreadSaturation.sleeping()
@@ -312,7 +313,7 @@ func (r *Raft) runCandidate() {
 			r.mainThreadSaturation.working()
 			// Check if the term is greater than ours, bail
 			if vote.Term > r.getCurrentTerm() {
-				r.logger.Debug("newer term discovered, fallback to follower")
+				r.logger.Debug("newer term discovered, fallback to follower", "term", vote.Term)
 				r.setState(Follower)
 				r.setCurrentTerm(vote.Term)
 				return
@@ -326,7 +327,7 @@ func (r *Raft) runCandidate() {
 
 			// Check if we've become the leader
 			if grantedVotes >= votesNeeded {
-				r.logger.Info("election won", "tally", grantedVotes)
+				r.logger.Info("election won", "term", vote.Term, "tally", grantedVotes)
 				r.setState(Leader)
 				r.setLeader(r.localAddr, r.localID)
 				return
@@ -1829,7 +1830,8 @@ func (r *Raft) electSelf() <-chan *voteResult {
 			if err != nil {
 				r.logger.Error("failed to make requestVote RPC",
 					"target", peer,
-					"error", err)
+					"error", err,
+					"term", req.Term)
 				resp.Term = req.Term
 				resp.Granted = false
 			}
@@ -1841,6 +1843,7 @@ func (r *Raft) electSelf() <-chan *voteResult {
 	for _, server := range r.configurations.latest.Servers {
 		if server.Suffrage == Voter {
 			if server.ID == r.localID {
+				r.logger.Debug("voting for self", "term", req.Term, "id", r.localID)
 				// Persist a vote for ourselves
 				if err := r.persistVote(req.Term, req.RPCHeader.Addr); err != nil {
 					r.logger.Error("failed to persist vote", "error", err)
@@ -1856,6 +1859,7 @@ func (r *Raft) electSelf() <-chan *voteResult {
 					voterID: r.localID,
 				}
 			} else {
+				r.logger.Debug("asking for vote", "term", req.Term, "from", server.ID, "address", server.Address)
 				askPeer(server)
 			}
 		}
