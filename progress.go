@@ -100,7 +100,7 @@ type countingReader struct {
 
 func (r *countingReader) Read(p []byte) (n int, err error) {
 	n, err = r.reader.Read(p)
-	atomic.StoreInt64(&r.bytes, atomic.AddInt64(&r.bytes, int64(n)))
+	atomic.AddInt64(&r.bytes, int64(n))
 	return n, err
 }
 
