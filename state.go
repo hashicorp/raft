@@ -91,34 +91,22 @@ func (r *raftState) setCurrentTerm(term uint64) {
 	atomic.StoreUint64(&r.currentTerm, term)
 }
 
-func (r *raftState) getLastLog() (index, term uint64) {
-	r.lastLock.Lock()
-	index = r.lastLogIndex
-	term = r.lastLogTerm
-	r.lastLock.Unlock()
-	return
+func (r *raftState) getLastLog() (uint64, uint64) {
+	return atomic.LoadUint64(&r.lastLogIndex), atomic.LoadUint64(&r.lastLogTerm)
 }
 
 func (r *raftState) setLastLog(index, term uint64) {
-	r.lastLock.Lock()
-	r.lastLogIndex = index
-	r.lastLogTerm = term
-	r.lastLock.Unlock()
+	atomic.StoreUint64(&r.lastLogIndex, index)
+	atomic.StoreUint64(&r.lastLogTerm, term)
 }
 
-func (r *raftState) getLastSnapshot() (index, term uint64) {
-	r.lastLock.Lock()
-	index = r.lastSnapshotIndex
-	term = r.lastSnapshotTerm
-	r.lastLock.Unlock()
-	return
+func (r *raftState) getLastSnapshot() (uint64, uint64) {
+	return atomic.LoadUint64(&r.lastSnapshotIndex), atomic.LoadUint64(&r.lastSnapshotTerm)
 }
 
 func (r *raftState) setLastSnapshot(index, term uint64) {
-	r.lastLock.Lock()
-	r.lastSnapshotIndex = index
-	r.lastSnapshotTerm = term
-	r.lastLock.Unlock()
+	atomic.StoreUint64(&r.lastSnapshotIndex, index)
+	atomic.StoreUint64(&r.lastSnapshotTerm, term)
 }
 
 func (r *raftState) getCommitIndex() uint64 {
@@ -154,9 +142,9 @@ func (r *raftState) waitShutdown() {
 // getLastIndex returns the last index in stable storage.
 // Either from the last log or from the last snapshot.
 func (r *raftState) getLastIndex() uint64 {
-	r.lastLock.Lock()
-	defer r.lastLock.Unlock()
-	return max(r.lastLogIndex, r.lastSnapshotIndex)
+	logIndex := atomic.LoadUint64(&r.lastLogIndex)
+	snapIndex := atomic.LoadUint64(&r.lastSnapshotIndex)
+	return max(logIndex, snapIndex)
 }
 
 // getLastEntry returns the last index and term in stable storage.

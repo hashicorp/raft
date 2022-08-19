@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	hclog "github.com/hashicorp/go-hclog"
@@ -94,23 +95,17 @@ type CountingReader interface {
 
 type countingReader struct {
 	reader io.Reader
-
-	mu    sync.Mutex
-	bytes int64
+	bytes  int64
 }
 
 func (r *countingReader) Read(p []byte) (n int, err error) {
 	n, err = r.reader.Read(p)
-	r.mu.Lock()
-	r.bytes += int64(n)
-	r.mu.Unlock()
+	atomic.StoreInt64(&r.bytes, atomic.AddInt64(&r.bytes, int64(n)))
 	return n, err
 }
 
 func (r *countingReader) Count() int64 {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.bytes
+	return atomic.LoadInt64(&r.bytes)
 }
 
 func newCountingReader(r io.Reader) *countingReader {
