@@ -1375,7 +1375,19 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		rpc.Respond(resp, rpcErr)
 	}()
 
-	// Ignore an older term
+	// this use case would happen when a node was a voter and is added back to the cluster as non voter,
+	// it term could be higher then the cluster, but because it's a non voter that term need to be discarded
+	// in favor of the cluster current term to keep the cluster stable, as an election don't need to be started
+	// by a node which don't have voting rights.
+	currentTerm := r.getCurrentTerm()
+	hasVote := hasVote(r.configurations.latest, r.localID)
+	if a.Term < currentTerm && !hasVote {
+		r.setState(Follower)
+		r.setCurrentTerm(a.Term)
+		resp.Term = a.Term
+	}
+
+	// if a node is a voter, Ignore an older term
 	if a.Term < r.getCurrentTerm() {
 		return
 	}
@@ -1410,7 +1422,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 					"previous-index", a.PrevLogEntry,
 					"last-index", lastIdx,
 					"error", err)
-				resp.NoRetryBackoff = true
+				resp.NoRetryBackoff = hasVote
 				return
 			}
 			prevLogTerm = prevLog.Term

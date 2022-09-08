@@ -233,7 +233,7 @@ START:
 	appendStats(string(peer.ID), start, float32(len(req.Entries)))
 
 	// Check for a newer term, stop running
-	if resp.Term > req.Term {
+	if resp.Term > req.Term && s.peer.Suffrage != Nonvoter {
 		r.handleStaleTerm(s)
 		return true
 	}

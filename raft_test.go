@@ -2644,6 +2644,85 @@ func TestRaft_VoteNotGranted_WhenNodeNotInCluster(t *testing.T) {
 	}
 }
 
+func TestRaft_StabilityIsKept_WhenNonVoterWithHigherTermJoin(t *testing.T) {
+	// Make a cluster
+	c := MakeCluster(3, t, nil)
+
+	defer c.Close()
+
+	// Get the leader
+	leader := c.Leader()
+
+	// Wait until we have 2 followers
+	limit := time.Now().Add(c.longstopTimeout)
+	var followers []*Raft
+	for time.Now().Before(limit) && len(followers) != 2 {
+		c.WaitEvent(nil, c.conf.CommitTimeout)
+		followers = c.GetInState(Follower)
+	}
+	if len(followers) != 2 {
+		t.Fatalf("expected two followers: %v", followers)
+	}
+
+	// Remove a follower
+	followerRemoved := followers[0]
+	future := leader.RemoveServer(followerRemoved.localID, 0, 0)
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	//set that follower term to higher term to simulate a partitioning
+	followerRemoved.setCurrentTerm(leader.getCurrentTerm() + 100)
+
+	//Add the node back as NonVoter
+	future = leader.AddNonvoter(followerRemoved.localID, followerRemoved.localAddr, 0, 0)
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	// Wait a while
+	time.Sleep(c.propagateTimeout * 100)
+
+	//Write some logs to ensure they replicate
+	for i := 0; i < 100; i++ {
+		future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+		if err := future.Error(); err != nil {
+			t.Fatalf("[ERR] apply err: %v", err)
+		}
+	}
+	c.WaitForReplication(100)
+
+	// Check leader stable
+	newLeader := c.Leader()
+	if newLeader.leaderID != leader.leaderID {
+		t.Fatalf("leader changed")
+	}
+
+	//Remove the server and add it back as Voter
+	future = leader.RemoveServer(followerRemoved.localID, 0, 0)
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	leader.AddVoter(followerRemoved.localID, followerRemoved.localAddr, 0, 0)
+
+	// Wait a while
+	time.Sleep(c.propagateTimeout * 10)
+
+	//Write some logs to ensure they replicate
+	for i := 100; i < 200; i++ {
+		future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+		if err := future.Error(); err != nil {
+			t.Fatalf("[ERR] apply err: %v", err)
+		}
+	}
+	c.WaitForReplication(200)
+
+	// Check leader stable
+	newLeader = c.Leader()
+	if newLeader.leaderID != leader.leaderID {
+		t.Fatalf("leader changed")
+	}
+}
+
 // TestRaft_FollowerRemovalNoElection ensures that a leader election is not
 // started when a standby is shut down and restarted.
 func TestRaft_FollowerRemovalNoElection(t *testing.T) {
