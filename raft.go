@@ -1380,7 +1380,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	// in favor of the cluster current term to keep the cluster stable, as an election don't need to be started
 	// by a node which don't have voting rights.
 	currentTerm := r.getCurrentTerm()
-	hasVote := hasVote(r.configurations.latest, r.localID)
+	hasVote := hasVote(r.getLatestConfiguration(), r.localID)
 	if a.Term < currentTerm && !hasVote {
 		r.setState(Follower)
 		r.setCurrentTerm(a.Term)
