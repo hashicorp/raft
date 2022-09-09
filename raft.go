@@ -1363,6 +1363,7 @@ func (r *Raft) processHeartbeat(rpc RPC) {
 func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "appendEntries"}, time.Now())
 	// Setup a response
+	noRetryBackoffIfErr := true
 	resp := &AppendEntriesResponse{
 		RPCHeader:      r.getRPCHeader(),
 		Term:           r.getCurrentTerm(),
@@ -1381,10 +1382,14 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	// by a node which don't have voting rights.
 	currentTerm := r.getCurrentTerm()
 	hasVote := hasVote(r.getLatestConfiguration(), r.localID)
-	if a.Term < currentTerm && !hasVote {
+	if a.Term < currentTerm && !hasVote && a.PrevLogTerm >= r.lastLogTerm {
+		r.logger.Warn("older term sent to non-voter", "PrevLogTerm", a.PrevLogTerm,
+			"lastLogTerm", r.lastLogTerm,
+			" Term", a.Term, "currentTerm", currentTerm)
 		r.setState(Follower)
 		r.setCurrentTerm(a.Term)
 		resp.Term = a.Term
+		noRetryBackoffIfErr = false
 	}
 
 	// if a node is a voter, Ignore an older term
@@ -1422,7 +1427,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 					"previous-index", a.PrevLogEntry,
 					"last-index", lastIdx,
 					"error", err)
-				resp.NoRetryBackoff = hasVote
+				resp.NoRetryBackoff = noRetryBackoffIfErr
 				return
 			}
 			prevLogTerm = prevLog.Term
