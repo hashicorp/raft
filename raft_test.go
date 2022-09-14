@@ -2675,7 +2675,7 @@ func TestRaft_ClusterCanRegainStability_WhenNonVoterWithHigherTermJoin(t *testin
 	}
 
 	//set that follower term to higher term to simulate a partitioning
-	followerRemoved.setCurrentTerm(leader.getCurrentTerm() + 2)
+	followerRemoved.setCurrentTerm(leader.getCurrentTerm() + 20)
 	//Add the node back as NonVoter
 	future = leader.AddNonvoter(followerRemoved.localID, followerRemoved.localAddr, 0, 0)
 	if err := future.Error(); err != nil {
