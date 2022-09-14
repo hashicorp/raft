@@ -1566,8 +1566,8 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 		candidateID := ServerID(req.ID)
 		// if the Servers list is empty that mean the cluster is very likely trying to bootstrap,
 		// Grant the vote
-		if len(r.configurations.latest.Servers) > 0 && !hasVote(r.configurations.latest, candidateID) {
-			r.logger.Warn("rejecting vote request since node is not a voter",
+		if len(r.configurations.latest.Servers) > 0 && !inConfiguration(r.configurations.latest, candidateID) {
+			r.logger.Warn("rejecting vote request since node is not in configuration",
 				"from", candidate)
 			return
 		}
