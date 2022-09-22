@@ -1594,6 +1594,16 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 		resp.Term = req.Term
 	}
 
+	// if we get a request for vote from a nonVoter  and the request term is higher,
+	// step down and update term, but reject the vote request
+	// This could happen when a node, previously voter, is converted to non-voter
+	if len(req.ID) > 0 {
+		candidateID := ServerID(req.ID)
+		if len(r.configurations.latest.Servers) > 0 && !hasVote(r.configurations.latest, candidateID) {
+			r.logger.Warn("rejecting vote request since node is not a voter", "from", candidate)
+			return
+		}
+	}
 	// Check if we have voted yet
 	lastVoteTerm, err := r.stable.GetUint64(keyLastVoteTerm)
 	if err != nil && err.Error() != "not found" {
