@@ -2674,8 +2674,9 @@ func TestRaft_ClusterCanRegainStability_WhenNonVoterWithHigherTermJoin(t *testin
 		t.Fatalf("err: %v", err)
 	}
 
-	//set that follower term to higher term to simulate a partitioning
-	followerRemoved.setCurrentTerm(leader.getCurrentTerm() + 20)
+	//set that follower term to higher term to faster simulate a partitioning
+	newTerm := leader.getCurrentTerm() + 20
+	followerRemoved.setCurrentTerm(newTerm)
 	//Add the node back as NonVoter
 	future = leader.AddNonvoter(followerRemoved.localID, followerRemoved.localAddr, 0, 0)
 	if err := future.Error(); err != nil {
@@ -2686,8 +2687,18 @@ func TestRaft_ClusterCanRegainStability_WhenNonVoterWithHigherTermJoin(t *testin
 
 	// Wait a while
 	time.Sleep(c.propagateTimeout)
-	// Check leader stable, could be a new leader here
+	// Check the term is now a new term
 	leader = c.Leader()
+	currentTerm := leader.getCurrentTerm()
+	if newTerm > currentTerm {
+		t.Fatalf("term should have changed,%d < %d", newTerm, currentTerm)
+	}
+
+	// check nonVoter is not elected
+	if leader.localID == followerRemoved.localID {
+		t.Fatalf("Should not be leader %s", followerRemoved.localID)
+	}
+
 	//Write some logs to ensure they replicate
 	for i := 0; i < 100; i++ {
 		future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
