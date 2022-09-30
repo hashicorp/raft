@@ -1597,6 +1597,8 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// if we get a request for vote from a nonVoter  and the request term is higher,
 	// step down and update term, but reject the vote request
 	// This could happen when a node, previously voter, is converted to non-voter
+	// The reason we need to step in is to permit to the cluster to make progress in such a scenario
+	// More details about that in https://github.com/hashicorp/raft/pull/526
 	if len(req.ID) > 0 {
 		candidateID := ServerID(req.ID)
 		if len(r.configurations.latest.Servers) > 0 && !hasVote(r.configurations.latest, candidateID) {
