@@ -3013,7 +3013,6 @@ func TestRaft_VoteWithNoIDNoAddr(t *testing.T) {
 	var resp RequestVoteResponse
 	followerT := c.trans[c.IndexOf(followers[1])]
 	c.Partition([]ServerAddress{leader.localAddr})
-	time.Sleep(c.propagateTimeout)
 
 	// wait for the remaining follower to trigger an election
 	waitForState(follower, Candidate)
