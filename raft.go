@@ -286,13 +286,7 @@ func (r *Raft) runCandidate() {
 	metrics.IncrCounter([]string{"raft", "state", "candidate"}, 1)
 
 	// Start vote for us, and set a timeout
-	var voteCh <-chan *voteResult
-	var prevoteCh <-chan *voteResult
-	if r.preVote {
-		prevoteCh = r.electSelf(true)
-	} else {
-		voteCh = r.electSelf(false)
-	}
+	prevoteCh := r.electSelf(true)
 
 	// Make sure the leadership transfer flag is reset after each run. Having this
 	// flag will set the field LeadershipTransfer in a RequestVoteRequst to true,
@@ -309,7 +303,7 @@ func (r *Raft) runCandidate() {
 	preVoteGrantedVotes := 0
 	votesNeeded := r.quorumSize()
 	r.logger.Debug("calculated votes needed", "needed", votesNeeded, "term", term)
-
+	var voteCh <-chan *voteResult
 	for r.getState() == Candidate {
 		r.mainThreadSaturation.sleeping()
 
@@ -336,6 +330,17 @@ func (r *Raft) runCandidate() {
 				return
 			}
 
+		case vote := <-prevoteCh:
+			r.mainThreadSaturation.working()
+			r.logger.Debug("got a prevote!!", "from", vote.voterID, "term", vote.Term, "tally", grantedVotes)
+			// Check if the term is greater than ours, bail
+			if vote.Term > r.getCurrentTerm() && !vote.PreVote {
+				r.logger.Debug("newer term discovered, fallback to follower", "term", vote.Term)
+				r.setState(Follower)
+				r.setCurrentTerm(vote.Term)
+				return
+			}
+
 			// Check if the vote is granted
 			if vote.Granted {
 				if !vote.PreVote {
@@ -348,25 +353,18 @@ func (r *Raft) runCandidate() {
 			}
 
 			// Check if we've become the leader
-			// If we won the election because the majority of nodes don't support pre-vote (or pre-vote is deactivated)
-			// set our state to leader and our term to the pre-vote term.
-			// we only need votesNeeded-1 as our vote was cast as a prevote and if we have  votesNeeded-1
-			// we can flip our vote to an actual vote.
-			if grantedVotes >= votesNeeded-1 {
+			if grantedVotes >= votesNeeded {
 				r.logger.Info("election won", "term", vote.Term, "tally", grantedVotes)
 				r.setState(Leader)
 				r.setLeader(r.localAddr, r.localID)
-
-				r.setCurrentTerm(term)
+				//r.setCurrentTerm(term)
 				return
 			}
-			// Check if we've won the pre-vote and proceed to election if so
-			if preVoteGrantedVotes+grantedVotes >= votesNeeded {
-				r.logger.Info("pre election won", "term", vote.Term, "tally", preVoteGrantedVotes, "votesNeeded", votesNeeded-1)
+			// Check if we've become the leader
+			if preVoteGrantedVotes >= votesNeeded {
+				r.logger.Info("pre election won", "term", vote.Term, "tally", preVoteGrantedVotes)
 				preVoteGrantedVotes = 0
 				grantedVotes = 0
-				electionTimer = randomTimeout(electionTimeout)
-				prevoteCh = nil
 				voteCh = r.electSelf(false)
 			}
 		case vote := <-voteCh:
@@ -1618,7 +1616,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 		RPCHeader: r.getRPCHeader(),
 		Term:      r.getCurrentTerm(),
 		Granted:   false,
-		PreVote:   preVote,
+		PreVote:   req.PreVote,
 	}
 	var rpcErr error
 	defer func() {
@@ -1674,7 +1672,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	if req.Term > r.getCurrentTerm() {
 		// Ensure transition to follower
 		r.logger.Debug("lost leadership because received a requestVote with a newer term")
-		if !preVote {
+		if !req.PreVote {
 			r.setState(Follower)
 			r.setCurrentTerm(req.Term)
 		}
@@ -1734,7 +1732,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	}
 
 	// Persist a vote for safety
-	if !preVote {
+	if !req.PreVote {
 		if err := r.persistVote(req.Term, candidateBytes); err != nil {
 			r.logger.Error("failed to persist vote", "error", err)
 			return
@@ -1942,6 +1940,7 @@ func (r *Raft) electSelf(preVote bool) <-chan *voteResult {
 				resp.Granted = false
 				resp.PreVote = req.PreVote
 			}
+			r.logger.Warn("dhayachi::", "prevote-req", req.PreVote, "resp-prevote", resp.PreVote)
 			respCh <- resp
 		})
 	}
@@ -1991,6 +1990,7 @@ func (r *Raft) persistVote(term uint64, candidate []byte) error {
 
 // setCurrentTerm is used to set the current term in a durable manner.
 func (r *Raft) setCurrentTerm(t uint64) {
+	r.logger.Warn("dhayachi setting term", "term", t)
 	// Persist to disk first
 	if err := r.stable.SetUint64(keyCurrentTerm, t); err != nil {
 		panic(fmt.Errorf("failed to save current term: %v", err))
