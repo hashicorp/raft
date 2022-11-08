@@ -89,6 +89,7 @@ type RequestVoteRequest struct {
 	// transfer. It is required for leadership transfer to work, because servers
 	// wouldn't vote otherwise if they are aware of an existing leader.
 	LeadershipTransfer bool
+	PreVote            bool
 }
 
 // GetRPCHeader - See WithRPCHeader.
@@ -110,6 +111,9 @@ type RequestVoteResponse struct {
 
 	// Is the vote granted.
 	Granted bool
+
+	// Is it a preVote response
+	PreVote bool
 }
 
 // GetRPCHeader - See WithRPCHeader.

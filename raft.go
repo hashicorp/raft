@@ -284,7 +284,7 @@ func (r *Raft) runCandidate() {
 	metrics.IncrCounter([]string{"raft", "state", "candidate"}, 1)
 
 	// Start vote for us, and set a timeout
-	voteCh := r.electSelf()
+	prevoteCh := r.electSelf(true)
 
 	// Make sure the leadership transfer flag is reset after each run. Having this
 	// flag will set the field LeadershipTransfer in a RequestVoteRequst to true,
@@ -298,9 +298,10 @@ func (r *Raft) runCandidate() {
 
 	// Tally the votes, need a simple majority
 	grantedVotes := 0
+	preVoteGrantedVotes := 0
 	votesNeeded := r.quorumSize()
 	r.logger.Debug("calculated votes needed", "needed", votesNeeded, "term", term)
-
+	var voteCh <-chan *voteResult
 	for r.getState() == Candidate {
 		r.mainThreadSaturation.sleeping()
 
@@ -309,6 +310,43 @@ func (r *Raft) runCandidate() {
 			r.mainThreadSaturation.working()
 			r.processRPC(rpc)
 
+		case vote := <-prevoteCh:
+			r.mainThreadSaturation.working()
+			r.logger.Debug("got a prevote!!", "from", vote.voterID, "term", vote.Term, "tally", grantedVotes)
+			// Check if the term is greater than ours, bail
+			if vote.Term > r.getCurrentTerm() && !vote.PreVote {
+				r.logger.Debug("newer term discovered, fallback to follower", "term", vote.Term)
+				r.setState(Follower)
+				r.setCurrentTerm(vote.Term)
+				return
+			}
+
+			// Check if the vote is granted
+			if vote.Granted {
+				if !vote.PreVote {
+					grantedVotes++
+					r.logger.Debug("vote granted", "from", vote.voterID, "term", vote.Term, "tally", grantedVotes)
+				} else {
+					preVoteGrantedVotes++
+					r.logger.Debug("prevote granted", "from", vote.voterID, "term", vote.Term, "tally", preVoteGrantedVotes)
+				}
+			}
+
+			// Check if we've become the leader
+			if grantedVotes >= votesNeeded {
+				r.logger.Info("election won", "term", vote.Term, "tally", grantedVotes)
+				r.setState(Leader)
+				r.setLeader(r.localAddr, r.localID)
+				//r.setCurrentTerm(term)
+				return
+			}
+			// Check if we've become the leader
+			if preVoteGrantedVotes >= votesNeeded {
+				r.logger.Info("pre election won", "term", vote.Term, "tally", preVoteGrantedVotes)
+				preVoteGrantedVotes = 0
+				grantedVotes = 0
+				voteCh = r.electSelf(false)
+			}
 		case vote := <-voteCh:
 			r.mainThreadSaturation.working()
 			// Check if the term is greater than ours, bail
@@ -332,7 +370,6 @@ func (r *Raft) runCandidate() {
 				r.setLeader(r.localAddr, r.localID)
 				return
 			}
-
 		case c := <-r.configurationChangeCh:
 			r.mainThreadSaturation.working()
 			// Reject any operations since we are not the leader
@@ -1534,6 +1571,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 		RPCHeader: r.getRPCHeader(),
 		Term:      r.getCurrentTerm(),
 		Granted:   false,
+		PreVote:   req.PreVote,
 	}
 	var rpcErr error
 	defer func() {
@@ -1589,8 +1627,10 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	if req.Term > r.getCurrentTerm() {
 		// Ensure transition to follower
 		r.logger.Debug("lost leadership because received a requestVote with a newer term")
-		r.setState(Follower)
-		r.setCurrentTerm(req.Term)
+		if !req.PreVote {
+			r.setState(Follower)
+			r.setCurrentTerm(req.Term)
+		}
 		resp.Term = req.Term
 	}
 
@@ -1621,7 +1661,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// Check if we've voted in this election before
 	if lastVoteTerm == req.Term && lastVoteCandBytes != nil {
 		r.logger.Info("duplicate requestVote for same term", "term", req.Term)
-		if bytes.Compare(lastVoteCandBytes, candidateBytes) == 0 {
+		if bytes.Equal(lastVoteCandBytes, candidateBytes) {
 			r.logger.Warn("duplicate requestVote from", "candidate", candidate)
 			resp.Granted = true
 		}
@@ -1647,14 +1687,14 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	}
 
 	// Persist a vote for safety
-	if err := r.persistVote(req.Term, candidateBytes); err != nil {
-		r.logger.Error("failed to persist vote", "error", err)
-		return
+	if !req.PreVote {
+		if err := r.persistVote(req.Term, candidateBytes); err != nil {
+			r.logger.Error("failed to persist vote", "error", err)
+			return
+		}
 	}
-
 	resp.Granted = true
 	r.setLastContact()
-	return
 }
 
 // installSnapshot is invoked when we get a InstallSnapshot RPC call.
@@ -1814,23 +1854,26 @@ type voteResult struct {
 // ourself. This has the side affecting of incrementing the current term. The
 // response channel returned is used to wait for all the responses (including a
 // vote for ourself). This must only be called from the main thread.
-func (r *Raft) electSelf() <-chan *voteResult {
+func (r *Raft) electSelf(preVote bool) <-chan *voteResult {
 	// Create a response channel
 	respCh := make(chan *voteResult, len(r.configurations.latest.Servers))
 
 	// Increment the term
-	r.setCurrentTerm(r.getCurrentTerm() + 1)
-
+	newTerm := r.getCurrentTerm() + 1
+	if !preVote {
+		r.setCurrentTerm(newTerm)
+	}
 	// Construct the request
 	lastIdx, lastTerm := r.getLastEntry()
 	req := &RequestVoteRequest{
 		RPCHeader: r.getRPCHeader(),
-		Term:      r.getCurrentTerm(),
+		Term:      newTerm,
 		// this is needed for retro compatibility, before RPCHeader.Addr was added
 		Candidate:          r.trans.EncodePeer(r.localID, r.localAddr),
 		LastLogIndex:       lastIdx,
 		LastLogTerm:        lastTerm,
 		LeadershipTransfer: r.candidateFromLeadershipTransfer,
+		PreVote:            preVote,
 	}
 
 	// Construct a function to ask for a vote
@@ -1846,7 +1889,9 @@ func (r *Raft) electSelf() <-chan *voteResult {
 					"term", req.Term)
 				resp.Term = req.Term
 				resp.Granted = false
+				resp.PreVote = req.PreVote
 			}
+			r.logger.Warn("dhayachi::", "prevote-req", req.PreVote, "resp-prevote", resp.PreVote)
 			respCh <- resp
 		})
 	}
@@ -1857,9 +1902,11 @@ func (r *Raft) electSelf() <-chan *voteResult {
 			if server.ID == r.localID {
 				r.logger.Debug("voting for self", "term", req.Term, "id", r.localID)
 				// Persist a vote for ourselves
-				if err := r.persistVote(req.Term, req.RPCHeader.Addr); err != nil {
-					r.logger.Error("failed to persist vote", "error", err)
-					return nil
+				if !preVote {
+					if err := r.persistVote(req.Term, req.RPCHeader.Addr); err != nil {
+						r.logger.Error("failed to persist vote", "error", err)
+						return nil
+					}
 				}
 				// Include our own vote
 				respCh <- &voteResult{
@@ -1867,6 +1914,7 @@ func (r *Raft) electSelf() <-chan *voteResult {
 						RPCHeader: r.getRPCHeader(),
 						Term:      req.Term,
 						Granted:   true,
+						PreVote:   req.PreVote,
 					},
 					voterID: r.localID,
 				}
@@ -1893,6 +1941,7 @@ func (r *Raft) persistVote(term uint64, candidate []byte) error {
 
 // setCurrentTerm is used to set the current term in a durable manner.
 func (r *Raft) setCurrentTerm(t uint64) {
+	r.logger.Warn("dhayachi setting term", "term", t)
 	// Persist to disk first
 	if err := r.stable.SetUint64(keyCurrentTerm, t); err != nil {
 		panic(fmt.Errorf("failed to save current term: %v", err))
