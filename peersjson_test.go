@@ -1,7 +1,6 @@
 package raft
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,14 +11,14 @@ import (
 func TestPeersJSON_BadConfiguration(t *testing.T) {
 	var err error
 	var base string
-	base, err = ioutil.TempDir("", "")
+	base, err = os.MkdirTemp("", "")
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	defer os.RemoveAll(base)
 
 	peers := filepath.Join(base, "peers.json")
-	if err = ioutil.WriteFile(peers, []byte("null"), 0666); err != nil {
+	if err = os.WriteFile(peers, []byte("null"), 0666); err != nil {
 		t.Fatalf("err: %v", err)
 	}
 
@@ -32,7 +31,7 @@ func TestPeersJSON_BadConfiguration(t *testing.T) {
 func TestPeersJSON_ReadPeersJSON(t *testing.T) {
 	var err error
 	var base string
-	base, err = ioutil.TempDir("", "")
+	base, err = os.MkdirTemp("", "")
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -44,7 +43,7 @@ func TestPeersJSON_ReadPeersJSON(t *testing.T) {
  "127.0.0.3:123"]
 `)
 	peers := filepath.Join(base, "peers.json")
-	if err = ioutil.WriteFile(peers, content, 0666); err != nil {
+	if err = os.WriteFile(peers, content, 0666); err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	var configuration Configuration
@@ -80,7 +79,7 @@ func TestPeersJSON_ReadPeersJSON(t *testing.T) {
 func TestPeersJSON_ReadConfigJSON(t *testing.T) {
 	var err error
 	var base string
-	base, err = ioutil.TempDir("", "")
+	base, err = os.MkdirTemp("", "")
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -105,7 +104,7 @@ func TestPeersJSON_ReadConfigJSON(t *testing.T) {
 ]
 `)
 	peers := filepath.Join(base, "peers.json")
-	if err = ioutil.WriteFile(peers, content, 0666); err != nil {
+	if err = os.WriteFile(peers, content, 0666); err != nil {
 		t.Fatalf("err: %v", err)
 	}
 

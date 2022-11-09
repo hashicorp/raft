@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"reflect"
 	"sync"
@@ -700,7 +699,7 @@ func makeCluster(t *testing.T, opts *MakeClusterOpts) *cluster {
 
 	// Setup the stores and transports
 	for i := 0; i < opts.Peers; i++ {
-		dir, err := ioutil.TempDir("", "raft")
+		dir, err := os.MkdirTemp("", "raft")
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
@@ -801,7 +800,7 @@ func MakeClusterCustom(t *testing.T, opts *MakeClusterOpts) *cluster {
 // NOTE: This is exposed for middleware testing purposes and is not a stable API
 func FileSnapTest(t *testing.T) (string, *FileSnapshotStore) {
 	// Create a test dir
-	dir, err := ioutil.TempDir("", "raft")
+	dir, err := os.MkdirTemp("", "raft")
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}

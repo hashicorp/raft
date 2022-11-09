@@ -5,8 +5,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io/ioutil"
-	"log"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -424,12 +422,9 @@ func TestRaft_LeaderFail(t *testing.T) {
 		if len(fsm.logs) != 2 {
 			t.Fatalf("did not apply both to FSM! %v", fsm.logs)
 		}
-		if bytes.Compare(fsm.logs[0], []byte("test")) != 0 {
-			t.Fatalf("first entry should be 'test'")
-		}
-		if bytes.Compare(fsm.logs[1], []byte("apply")) != 0 {
-			t.Fatalf("second entry should be 'apply'")
-		}
+
+		require.Equal(t, fsm.logs[0], []byte("test"))
+		require.Equal(t, fsm.logs[1], []byte("apply"))
 		fsm.Unlock()
 	}
 }
@@ -1223,13 +1218,13 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	content := []byte(fmt.Sprintf("[%s]", strings.Join(peers, ",")))
 
 	// Perform a manual recovery on the cluster.
-	base, err := ioutil.TempDir("", "")
+	base, err := os.MkdirTemp("", "")
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	defer os.RemoveAll(base)
 	peersFile := filepath.Join(base, "peers.json")
-	if err = ioutil.WriteFile(peersFile, content, 0666); err != nil {
+	if err = os.WriteFile(peersFile, content, 0666); err != nil {
 		t.Fatalf("[ERR] err: %v", err)
 	}
 	configuration, err := ReadPeersJSON(peersFile)
@@ -1415,9 +1410,7 @@ func snapshotAndRestore(t *testing.T, offset uint64) {
 	}
 	for i, entry := range fsm.logs {
 		expected := []byte(fmt.Sprintf("test %d", i))
-		if bytes.Compare(entry, expected) != 0 {
-			t.Fatalf("Log entry bad: %v", entry)
-		}
+		require.Equal(t, entry, expected)
 	}
 	fsm.Unlock()
 
@@ -2744,8 +2737,8 @@ func TestRaft_FollowerRemovalNoElection(t *testing.T) {
 	c := MakeCluster(3, t, inmemConf)
 
 	defer c.Close()
-	waitForLeader(c)
-
+	err := waitForLeader(c)
+	require.NoError(t, err)
 	leader := c.Leader()
 
 	// Wait until we have 2 followers
@@ -2798,8 +2791,8 @@ func TestRaft_VoteWithNoIDNoAddr(t *testing.T) {
 	c := MakeCluster(3, t, nil)
 
 	defer c.Close()
-	waitForLeader(c)
-
+	err := waitForLeader(c)
+	require.NoError(t, err)
 	leader := c.Leader()
 
 	// Wait until we have 2 followers
@@ -2864,25 +2857,6 @@ func waitForLeader(c *cluster) error {
 		}
 		count++
 		time.Sleep(50 * time.Millisecond)
-	}
-	return errors.New("no leader elected")
-}
-
-func waitForNewLeader(c *cluster, id ServerID) error {
-	count := 0
-	for count < 100 {
-		r := c.GetInState(Leader)
-		if len(r) >= 1 && r[0].localID != id {
-			return nil
-		} else {
-			if len(r) == 0 {
-				log.Println("no leader yet")
-			} else {
-				log.Printf("leader still %s\n", id)
-			}
-		}
-		count++
-		time.Sleep(100 * time.Millisecond)
 	}
 	return errors.New("no leader elected")
 }
