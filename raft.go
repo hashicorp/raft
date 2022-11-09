@@ -323,7 +323,7 @@ func (r *Raft) runCandidate() {
 			r.mainThreadSaturation.working()
 			r.logger.Debug("got a prevote!!", "from", vote.voterID, "term", vote.Term, "tally", grantedVotes)
 			// Check if the term is greater than ours, bail
-			if vote.Term > term && !vote.PreVote {
+			if vote.Term > r.getCurrentTerm() && !vote.PreVote {
 				r.logger.Debug("newer term discovered, fallback to follower", "term", vote.Term)
 				r.setState(Follower)
 				r.setCurrentTerm(vote.Term)
@@ -331,17 +331,6 @@ func (r *Raft) runCandidate() {
 			}
 			if vote.Term > term && vote.PreVote {
 				r.logger.Debug("newer term discovered on pre-vote, fallback to follower", "term", vote.Term)
-				r.setState(Follower)
-				r.setCurrentTerm(vote.Term)
-				return
-			}
-
-		case vote := <-prevoteCh:
-			r.mainThreadSaturation.working()
-			r.logger.Debug("got a prevote!!", "from", vote.voterID, "term", vote.Term, "tally", grantedVotes)
-			// Check if the term is greater than ours, bail
-			if vote.Term > r.getCurrentTerm() && !vote.PreVote {
-				r.logger.Debug("newer term discovered, fallback to follower", "term", vote.Term)
 				r.setState(Follower)
 				r.setCurrentTerm(vote.Term)
 				return
@@ -359,14 +348,17 @@ func (r *Raft) runCandidate() {
 			}
 
 			// Check if we've become the leader
+			// If we won the election because the majority of nodes don't support pre-vote (or pre-vote is deactivated)
+			// set our state to leader and our term to the pre-vote term.
 			if grantedVotes >= votesNeeded {
 				r.logger.Info("election won", "term", vote.Term, "tally", grantedVotes)
 				r.setState(Leader)
 				r.setLeader(r.localAddr, r.localID)
-				//r.setCurrentTerm(term)
+
+				r.setCurrentTerm(term)
 				return
 			}
-			// Check if we've become the leader
+			// Check if we've won the pre-vote and proceed to election if so
 			if preVoteGrantedVotes >= votesNeeded {
 				r.logger.Info("pre election won", "term", vote.Term, "tally", preVoteGrantedVotes)
 				preVoteGrantedVotes = 0
@@ -1946,7 +1938,6 @@ func (r *Raft) electSelf(preVote bool) <-chan *voteResult {
 				resp.Granted = false
 				resp.PreVote = req.PreVote
 			}
-			r.logger.Warn("dhayachi::", "prevote-req", req.PreVote, "resp-prevote", resp.PreVote)
 			respCh <- resp
 		})
 	}
@@ -1996,7 +1987,6 @@ func (r *Raft) persistVote(term uint64, candidate []byte) error {
 
 // setCurrentTerm is used to set the current term in a durable manner.
 func (r *Raft) setCurrentTerm(t uint64) {
-	r.logger.Warn("dhayachi setting term", "term", t)
 	// Persist to disk first
 	if err := r.stable.SetUint64(keyCurrentTerm, t); err != nil {
 		panic(fmt.Errorf("failed to save current term: %v", err))
