@@ -284,7 +284,13 @@ func (r *Raft) runCandidate() {
 	metrics.IncrCounter([]string{"raft", "state", "candidate"}, 1)
 
 	// Start vote for us, and set a timeout
-	prevoteCh := r.electSelf(true)
+	var voteCh <-chan *voteResult
+	var prevoteCh <-chan *voteResult
+	if r.preVote {
+		prevoteCh = r.electSelf(true)
+	} else {
+		voteCh = r.electSelf(false)
+	}
 
 	// Make sure the leadership transfer flag is reset after each run. Having this
 	// flag will set the field LeadershipTransfer in a RequestVoteRequst to true,
@@ -301,7 +307,7 @@ func (r *Raft) runCandidate() {
 	preVoteGrantedVotes := 0
 	votesNeeded := r.quorumSize()
 	r.logger.Debug("calculated votes needed", "needed", votesNeeded, "term", term)
-	var voteCh <-chan *voteResult
+
 	for r.getState() == Candidate {
 		r.mainThreadSaturation.sleeping()
 
@@ -1565,13 +1571,16 @@ func (r *Raft) processConfigurationLogEntry(entry *Log) error {
 func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "requestVote"}, time.Now())
 	r.observe(*req)
-
+	preVote := req.PreVote
+	if !r.preVote {
+		preVote = false
+	}
 	// Setup a response
 	resp := &RequestVoteResponse{
 		RPCHeader: r.getRPCHeader(),
 		Term:      r.getCurrentTerm(),
 		Granted:   false,
-		PreVote:   req.PreVote,
+		PreVote:   preVote,
 	}
 	var rpcErr error
 	defer func() {
@@ -1627,7 +1636,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	if req.Term > r.getCurrentTerm() {
 		// Ensure transition to follower
 		r.logger.Debug("lost leadership because received a requestVote with a newer term")
-		if !req.PreVote {
+		if !preVote {
 			r.setState(Follower)
 			r.setCurrentTerm(req.Term)
 		}
@@ -1687,7 +1696,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	}
 
 	// Persist a vote for safety
-	if !req.PreVote {
+	if !preVote {
 		if err := r.persistVote(req.Term, candidateBytes); err != nil {
 			r.logger.Error("failed to persist vote", "error", err)
 			return
