@@ -2063,6 +2063,62 @@ func TestRaft_AppendEntry(t *testing.T) {
 	require.True(t, resp2.Success)
 }
 
+func TestRaft_PreVoteMixedCluster_MajorityNoPreVote(t *testing.T) {
+
+	tcs := []struct {
+		name         string
+		prevoteNum   int
+		noprevoteNum int
+	}{
+		{"majority no pre-vote", 2, 3},
+		{"majority pre-vote", 3, 2},
+		{"all pre-vote", 3, 0},
+		{"all no pre-vote", 0, 3},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+
+			// Make majority cluster.
+			majority := tc.prevoteNum
+			minority := tc.noprevoteNum
+			if tc.prevoteNum < tc.noprevoteNum {
+				majority = tc.noprevoteNum
+				minority = tc.prevoteNum
+			}
+
+			conf := inmemConfig(t)
+			conf.PreVote = tc.prevoteNum > tc.noprevoteNum
+			c := MakeCluster(majority, t, conf)
+			defer c.Close()
+
+			// Set up another server speaking protocol version 2.
+			conf = inmemConfig(t)
+			conf.PreVote = tc.prevoteNum < tc.noprevoteNum
+			c1 := MakeClusterNoBootstrap(minority, t, conf)
+
+			// Merge clusters.
+			c.Merge(c1)
+			c.FullyConnect()
+
+			if len(c1.rafts) > 0 {
+				future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 0)
+				if err := future.Error(); err != nil {
+					t.Fatalf("err: %v", err)
+				}
+			}
+			time.Sleep(c.propagateTimeout * 10)
+
+			leaderOld := c.Leader()
+			c.Followers()
+			c.Partition([]ServerAddress{leaderOld.localAddr})
+			time.Sleep(c.propagateTimeout * 3)
+			leader := c.Leader()
+			require.NotEqual(t, leader.leaderID, leaderOld.leaderID)
+		})
+	}
+
+}
+
 func TestRaft_VotingGrant_WhenLeaderAvailable(t *testing.T) {
 	conf := inmemConfig(t)
 	conf.ProtocolVersion = 3
