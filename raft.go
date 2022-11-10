@@ -350,7 +350,9 @@ func (r *Raft) runCandidate() {
 			// Check if we've become the leader
 			// If we won the election because the majority of nodes don't support pre-vote (or pre-vote is deactivated)
 			// set our state to leader and our term to the pre-vote term.
-			if grantedVotes >= votesNeeded {
+			// we only need votesNeeded-1 as our vote was cast as a prevote and if we have  votesNeeded-1
+			// we can flip our vote to an actual vote.
+			if grantedVotes >= votesNeeded-1 {
 				r.logger.Info("election won", "term", vote.Term, "tally", grantedVotes)
 				r.setState(Leader)
 				r.setLeader(r.localAddr, r.localID)
@@ -363,6 +365,7 @@ func (r *Raft) runCandidate() {
 				r.logger.Info("pre election won", "term", vote.Term, "tally", preVoteGrantedVotes)
 				preVoteGrantedVotes = 0
 				grantedVotes = 0
+				electionTimer = randomTimeout(electionTimeout)
 				voteCh = r.electSelf(false)
 			}
 		case vote := <-voteCh:

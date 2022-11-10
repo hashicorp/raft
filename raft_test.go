@@ -2061,7 +2061,7 @@ func TestRaft_AppendEntry(t *testing.T) {
 	require.True(t, resp2.Success)
 }
 
-func TestRaft_PreVoteMixedCluster_MajorityNoPreVote(t *testing.T) {
+func TestRaft_PreVoteMixedCluster(t *testing.T) {
 
 	tcs := []struct {
 		name         string
@@ -2070,6 +2070,8 @@ func TestRaft_PreVoteMixedCluster_MajorityNoPreVote(t *testing.T) {
 	}{
 		{"majority no pre-vote", 2, 3},
 		{"majority pre-vote", 3, 2},
+		{"majority no pre-vote", 1, 2},
+		{"majority pre-vote", 2, 1},
 		{"all pre-vote", 3, 0},
 		{"all no pre-vote", 0, 3},
 	}
