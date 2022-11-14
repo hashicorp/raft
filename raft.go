@@ -323,7 +323,7 @@ func (r *Raft) runCandidate() {
 			r.mainThreadSaturation.working()
 			r.logger.Debug("got a prevote!!", "from", vote.voterID, "term", vote.Term, "tally", grantedVotes)
 			// Check if the term is greater than ours, bail
-			if vote.Term > r.getCurrentTerm() && !vote.PreVote {
+			if vote.Term > term && !vote.PreVote {
 				r.logger.Debug("newer term discovered, fallback to follower", "term", vote.Term)
 				r.setState(Follower)
 				r.setCurrentTerm(vote.Term)
@@ -361,11 +361,12 @@ func (r *Raft) runCandidate() {
 				return
 			}
 			// Check if we've won the pre-vote and proceed to election if so
-			if preVoteGrantedVotes >= votesNeeded {
-				r.logger.Info("pre election won", "term", vote.Term, "tally", preVoteGrantedVotes)
+			if preVoteGrantedVotes+grantedVotes >= votesNeeded {
+				r.logger.Info("pre election won", "term", vote.Term, "tally", preVoteGrantedVotes, "votesNeeded", votesNeeded-1)
 				preVoteGrantedVotes = 0
 				grantedVotes = 0
 				electionTimer = randomTimeout(electionTimeout)
+				prevoteCh = nil
 				voteCh = r.electSelf(false)
 			}
 		case vote := <-voteCh:

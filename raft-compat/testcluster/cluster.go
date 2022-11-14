@@ -117,6 +117,10 @@ func NewRaftCluster(t *testing.T, f func(t *testing.T, id string) RaftNode, coun
 	return rc
 }
 
+func NewPreviousRaftCluster(t *testing.T, count int, name string) RaftCluster {
+	return NewRaftCluster(t, InitLatest, count, name)
+}
+
 //func NewRaftNodeWitStore[T RaftNode](t *testing.T, name string, store *raftprevious.InmemStore) *T {
 //	raft := new(T)
 //	initNode(t, raft, name, store)
@@ -157,12 +161,13 @@ func (r *RaftCluster) GetIndex(id string) int {
 }
 
 func InitUIT(t *testing.T, id string) RaftNode {
-	return InitUITWithStore(t, id, nil)
+	return InitUITWithStore(t, id, nil, func(config *raft.Config) {})
 }
 
-func InitUITWithStore(t *testing.T, id string, store *raftprevious.InmemStore) RaftNode {
+func InitUITWithStore(t *testing.T, id string, store *raftprevious.InmemStore, cfgMod func(config *raft.Config)) RaftNode {
 	node := RaftUIT{}
 	node.Config = raft.DefaultConfig()
+	cfgMod(node.Config)
 	node.Config.HeartbeatTimeout = 50 * time.Millisecond
 	node.Config.ElectionTimeout = 50 * time.Millisecond
 	node.Config.LeaderLeaseTimeout = 50 * time.Millisecond
