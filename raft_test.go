@@ -2100,8 +2100,8 @@ func TestRaft_PreVoteMixedCluster(t *testing.T) {
 			c.Merge(c1)
 			c.FullyConnect()
 
-			if len(c1.rafts) > 0 {
-				future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 0)
+			for _, r := range c1.rafts {
+				future := c.Leader().AddVoter(r.localID, r.localAddr, 0, 0)
 				if err := future.Error(); err != nil {
 					t.Fatalf("err: %v", err)
 				}
