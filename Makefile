@@ -42,4 +42,19 @@ cov:
 	INTEG_TESTS=yes gocov test github.com/hashicorp/raft | gocov-html > /tmp/coverage.html
 	open /tmp/coverage.html
 
+.PHONY: proto	
+proto: proto-tools proto-no-tools
+	
+.PHONY: proto-no-tools
+proto-no-tools:
+	buf generate
+	mog -source './proto/transport/v1/*.pb.go'
+	
+.PHONY: proto-tools
+proto-tools:
+	go install github.com/bufbuild/buf/cmd/buf@v1.11.0
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@$(shell grep google.golang.org/protobuf go.mod | awk '{print $$2}')
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.2.0
+	go install github.com/hashicorp/mog@v0.3.0
+
 .PHONY: test cov integ deps dep-linter lint
