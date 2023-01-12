@@ -747,7 +747,7 @@ func (n *netPipeline) decodeResponses() {
 			}
 
 			_, err := decodeResponse(n.conn, future.resp)
-			future.respond(err)
+			future.Respond(err)
 			select {
 			case n.doneCh <- future:
 			case <-n.shutdownCh:
@@ -767,7 +767,7 @@ func (n *netPipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEntr
 		args:  args,
 		resp:  resp,
 	}
-	future.init()
+	future.Init()
 
 	// Add a send timeout
 	if timeout := n.trans.timeout; timeout > 0 {

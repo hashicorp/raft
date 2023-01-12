@@ -84,20 +84,20 @@ func (e errorFuture) Index() uint64 {
 	return 0
 }
 
-// deferError can be embedded to allow a future
+// DeferError can be embedded to allow a future
 // to provide an error in the future.
-type deferError struct {
+type DeferError struct {
 	err        error
 	errCh      chan error
 	responded  bool
 	ShutdownCh chan struct{}
 }
 
-func (d *deferError) init() {
+func (d *DeferError) Init() {
 	d.errCh = make(chan error, 1)
 }
 
-func (d *deferError) Error() error {
+func (d *DeferError) Error() error {
 	if d.err != nil {
 		// Note that when we've received a nil error, this
 		// won't trigger, but the channel is closed after
@@ -115,7 +115,7 @@ func (d *deferError) Error() error {
 	return d.err
 }
 
-func (d *deferError) respond(err error) {
+func (d *DeferError) Respond(err error) {
 	if d.errCh == nil {
 		return
 	}
@@ -138,7 +138,7 @@ type configurationChangeFuture struct {
 // bootstrapFuture is used to attempt a live bootstrap of the cluster. See the
 // Raft object's BootstrapCluster member function for more details.
 type bootstrapFuture struct {
-	deferError
+	DeferError
 
 	// configuration is the proposed bootstrap configuration to apply.
 	configuration Configuration
@@ -147,7 +147,7 @@ type bootstrapFuture struct {
 // logFuture is used to apply a log entry and waits until
 // the log is considered committed.
 type logFuture struct {
-	deferError
+	DeferError
 	log      Log
 	response interface{}
 	dispatch time.Time
@@ -179,7 +179,7 @@ func (s *shutdownFuture) Error() error {
 // userSnapshotFuture is used for waiting on a user-triggered snapshot to
 // complete.
 type userSnapshotFuture struct {
-	deferError
+	DeferError
 
 	// opener is a function used to open the snapshot. This is filled in
 	// once the future returns with no error.
@@ -203,7 +203,7 @@ func (u *userSnapshotFuture) Open() (*SnapshotMeta, io.ReadCloser, error) {
 // userRestoreFuture is used for waiting on a user-triggered restore of an
 // external snapshot to complete.
 type userRestoreFuture struct {
-	deferError
+	DeferError
 
 	// meta is the metadata that belongs with the snapshot.
 	meta *SnapshotMeta
@@ -215,7 +215,7 @@ type userRestoreFuture struct {
 // reqSnapshotFuture is used for requesting a snapshot start.
 // It is only used internally.
 type reqSnapshotFuture struct {
-	deferError
+	DeferError
 
 	// snapshot details provided by the FSM runner before responding
 	index    uint64
@@ -226,14 +226,14 @@ type reqSnapshotFuture struct {
 // restoreFuture is used for requesting an FSM to perform a
 // snapshot restore. Used internally only.
 type restoreFuture struct {
-	deferError
+	DeferError
 	ID string
 }
 
 // verifyFuture is used to verify the current node is still
 // the leader. This is to prevent a stale read.
 type verifyFuture struct {
-	deferError
+	DeferError
 	notifyCh   chan *verifyFuture
 	quorumSize int
 	votes      int
@@ -243,7 +243,7 @@ type verifyFuture struct {
 // leadershipTransferFuture is used to track the progress of a leadership
 // transfer internally.
 type leadershipTransferFuture struct {
-	deferError
+	DeferError
 
 	ID      *ServerID
 	Address *ServerAddress
@@ -252,7 +252,7 @@ type leadershipTransferFuture struct {
 // configurationsFuture is used to retrieve the current configurations. This is
 // used to allow safe access to this information outside of the main thread.
 type configurationsFuture struct {
-	deferError
+	DeferError
 	configurations configurations
 }
 
@@ -292,7 +292,7 @@ func (v *verifyFuture) vote(leader bool) {
 // appendFuture is used for waiting on a pipelined append
 // entries RPC.
 type appendFuture struct {
-	deferError
+	DeferError
 	start time.Time
 	args  *AppendEntriesRequest
 	resp  *AppendEntriesResponse

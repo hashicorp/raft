@@ -88,7 +88,7 @@ func (r *Raft) runFSM() {
 			// Invoke the future if given
 			if req.future != nil {
 				req.future.response = resp
-				req.future.respond(nil)
+				req.future.Respond(nil)
 			}
 		}()
 
@@ -171,7 +171,7 @@ func (r *Raft) runFSM() {
 
 			if req.future != nil {
 				req.future.response = resp
-				req.future.respond(nil)
+				req.future.Respond(nil)
 			}
 		}
 	}
@@ -180,7 +180,7 @@ func (r *Raft) runFSM() {
 		// Open the snapshot
 		meta, source, err := r.snapshots.Open(req.ID)
 		if err != nil {
-			req.respond(fmt.Errorf("failed to open snapshot %v: %v", req.ID, err))
+			req.Respond(fmt.Errorf("failed to open snapshot %v: %v", req.ID, err))
 			return
 		}
 		defer source.Close()
@@ -194,20 +194,20 @@ func (r *Raft) runFSM() {
 
 		// Attempt to restore
 		if err := fsmRestoreAndMeasure(snapLogger, r.fsm, source, meta.Size); err != nil {
-			req.respond(fmt.Errorf("failed to restore snapshot %v: %v", req.ID, err))
+			req.Respond(fmt.Errorf("failed to restore snapshot %v: %v", req.ID, err))
 			return
 		}
 
 		// Update the last index and term
 		lastIndex = meta.Index
 		lastTerm = meta.Term
-		req.respond(nil)
+		req.Respond(nil)
 	}
 
 	snapshot := func(req *reqSnapshotFuture) {
 		// Is there something to snapshot?
 		if lastIndex == 0 {
-			req.respond(ErrNothingNewToSnapshot)
+			req.Respond(ErrNothingNewToSnapshot)
 			return
 		}
 
@@ -220,7 +220,7 @@ func (r *Raft) runFSM() {
 		req.index = lastIndex
 		req.term = lastTerm
 		req.snapshot = snap
-		req.respond(err)
+		req.Respond(err)
 	}
 
 	saturation := newSaturationMetric([]string{"raft", "thread", "fsm", "saturation"}, 1*time.Second)

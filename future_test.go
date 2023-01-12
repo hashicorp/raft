@@ -6,9 +6,9 @@ import (
 )
 
 func TestDeferFutureSuccess(t *testing.T) {
-	var f deferError
-	f.init()
-	f.respond(nil)
+	var f DeferError
+	f.Init()
+	f.Respond(nil)
 	if err := f.Error(); err != nil {
 		t.Fatalf("unexpected error result; got %#v want nil", err)
 	}
@@ -19,9 +19,9 @@ func TestDeferFutureSuccess(t *testing.T) {
 
 func TestDeferFutureError(t *testing.T) {
 	want := errors.New("x")
-	var f deferError
-	f.init()
-	f.respond(want)
+	var f DeferError
+	f.Init()
+	f.Respond(want)
 	if got := f.Error(); got != want {
 		t.Fatalf("unexpected error result; got %#v want %#v", got, want)
 	}
@@ -33,9 +33,9 @@ func TestDeferFutureError(t *testing.T) {
 func TestDeferFutureConcurrent(t *testing.T) {
 	// Food for the race detector.
 	want := errors.New("x")
-	var f deferError
-	f.init()
-	go f.respond(want)
+	var f DeferError
+	f.Init()
+	go f.Respond(want)
 	if got := f.Error(); got != want {
 		t.Errorf("unexpected error result; got %#v want %#v", got, want)
 	}
