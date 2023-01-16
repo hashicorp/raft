@@ -213,6 +213,9 @@ type Config struct {
 	// LogOutput with LogLevel is used.
 	Logger hclog.Logger
 
+	// Name shown by the Logger messages.
+	LogNodeName string
+
 	// NoSnapshotRestoreOnStart controls if raft will restore a snapshot to the
 	// FSM on start. This is useful if your FSM recovers from other mechanisms
 	// than raft snapshotting. Snapshot metadata will still be used to initialize
@@ -232,7 +235,7 @@ func (conf *Config) getOrCreateLogger() hclog.Logger {
 	}
 
 	return hclog.New(&hclog.LoggerOptions{
-		Name:   "raft",
+		Name:   conf.LogNodeName,
 		Level:  hclog.LevelFromString(conf.LogLevel),
 		Output: conf.LogOutput,
 	})
@@ -305,6 +308,7 @@ func DefaultConfig() *Config {
 		SnapshotThreshold:  8192,
 		LeaderLeaseTimeout: 500 * time.Millisecond,
 		LogLevel:           "DEBUG",
+		LogNodeName:        "raft",
 	}
 }
 
