@@ -28,10 +28,6 @@ const (
 	// DefaultTimeoutScale is the default TimeoutScale in a NetworkTransport.
 	DefaultTimeoutScale = 256 * 1024 // 256KB
 
-	// rpcMaxPipeline controls the maximum number of outstanding
-	// AppendEntries RPC calls.
-	rpcMaxPipeline = 128
-
 	// connReceiveBufferSize is the size of the buffer we will use for reading RPC requests into
 	// on followers
 	connReceiveBufferSize = 256 * 1024 // 256KB
@@ -51,7 +47,6 @@ var (
 )
 
 /*
-
 NetworkTransport provides a network based transport that can be
 used to communicate with Raft on remote machines. It requires
 an underlying stream layer to provide a stream abstraction, which can
@@ -67,7 +62,6 @@ both are encoded using MsgPack.
 InstallSnapshot is special, in that after the RPC request we stream
 the entire state. That socket is not re-used as the connection state
 is not known if there is an error.
-
 */
 type NetworkTransport struct {
 	connPool     map[ServerAddress][]*netConn
@@ -80,7 +74,8 @@ type NetworkTransport struct {
 
 	logger hclog.Logger
 
-	maxPool int
+	maxPool     int
+	maxInFlight int
 
 	serverAddressProvider ServerAddressProvider
 
@@ -111,6 +106,37 @@ type NetworkTransportConfig struct {
 
 	// MaxPool controls how many connections we will pool
 	MaxPool int
+
+	// MaxRPCsInFlight controls the pipelining "optimization" when replicating
+	// entries to followers (if it's is not disabled).
+	//
+	// Setting this to 1 explicitly disables pipelining since no overlapping of
+	// request processing is allowed. If set to 1 the pipelining code path is
+	// skipped entirely and every request is entirely synchronous.
+	//
+	// The default value (if 0 or lower are specified) is 2, which overlaps the
+	// preparation and sending of the next request while waiting for the previous
+	// response, but no additional queuing.
+	//
+	// Historically this was internally fixed at (effectively) 130 however
+	// performance testing has shown that in practice the pipelining optimization
+	// combines badly with batching and actually has a very large negative impact
+	// on commit latency when throughput is high, whilst having very little
+	// benefit on latency or throughput in any other case! See [TODO link PR] for
+	// more analysis of the performance impacts.
+	//
+	// Increasing this beyond 2 is likely to only be beneficial in very
+	// high-latency network conditions. HashiCorp doesn't recommend using our own
+	// products this way.
+	//
+	// To maintain the old behavior exactly, set this to 130. The old internal
+	// constant was 128 but was used directly as a channel buffer size. Since we
+	// send before blocking on the channel and unblock the channel as soon as the
+	// receiver is done with the earliest outstanding request, even an unbuffered
+	// channel (buffer=0) allows one request to be sent while waiting for the
+	// previous one (i.e. 2 inflight). so the old buffer actually allowed 130 RPCs
+	// to be inflight at once.
+	MaxRPCsInFlight int
 
 	// Timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
 	// the timeout by (SnapshotSize / TimeoutScale).
@@ -166,11 +192,18 @@ func NewNetworkTransportWithConfig(
 			Level:  hclog.DefaultLevel,
 		})
 	}
+	maxInFlight := config.MaxRPCsInFlight
+	if maxInFlight < 1 {
+		// Default (zero or nonsense negative value given) to 2 (which translates to
+		// a zero length channel buffer)
+		maxInFlight = 2
+	}
 	trans := &NetworkTransport{
 		connPool:              make(map[ServerAddress][]*netConn),
 		consumeCh:             make(chan RPC),
 		logger:                config.Logger,
 		maxPool:               config.MaxPool,
+		maxInFlight:           maxInFlight,
 		shutdownCh:            make(chan struct{}),
 		stream:                config.Stream,
 		timeout:               config.Timeout,
@@ -383,6 +416,12 @@ func (n *NetworkTransport) returnConn(conn *netConn) {
 // AppendEntriesPipeline returns an interface that can be used to pipeline
 // AppendEntries requests.
 func (n *NetworkTransport) AppendEntriesPipeline(id ServerID, target ServerAddress) (AppendPipeline, error) {
+	if n.maxInFlight < 2 {
+		// Pipelining is disabled since no more than one request can be outstanding
+		// at once. Skip the whole code path and use synchronous requests.
+		return nil, ErrPipelineReplicationNotSupported
+	}
+
 	// Get a connection
 	conn, err := n.getConnFromAddressProvider(id, target)
 	if err != nil {
@@ -390,7 +429,7 @@ func (n *NetworkTransport) AppendEntriesPipeline(id ServerID, target ServerAddre
 	}
 
 	// Create the pipeline
-	return newNetPipeline(n, conn), nil
+	return newNetPipeline(n, conn, n.maxInFlight), nil
 }
 
 // AppendEntries implements the Transport interface.
@@ -724,14 +763,25 @@ func sendRPC(conn *netConn, rpcType uint8, args interface{}) error {
 	return nil
 }
 
-// newNetPipeline is used to construct a netPipeline from a given
-// transport and connection.
-func newNetPipeline(trans *NetworkTransport, conn *netConn) *netPipeline {
+// newNetPipeline is used to construct a netPipeline from a given transport and
+// connection. It is a bug to ever call this with maxInFlight less than 2 and
+// will cause a panic.
+func newNetPipeline(trans *NetworkTransport, conn *netConn, maxInFlight int) *netPipeline {
+	if maxInFlight < 2 {
+		// Shouldn't happen (tm) since we validate this in the one call site and
+		// skip pipelining if it's lower.
+		panic("pipelining makes no sense if maxInFlight < 2")
+	}
 	n := &netPipeline{
-		conn:         conn,
-		trans:        trans,
-		doneCh:       make(chan AppendFuture, rpcMaxPipeline),
-		inprogressCh: make(chan *appendFuture, rpcMaxPipeline),
+		conn:  conn,
+		trans: trans,
+		// The buffer size is 2 less than the configured max because we send before
+		// waiting on the channel and the decode routine unblocks the channel as
+		// soon as it's waiting on the first request. So a zero-buffered channel
+		// still allows 1 request to be sent even while decode is still waiting for
+		// a response from the previous one. i.e. two are inflight at the same time.
+		inprogressCh: make(chan *appendFuture, maxInFlight-2),
+		doneCh:       make(chan AppendFuture, maxInFlight-2),
 		shutdownCh:   make(chan struct{}),
 	}
 	go n.decodeResponses()
