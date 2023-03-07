@@ -9,8 +9,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hashicorp/go-hclog"
-
 	"github.com/armon/go-metrics"
 )
 
@@ -1119,6 +1117,19 @@ func (r *Raft) restoreUserSnapshot(meta *SnapshotMeta, reader io.Reader) error {
 	r.setLastApplied(lastIndex)
 	r.setLastSnapshot(lastIndex, term)
 
+	// delete logs after restore
+	firstLogIndex, err := r.logs.FirstIndex()
+	if err != nil {
+		return fmt.Errorf("failed to get the first index for log compaction, %w", err)
+	}
+	lastLogIndex, err := r.logs.LastIndex()
+	if err != nil {
+		return fmt.Errorf("failed to get the last index for log compaction, %w", err)
+	}
+	if err := r.logs.DeleteRange(firstLogIndex, lastLogIndex); err != nil {
+		return fmt.Errorf("log compaction failed on restore user snapshot: %w", err)
+	}
+
 	r.logger.Info("restored user snapshot", "index", latestIndex)
 	return nil
 }
@@ -1788,9 +1799,20 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	r.setCommittedConfiguration(reqConfiguration, reqConfigurationIndex)
 
 	// Compact logs, continue even if this fails
-	if err := r.compactLogs(req.LastLogIndex); err != nil {
-		r.logger.Error("failed to compact logs", "error", err)
+	minLog, err := r.logs.FirstIndex()
+	if err != nil {
+		r.logger.Error("failed to get first log index: %v", err)
+		return
 	}
+
+	if err := r.logs.DeleteRange(minLog, r.lastLogIndex); err != nil {
+		r.logger.Error("log compaction failed: %v", err)
+	}
+
+	//
+	//if err := r.compactLogs(req.LastLogIndex); err != nil {
+	//	r.logger.Error("failed to compact logs", "error", err)
+	//}
 
 	r.logger.Info("Installed remote snapshot")
 	resp.Success = true

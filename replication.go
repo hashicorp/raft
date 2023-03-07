@@ -3,6 +3,7 @@ package raft
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -217,7 +218,8 @@ START:
 	s.peerLock.RUnlock()
 
 	// Setup the request
-	if err := r.setupAppendEntries(s, &req, atomic.LoadUint64(&s.nextIndex), lastIndex); err == ErrLogNotFound {
+	err := r.setupAppendEntries(s, &req, atomic.LoadUint64(&s.nextIndex), lastIndex)
+	if err != nil && strings.Contains(err.Error(), ErrLogNotFound.Error()) {
 		goto SEND_SNAP
 	} else if err != nil {
 		return
