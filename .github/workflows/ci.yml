@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  pull_request:
+    branches: ["master"]
+  push:
+    branches: ["master"]
+    tags: ["*"]
+
+jobs:
+  go-fmt-and-vet:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v3
+    - uses: actions/setup-go@v3
+      with:
+        go-version-file: 'go.mod'
+        cache: true
+    - run: |
+        files=$(go fmt ./...)
+        if [ -n "$files" ]; then
+          echo "The following file(s) do not conform to go fmt:"
+          echo "$files"
+          exit 1
+        fi
+    - run: |
+        PACKAGE_NAMES=$(go list ./... | grep -v github.com/hashicorp/raft/fuzzy)
+        go vet $PACKAGE_NAMES
+
+  go-test:
+    needs: go-fmt-and-vet
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v3
+    - uses: actions/setup-go@v3
+      with:
+        go-version-file: 'go.mod'
+        cache: true
+    - run: go test -race ./...
