@@ -2417,6 +2417,41 @@ func TestRaft_GetConfigurationNoBootstrap(t *testing.T) {
 	}
 }
 
+func TestRaft_LogStoreIsMonotonic(t *testing.T) {
+	c := MakeCluster(1, t, nil)
+	defer c.Close()
+
+	// Should be one leader
+	leader := c.Leader()
+	c.EnsureLeader(t, leader.localAddr)
+
+	// Test the monotonic type assertion on the InmemStore.
+	_, ok := leader.logs.(MonotonicLogStore)
+	assert.False(t, ok)
+
+	var log LogStore
+
+	// Wrapping the non-monotonic store as a LogCache should make it pass the
+	// type assertion, but the underlying store is still non-monotonic.
+	log, _ = NewLogCache(100, leader.logs)
+	mcast, ok := log.(MonotonicLogStore)
+	require.True(t, ok)
+	assert.False(t, mcast.IsMonotonic())
+
+	// Now create a new MockMonotonicLogStore using the leader logs and expect
+	// it to work.
+	log = &MockMonotonicLogStore{s: leader.logs}
+	mcast, ok = log.(MonotonicLogStore)
+	require.True(t, ok)
+	assert.True(t, mcast.IsMonotonic())
+
+	// Wrap the mock logstore in a LogCache and check again.
+	log, _ = NewLogCache(100, log)
+	mcast, ok = log.(MonotonicLogStore)
+	require.True(t, ok)
+	assert.True(t, mcast.IsMonotonic())
+}
+
 func TestRaft_CacheLogWithStoreError(t *testing.T) {
 	c := MakeCluster(2, t, nil)
 	defer c.Close()

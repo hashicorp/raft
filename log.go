@@ -122,11 +122,24 @@ type LogStore interface {
 	// StoreLog stores a log entry.
 	StoreLog(log *Log) error
 
-	// StoreLogs stores multiple log entries.
+	// StoreLogs stores multiple log entries. Implementers of StoreLogs with
+	// guarantees of monotonically increasing sequential indexes should make use
+	// of the MonotonicLogStore interface.
 	StoreLogs(logs []*Log) error
 
 	// DeleteRange deletes a range of log entries. The range is inclusive.
 	DeleteRange(min, max uint64) error
+}
+
+// MonotonicLogStore is an optional interface for LogStore implementations with
+// gapless index requirements. If they return true, the LogStore must have an
+// efficient implementation of DeleteLogs, as this called after every snapshot
+// restore when gaps are not allowed. We avoid deleting all records for
+// LogStores that do not implement MonotonicLogStore because this has a major
+// negative performance impact on the BoltDB store that is currently the most
+// widely used.
+type MonotonicLogStore interface {
+	IsMonotonic() bool
 }
 
 func oldestLog(s LogStore) (Log, error) {
