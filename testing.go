@@ -133,7 +133,7 @@ func (m *MockSnapshot) Persist(sink SnapshotSink) error {
 func (m *MockSnapshot) Release() {
 }
 
-// MockMonotonicLogStore is a stubbed LogStore wrapper for testing the
+// MockMonotonicLogStore is a LogStore wrapper for testing the
 // MonotonicLogStore interface.
 type MockMonotonicLogStore struct {
 	s LogStore
@@ -714,6 +714,7 @@ type MakeClusterOpts struct {
 	ConfigStoreFSM  bool
 	MakeFSMFunc     func() FSM
 	LongstopTimeout time.Duration
+	MonotonicLogs   bool
 }
 
 // makeCluster will return a cluster with the given config and number of peers.
@@ -789,10 +790,15 @@ func makeCluster(t *testing.T, opts *MakeClusterOpts) *cluster {
 	// Create all the rafts
 	c.startTime = time.Now()
 	for i := 0; i < opts.Peers; i++ {
-		logs := c.stores[i]
+		var logs LogStore
+		logs = c.stores[i]
 		store := c.stores[i]
 		snap := c.snaps[i]
 		trans := c.trans[i]
+
+		if opts.MonotonicLogs {
+			logs = &MockMonotonicLogStore{s: logs}
+		}
 
 		peerConf := opts.Conf
 		peerConf.LocalID = configuration.Servers[i].ID

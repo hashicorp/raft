@@ -645,6 +645,14 @@ func (r *Raft) restoreSnapshot() error {
 		r.setCommittedConfiguration(conf, index)
 		r.setLatestConfiguration(conf, index)
 
+		// Remove old logs if r.logs is a MonotonicLogStore. Log any errors and
+		// continue.
+		if logs, ok := r.logs.(MonotonicLogStore); ok && logs.IsMonotonic() {
+			if err := r.removeOldLogs(); err != nil {
+				r.logger.Error("failed to reset logs", "error", err)
+			}
+		}
+
 		// Success!
 		return nil
 	}

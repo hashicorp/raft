@@ -249,3 +249,29 @@ func (r *Raft) compactLogs(snapIdx uint64) error {
 	}
 	return nil
 }
+
+// removeOldLogs removes all old logs from the store. This is used for
+// MonotonicLogStores after restore. Callers should verify that the store
+// implementation is monotonic prior to calling.
+func (r *Raft) removeOldLogs() error {
+	defer metrics.MeasureSince([]string{"raft", "removeOldLogs"}, time.Now())
+
+	// Determine log ranges to truncate
+	firstLogIdx, err := r.logs.FirstIndex()
+	if err != nil {
+		return fmt.Errorf("failed to get first log index: %w", err)
+	}
+
+	lastLogIdx, err := r.logs.LastIndex()
+	if err != nil {
+		return fmt.Errorf("failed to get last log index: %w", err)
+	}
+
+	r.logger.Info("removing all old logs from log store", "first", firstLogIdx, "last", lastLogIdx)
+
+	if err := r.logs.DeleteRange(firstLogIdx, lastLogIdx); err != nil {
+		return fmt.Errorf("log truncation failed: %v", err)
+	}
+
+	return nil
+}
