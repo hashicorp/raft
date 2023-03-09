@@ -650,6 +650,10 @@ func (r *Raft) restoreSnapshot() error {
 	if len(snapshots) > 0 {
 		return fmt.Errorf("failed to load any existing snapshots")
 	}
+
+	// Reset logs after restore
+	r.resetMonotonicLogs()
+
 	return nil
 }
 

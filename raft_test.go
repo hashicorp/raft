@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-hclog"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1014,6 +1015,74 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 	if last := r.getLastApplied(); last != snap.Index {
 		t.Fatalf("bad last index: %d, expecting %d", last, snap.Index)
 	}
+}
+
+func TestRaft_SnapshotRestore_Monotonic(t *testing.T) {
+	// Make the cluster
+	conf := inmemConfig(t)
+	conf.TrailingLogs = 10
+	c := MakeCluster(1, t, conf)
+	defer c.Close()
+
+	leader := c.Leader()
+	leader.logs = &MockMonotonicLogStore{s: leader.logs}
+
+	// Commit a lot of things
+	var future Future
+	for i := 0; i < 100; i++ {
+		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	// Wait for the last future to apply
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Take a snapshot
+	snapFuture := leader.Snapshot()
+	if err := snapFuture.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Check for snapshot
+	snaps, _ := leader.snapshots.List()
+	if len(snaps) != 1 {
+		t.Fatalf("should have a snapshot")
+	}
+	snap := snaps[0]
+
+	// Logs should be trimmed
+	if idx, _ := leader.logs.FirstIndex(); idx != snap.Index-conf.TrailingLogs+1 {
+		t.Fatalf("should trim logs to %d: but is %d", snap.Index-conf.TrailingLogs+1, idx)
+	}
+
+	// Shutdown
+	shutdown := leader.Shutdown()
+	if err := shutdown.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Restart the Raft
+	r := leader
+	// Can't just reuse the old transport as it will be closed
+	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
+	cfg := r.config()
+	r, err := NewRaft(&cfg, r.fsm, r.logs, r.stable, r.snapshots, trans2)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	c.rafts[0] = r
+
+	// We should have restored from the snapshot!
+	if last := r.getLastApplied(); last != snap.Index {
+		t.Fatalf("bad last index: %d, expecting %d", last, snap.Index)
+	}
+
+	// Verify that logs have been reset
+	first, _ := r.logs.FirstIndex()
+	last, _ := r.logs.LastIndex()
+	assert.Zero(t, first)
+	assert.Zero(t, last)
 }
 
 func TestRaft_SnapshotRestore_Progress(t *testing.T) {

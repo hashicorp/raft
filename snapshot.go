@@ -1,12 +1,15 @@
 package raft
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"time"
 
 	"github.com/armon/go-metrics"
 )
+
+var errNonMonotonicLogStore = errors.New("non-monotonic log store")
 
 // SnapshotMeta is for metadata of a snapshot.
 type SnapshotMeta struct {
@@ -244,5 +247,37 @@ func (r *Raft) compactLogs(snapIdx uint64) error {
 	if err := r.logs.DeleteRange(minLog, maxLog); err != nil {
 		return fmt.Errorf("log compaction failed: %v", err)
 	}
+	return nil
+}
+
+// resetMonotonicLogs truncates all logs for MonotonicLogStores after a snapshot
+// restore.
+func (r *Raft) resetMonotonicLogs() error {
+	// Only truncate if the underlying store has monotonic log index
+	// requirements.
+	logs, ok := r.logs.(MonotonicLogStore)
+	if ok && logs.IsMonotonic() {
+		defer metrics.MeasureSince([]string{"raft", "resetMonotonicLogs"}, time.Now())
+	} else {
+		r.logger.Info("skipping truncate for non-monotonic log store")
+		return errNonMonotonicLogStore
+	}
+
+	// Determine log ranges to truncate
+	minLogIdx, err := r.logs.FirstIndex()
+	if err != nil {
+		return fmt.Errorf("failed to get first log index: %w", err)
+	}
+
+	lastLogIdx, err := r.logs.LastIndex()
+	if err != nil {
+		return fmt.Errorf("failed to get last log index: %w", err)
+	}
+
+	r.logger.Info("truncating monotonic log store", "from", minLogIdx, "to", lastLogIdx)
+	if err := r.logs.DeleteRange(minLogIdx, lastLogIdx); err != nil {
+		return fmt.Errorf("log truncation failed: %v", err)
+	}
+
 	return nil
 }

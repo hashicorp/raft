@@ -3,6 +3,7 @@ package raft
 import (
 	"bytes"
 	"container/list"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -1125,6 +1126,11 @@ func (r *Raft) restoreUserSnapshot(meta *SnapshotMeta, reader io.Reader) error {
 	r.setLastApplied(lastIndex)
 	r.setLastSnapshot(lastIndex, term)
 
+	// Now that we've restored from snapshot, clear the logs.
+	if err := r.resetMonotonicLogs(); err != nil {
+		return err
+	}
+
 	r.logger.Info("restored user snapshot", "index", latestIndex)
 	return nil
 }
@@ -1793,15 +1799,20 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	r.setLatestConfiguration(reqConfiguration, reqConfigurationIndex)
 	r.setCommittedConfiguration(reqConfiguration, reqConfigurationIndex)
 
-	// Compact logs, continue even if this fails
-	if err := r.compactLogs(req.LastLogIndex); err != nil {
-		r.logger.Error("failed to compact logs", "error", err)
+	// Fully truncate logs for stores with monotonically increasing log indexes.
+	// Otherwise, compact the logs. Log any errors and continue.
+	err = r.resetMonotonicLogs()
+	if errors.Is(err, errNonMonotonicLogStore) {
+		if err := r.compactLogs(req.LastLogIndex); err != nil {
+			r.logger.Error("failed to compact logs", "error", err)
+		}
+	} else if err != nil {
+		r.logger.Error("failed to reset logs", "error", err)
 	}
 
 	r.logger.Info("Installed remote snapshot")
 	resp.Success = true
 	r.setLastContact()
-	return
 }
 
 // setLastContact is used to set the last contact time to now
