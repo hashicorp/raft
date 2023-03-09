@@ -122,7 +122,7 @@ type NetworkTransportConfig struct {
 	// performance testing has shown that in practice the pipelining optimization
 	// combines badly with batching and actually has a very large negative impact
 	// on commit latency when throughput is high, whilst having very little
-	// benefit on latency or throughput in any other case! See [TODO link PR] for
+	// benefit on latency or throughput in any other case! See [#541](https://github.com/hashicorp/raft/pull/541) for
 	// more analysis of the performance impacts.
 	//
 	// Increasing this beyond 2 is likely to only be beneficial in very
