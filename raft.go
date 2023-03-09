@@ -25,6 +25,12 @@ var (
 	keyLastVoteCand = []byte("LastVoteCand")
 )
 
+// MonotonicLogStore is a simple interface which acts as a compatibility shim
+// for log stores with gapless index requirements.
+type MonotonicLogStore interface {
+	IsMonotonic() bool
+}
+
 // getRPCHeader returns an initialized RPCHeader struct for the given
 // Raft instance. This structure is sent along with RPC requests and
 // responses.

@@ -2414,6 +2414,82 @@ func TestRaft_GetConfigurationNoBootstrap(t *testing.T) {
 	}
 }
 
+// MockMonotonicLogStore is a stubbed LogStore wrapper for testing the
+// MonotonicLogStore interface.
+type MockMonotonicLogStore struct {
+	s LogStore
+}
+
+// IsMonotonic implements the MonotonicLogStore interface.
+func (m *MockMonotonicLogStore) IsMonotonic() bool {
+	return true
+}
+
+// FirstIndex implements the LogStore interface.
+func (m *MockMonotonicLogStore) FirstIndex() (uint64, error) {
+	return m.s.FirstIndex()
+}
+
+// LastIndex implements the LogStore interface.
+func (m *MockMonotonicLogStore) LastIndex() (uint64, error) {
+	return m.s.LastIndex()
+}
+
+// GetLog implements the LogStore interface.
+func (m *MockMonotonicLogStore) GetLog(index uint64, log *Log) error {
+	return m.s.GetLog(index, log)
+}
+
+// StoreLog implements the LogStore interface.
+func (m *MockMonotonicLogStore) StoreLog(log *Log) error {
+	return m.s.StoreLog(log)
+}
+
+// StoreLogs implements the LogStore interface.
+func (m *MockMonotonicLogStore) StoreLogs(logs []*Log) error {
+	return m.s.StoreLogs(logs)
+}
+
+// DeleteRange implements the LogStore interface.
+func (m *MockMonotonicLogStore) DeleteRange(min uint64, max uint64) error {
+	return m.s.DeleteRange(min, max)
+}
+
+func TestRaft_LogStoreIsMonotonic(t *testing.T) {
+	c := MakeCluster(1, t, nil)
+	defer c.Close()
+
+	// Should be one leader
+	leader := c.Leader()
+	c.EnsureLeader(t, leader.localAddr)
+
+	// Test the monotonic type assertion on the InmemStore.
+	_, ok := leader.logs.(MonotonicLogStore)
+	assert.False(t, ok)
+
+	var log LogStore
+
+	// Wrapping the non-monotonic store as a LogCache should make it pass the
+	// type assertion, but the underlying store is still non-monotonic.
+	log, _ = NewLogCache(100, leader.logs)
+	mcast, ok := log.(MonotonicLogStore)
+	require.True(t, ok)
+	assert.False(t, mcast.IsMonotonic())
+
+	// Now create a new MockMonotonicLogStore using the leader logs and expect
+	// it to work.
+	log = &MockMonotonicLogStore{s: leader.logs}
+	mcast, ok = log.(MonotonicLogStore)
+	require.True(t, ok)
+	assert.True(t, mcast.IsMonotonic())
+
+	// Wrap the mock logstore in a LogCache and check again.
+	log, _ = NewLogCache(100, log)
+	mcast, ok = log.(MonotonicLogStore)
+	require.True(t, ok)
+	assert.True(t, mcast.IsMonotonic())
+}
+
 func TestRaft_CacheLogWithStoreError(t *testing.T) {
 	c := MakeCluster(2, t, nil)
 	defer c.Close()
