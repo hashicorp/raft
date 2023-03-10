@@ -31,14 +31,13 @@ jobs:
     needs: go-fmt-and-vet
     strategy:
       matrix:
-        go: ['1.19', '1.20']
         arch: ['x32', 'x64']
     runs-on: ubuntu-22.04
     steps:
     - uses: actions/checkout@v3
     - uses: actions/setup-go@v3
       with:
-        go-version: ${{ matrix.go }}
+        go-version-file: 'go.mod'
         architecture: ${{ matrix.arch }}
         cache: true
     - run: sudo apt-get install gcc-multilib
