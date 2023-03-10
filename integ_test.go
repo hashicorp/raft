@@ -1,6 +1,3 @@
-//go:build integration
-// +build integration
-
 package raft
 
 import (
@@ -15,6 +12,18 @@ import (
 	"github.com/hashicorp/go-hclog"
 	"github.com/stretchr/testify/require"
 )
+
+// CheckInteg will skip a test if integration testing is not enabled.
+func CheckInteg(t *testing.T) {
+	if !IsInteg() {
+		t.SkipNow()
+	}
+}
+
+// IsInteg returns a boolean telling you if we're in integ testing mode.
+func IsInteg() bool {
+	return os.Getenv("INTEG_TESTS") != ""
+}
 
 type RaftEnv struct {
 	dir      string
@@ -211,6 +220,7 @@ func logBytes(i, sz int) []byte {
 // Tests Raft by creating a cluster, growing it to 5 nodes while
 // causing various stressful conditions
 func TestRaft_Integ(t *testing.T) {
+	CheckInteg(t)
 	conf := DefaultConfig()
 	conf.LocalID = ServerID("first")
 	conf.HeartbeatTimeout = 50 * time.Millisecond
@@ -349,6 +359,7 @@ func TestRaft_Integ(t *testing.T) {
 }
 
 func TestRaft_RestartFollower_LongInitialHeartbeat(t *testing.T) {
+	CheckInteg(t)
 	tests := []struct {
 		name                   string
 		restartInitialTimeouts time.Duration
