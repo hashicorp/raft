@@ -1,0 +1,204 @@
+syntax = "proto3";
+
+package hashicorp.raft.transport.v1;
+
+import "proto/transport/v1/types.proto";
+
+service RaftTransportService {
+  // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
+  rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
+  // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
+  // buf:lint:ignore RPC_REQUEST_STANDARD_NAME
+  // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
+  rpc AppendEntriesPipeline(stream AppendEntriesRequest) returns (stream AppendEntriesResponse);
+  rpc RequestVote(RequestVoteRequest) returns (RequestVoteResponse);
+  rpc InstallSnapshot(stream InstallSnapshotRequest) returns (stream InstallSnapshotResponse);
+  rpc TimeoutNow(TimeoutNowRequest) returns (TimeoutNowResponse);
+}
+
+// AppendEntriesRequest is the command used to append entries to the
+// replicated log.
+// mog annotation:
+//
+// target=github.com/hashicorp/raft.AppendEntriesRequest
+// output=service.gen.go
+// name=Struct
+// ignore-fields=state,sizeCache,unknownFields,Leader
+message AppendEntriesRequest {
+  // mog: target=RPCHeader
+  RPCHeader rpc_header = 1;
+
+  // Provide the current term and leader
+  uint64 term = 2;
+
+  // Provide the previous entries index for integrity checking
+  // mog: target=PrevLogEntry
+  uint64 previous_log_entry = 3;
+
+  // PreviousLogTerm is the previous logs term value for integrity checking
+  // mog: target=PrevLogTerm
+  uint64 previous_log_term = 4;
+
+  // New entries to commit
+  repeated Log entries = 5;
+
+  // Commit index on the leader
+  uint64 leader_commit_index = 6;
+}
+
+// AppendEntriesResponse is the response returned from an
+// AppendEntriesRequest.
+// mog annotation:
+//
+// target=github.com/hashicorp/raft.AppendEntriesResponse
+// output=service.gen.go
+// name=Struct
+// ignore-fields=state,sizeCache,unknownFields
+message AppendEntriesResponse {
+  // mog: target=RPCHeader
+  RPCHeader rpc_header = 1;
+
+  // Newer term if leader is out of date
+  uint64 term = 2;
+
+  // Last Log is a hint to help accelerate rebuilding slow nodes
+  uint64 last_log = 3;
+
+  // We may not succeed if we have a conflicting entry
+  bool success = 4;
+
+  // There are scenarios where this request didn't succeed
+  // but there's no need to wait/back-off the next attempt.
+  bool no_retry_backoff = 5;
+}
+
+// RequestVoteRequest is the command used to request a vote.
+// mog annotation:
+//
+// target=github.com/hashicorp/raft.RequestVoteRequest
+// output=service.gen.go
+// name=Struct
+// ignore-fields=state,sizeCache,unknownFields,Candidate
+message RequestVoteRequest {
+  // mog: target=RPCHeader
+  RPCHeader rpc_header = 1;
+
+  // Provide the term
+  uint64 term = 2;
+
+  // The requesting servers last log index
+  uint64 last_log_index = 3;
+
+  // The requesting servers last log term
+  uint64 last_log_term = 4;
+
+  // Used to indicate to peers if this vote was triggered by a leadership
+  // transfer. It is required for leadership transfer to work, because servers
+  // wouldn't vote otherwise if they are aware of an existing leader.
+  bool leadership_transfer = 5;
+}
+
+// RequestVoteResponse is the data returned from RequestVote RPC
+// mog annotation:
+//
+// target=github.com/hashicorp/raft.RequestVoteResponse
+// output=service.gen.go
+// name=Struct
+// ignore-fields=state,sizeCache,unknownFields,Peers
+message RequestVoteResponse {
+  // mog: target=RPCHeader
+  RPCHeader rpc_header = 1;
+
+  // Provide the term
+  uint64 term = 2;
+
+  // Was the vote granted
+  bool granted = 3;
+}
+
+message InstallSnapshotRequest {
+  oneof message {
+    InstallSnapshotMetadata metadata = 1;
+    InstallSnapshotChunk chunk = 2;
+  }
+}
+
+// InstallSnapshotMetadata is the initial install snapshot request
+// arguments. This will be the first message sent in the InstallSnapshot RPC.
+// mog annotation:
+//
+// target=github.com/hashicorp/raft.InstallSnapshotRequest
+// output=service.gen.go
+// name=Struct
+// ignore-fields=state,sizeCache,unknownFields,Leader,Peers
+message InstallSnapshotMetadata {
+  // mog: target=RPCHeader
+  RPCHeader rpc_header = 1;
+
+  int32 snapshot_version = 2;
+
+  // Term is the current term of the leader
+  uint64 term = 3;
+
+  // LastLogIndex is the last log index represented in the snapshot
+  uint64 last_log_index = 4;
+
+  // LastLogTerm is the last log term represented in the snapshot
+  uint64 last_log_term = 5;
+
+  // Configuration contains cluster membership information.
+  bytes configuration = 6;
+
+  // ConfigurationIndex is the log index where the Configuration data was
+  // originally written.
+  uint64 configuration_index = 7;
+
+  // Size is the number of bytes of snapshot data to be sent.
+  int64 size = 8;
+}
+
+message InstallSnapshotChunk {
+  bytes snapshot_data = 1;
+}
+
+// InstallSnapshotResponse is the data returned from RequestVote RPC
+// mog annotation:
+//
+// target=github.com/hashicorp/raft.InstallSnapshotResponse
+// output=service.gen.go
+// name=Struct
+// ignore-fields=state,sizeCache,unknownFields
+message InstallSnapshotResponse {
+  // mog: target=RPCHeader
+  RPCHeader rpc_header = 1;
+
+  // Provide the term
+  uint64 term = 2;
+
+  // Success represents whether the snapshot was installed successfully.
+  bool success = 3;
+}
+
+// TimeoutNowRequest is the arguments for the TimeoutNow RPC request
+// mog annotation:
+//
+// target=github.com/hashicorp/raft.TimeoutNowRequest
+// output=service.gen.go
+// name=Struct
+// ignore-fields=state,sizeCache,unknownFields
+message TimeoutNowRequest {
+  // mog: target=RPCHeader
+  RPCHeader rpc_header = 1;
+}
+
+// TimeoutNowResponse is the response message for a TimeoutNow RPC request
+// mog annotation:
+//
+// target=github.com/hashicorp/raft.TimeoutNowResponse
+// output=service.gen.go
+// name=Struct
+// ignore-fields=state,sizeCache,unknownFields
+message TimeoutNowResponse {
+  // mog: target=RPCHeader
+  RPCHeader rpc_header = 1;
+}

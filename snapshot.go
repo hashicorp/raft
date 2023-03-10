@@ -93,7 +93,7 @@ func (r *Raft) runSnapshots() {
 					return r.snapshots.Open(id)
 				}
 			}
-			future.respond(err)
+			future.Respond(err)
 
 		case <-r.shutdownCh:
 			return
@@ -127,7 +127,7 @@ func (r *Raft) takeSnapshot() (string, error) {
 
 	// Create a request for the FSM to perform a snapshot.
 	snapReq := &reqSnapshotFuture{}
-	snapReq.init()
+	snapReq.Init()
 
 	// Wait for dispatch or shutdown.
 	select {
@@ -150,7 +150,7 @@ func (r *Raft) takeSnapshot() (string, error) {
 	// it is owned by the main thread.
 	configReq := &configurationsFuture{}
 	configReq.ShutdownCh = r.shutdownCh
-	configReq.init()
+	configReq.Init()
 	select {
 	case r.configurationsCh <- configReq:
 	case <-r.shutdownCh:

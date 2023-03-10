@@ -64,7 +64,7 @@ type followerReplication struct {
 
 	// triggerDeferErrorCh is used to provide a backchannel. By sending a
 	// deferErr, the sender can be notifed when the replication is done.
-	triggerDeferErrorCh chan *deferError
+	triggerDeferErrorCh chan *DeferError
 
 	// lastContact is updated to the current time whenever any response is
 	// received from the follower (successful or not). This is used to check
@@ -154,9 +154,9 @@ RPC:
 			lastLogIdx, _ := r.getLastLog()
 			shouldStop = r.replicateTo(s, lastLogIdx)
 			if !shouldStop {
-				deferErr.respond(nil)
+				deferErr.Respond(nil)
 			} else {
-				deferErr.respond(fmt.Errorf("replication failed"))
+				deferErr.Respond(fmt.Errorf("replication failed"))
 			}
 		case <-s.triggerCh:
 			lastLogIdx, _ := r.getLastLog()
@@ -476,9 +476,9 @@ SEND:
 			lastLogIdx, _ := r.getLastLog()
 			shouldStop = r.pipelineSend(s, pipeline, &nextIndex, lastLogIdx)
 			if !shouldStop {
-				deferErr.respond(nil)
+				deferErr.Respond(nil)
 			} else {
-				deferErr.respond(fmt.Errorf("replication failed"))
+				deferErr.Respond(fmt.Errorf("replication failed"))
 			}
 		case <-s.triggerCh:
 			lastLogIdx, _ := r.getLastLog()

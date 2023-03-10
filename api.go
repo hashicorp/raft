@@ -750,7 +750,7 @@ func (r *Raft) ReloadableConfig() ReloadableConfig {
 // servers to the cluster.
 func (r *Raft) BootstrapCluster(configuration Configuration) Future {
 	bootstrapReq := &bootstrapFuture{}
-	bootstrapReq.init()
+	bootstrapReq.Init()
 	bootstrapReq.configuration = configuration
 	select {
 	case <-r.shutdownCh:
@@ -810,7 +810,7 @@ func (r *Raft) ApplyLog(log Log, timeout time.Duration) ApplyFuture {
 			Extensions: log.Extensions,
 		},
 	}
-	logFuture.init()
+	logFuture.Init()
 
 	select {
 	case <-timer:
@@ -836,7 +836,7 @@ func (r *Raft) Barrier(timeout time.Duration) Future {
 
 	// Create a log future, no index or term yet
 	logFuture := &logFuture{log: Log{Type: LogBarrier}}
-	logFuture.init()
+	logFuture.Init()
 
 	select {
 	case <-timer:
@@ -854,7 +854,7 @@ func (r *Raft) Barrier(timeout time.Duration) Future {
 func (r *Raft) VerifyLeader() Future {
 	metrics.IncrCounter([]string{"raft", "verify_leader"}, 1)
 	verifyFuture := &verifyFuture{}
-	verifyFuture.init()
+	verifyFuture.Init()
 	select {
 	case <-r.shutdownCh:
 		return errorFuture{ErrRaftShutdown}
@@ -867,9 +867,9 @@ func (r *Raft) VerifyLeader() Future {
 // committed. The main loop can access this directly.
 func (r *Raft) GetConfiguration() ConfigurationFuture {
 	configReq := &configurationsFuture{}
-	configReq.init()
+	configReq.Init()
 	configReq.configurations = configurations{latest: r.getLatestConfiguration()}
-	configReq.respond(nil)
+	configReq.Respond(nil)
 	return configReq
 }
 
@@ -1000,12 +1000,12 @@ func (r *Raft) Shutdown() Future {
 // can be used to open the snapshot.
 func (r *Raft) Snapshot() SnapshotFuture {
 	future := &userSnapshotFuture{}
-	future.init()
+	future.Init()
 	select {
 	case r.userSnapshotCh <- future:
 		return future
 	case <-r.shutdownCh:
-		future.respond(ErrRaftShutdown)
+		future.Respond(ErrRaftShutdown)
 		return future
 	}
 }
@@ -1036,7 +1036,7 @@ func (r *Raft) Restore(meta *SnapshotMeta, reader io.Reader, timeout time.Durati
 		meta:   meta,
 		reader: reader,
 	}
-	restore.init()
+	restore.Init()
 	select {
 	case <-timer:
 		return ErrEnqueueTimeout
@@ -1058,7 +1058,7 @@ func (r *Raft) Restore(meta *SnapshotMeta, reader io.Reader, timeout time.Durati
 			Type: LogNoop,
 		},
 	}
-	noop.init()
+	noop.Init()
 	select {
 	case <-timer:
 		return ErrEnqueueTimeout

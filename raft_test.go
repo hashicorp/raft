@@ -891,7 +891,7 @@ func TestRaft_AddKnownPeer(t *testing.T) {
 	followers := c.GetInState(Follower)
 
 	configReq := &configurationsFuture{}
-	configReq.init()
+	configReq.Init()
 	leader.configurationsCh <- configReq
 	if err := configReq.Error(); err != nil {
 		t.Fatalf("err: %v", err)
@@ -905,7 +905,7 @@ func TestRaft_AddKnownPeer(t *testing.T) {
 		t.Fatalf("AddVoter() err: %v", err)
 	}
 	configReq = &configurationsFuture{}
-	configReq.init()
+	configReq.Init()
 	leader.configurationsCh <- configReq
 	if err := configReq.Error(); err != nil {
 		t.Fatalf("err: %v", err)
@@ -928,7 +928,7 @@ func TestRaft_RemoveUnknownPeer(t *testing.T) {
 	// Get the leader
 	leader := c.Leader()
 	configReq := &configurationsFuture{}
-	configReq.init()
+	configReq.Init()
 	leader.configurationsCh <- configReq
 	if err := configReq.Error(); err != nil {
 		t.Fatalf("err: %v", err)
@@ -944,7 +944,7 @@ func TestRaft_RemoveUnknownPeer(t *testing.T) {
 		t.Fatalf("RemoveServer() err: %v", err)
 	}
 	configReq = &configurationsFuture{}
-	configReq.init()
+	configReq.Init()
 	leader.configurationsCh <- configReq
 	if err := configReq.Error(); err != nil {
 		t.Fatalf("err: %v", err)

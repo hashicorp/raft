@@ -119,7 +119,7 @@ func (r *Raft) requestConfigChange(req configurationChangeRequest, timeout time.
 	future := &configurationChangeFuture{
 		req: req,
 	}
-	future.init()
+	future.Init()
 	select {
 	case <-timer:
 		return errorFuture{ErrEnqueueTimeout}
@@ -172,36 +172,36 @@ func (r *Raft) runFollower() {
 		case c := <-r.configurationChangeCh:
 			r.mainThreadSaturation.working()
 			// Reject any operations since we are not the leader
-			c.respond(ErrNotLeader)
+			c.Respond(ErrNotLeader)
 
 		case a := <-r.applyCh:
 			r.mainThreadSaturation.working()
 			// Reject any operations since we are not the leader
-			a.respond(ErrNotLeader)
+			a.Respond(ErrNotLeader)
 
 		case v := <-r.verifyCh:
 			r.mainThreadSaturation.working()
 			// Reject any operations since we are not the leader
-			v.respond(ErrNotLeader)
+			v.Respond(ErrNotLeader)
 
 		case ur := <-r.userRestoreCh:
 			r.mainThreadSaturation.working()
 			// Reject any restores since we are not the leader
-			ur.respond(ErrNotLeader)
+			ur.Respond(ErrNotLeader)
 
 		case l := <-r.leadershipTransferCh:
 			r.mainThreadSaturation.working()
 			// Reject any operations since we are not the leader
-			l.respond(ErrNotLeader)
+			l.Respond(ErrNotLeader)
 
 		case c := <-r.configurationsCh:
 			r.mainThreadSaturation.working()
 			c.configurations = r.configurations.Clone()
-			c.respond(nil)
+			c.Respond(nil)
 
 		case b := <-r.bootstrapCh:
 			r.mainThreadSaturation.working()
-			b.respond(r.liveBootstrap(b.configuration))
+			b.Respond(r.liveBootstrap(b.configuration))
 
 		case <-r.leaderNotifyCh:
 			//  Ignore since we are not the leader
@@ -339,36 +339,36 @@ func (r *Raft) runCandidate() {
 		case c := <-r.configurationChangeCh:
 			r.mainThreadSaturation.working()
 			// Reject any operations since we are not the leader
-			c.respond(ErrNotLeader)
+			c.Respond(ErrNotLeader)
 
 		case a := <-r.applyCh:
 			r.mainThreadSaturation.working()
 			// Reject any operations since we are not the leader
-			a.respond(ErrNotLeader)
+			a.Respond(ErrNotLeader)
 
 		case v := <-r.verifyCh:
 			r.mainThreadSaturation.working()
 			// Reject any operations since we are not the leader
-			v.respond(ErrNotLeader)
+			v.Respond(ErrNotLeader)
 
 		case ur := <-r.userRestoreCh:
 			r.mainThreadSaturation.working()
 			// Reject any restores since we are not the leader
-			ur.respond(ErrNotLeader)
+			ur.Respond(ErrNotLeader)
 
 		case l := <-r.leadershipTransferCh:
 			r.mainThreadSaturation.working()
 			// Reject any operations since we are not the leader
-			l.respond(ErrNotLeader)
+			l.Respond(ErrNotLeader)
 
 		case c := <-r.configurationsCh:
 			r.mainThreadSaturation.working()
 			c.configurations = r.configurations.Clone()
-			c.respond(nil)
+			c.Respond(nil)
 
 		case b := <-r.bootstrapCh:
 			r.mainThreadSaturation.working()
-			b.respond(ErrCantBootstrap)
+			b.Respond(ErrCantBootstrap)
 
 		case <-r.leaderNotifyCh:
 			//  Ignore since we are not the leader
@@ -464,12 +464,12 @@ func (r *Raft) runLeader() {
 
 		// Respond to all inflight operations
 		for e := r.leaderState.inflight.Front(); e != nil; e = e.Next() {
-			e.Value.(*logFuture).respond(ErrLeadershipLost)
+			e.Value.(*logFuture).Respond(ErrLeadershipLost)
 		}
 
 		// Respond to any pending verify requests
 		for future := range r.leaderState.notify {
-			future.respond(ErrLeadershipLost)
+			future.Respond(ErrLeadershipLost)
 		}
 
 		// Clear all the state
@@ -547,7 +547,7 @@ func (r *Raft) startStopReplication() {
 				commitment:          r.leaderState.commitment,
 				stopCh:              make(chan uint64, 1),
 				triggerCh:           make(chan struct{}, 1),
-				triggerDeferErrorCh: make(chan *deferError, 1),
+				triggerDeferErrorCh: make(chan *DeferError, 1),
 				currentTerm:         r.getCurrentTerm(),
 				nextIndex:           lastIdx + 1,
 				lastContact:         time.Now(),
@@ -640,7 +640,7 @@ func (r *Raft) leaderLoop() {
 			r.mainThreadSaturation.working()
 			if r.getLeadershipTransferInProgress() {
 				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
-				future.respond(ErrLeadershipTransferInProgress)
+				future.Respond(ErrLeadershipTransferInProgress)
 				continue
 			}
 
@@ -677,19 +677,19 @@ func (r *Raft) leaderLoop() {
 					close(stopCh)
 					err := fmt.Errorf("leadership transfer timeout")
 					r.logger.Debug(err.Error())
-					future.respond(err)
+					future.Respond(err)
 					<-doneCh
 				case <-leftLeaderLoop:
 					close(stopCh)
 					err := fmt.Errorf("lost leadership during transfer (expected)")
 					r.logger.Debug(err.Error())
-					future.respond(nil)
+					future.Respond(nil)
 					<-doneCh
 				case err := <-doneCh:
 					if err != nil {
 						r.logger.Debug(err.Error())
 					}
-					future.respond(err)
+					future.Respond(err)
 				}
 			}()
 
@@ -794,7 +794,7 @@ func (r *Raft) leaderLoop() {
 				for _, repl := range r.leaderState.replState {
 					repl.cleanNotify(v)
 				}
-				v.respond(ErrNotLeader)
+				v.Respond(ErrNotLeader)
 
 			} else {
 				// Quorum of members agree, we are still leader
@@ -802,47 +802,47 @@ func (r *Raft) leaderLoop() {
 				for _, repl := range r.leaderState.replState {
 					repl.cleanNotify(v)
 				}
-				v.respond(nil)
+				v.Respond(nil)
 			}
 
 		case future := <-r.userRestoreCh:
 			r.mainThreadSaturation.working()
 			if r.getLeadershipTransferInProgress() {
 				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
-				future.respond(ErrLeadershipTransferInProgress)
+				future.Respond(ErrLeadershipTransferInProgress)
 				continue
 			}
 			err := r.restoreUserSnapshot(future.meta, future.reader)
-			future.respond(err)
+			future.Respond(err)
 
 		case future := <-r.configurationsCh:
 			r.mainThreadSaturation.working()
 			if r.getLeadershipTransferInProgress() {
 				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
-				future.respond(ErrLeadershipTransferInProgress)
+				future.Respond(ErrLeadershipTransferInProgress)
 				continue
 			}
 			future.configurations = r.configurations.Clone()
-			future.respond(nil)
+			future.Respond(nil)
 
 		case future := <-r.configurationChangeChIfStable():
 			r.mainThreadSaturation.working()
 			if r.getLeadershipTransferInProgress() {
 				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
-				future.respond(ErrLeadershipTransferInProgress)
+				future.Respond(ErrLeadershipTransferInProgress)
 				continue
 			}
 			r.appendConfigurationEntry(future)
 
 		case b := <-r.bootstrapCh:
 			r.mainThreadSaturation.working()
-			b.respond(ErrCantBootstrap)
+			b.Respond(ErrCantBootstrap)
 
 		case newLog := <-r.applyCh:
 			r.mainThreadSaturation.working()
 			if r.getLeadershipTransferInProgress() {
 				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
-				newLog.respond(ErrLeadershipTransferInProgress)
+				newLog.Respond(ErrLeadershipTransferInProgress)
 				continue
 			}
 			// Group commit, gather all the ready commits
@@ -861,7 +861,7 @@ func (r *Raft) leaderLoop() {
 			if stepDown {
 				// we're in the process of stepping down as leader, don't process anything new
 				for i := range ready {
-					ready[i].respond(ErrNotLeader)
+					ready[i].Respond(ErrNotLeader)
 				}
 			} else {
 				r.dispatchLogs(ready)
@@ -905,7 +905,7 @@ func (r *Raft) verifyLeader(v *verifyFuture) {
 	// Set the quorum size, hot-path for single node
 	v.quorumSize = r.quorumSize()
 	if v.quorumSize == 1 {
-		v.respond(nil)
+		v.Respond(nil)
 		return
 	}
 
@@ -933,8 +933,8 @@ func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress, repl *foll
 	}
 
 	for atomic.LoadUint64(&repl.nextIndex) <= r.getLastIndex() {
-		err := &deferError{}
-		err.init()
+		err := &DeferError{}
+		err.Init()
 		repl.triggerDeferErrorCh <- err
 		select {
 		case err := <-err.errCh:
@@ -1062,7 +1062,7 @@ func (r *Raft) restoreUserSnapshot(meta *SnapshotMeta, reader io.Reader) error {
 		if e == nil {
 			break
 		}
-		e.Value.(*logFuture).respond(ErrAbortedByRestore)
+		e.Value.(*logFuture).Respond(ErrAbortedByRestore)
 		r.leaderState.inflight.Remove(e)
 	}
 
@@ -1103,7 +1103,7 @@ func (r *Raft) restoreUserSnapshot(meta *SnapshotMeta, reader io.Reader) error {
 	// bad state so we panic to take ourselves out.
 	fsm := &restoreFuture{ID: sink.ID()}
 	fsm.ShutdownCh = r.shutdownCh
-	fsm.init()
+	fsm.Init()
 	select {
 	case r.fsmMutateCh <- fsm:
 	case <-r.shutdownCh:
@@ -1132,7 +1132,7 @@ func (r *Raft) restoreUserSnapshot(meta *SnapshotMeta, reader io.Reader) error {
 func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 	configuration, err := nextConfiguration(r.configurations.latest, r.configurations.latestIndex, future.req)
 	if err != nil {
-		future.respond(err)
+		future.Respond(err)
 		return
 	}
 
@@ -1195,7 +1195,7 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 	if err := r.logs.StoreLogs(logs); err != nil {
 		r.logger.Error("failed to commit logs", "error", err)
 		for _, applyLog := range applyLogs {
-			applyLog.respond(err)
+			applyLog.Respond(err)
 		}
 		r.setState(Follower)
 		return
@@ -1232,7 +1232,7 @@ func (r *Raft) processLogs(index uint64, futures map[uint64]*logFuture) {
 		case <-r.shutdownCh:
 			for _, cl := range batch {
 				if cl.future != nil {
-					cl.future.respond(ErrRaftShutdown)
+					cl.future.Respond(ErrRaftShutdown)
 				}
 			}
 		}
@@ -1274,7 +1274,7 @@ func (r *Raft) processLogs(index uint64, futures map[uint64]*logFuture) {
 
 		case futureOk:
 			// Invoke the future if given.
-			future.respond(nil)
+			future.Respond(nil)
 		}
 	}
 
@@ -1765,11 +1765,11 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	// Restore snapshot
 	future := &restoreFuture{ID: sink.ID()}
 	future.ShutdownCh = r.shutdownCh
-	future.init()
+	future.Init()
 	select {
 	case r.fsmMutateCh <- future:
 	case <-r.shutdownCh:
-		future.respond(ErrRaftShutdown)
+		future.Respond(ErrRaftShutdown)
 		return
 	}
 
@@ -1943,12 +1943,12 @@ func (r *Raft) pickServer() *Server {
 // mainloop.
 func (r *Raft) initiateLeadershipTransfer(id *ServerID, address *ServerAddress) LeadershipTransferFuture {
 	future := &leadershipTransferFuture{ID: id, Address: address}
-	future.init()
+	future.Init()
 
 	if id != nil && *id == r.localID {
 		err := fmt.Errorf("cannot transfer leadership to itself")
 		r.logger.Info(err.Error())
-		future.respond(err)
+		future.Respond(err)
 		return future
 	}
 

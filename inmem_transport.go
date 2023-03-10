@@ -271,7 +271,7 @@ func (i *inmemPipeline) decodeResponses() {
 			case rpcResp := <-inp.respCh:
 				// Copy the result back
 				*inp.future.resp = *rpcResp.Response.(*AppendEntriesResponse)
-				inp.future.respond(rpcResp.Error)
+				inp.future.Respond(rpcResp.Error)
 
 				select {
 				case i.doneCh <- inp.future:
@@ -280,7 +280,7 @@ func (i *inmemPipeline) decodeResponses() {
 				}
 
 			case <-timeoutCh:
-				inp.future.respond(fmt.Errorf("command timed out"))
+				inp.future.Respond(fmt.Errorf("command timed out"))
 				select {
 				case i.doneCh <- inp.future:
 				case <-i.shutdownCh:
@@ -303,7 +303,7 @@ func (i *inmemPipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEn
 		args:  args,
 		resp:  resp,
 	}
-	future.init()
+	future.Init()
 
 	// Handle a timeout
 	var timeout <-chan time.Time
