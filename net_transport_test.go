@@ -568,7 +568,7 @@ func TestNetworkTransport_InstallSnapshot(t *testing.T) {
 				rpc.Reader.Read(buf)
 
 				// Compare
-				if bytes.Compare(buf, []byte("0123456789")) != 0 {
+				if !bytes.Equal(buf, []byte("0123456789")) {
 					t.Errorf("bad buf %v", buf)
 					return
 				}
