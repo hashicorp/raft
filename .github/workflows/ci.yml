@@ -42,8 +42,9 @@ jobs:
         cache: true
     # x86 specific build.
     - if: ${{ matrix.arch == 'x32' }}
-      run: sudo apt-get install gcc-multilib
-      run: go test --tags batchtest ./...
+      run: |
+        sudo apt-get install gcc-multilib
+        go test --tags batchtest ./...
     # x86-64 specific build.
     - if: ${{ matrix.arch == 'x64' }}
       run: go test -race --tags batchtest ./...
