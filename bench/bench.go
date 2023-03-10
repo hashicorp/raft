@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package raftbench
 
 // raftbench provides common benchmarking functions which can be used by
