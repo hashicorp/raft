@@ -32,7 +32,7 @@ jobs:
     strategy:
       matrix:
         go: ['1.19', '1.20']
-        arch: ['x86', 'x64']
+        arch: ['x32', 'x64']
     runs-on: ubuntu-22.04
     steps:
     - uses: actions/checkout@v3
