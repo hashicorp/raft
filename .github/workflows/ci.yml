@@ -41,5 +41,6 @@ jobs:
         go-version: ${{ matrix.go }}
         architecture: ${{ matrix.arch }}
         cache: true
+    - run: sudo apt-get install gcc-multilib
       # TODO: add race flag for x64 only
     - run: go test --tags batchtest ./...
