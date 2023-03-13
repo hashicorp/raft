@@ -31,7 +31,7 @@ jobs:
     needs: go-fmt-and-vet
     strategy:
       matrix:
-        arch: ['1.19', '1.20']
+        go: ['1.19', '1.20']
         arch: ['x32', 'x64']
     runs-on: ubuntu-22.04
     env:
