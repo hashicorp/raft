@@ -50,25 +50,21 @@ var (
 	ErrPipelineShutdown = errors.New("append pipeline closed")
 )
 
-/*
-
-NetworkTransport provides a network based transport that can be
-used to communicate with Raft on remote machines. It requires
-an underlying stream layer to provide a stream abstraction, which can
-be simple TCP, TLS, etc.
-
-This transport is very simple and lightweight. Each RPC request is
-framed by sending a byte that indicates the message type, followed
-by the MsgPack encoded request.
-
-The response is an error string followed by the response object,
-both are encoded using MsgPack.
-
-InstallSnapshot is special, in that after the RPC request we stream
-the entire state. That socket is not re-used as the connection state
-is not known if there is an error.
-
-*/
+// NetworkTransport provides a network based transport that can be
+// used to communicate with Raft on remote machines. It requires
+// an underlying stream layer to provide a stream abstraction, which can
+// be simple TCP, TLS, etc.
+//
+// This transport is very simple and lightweight. Each RPC request is
+// framed by sending a byte that indicates the message type, followed
+// by the MsgPack encoded request.
+//
+// The response is an error string followed by the response object,
+// both are encoded using MsgPack.
+//
+// InstallSnapshot is special, in that after the RPC request we stream
+// the entire state. That socket is not re-used as the connection state
+// is not known if there is an error.
 type NetworkTransport struct {
 	connPool     map[ServerAddress][]*netConn
 	connPoolLock sync.Mutex

@@ -57,6 +57,11 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 		Success: true,
 	}
 
+	// errCh is used to report errors from any of the goroutines
+	// created in this test.
+	// It is buffered as to not block.
+	errCh := make(chan error, 100)
+
 	// Listen for a request
 	go func() {
 		for {
@@ -65,7 +70,7 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 				// Verify the command
 				req := rpc.Command.(*AppendEntriesRequest)
 				if !reflect.DeepEqual(req, &args) {
-					t.Errorf("command mismatch: %#v %#v", *req, args)
+					errCh <- fmt.Errorf("command mismatch: %#v %#v", *req, args)
 					return
 				}
 				rpc.Respond(&resp, nil)
@@ -82,32 +87,37 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	defer trans2.Close()
-	var i int
-	for i = 0; i < 2; i++ {
+
+	for i := 0; i < 2; i++ {
 		// Create wait group
 		wg := &sync.WaitGroup{}
-		wg.Add(5)
-
-		appendFunc := func() {
-			defer wg.Done()
-			var out AppendEntriesResponse
-			if err := trans2.AppendEntries("id1", trans1.LocalAddr(), &args, &out); err != nil {
-				t.Fatalf("err: %v", err)
-			}
-
-			// Verify the response
-			if !reflect.DeepEqual(resp, out) {
-				t.Fatalf("command mismatch: %#v %#v", resp, out)
-			}
-		}
 
 		// Try to do parallel appends, should stress the conn pool
 		for i = 0; i < 5; i++ {
-			go appendFunc()
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				var out AppendEntriesResponse
+				if err := trans2.AppendEntries("id1", trans1.LocalAddr(), &args, &out); err != nil {
+					errCh <- err
+					return
+				}
+
+				// Verify the response
+				if !reflect.DeepEqual(resp, out) {
+					errCh <- fmt.Errorf("command mismatch: %#v %#v", resp, out)
+					return
+				}
+			}()
 		}
 
 		// Wait for the routines to finish
 		wg.Wait()
+
+		// Check if we received any errors from the above goroutines.
+		if len(errCh) > 0 {
+			t.Fatal(<-errCh)
+		}
 
 		// Check the conn pool size
 		addr := trans1.LocalAddr()
@@ -561,7 +571,7 @@ func TestNetworkTransport_InstallSnapshot(t *testing.T) {
 				rpc.Reader.Read(buf)
 
 				// Compare
-				if bytes.Compare(buf, []byte("0123456789")) != 0 {
+				if !bytes.Equal(buf, []byte("0123456789")) {
 					t.Errorf("bad buf %v", buf)
 					return
 				}
@@ -661,6 +671,11 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 		Success: true,
 	}
 
+	// errCh is used to report errors from any of the goroutines
+	// created in this test.
+	// It is buffered as to not block.
+	errCh := make(chan error, 100)
+
 	// Listen for a request
 	go func() {
 		for {
@@ -669,7 +684,7 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 				// Verify the command
 				req := rpc.Command.(*AppendEntriesRequest)
 				if !reflect.DeepEqual(req, &args) {
-					t.Errorf("command mismatch: %#v %#v", *req, args)
+					errCh <- fmt.Errorf("command mismatch: %#v %#v", *req, args)
 					return
 				}
 				rpc.Respond(&resp, nil)
@@ -689,28 +704,34 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 
 	// Create wait group
 	wg := &sync.WaitGroup{}
-	wg.Add(5)
-
-	appendFunc := func() {
-		defer wg.Done()
-		var out AppendEntriesResponse
-		if err := trans2.AppendEntries("id1", trans1.LocalAddr(), &args, &out); err != nil {
-			t.Fatalf("err: %v", err)
-		}
-
-		// Verify the response
-		if !reflect.DeepEqual(resp, out) {
-			t.Fatalf("command mismatch: %#v %#v", resp, out)
-		}
-	}
 
 	// Try to do parallel appends, should stress the conn pool
 	for i := 0; i < 5; i++ {
-		go appendFunc()
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+			var out AppendEntriesResponse
+			if err := trans2.AppendEntries("id1", trans1.LocalAddr(), &args, &out); err != nil {
+				errCh <- err
+				return
+			}
+
+			// Verify the response
+			if !reflect.DeepEqual(resp, out) {
+				errCh <- fmt.Errorf("command mismatch: %#v %#v", resp, out)
+				return
+			}
+		}()
 	}
 
 	// Wait for the routines to finish
 	wg.Wait()
+
+	// Check if we received any errors from the above goroutines.
+	if len(errCh) > 0 {
+		t.Fatal(<-errCh)
+	}
 
 	// Check the conn pool size
 	addr := trans1.LocalAddr()
