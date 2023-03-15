@@ -1060,8 +1060,17 @@ func TestRaft_SnapshotRestore_Monotonic(t *testing.T) {
 	snap := snaps[0]
 
 	// Logs should be trimmed
-	if idx, _ := leader.logs.FirstIndex(); idx != snap.Index-conf.TrailingLogs+1 {
-		t.Fatalf("should trim logs to %d: but is %d", snap.Index-conf.TrailingLogs+1, idx)
+	firstIdx, err := leader.logs.FirstIndex()
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	lastIdx, err := leader.logs.LastIndex()
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if firstIdx != snap.Index-conf.TrailingLogs+1 {
+		t.Fatalf("should trim logs to %d: but is %d", snap.Index-conf.TrailingLogs+1, firstIdx)
 	}
 
 	// Shutdown
@@ -1075,7 +1084,7 @@ func TestRaft_SnapshotRestore_Monotonic(t *testing.T) {
 	// Can't just reuse the old transport as it will be closed
 	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
 	cfg := r.config()
-	r, err := NewRaft(&cfg, r.fsm, r.logs, r.stable, r.snapshots, trans2)
+	r, err = NewRaft(&cfg, r.fsm, r.logs, r.stable, r.snapshots, trans2)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -1086,11 +1095,11 @@ func TestRaft_SnapshotRestore_Monotonic(t *testing.T) {
 		t.Fatalf("bad last index: %d, expecting %d", last, snap.Index)
 	}
 
-	// Verify that logs have been reset
+	// Verify that logs have not been reset
 	first, _ := r.logs.FirstIndex()
 	last, _ := r.logs.LastIndex()
-	assert.Zero(t, first)
-	assert.Zero(t, last)
+	assert.Equal(t, firstIdx, first)
+	assert.Equal(t, lastIdx, last)
 }
 
 func TestRaft_SnapshotRestore_Progress(t *testing.T) {
