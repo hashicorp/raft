@@ -130,13 +130,13 @@ type LogStore interface {
 }
 
 // MonotonicLogStore is an optional interface for LogStore implementations that
-// cannot tolerate gaps in between the Index values of consecutive log entries. For example, 
-// this may allow more efficient indexing because the Index values are densely populated. If true is 
-// returned, Raft will avoid relying on gaps to trigger re-synching logs on followers after a 
-// snapshot is restored. The LogStore must have an efficient implementation of 
-// DeleteLogs, as this called after every snapshot restore when gaps are not allowed. 
-// We avoid deleting all records for LogStores that do not implement MonotonicLogStore 
-// because this has a major negative performance impact on the BoltDB store that is currently 
+// cannot tolerate gaps in between the Index values of consecutive log entries. For example,
+// this may allow more efficient indexing because the Index values are densely populated. If true is
+// returned, Raft will avoid relying on gaps to trigger re-synching logs on followers after a
+// snapshot is restored. The LogStore must have an efficient implementation of
+// DeleteLogs, as this called after every snapshot restore when gaps are not allowed.
+// We avoid deleting all records for LogStores that do not implement MonotonicLogStore
+// because this has a major negative performance impact on the BoltDB store that is currently
 // the most widely used.
 type MonotonicLogStore interface {
 	IsMonotonic() bool
