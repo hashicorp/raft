@@ -122,22 +122,22 @@ type LogStore interface {
 	// StoreLog stores a log entry.
 	StoreLog(log *Log) error
 
-	// StoreLogs stores multiple log entries. Implementers of StoreLogs with
-	// guarantees of monotonically increasing sequential indexes should make use
-	// of the MonotonicLogStore interface.
+	// StoreLogs stores multiple log entries. By default the logs stored may not be contiguous with previous logs (i.e. may have a gap in Index since the last log written). If an implementation can't tolerate this it may optionally implement `MonotonicLogStore` to indicate that this is not allowed. This changes Raft's behaviour after restoring a user snapshot to remove all previous logs instead of relying on a "gap" to signal the discontinuity between logs before the snapshot and logs after.
 	StoreLogs(logs []*Log) error
 
 	// DeleteRange deletes a range of log entries. The range is inclusive.
 	DeleteRange(min, max uint64) error
 }
 
-// MonotonicLogStore is an optional interface for LogStore implementations with
-// gapless index requirements. If they return true, the LogStore must have an
-// efficient implementation of DeleteLogs, as this called after every snapshot
-// restore when gaps are not allowed. We avoid deleting all records for
-// LogStores that do not implement MonotonicLogStore because this has a major
-// negative performance impact on the BoltDB store that is currently the most
-// widely used.
+// MonotonicLogStore is an optional interface for LogStore implementations that
+// cannot tolerate gaps in between the Index values of consecutive log entries. For example, 
+// this may allow more efficient indexing because the Index values are densely populated. If true is 
+// returned, Raft will avoid relying on gaps to trigger re-synching logs on followers after a 
+// snapshot is restored. The LogStore must have an efficient implementation of 
+// DeleteLogs, as this called after every snapshot restore when gaps are not allowed. 
+// We avoid deleting all records for LogStores that do not implement MonotonicLogStore 
+// because this has a major negative performance impact on the BoltDB store that is currently 
+// the most widely used.
 type MonotonicLogStore interface {
 	IsMonotonic() bool
 }
