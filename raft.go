@@ -1129,7 +1129,7 @@ func (r *Raft) restoreUserSnapshot(meta *SnapshotMeta, reader io.Reader) error {
 		}
 	}
 
-	r.logger.Info("restored user snapshot", "index", latestIndex)
+	r.logger.Info("restored user snapshot", "index", lastIndex)
 	return nil
 }
 
