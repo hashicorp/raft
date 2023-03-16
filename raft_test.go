@@ -1425,7 +1425,9 @@ func TestRaft_UserSnapshot(t *testing.T) {
 
 // snapshotAndRestore does a snapshot and restore sequence and applies the given
 // offset to the snapshot index, so we can try out different situations.
-func snapshotAndRestore(t *testing.T, offset uint64, monotonicLogStore bool) {
+func snapshotAndRestore(t *testing.T, offset uint64, monotonicLogStore bool, restoreNewCluster bool) {
+	t.Helper()
+
 	// Make the cluster.
 	conf := inmemConfig(t)
 
@@ -1476,6 +1478,23 @@ func snapshotAndRestore(t *testing.T, offset uint64, monotonicLogStore bool) {
 	// Get the last index before the restore.
 	preIndex := leader.getLastIndex()
 
+	if restoreNewCluster {
+		var c2 *cluster
+		if monotonicLogStore {
+			opts := &MakeClusterOpts{
+				Peers:         3,
+				Bootstrap:     true,
+				Conf:          conf,
+				MonotonicLogs: true,
+			}
+			c2 = MakeClusterCustom(t, opts)
+		} else {
+			c2 = MakeCluster(3, t, conf)
+		}
+		c = c2
+		leader = c.Leader()
+	}
+
 	// Restore the snapshot, twiddling the index with the offset.
 	meta, reader, err := snap.Open()
 	meta.Index += offset
@@ -1491,17 +1510,36 @@ func snapshotAndRestore(t *testing.T, offset uint64, monotonicLogStore bool) {
 	// an index to create a hole, and then we apply a no-op after the
 	// restore.
 	var expected uint64
-	if meta.Index < preIndex {
+	if !restoreNewCluster && meta.Index < preIndex {
 		expected = preIndex + 2
 	} else {
+		// restoring onto a new cluster should always have a last index based
+		// off of the snaphsot meta index
 		expected = meta.Index + 2
 	}
+
 	lastIndex := leader.getLastIndex()
 	if lastIndex != expected {
 		t.Fatalf("Index was not updated correctly: %d vs. %d", lastIndex, expected)
 	}
 
-	// Ensure all the logs are the same and that we have everything that was
+	// Ensure raft logs are removed for monotonic log stores but remain
+	// untouched for non-monotic (BoltDB) logstores.
+	// When first index = 1, then logs have remained untouched.
+	// When first indext is set to the next commit index / last index, then
+	// it means logs have been removed.
+	firstLogIndex, err := leader.logs.FirstIndex()
+	require.NoError(t, err)
+	lastLogIndex, err := leader.logs.LastIndex()
+	require.NoError(t, err)
+	if monotonicLogStore {
+		require.Equal(t, expected, firstLogIndex)
+	} else {
+		require.Equal(t, uint64(1), firstLogIndex)
+	}
+	require.Equal(t, expected, lastLogIndex)
+
+	// Ensure all the fsm logs are the same and that we have everything that was
 	// part of the original snapshot, and that the contents after were
 	// reverted.
 	c.EnsureSame(t)
@@ -1512,7 +1550,7 @@ func snapshotAndRestore(t *testing.T, offset uint64, monotonicLogStore bool) {
 	}
 	for i, entry := range fsm.logs {
 		expected := []byte(fmt.Sprintf("test %d", i))
-		if bytes.Compare(entry, expected) != 0 {
+		if !bytes.Equal(entry, expected) {
 			t.Fatalf("Log entry bad: %v", entry)
 		}
 	}
@@ -1540,13 +1578,17 @@ func TestRaft_UserRestore(t *testing.T) {
 		10000,
 	}
 
+	restoreToNewClusterCases := []bool{false, true}
+
 	for _, c := range cases {
-		t.Run(fmt.Sprintf("case %v", c), func(t *testing.T) {
-			snapshotAndRestore(t, c, false)
-		})
-		t.Run(fmt.Sprintf("monotonic case %v", c), func(t *testing.T) {
-			snapshotAndRestore(t, c, true)
-		})
+		for _, restoreNewCluster := range restoreToNewClusterCases {
+			t.Run(fmt.Sprintf("case %v | restored to new cluster: %t", c, restoreNewCluster), func(t *testing.T) {
+				snapshotAndRestore(t, c, false, restoreNewCluster)
+			})
+			t.Run(fmt.Sprintf("monotonic case %v | restored to new cluster: %t", c, restoreNewCluster), func(t *testing.T) {
+				snapshotAndRestore(t, c, true, restoreNewCluster)
+			})
+		}
 	}
 }
 
