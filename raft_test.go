@@ -1438,16 +1438,17 @@ func snapshotAndRestore(t *testing.T, offset uint64, monotonicLogStore bool, res
 	conf.LeaderLeaseTimeout = 500 * time.Millisecond
 
 	var c *cluster
+	numPeers := 3
+	optsMonotonic := &MakeClusterOpts{
+		Peers:         numPeers,
+		Bootstrap:     true,
+		Conf:          conf,
+		MonotonicLogs: true,
+	}
 	if monotonicLogStore {
-		opts := &MakeClusterOpts{
-			Peers:         3,
-			Bootstrap:     true,
-			Conf:          conf,
-			MonotonicLogs: true,
-		}
-		c = MakeClusterCustom(t, opts)
+		c = MakeClusterCustom(t, optsMonotonic)
 	} else {
-		c = MakeCluster(3, t, conf)
+		c = MakeCluster(numPeers, t, conf)
 	}
 	defer c.Close()
 
@@ -1481,15 +1482,9 @@ func snapshotAndRestore(t *testing.T, offset uint64, monotonicLogStore bool, res
 	if restoreNewCluster {
 		var c2 *cluster
 		if monotonicLogStore {
-			opts := &MakeClusterOpts{
-				Peers:         3,
-				Bootstrap:     true,
-				Conf:          conf,
-				MonotonicLogs: true,
-			}
-			c2 = MakeClusterCustom(t, opts)
+			c2 = MakeClusterCustom(t, optsMonotonic)
 		} else {
-			c2 = MakeCluster(3, t, conf)
+			c2 = MakeCluster(numPeers, t, conf)
 		}
 		c = c2
 		leader = c.Leader()
@@ -1528,17 +1523,21 @@ func snapshotAndRestore(t *testing.T, offset uint64, monotonicLogStore bool, res
 	// When first index = 1, then logs have remained untouched.
 	// When first indext is set to the next commit index / last index, then
 	// it means logs have been removed.
-	firstLogIndex, err := leader.logs.FirstIndex()
-	require.NoError(t, err)
-	lastLogIndex, err := leader.logs.LastIndex()
-	require.NoError(t, err)
-	if monotonicLogStore {
-		require.Equal(t, expected, firstLogIndex)
-	} else {
-		require.Equal(t, uint64(1), firstLogIndex)
+	raftNodes := make([]*Raft, 0, numPeers+1)
+	raftNodes = append(raftNodes, leader)
+	raftNodes = append(raftNodes, c.Followers()...)
+	for _, raftNode := range raftNodes {
+		firstLogIndex, err := raftNode.logs.FirstIndex()
+		require.NoError(t, err)
+		lastLogIndex, err := raftNode.logs.LastIndex()
+		require.NoError(t, err)
+		if monotonicLogStore {
+			require.Equal(t, expected, firstLogIndex)
+		} else {
+			require.Equal(t, uint64(1), firstLogIndex)
+		}
+		require.Equal(t, expected, lastLogIndex)
 	}
-	require.Equal(t, expected, lastLogIndex)
-
 	// Ensure all the fsm logs are the same and that we have everything that was
 	// part of the original snapshot, and that the contents after were
 	// reverted.
