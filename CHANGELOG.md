@@ -1,5 +1,13 @@
 # UNRELEASED
 
+# 1.4.0 (March 17th, 2023)
+
+FEATURES
+* Support log stores with a montonically increasing index.  Implementing a log store with the `MonotonicLogStore` interface where `IsMonotonic()` returns true will allow Raft to clear all previous logs on user restores of Raft snapshots.
+
+BUG FIXES
+* Restoring a snapshot with the raft-wal log store caused a panic due to index gap that is created during snapshot restores. 
+
 # 1.3.0 (April 22nd, 2021)
 
 IMPROVEMENTS
