@@ -1020,7 +1020,7 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 	}
 }
 
-func TestRaft_SnapshotRestore_Monotonic(t *testing.T) {
+func TestRaft_RestoreSnapshotOnStartup_Monotonic(t *testing.T) {
 	// Make the cluster
 	conf := inmemConfig(t)
 	conf.TrailingLogs = 10
