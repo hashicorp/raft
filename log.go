@@ -134,9 +134,9 @@ type LogStore interface {
 // this may allow more efficient indexing because the Index values are densely populated. If true is
 // returned, Raft will avoid relying on gaps to trigger re-synching logs on followers after a
 // snapshot is restored. The LogStore must have an efficient implementation of
-// DeleteLogs, as this called after every snapshot restore when gaps are not allowed.
+// DeleteLogs for the case where all logs are removed, as this must be called after snapshot restore when gaps are not allowed.
 // We avoid deleting all records for LogStores that do not implement MonotonicLogStore
-// because this has a major negative performance impact on the BoltDB store that is currently
+// because although it's always correct to do so, it has a major negative performance impact on the BoltDB store that is currently
 // the most widely used.
 type MonotonicLogStore interface {
 	IsMonotonic() bool
