@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-hclog"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1019,6 +1020,88 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 	}
 }
 
+func TestRaft_RestoreSnapshotOnStartup_Monotonic(t *testing.T) {
+	// Make the cluster
+	conf := inmemConfig(t)
+	conf.TrailingLogs = 10
+	opts := &MakeClusterOpts{
+		Peers:         1,
+		Bootstrap:     true,
+		Conf:          conf,
+		MonotonicLogs: true,
+	}
+	c := MakeClusterCustom(t, opts)
+	defer c.Close()
+
+	leader := c.Leader()
+
+	// Commit a lot of things
+	var future Future
+	for i := 0; i < 100; i++ {
+		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	// Wait for the last future to apply
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Take a snapshot
+	snapFuture := leader.Snapshot()
+	if err := snapFuture.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Check for snapshot
+	snaps, _ := leader.snapshots.List()
+	if len(snaps) != 1 {
+		t.Fatalf("should have a snapshot")
+	}
+	snap := snaps[0]
+
+	// Logs should be trimmed
+	firstIdx, err := leader.logs.FirstIndex()
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	lastIdx, err := leader.logs.LastIndex()
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if firstIdx != snap.Index-conf.TrailingLogs+1 {
+		t.Fatalf("should trim logs to %d: but is %d", snap.Index-conf.TrailingLogs+1, firstIdx)
+	}
+
+	// Shutdown
+	shutdown := leader.Shutdown()
+	if err := shutdown.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Restart the Raft
+	r := leader
+	// Can't just reuse the old transport as it will be closed
+	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
+	cfg := r.config()
+	r, err = NewRaft(&cfg, r.fsm, r.logs, r.stable, r.snapshots, trans2)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	c.rafts[0] = r
+
+	// We should have restored from the snapshot!
+	if last := r.getLastApplied(); last != snap.Index {
+		t.Fatalf("bad last index: %d, expecting %d", last, snap.Index)
+	}
+
+	// Verify that logs have not been reset
+	first, _ := r.logs.FirstIndex()
+	last, _ := r.logs.LastIndex()
+	assert.Equal(t, firstIdx, first)
+	assert.Equal(t, lastIdx, last)
+}
+
 func TestRaft_SnapshotRestore_Progress(t *testing.T) {
 	// Make the cluster
 	conf := inmemConfig(t)
@@ -1342,7 +1425,9 @@ func TestRaft_UserSnapshot(t *testing.T) {
 
 // snapshotAndRestore does a snapshot and restore sequence and applies the given
 // offset to the snapshot index, so we can try out different situations.
-func snapshotAndRestore(t *testing.T, offset uint64) {
+func snapshotAndRestore(t *testing.T, offset uint64, monotonicLogStore bool, restoreNewCluster bool) {
+	t.Helper()
+
 	// Make the cluster.
 	conf := inmemConfig(t)
 
@@ -1352,7 +1437,19 @@ func snapshotAndRestore(t *testing.T, offset uint64) {
 	conf.ElectionTimeout = 500 * time.Millisecond
 	conf.LeaderLeaseTimeout = 500 * time.Millisecond
 
-	c := MakeCluster(3, t, conf)
+	var c *cluster
+	numPeers := 3
+	optsMonotonic := &MakeClusterOpts{
+		Peers:         numPeers,
+		Bootstrap:     true,
+		Conf:          conf,
+		MonotonicLogs: true,
+	}
+	if monotonicLogStore {
+		c = MakeClusterCustom(t, optsMonotonic)
+	} else {
+		c = MakeCluster(numPeers, t, conf)
+	}
 	defer c.Close()
 
 	// Wait for things to get stable and commit some things.
@@ -1382,6 +1479,17 @@ func snapshotAndRestore(t *testing.T, offset uint64) {
 	// Get the last index before the restore.
 	preIndex := leader.getLastIndex()
 
+	if restoreNewCluster {
+		var c2 *cluster
+		if monotonicLogStore {
+			c2 = MakeClusterCustom(t, optsMonotonic)
+		} else {
+			c2 = MakeCluster(numPeers, t, conf)
+		}
+		c = c2
+		leader = c.Leader()
+	}
+
 	// Restore the snapshot, twiddling the index with the offset.
 	meta, reader, err := snap.Open()
 	meta.Index += offset
@@ -1397,17 +1505,40 @@ func snapshotAndRestore(t *testing.T, offset uint64) {
 	// an index to create a hole, and then we apply a no-op after the
 	// restore.
 	var expected uint64
-	if meta.Index < preIndex {
+	if !restoreNewCluster && meta.Index < preIndex {
 		expected = preIndex + 2
 	} else {
+		// restoring onto a new cluster should always have a last index based
+		// off of the snaphsot meta index
 		expected = meta.Index + 2
 	}
+
 	lastIndex := leader.getLastIndex()
 	if lastIndex != expected {
 		t.Fatalf("Index was not updated correctly: %d vs. %d", lastIndex, expected)
 	}
 
-	// Ensure all the logs are the same and that we have everything that was
+	// Ensure raft logs are removed for monotonic log stores but remain
+	// untouched for non-monotic (BoltDB) logstores.
+	// When first index = 1, then logs have remained untouched.
+	// When first indext is set to the next commit index / last index, then
+	// it means logs have been removed.
+	raftNodes := make([]*Raft, 0, numPeers+1)
+	raftNodes = append(raftNodes, leader)
+	raftNodes = append(raftNodes, c.Followers()...)
+	for _, raftNode := range raftNodes {
+		firstLogIndex, err := raftNode.logs.FirstIndex()
+		require.NoError(t, err)
+		lastLogIndex, err := raftNode.logs.LastIndex()
+		require.NoError(t, err)
+		if monotonicLogStore {
+			require.Equal(t, expected, firstLogIndex)
+		} else {
+			require.Equal(t, uint64(1), firstLogIndex)
+		}
+		require.Equal(t, expected, lastLogIndex)
+	}
+	// Ensure all the fsm logs are the same and that we have everything that was
 	// part of the original snapshot, and that the contents after were
 	// reverted.
 	c.EnsureSame(t)
@@ -1418,7 +1549,7 @@ func snapshotAndRestore(t *testing.T, offset uint64) {
 	}
 	for i, entry := range fsm.logs {
 		expected := []byte(fmt.Sprintf("test %d", i))
-		if bytes.Compare(entry, expected) != 0 {
+		if !bytes.Equal(entry, expected) {
 			t.Fatalf("Log entry bad: %v", entry)
 		}
 	}
@@ -1446,10 +1577,17 @@ func TestRaft_UserRestore(t *testing.T) {
 		10000,
 	}
 
+	restoreToNewClusterCases := []bool{false, true}
+
 	for _, c := range cases {
-		t.Run(fmt.Sprintf("case %v", c), func(t *testing.T) {
-			snapshotAndRestore(t, c)
-		})
+		for _, restoreNewCluster := range restoreToNewClusterCases {
+			t.Run(fmt.Sprintf("case %v | restored to new cluster: %t", c, restoreNewCluster), func(t *testing.T) {
+				snapshotAndRestore(t, c, false, restoreNewCluster)
+			})
+			t.Run(fmt.Sprintf("monotonic case %v | restored to new cluster: %t", c, restoreNewCluster), func(t *testing.T) {
+				snapshotAndRestore(t, c, true, restoreNewCluster)
+			})
+		}
 	}
 }
 
@@ -2380,6 +2518,7 @@ func TestRaft_LeadershipTransferStopRightAway(t *testing.T) {
 		t.Errorf("leadership shouldn't have started, but instead it error with: %v", err)
 	}
 }
+
 func TestRaft_GetConfigurationNoBootstrap(t *testing.T) {
 	c := MakeCluster(2, t, nil)
 	defer c.Close()
@@ -2415,6 +2554,41 @@ func TestRaft_GetConfigurationNoBootstrap(t *testing.T) {
 	if !reflect.DeepEqual(observed, expected) {
 		t.Errorf("GetConfiguration result differ from Raft.GetConfiguration: observed %+v, expected %+v", observed, expected)
 	}
+}
+
+func TestRaft_LogStoreIsMonotonic(t *testing.T) {
+	c := MakeCluster(1, t, nil)
+	defer c.Close()
+
+	// Should be one leader
+	leader := c.Leader()
+	c.EnsureLeader(t, leader.localAddr)
+
+	// Test the monotonic type assertion on the InmemStore.
+	_, ok := leader.logs.(MonotonicLogStore)
+	assert.False(t, ok)
+
+	var log LogStore
+
+	// Wrapping the non-monotonic store as a LogCache should make it pass the
+	// type assertion, but the underlying store is still non-monotonic.
+	log, _ = NewLogCache(100, leader.logs)
+	mcast, ok := log.(MonotonicLogStore)
+	require.True(t, ok)
+	assert.False(t, mcast.IsMonotonic())
+
+	// Now create a new MockMonotonicLogStore using the leader logs and expect
+	// it to work.
+	log = &MockMonotonicLogStore{s: leader.logs}
+	mcast, ok = log.(MonotonicLogStore)
+	require.True(t, ok)
+	assert.True(t, mcast.IsMonotonic())
+
+	// Wrap the mock logstore in a LogCache and check again.
+	log, _ = NewLogCache(100, log)
+	mcast, ok = log.(MonotonicLogStore)
+	require.True(t, ok)
+	assert.True(t, mcast.IsMonotonic())
 }
 
 func TestRaft_CacheLogWithStoreError(t *testing.T) {
