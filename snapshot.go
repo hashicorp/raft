@@ -210,10 +210,10 @@ func (r *Raft) takeSnapshot() (string, error) {
 	return sink.ID(), nil
 }
 
-// compactLogs takes the last inclusive index of a snapshot
-// and trims the logs that are no longer needed.
-func (r *Raft) compactLogs(snapIdx uint64) error {
-	defer metrics.MeasureSince([]string{"raft", "compactLogs"}, time.Now())
+// compactLogsToTrailingLogIdx takes the last inclusive index of a snapshot
+// and trailingLogs and trims the logs that are no longer needed up to the
+// trailingLogIdx.
+func (r *Raft) compactLogsToTrailingLogIdx(snapIdx uint64, trailingLogs uint64) error {
 	// Determine log ranges to compact
 	minLog, err := r.logs.FirstIndex()
 	if err != nil {
@@ -225,7 +225,6 @@ func (r *Raft) compactLogs(snapIdx uint64) error {
 
 	// Use a consistent value for trailingLogs for the duration of this method
 	// call to avoid surprising behaviour.
-	trailingLogs := r.config().TrailingLogs
 	if lastLogIdx <= trailingLogs {
 		return nil
 	}
@@ -250,28 +249,25 @@ func (r *Raft) compactLogs(snapIdx uint64) error {
 	return nil
 }
 
+// compactLogs takes the last inclusive index of a snapshot
+// and trims the logs that are no longer needed.
+func (r *Raft) compactLogs(snapIdx uint64) error {
+	defer metrics.MeasureSince([]string{"raft", "compactLogs"}, time.Now())
+	return r.compactLogsToTrailingLogIdx(snapIdx, r.config().TrailingLogs)
+}
+
 // removeOldLogs removes all old logs from the store. This is used for
 // MonotonicLogStores after restore. Callers should verify that the store
 // implementation is monotonic prior to calling.
 func (r *Raft) removeOldLogs() error {
 	defer metrics.MeasureSince([]string{"raft", "removeOldLogs"}, time.Now())
 
-	// Determine log ranges to truncate
-	firstLogIdx, err := r.logs.FirstIndex()
-	if err != nil {
-		return fmt.Errorf("failed to get first log index: %w", err)
-	}
-
 	lastLogIdx, err := r.logs.LastIndex()
 	if err != nil {
 		return fmt.Errorf("failed to get last log index: %w", err)
 	}
 
-	r.logger.Info("removing all old logs from log store", "first", firstLogIdx, "last", lastLogIdx)
+	r.logger.Info("removing all old logs from log store")
 
-	if err := r.logs.DeleteRange(firstLogIdx, lastLogIdx); err != nil {
-		return fmt.Errorf("log truncation failed: %v", err)
-	}
-
-	return nil
+	return r.compactLogsToTrailingLogIdx(lastLogIdx, 0)
 }
