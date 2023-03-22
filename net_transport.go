@@ -232,7 +232,7 @@ func (n *NetworkTransport) getStreamContext() context.Context {
 	return n.streamCtx
 }
 
-// SetHeartbeatHandler is used to setup a heartbeat handler
+// SetHeartbeatHandler is used to set up a heartbeat handler
 // as a fast-pass. This is to avoid head-of-line blocking from
 // disk IO.
 func (n *NetworkTransport) SetHeartbeatHandler(cb func(rpc RPC)) {
@@ -367,7 +367,7 @@ func (n *NetworkTransport) returnConn(conn *netConn) {
 	defer n.connPoolLock.Unlock()
 
 	key := conn.target
-	conns, _ := n.connPool[key]
+	conns := n.connPool[key]
 
 	if !n.IsShutdown() && len(conns) < n.maxPool {
 		n.connPool[key] = append(conns, conn)
@@ -793,7 +793,7 @@ func (n *netPipeline) Consumer() <-chan AppendFuture {
 	return n.doneCh
 }
 
-// Closed is used to shutdown the pipeline connection.
+// Close is used to shut down the pipeline connection.
 func (n *netPipeline) Close() error {
 	n.shutdownLock.Lock()
 	defer n.shutdownLock.Unlock()

@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"sync"
 )
 
@@ -88,7 +87,7 @@ func (m *InmemSnapshotStore) Open(id string) (*SnapshotMeta, io.ReadCloser, erro
 	// Make a copy of the contents, since a bytes.Buffer can only be read
 	// once.
 	contents := bytes.NewBuffer(m.latest.contents.Bytes())
-	return &m.latest.meta, ioutil.NopCloser(contents), nil
+	return &m.latest.meta, io.NopCloser(contents), nil
 }
 
 // Write appends the given bytes to the snapshot contents

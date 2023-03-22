@@ -8,7 +8,6 @@ import (
 	"container/list"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"sync/atomic"
 	"time"
 
@@ -217,7 +216,7 @@ func (r *Raft) runFollower() {
 
 			// Check if we have had a successful contact
 			lastContact := r.LastContact()
-			if time.Now().Sub(lastContact) < hbTimeout {
+			if time.Since(lastContact) < hbTimeout {
 				continue
 			}
 
@@ -1511,7 +1510,6 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	// Everything went well, set success
 	resp.Success = true
 	r.setLastContact()
-	return
 }
 
 // processConfigurationLogEntry takes a log entry and updates the latest
@@ -1631,7 +1629,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// Check if we've voted in this election before
 	if lastVoteTerm == req.Term && lastVoteCandBytes != nil {
 		r.logger.Info("duplicate requestVote for same term", "term", req.Term)
-		if bytes.Compare(lastVoteCandBytes, candidateBytes) == 0 {
+		if bytes.Equal(lastVoteCandBytes, candidateBytes) {
 			r.logger.Warn("duplicate requestVote from", "candidate", candidate)
 			resp.Granted = true
 		}
@@ -1664,7 +1662,6 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 
 	resp.Granted = true
 	r.setLastContact()
-	return
 }
 
 // installSnapshot is invoked when we get a InstallSnapshot RPC call.
@@ -1680,7 +1677,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	}
 	var rpcErr error
 	defer func() {
-		io.Copy(ioutil.Discard, rpc.Reader) // ensure we always consume all the snapshot data from the stream [see issue #212]
+		_, _ = io.Copy(io.Discard, rpc.Reader) // ensure we always consume all the snapshot data from the stream [see issue #212]
 		rpc.Respond(resp, rpcErr)
 	}()
 

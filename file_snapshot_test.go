@@ -6,7 +6,6 @@ package raft
 import (
 	"bytes"
 	"io"
-	"io/ioutil"
 	"os"
 	"reflect"
 	"runtime"
@@ -28,13 +27,13 @@ func TestFileSnapshotSinkImpl(t *testing.T) {
 }
 
 func TestFileSS_CreateSnapshotMissingParentDir(t *testing.T) {
-	parent, err := ioutil.TempDir("", "raft")
+	parent, err := os.MkdirTemp("", "raft")
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
 	defer os.RemoveAll(parent)
 
-	dir, err := ioutil.TempDir(parent, "raft")
+	dir, err := os.MkdirTemp(parent, "raft")
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
@@ -54,7 +53,7 @@ func TestFileSS_CreateSnapshotMissingParentDir(t *testing.T) {
 }
 func TestFileSS_CreateSnapshot(t *testing.T) {
 	// Create a test dir
-	dir, err := ioutil.TempDir("", "raft")
+	dir, err := os.MkdirTemp("", "raft")
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
@@ -162,7 +161,7 @@ func TestFileSS_CreateSnapshot(t *testing.T) {
 
 func TestFileSS_CancelSnapshot(t *testing.T) {
 	// Create a test dir
-	dir, err := ioutil.TempDir("", "raft")
+	dir, err := os.MkdirTemp("", "raft")
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
@@ -200,7 +199,7 @@ func TestFileSS_Retention(t *testing.T) {
 	var err error
 	// Create a test dir
 	var dir string
-	dir, err = ioutil.TempDir("", "raft")
+	dir, err = os.MkdirTemp("", "raft")
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
@@ -253,7 +252,7 @@ func TestFileSS_BadPerm(t *testing.T) {
 
 	// Create a temp dir
 	var dir1 string
-	dir1, err = ioutil.TempDir("", "raft")
+	dir1, err = os.MkdirTemp("", "raft")
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}
@@ -261,7 +260,7 @@ func TestFileSS_BadPerm(t *testing.T) {
 
 	// Create a sub dir and remove all permissions
 	var dir2 string
-	dir2, err = ioutil.TempDir(dir1, "badperm")
+	dir2, err = os.MkdirTemp(dir1, "badperm")
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}
@@ -277,13 +276,13 @@ func TestFileSS_BadPerm(t *testing.T) {
 }
 
 func TestFileSS_MissingParentDir(t *testing.T) {
-	parent, err := ioutil.TempDir("", "raft")
+	parent, err := os.MkdirTemp("", "raft")
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
 	defer os.RemoveAll(parent)
 
-	dir, err := ioutil.TempDir(parent, "raft")
+	dir, err := os.MkdirTemp(parent, "raft")
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
@@ -297,7 +296,7 @@ func TestFileSS_MissingParentDir(t *testing.T) {
 
 func TestFileSS_Ordering(t *testing.T) {
 	// Create a test dir
-	dir, err := ioutil.TempDir("", "raft")
+	dir, err := os.MkdirTemp("", "raft")
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
