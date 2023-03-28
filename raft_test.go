@@ -4,8 +4,8 @@
 package raft
 
 import (
-	"bufio"
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -1149,9 +1149,10 @@ func TestRaft_SnapshotRestore_Progress(t *testing.T) {
 	// Intercept logs and look for specific log messages.
 	var logbuf lockedBytesBuffer
 	cfg.Logger = hclog.New(&hclog.LoggerOptions{
-		Name:   "test",
-		Level:  hclog.Info,
-		Output: &logbuf,
+		Name:       "test",
+		JSONFormat: true,
+		Level:      hclog.Info,
+		Output:     &logbuf,
 	})
 	r, err := NewRaft(&cfg, r.fsm, r.logs, r.stable, r.snapshots, trans2)
 	if err != nil {
@@ -1165,14 +1166,26 @@ func TestRaft_SnapshotRestore_Progress(t *testing.T) {
 	}
 
 	{
-		scan := bufio.NewScanner(strings.NewReader(logbuf.String()))
+		dec := json.NewDecoder(strings.NewReader(logbuf.String()))
+
 		found := false
-		for scan.Scan() {
-			line := scan.Text()
-			if strings.Contains(line, "snapshot restore progress") && strings.Contains(line, "percent-complete=100.00%") {
+
+		type partialRecord struct {
+			Message         string `json:"@message"`
+			PercentComplete string `json:"percent-complete"`
+		}
+
+		for !found {
+			var record partialRecord
+			if err := dec.Decode(&record); err != nil {
+				t.Fatalf("error while decoding json logs: %v", err)
+			}
+
+			if record.Message == "snapshot restore progress" && record.PercentComplete == "100.00%" {
 				found = true
 				break
 			}
+
 		}
 		if !found {
 			t.Fatalf("could not find a log line indicating that snapshot restore progress was being logged")
