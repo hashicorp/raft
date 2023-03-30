@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"reflect"
 	"sync"
@@ -131,6 +130,47 @@ func (m *MockSnapshot) Persist(sink SnapshotSink) error {
 
 // NOTE: This is exposed for middleware testing purposes and is not a stable API
 func (m *MockSnapshot) Release() {
+}
+
+// MockMonotonicLogStore is a LogStore wrapper for testing the
+// MonotonicLogStore interface.
+type MockMonotonicLogStore struct {
+	s LogStore
+}
+
+// IsMonotonic implements the MonotonicLogStore interface.
+func (m *MockMonotonicLogStore) IsMonotonic() bool {
+	return true
+}
+
+// FirstIndex implements the LogStore interface.
+func (m *MockMonotonicLogStore) FirstIndex() (uint64, error) {
+	return m.s.FirstIndex()
+}
+
+// LastIndex implements the LogStore interface.
+func (m *MockMonotonicLogStore) LastIndex() (uint64, error) {
+	return m.s.LastIndex()
+}
+
+// GetLog implements the LogStore interface.
+func (m *MockMonotonicLogStore) GetLog(index uint64, log *Log) error {
+	return m.s.GetLog(index, log)
+}
+
+// StoreLog implements the LogStore interface.
+func (m *MockMonotonicLogStore) StoreLog(log *Log) error {
+	return m.s.StoreLog(log)
+}
+
+// StoreLogs implements the LogStore interface.
+func (m *MockMonotonicLogStore) StoreLogs(logs []*Log) error {
+	return m.s.StoreLogs(logs)
+}
+
+// DeleteRange implements the LogStore interface.
+func (m *MockMonotonicLogStore) DeleteRange(min uint64, max uint64) error {
+	return m.s.DeleteRange(min, max)
 }
 
 // This can be used as the destination for a logger and it'll
@@ -678,6 +718,7 @@ type MakeClusterOpts struct {
 	ConfigStoreFSM  bool
 	MakeFSMFunc     func() FSM
 	LongstopTimeout time.Duration
+	MonotonicLogs   bool
 }
 
 // makeCluster will return a cluster with the given config and number of peers.
@@ -708,7 +749,7 @@ func makeCluster(t *testing.T, opts *MakeClusterOpts) *cluster {
 
 	// Setup the stores and transports
 	for i := 0; i < opts.Peers; i++ {
-		dir, err := ioutil.TempDir("", "raft")
+		dir, err := os.MkdirTemp("", "raft")
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
@@ -753,10 +794,15 @@ func makeCluster(t *testing.T, opts *MakeClusterOpts) *cluster {
 	// Create all the rafts
 	c.startTime = time.Now()
 	for i := 0; i < opts.Peers; i++ {
-		logs := c.stores[i]
+		var logs LogStore
+		logs = c.stores[i]
 		store := c.stores[i]
 		snap := c.snaps[i]
 		trans := c.trans[i]
+
+		if opts.MonotonicLogs {
+			logs = &MockMonotonicLogStore{s: logs}
+		}
 
 		peerConf := opts.Conf
 		peerConf.LocalID = configuration.Servers[i].ID
@@ -809,7 +855,7 @@ func MakeClusterCustom(t *testing.T, opts *MakeClusterOpts) *cluster {
 // NOTE: This is exposed for middleware testing purposes and is not a stable API
 func FileSnapTest(t *testing.T) (string, *FileSnapshotStore) {
 	// Create a test dir
-	dir, err := ioutil.TempDir("", "raft")
+	dir, err := os.MkdirTemp("", "raft")
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}

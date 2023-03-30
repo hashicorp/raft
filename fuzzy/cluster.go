@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
@@ -294,7 +293,7 @@ func (c *cluster) VerifyFSM(t *testing.T) {
 }
 
 func (c *cluster) RecordState(t *testing.T) {
-	td, _ := ioutil.TempDir(os.Getenv("TEST_FAIL_DIR"), "failure")
+	td, _ := os.MkdirTemp(os.Getenv("TEST_FAIL_DIR"), "failure")
 	sd, _ := resolveDirectory("data", false)
 	copyDir(td, sd)
 	dump := func(n *raftNode) {

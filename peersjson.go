@@ -6,7 +6,7 @@ package raft
 import (
 	"bytes"
 	"encoding/json"
-	"io/ioutil"
+	"os"
 )
 
 // ReadPeersJSON consumes a legacy peers.json file in the format of the old JSON
@@ -17,7 +17,7 @@ import (
 // support for these, nor non-voter suffrage types.
 func ReadPeersJSON(path string) (Configuration, error) {
 	// Read in the file.
-	buf, err := ioutil.ReadFile(path)
+	buf, err := os.ReadFile(path)
 	if err != nil {
 		return Configuration{}, err
 	}
@@ -66,7 +66,7 @@ type configEntry struct {
 // versions that use server IDs.
 func ReadConfigJSON(path string) (Configuration, error) {
 	// Read in the file.
-	buf, err := ioutil.ReadFile(path)
+	buf, err := os.ReadFile(path)
 	if err != nil {
 		return Configuration{}, err
 	}
