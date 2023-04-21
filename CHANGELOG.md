@@ -1,9 +1,14 @@
 # UNRELEASED
 
+# 1.5.0 (April 21st, 2023)
+
+IMPROVEMENTS
+* Fixed a performance anomaly related to pipelining RPCs that caused large increases in commit latency under high write throughput. Default behavior has changed. For more information see #541.
+
 # 1.4.0 (March 17th, 2023)
 
 FEATURES
-* Support log stores with a montonically increasing index.  Implementing a log store with the `MonotonicLogStore` interface where `IsMonotonic()` returns true will allow Raft to clear all previous logs on user restores of Raft snapshots.
+* Support log stores with a monotonically increasing index.  Implementing a log store with the `MonotonicLogStore` interface where `IsMonotonic()` returns true will allow Raft to clear all previous logs on user restores of Raft snapshots.
 
 BUG FIXES
 * Restoring a snapshot with the raft-wal log store caused a panic due to index gap that is created during snapshot restores. 
