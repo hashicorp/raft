@@ -199,13 +199,18 @@ func newTestLogger(t *testing.T) hclog.Logger {
 	return newTestLoggerWithPrefix(t, "")
 }
 
-// newTestLoggerWithPrefix returns a Logger that can be used in tests. prefix will
-// be added as the name of the logger.
+// newTestLoggerWithPrefix returns a Logger that can be used in tests. prefix
+// will be added as the name of the logger.
 //
 // If tests are run with -v (verbose mode, or -json which implies verbose) the
-// log output will go to stderr directly.
-// If tests are run in regular "quiet" mode, logs will be sent to t.Log so that
-// the logs only appear when a test fails.
+// log output will go to stderr directly. If tests are run in regular "quiet"
+// mode, logs will be sent to t.Log so that the logs only appear when a test
+// fails.
+//
+// Be careful where this is used though - calling t.Log after the test completes
+// causes a panic. This is common if you use it for a NetworkTransport for
+// example and then close the transport at the end of the test because an error
+// is logged after the test is complete.
 func newTestLoggerWithPrefix(t *testing.T, prefix string) hclog.Logger {
 	if testing.Verbose() {
 		return hclog.New(&hclog.LoggerOptions{Name: prefix})
