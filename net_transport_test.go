@@ -512,7 +512,7 @@ func TestNetworkTransport_AppendEntriesPipeline_MaxRPCsInFlight(t *testing.T) {
 			}()
 
 			select {
-			case <-errCh:
+			case err := <-errCh:
 				require.NoError(t, err)
 				t.Fatalf("AppendEntries didn't block with %d in flight", max)
 			case <-time.After(50 * time.Millisecond):
