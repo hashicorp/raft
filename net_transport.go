@@ -28,6 +28,12 @@ const (
 	// DefaultTimeoutScale is the default TimeoutScale in a NetworkTransport.
 	DefaultTimeoutScale = 256 * 1024 // 256KB
 
+	// DefaultMaxInFlight is the default value used for pipelining configuration
+	// if a zero value is passed. See https://github.com/hashicorp/raft/pull/541
+	// for rationale. Note, if this is changed we should update the doc comments
+	// below for NetworkTransportConfig.MaxRPCsInFlight.
+	DefaultMaxInFlight = 2
+
 	// connReceiveBufferSize is the size of the buffer we will use for reading RPC requests into
 	// on followers
 	connReceiveBufferSize = 256 * 1024 // 256KB
@@ -35,6 +41,16 @@ const (
 	// connSendBufferSize is the size of the buffer we will use for sending RPC request data from
 	// the leader to followers.
 	connSendBufferSize = 256 * 1024 // 256KB
+
+	// minInFlightForPipelining is a property of our current pipelining
+	// implementation and must not be changed unless we change the invariants of
+	// that implementation. Roughly speaking even with a zero-length in-flight
+	// buffer we still allow 2 requests to be in-flight before we block because we
+	// only block after sending and the receiving go-routine always unblocks the
+	// chan right after first send. This is a constant just to provide context
+	// rather than a magic number in a few places we have to check invariants to
+	// avoid panics etc.
+	minInFlightForPipelining = 2
 )
 
 var (
@@ -112,16 +128,17 @@ type NetworkTransportConfig struct {
 	// request processing is allowed. If set to 1 the pipelining code path is
 	// skipped entirely and every request is entirely synchronous.
 	//
-	// The default value (if 0 or lower are specified) is 2, which overlaps the
-	// preparation and sending of the next request while waiting for the previous
-	// response, but no additional queuing.
+	// The default value (if 0 or lower are specified) is 2 (DefaultMaxInFlight),
+	// which overlaps the preparation and sending of the next request while
+	// waiting for the previous response, but no additional queuing.
 	//
 	// Historically this was internally fixed at (effectively) 130 however
 	// performance testing has shown that in practice the pipelining optimization
 	// combines badly with batching and actually has a very large negative impact
 	// on commit latency when throughput is high, whilst having very little
-	// benefit on latency or throughput in any other case! See [#541](https://github.com/hashicorp/raft/pull/541) for
-	// more analysis of the performance impacts.
+	// benefit on latency or throughput in any other case! See
+	// [#541](https://github.com/hashicorp/raft/pull/541) for more analysis of the
+	// performance impacts.
 	//
 	// Increasing this beyond 2 is likely to only be beneficial in very
 	// high-latency network conditions. HashiCorp doesn't recommend using our own
@@ -191,10 +208,9 @@ func NewNetworkTransportWithConfig(
 		})
 	}
 	maxInFlight := config.MaxRPCsInFlight
-	if maxInFlight < 1 {
-		// Default (zero or nonsense negative value given) to 2 (which translates to
-		// a zero length channel buffer)
-		maxInFlight = 2
+	if maxInFlight == 0 {
+		// Default zero value
+		maxInFlight = DefaultMaxInFlight
 	}
 	trans := &NetworkTransport{
 		connPool:              make(map[ServerAddress][]*netConn),
@@ -414,7 +430,7 @@ func (n *NetworkTransport) returnConn(conn *netConn) {
 // AppendEntriesPipeline returns an interface that can be used to pipeline
 // AppendEntries requests.
 func (n *NetworkTransport) AppendEntriesPipeline(id ServerID, target ServerAddress) (AppendPipeline, error) {
-	if n.maxInFlight < 2 {
+	if n.maxInFlight < minInFlightForPipelining {
 		// Pipelining is disabled since no more than one request can be outstanding
 		// at once. Skip the whole code path and use synchronous requests.
 		return nil, ErrPipelineReplicationNotSupported
@@ -762,10 +778,10 @@ func sendRPC(conn *netConn, rpcType uint8, args interface{}) error {
 }
 
 // newNetPipeline is used to construct a netPipeline from a given transport and
-// connection. It is a bug to ever call this with maxInFlight less than 2 and
-// will cause a panic.
+// connection. It is a bug to ever call this with maxInFlight less than 2
+// (minInFlightForPipelining) and will cause a panic.
 func newNetPipeline(trans *NetworkTransport, conn *netConn, maxInFlight int) *netPipeline {
-	if maxInFlight < 2 {
+	if maxInFlight < minInFlightForPipelining {
 		// Shouldn't happen (tm) since we validate this in the one call site and
 		// skip pipelining if it's lower.
 		panic("pipelining makes no sense if maxInFlight < 2")
