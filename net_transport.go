@@ -28,11 +28,11 @@ const (
 	// DefaultTimeoutScale is the default TimeoutScale in a NetworkTransport.
 	DefaultTimeoutScale = 256 * 1024 // 256KB
 
-	// DefaultMaxInFlight is the default value used for pipelining configuration
+	// DefaultMaxRPCsInFlight is the default value used for pipelining configuration
 	// if a zero value is passed. See https://github.com/hashicorp/raft/pull/541
 	// for rationale. Note, if this is changed we should update the doc comments
 	// below for NetworkTransportConfig.MaxRPCsInFlight.
-	DefaultMaxInFlight = 2
+	DefaultMaxRPCsInFlight = 2
 
 	// connReceiveBufferSize is the size of the buffer we will use for reading RPC requests into
 	// on followers
@@ -122,15 +122,16 @@ type NetworkTransportConfig struct {
 	MaxPool int
 
 	// MaxRPCsInFlight controls the pipelining "optimization" when replicating
-	// entries to followers (if it's is not disabled).
+	// entries to followers.
 	//
 	// Setting this to 1 explicitly disables pipelining since no overlapping of
 	// request processing is allowed. If set to 1 the pipelining code path is
 	// skipped entirely and every request is entirely synchronous.
 	//
-	// The default value (if 0 or lower are specified) is 2 (DefaultMaxInFlight),
-	// which overlaps the preparation and sending of the next request while
-	// waiting for the previous response, but no additional queuing.
+	// If zero is set (or left as default), DefaultMaxRPCsInFlight is used which
+	// is currently 2. A value of 2 overlaps the preparation and sending of the
+	// next request while waiting for the previous response, but avoids additional
+	// queuing.
 	//
 	// Historically this was internally fixed at (effectively) 130 however
 	// performance testing has shown that in practice the pipelining optimization
@@ -140,17 +141,17 @@ type NetworkTransportConfig struct {
 	// [#541](https://github.com/hashicorp/raft/pull/541) for more analysis of the
 	// performance impacts.
 	//
-	// Increasing this beyond 2 is likely to only be beneficial in very
+	// Increasing this beyond 2 is likely to be beneficial only in very
 	// high-latency network conditions. HashiCorp doesn't recommend using our own
 	// products this way.
 	//
-	// To maintain the old behavior exactly, set this to 130. The old internal
-	// constant was 128 but was used directly as a channel buffer size. Since we
-	// send before blocking on the channel and unblock the channel as soon as the
-	// receiver is done with the earliest outstanding request, even an unbuffered
-	// channel (buffer=0) allows one request to be sent while waiting for the
-	// previous one (i.e. 2 inflight). so the old buffer actually allowed 130 RPCs
-	// to be inflight at once.
+	// To maintain the behavior from before version 1.4.1 exactly, set this to
+	// 130. The old internal constant was 128 but was used directly as a channel
+	// buffer size. Since we send before blocking on the channel and unblock the
+	// channel as soon as the receiver is done with the earliest outstanding
+	// request, even an unbuffered channel (buffer=0) allows one request to be
+	// sent while waiting for the previous one (i.e. 2 inflight). so the old
+	// buffer actually allowed 130 RPCs to be inflight at once.
 	MaxRPCsInFlight int
 
 	// Timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
@@ -210,7 +211,7 @@ func NewNetworkTransportWithConfig(
 	maxInFlight := config.MaxRPCsInFlight
 	if maxInFlight == 0 {
 		// Default zero value
-		maxInFlight = DefaultMaxInFlight
+		maxInFlight = DefaultMaxRPCsInFlight
 	}
 	trans := &NetworkTransport{
 		connPool:              make(map[ServerAddress][]*netConn),
