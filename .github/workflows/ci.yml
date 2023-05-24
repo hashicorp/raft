@@ -49,6 +49,7 @@ jobs:
     # x86 specific build.
     - if: matrix.arch == 'x32'
       run: |
+        sudo apt-get update
         sudo apt-get install gcc-multilib
         go test --tags batchtest ./...
     # x86-64 specific build.
