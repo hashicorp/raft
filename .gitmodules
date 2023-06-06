@@ -1,0 +1,3 @@
+[submodule "raft-compat/raftrs"]
+	path = raft-compat/raftrs
+	url = git@github.com:hashicorp/raft
