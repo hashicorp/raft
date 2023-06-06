@@ -21,7 +21,7 @@ import (
 var userSnapshotErrorsOnNoData = true
 
 // Return configurations optimized for in-memory
-func inmemConfig(tb testing.TB) *Config {
+func InmemConfig(t *testing.T) *Config {
 	conf := DefaultConfig()
 	conf.HeartbeatTimeout = 50 * time.Millisecond
 	conf.ElectionTimeout = 50 * time.Millisecond
@@ -218,6 +218,39 @@ func newTestLoggerWithPrefix(tb testing.TB, prefix string) hclog.Logger {
 		Name:   prefix,
 		Output: &testLoggerAdapter{tb: tb, prefix: prefix},
 	})
+}
+
+func (c *cluster) NodeID(index int) ServerID {
+	if index >= len(c.rafts) {
+		return ""
+	}
+	return c.rafts[index].localID
+}
+
+// ConnectExternal connects all the transports together.
+func (c *cluster) ConnectExternal(a ServerAddress) {
+	c.logger.Debug("fully connecting")
+	for _, t := range c.trans {
+		t.Connect(a, t)
+	}
+}
+
+func (c *cluster) Transport(index int) LoopbackTransport {
+	if index >= len(c.trans) {
+		return nil
+	}
+	return c.trans[index]
+}
+
+func (c *cluster) NodeAddress(index int) ServerAddress {
+	if index >= len(c.rafts) {
+		return ""
+	}
+	return c.rafts[index].localAddr
+}
+
+func (c *cluster) RaftsLen() int {
+	return len(c.rafts)
 }
 
 type cluster struct {
@@ -726,7 +759,7 @@ type MakeClusterOpts struct {
 // each other.
 func makeCluster(t *testing.T, opts *MakeClusterOpts) *cluster {
 	if opts.Conf == nil {
-		opts.Conf = inmemConfig(t)
+		opts.Conf = InmemConfig(t)
 	}
 
 	c := &cluster{
