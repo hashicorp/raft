@@ -56,9 +56,12 @@ type raftCluster[T raftNode] struct {
 	rafts []T
 }
 
-func newRaftCluster[T raftNode](count int) raftCluster[T] {
+func newRaftCluster[T raftNode](count int, name string) raftCluster[T] {
 	rc := raftCluster[T]{}
 	rc.rafts = make([]T, count)
+	for i := 0; i < count; i++ {
+		initNode(&rc.rafts[i], fmt.Sprintf("%s-%d", name, i))
+	}
 	return rc
 }
 
@@ -72,23 +75,50 @@ func (r *raftCluster[T]) getLeader() T {
 	return empty
 }
 
+func initNode(node interface{}, id string) {
+	switch node.(type) {
+	case *raftLatest:
+		initLatest(node.(*raftLatest), id)
+	case *raftUIT:
+		initUIT(node.(*raftUIT), id)
+	default:
+		panic("invalid node type")
+	}
+}
+
+func initUIT(node *raftUIT, id string) {
+	node.Config = raft.DefaultConfig()
+	node.Config.HeartbeatTimeout = 50 * time.Millisecond
+	node.Config.ElectionTimeout = 50 * time.Millisecond
+	node.Config.LeaderLeaseTimeout = 50 * time.Millisecond
+	node.Config.CommitTimeout = 5 * time.Millisecond
+	node.id = raft.ServerID(id)
+	node.Config.LocalID = node.id
+	node.Store = raft.NewInmemStore()
+	node.Snap = raft.NewInmemSnapshotStore()
+	node.fsm = &raft.MockFSM{}
+}
+
+func initLatest(node *raftLatest, id string) {
+	node.Config = raftrs.DefaultConfig()
+	node.Config.HeartbeatTimeout = 50 * time.Millisecond
+	node.Config.ElectionTimeout = 50 * time.Millisecond
+	node.Config.LeaderLeaseTimeout = 50 * time.Millisecond
+	node.Config.CommitTimeout = 5 * time.Millisecond
+	node.id = raftrs.ServerID(id)
+	node.Config.LocalID = node.id
+	node.Store = raftrs.NewInmemStore()
+	node.Snap = raftrs.NewInmemSnapshotStore()
+	node.fsm = &raftrs.MockFSM{}
+}
+
 func TestRaft_RollingUpgrade(t *testing.T) {
 
 	initCount := 3
-	rLatest := newRaftCluster[raftLatest](initCount)
+	rLatest := newRaftCluster[raftLatest](initCount, "raftOld")
 	configuration := raftrs.Configuration{}
 
 	for i := 0; i < initCount; i++ {
-		rLatest.rafts[i].Config = raftrs.DefaultConfig()
-		rLatest.rafts[i].Config.HeartbeatTimeout = 50 * time.Millisecond
-		rLatest.rafts[i].Config.ElectionTimeout = 50 * time.Millisecond
-		rLatest.rafts[i].Config.LeaderLeaseTimeout = 50 * time.Millisecond
-		rLatest.rafts[i].Config.CommitTimeout = 5 * time.Millisecond
-		rLatest.rafts[i].id = raftrs.ServerID(fmt.Sprintf("grpc%d", i))
-		rLatest.rafts[i].Config.LocalID = rLatest.rafts[i].id
-		rLatest.rafts[i].Store = raftrs.NewInmemStore()
-		rLatest.rafts[i].Snap = raftrs.NewInmemSnapshotStore()
-		rLatest.rafts[i].fsm = &raftrs.MockFSM{}
 		var err error
 		rLatest.rafts[i].trans, err = raftrs.NewTCPTransport("localhost:0", nil, 2, time.Second, nil)
 		require.NoError(t, err)
@@ -120,7 +150,7 @@ func TestRaft_RollingUpgrade(t *testing.T) {
 	future := getLeader.raft.Apply([]byte("test"), time.Second)
 	require.NoError(t, future.Error())
 
-	rUIT := newRaftCluster[raftUIT](initCount)
+	rUIT := newRaftCluster[raftUIT](initCount, "raftNew")
 	leader, _ := getLeader.raft.LeaderWithID()
 	require.NotEmpty(t, leader)
 
@@ -131,16 +161,6 @@ func TestRaft_RollingUpgrade(t *testing.T) {
 			leaderIdx = i
 			continue
 		}
-		rUIT.rafts[i].Config = raft.DefaultConfig()
-		rUIT.rafts[i].Config.HeartbeatTimeout = 50 * time.Millisecond
-		rUIT.rafts[i].Config.ElectionTimeout = 50 * time.Millisecond
-		rUIT.rafts[i].Config.LeaderLeaseTimeout = 50 * time.Millisecond
-		rUIT.rafts[i].Config.CommitTimeout = 5 * time.Millisecond
-		rUIT.rafts[i].id = raft.ServerID(fmt.Sprintf("newGrpc%d", i))
-		rUIT.rafts[i].Config.LocalID = rUIT.rafts[i].id
-		rUIT.rafts[i].Store = raft.NewInmemStore()
-		rUIT.rafts[i].Snap = raft.NewInmemSnapshotStore()
-		rUIT.rafts[i].fsm = &raft.MockFSM{}
 		var err error
 		rUIT.rafts[i].trans, err = raft.NewTCPTransport("localhost:0", nil, 2, time.Second, nil)
 		require.NoError(t, err)
