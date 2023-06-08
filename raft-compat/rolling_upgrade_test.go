@@ -145,7 +145,7 @@ func TestRaft_RollingUpgrade(t *testing.T) {
 	}
 	getLeader := rLatest.getLeader()
 	require.NotNil(t, getLeader)
-	a := getLeader.raft.Leader()
+	a, _ := getLeader.raft.LeaderWithID()
 	require.NotEmpty(t, a)
 	future := getLeader.raft.Apply([]byte("test"), time.Second)
 	require.NoError(t, future.Error())
@@ -171,7 +171,7 @@ func TestRaft_RollingUpgrade(t *testing.T) {
 		time.Sleep(1 * time.Second)
 
 		// Check Leader haven't changed as we are not replacing the leader
-		a := getLeader.raft.Leader()
+		a, _ := getLeader.raft.LeaderWithID()
 		require.Equal(t, a, leader)
 		getLeader.raft.RemoveServer(rLatest.rafts[i].id, 0, 0)
 		rLatest.rafts[i].raft.Shutdown()
@@ -186,13 +186,13 @@ func TestRaft_RollingUpgrade(t *testing.T) {
 		rUIT.rafts[leaderIdx].Store, rUIT.rafts[leaderIdx].Snap, rUIT.rafts[leaderIdx].trans)
 	getLeader.raft.AddVoter(raftrs.ServerID(rUIT.rafts[leaderIdx].getLocalID()), raftrs.ServerAddress(rUIT.rafts[leaderIdx].trans.LocalAddr()), 0, 0)
 	// Check Leader haven't changed as we are not replacing the leader
-	a = getLeader.raft.Leader()
+	a, _ = getLeader.raft.LeaderWithID()
 	require.Equal(t, a, leader)
 	getLeader.raft.RemoveServer(rLatest.rafts[leaderIdx].id, 0, 0)
 	time.Sleep(1 * time.Second)
 	rLatest.rafts[leaderIdx].raft.Shutdown()
 	time.Sleep(1 * time.Second)
-	aNew := rUIT.getLeader().raft.Leader()
+	aNew, _ := getLeader.raft.LeaderWithID()
 	require.NotEqual(t, aNew, leader)
 
 	require.Len(t, rUIT.getLeader().fsm.Logs(), 2)
