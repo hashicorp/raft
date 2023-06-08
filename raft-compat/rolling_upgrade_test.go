@@ -179,12 +179,6 @@ func TestRaft_RollingUpgrade(t *testing.T) {
 	future = getLeader.raft.Apply([]byte("test2"), time.Second)
 	require.NoError(t, future.Error())
 
-	rUIT.rafts[leaderIdx].Config = raft.InmemConfig(t)
-	rUIT.rafts[leaderIdx].id = raft.ServerID(fmt.Sprintf("newGrpc%d", leaderIdx))
-	rUIT.rafts[leaderIdx].Config.LocalID = rUIT.rafts[leaderIdx].id
-	rUIT.rafts[leaderIdx].Store = raft.NewInmemStore()
-	rUIT.rafts[leaderIdx].Snap = raft.NewInmemSnapshotStore()
-	rUIT.rafts[leaderIdx].fsm = &raft.MockFSM{}
 	var err error
 	rUIT.rafts[leaderIdx].trans, err = raft.NewTCPTransport("localhost:0", nil, 2, time.Second, nil)
 	require.NoError(t, err)
