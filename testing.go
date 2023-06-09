@@ -222,39 +222,6 @@ func newTestLoggerWithPrefix(t *testing.T, prefix string) hclog.Logger {
 	})
 }
 
-func (c *cluster) NodeID(index int) ServerID {
-	if index >= len(c.rafts) {
-		return ""
-	}
-	return c.rafts[index].localID
-}
-
-// ConnectExternal connects all the transports together.
-func (c *cluster) ConnectExternal(a ServerAddress) {
-	c.logger.Debug("fully connecting")
-	for _, t := range c.trans {
-		t.Connect(a, t)
-	}
-}
-
-func (c *cluster) Transport(index int) LoopbackTransport {
-	if index >= len(c.trans) {
-		return nil
-	}
-	return c.trans[index]
-}
-
-func (c *cluster) NodeAddress(index int) ServerAddress {
-	if index >= len(c.rafts) {
-		return ""
-	}
-	return c.rafts[index].localAddr
-}
-
-func (c *cluster) RaftsLen() int {
-	return len(c.rafts)
-}
-
 type cluster struct {
 	dirs             []string
 	stores           []*InmemStore
