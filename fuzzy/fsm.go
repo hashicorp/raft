@@ -11,7 +11,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/hashicorp/raft"
+	"github.com/hashicorp/raft/v2"
 )
 
 type logHash struct {

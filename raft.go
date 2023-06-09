@@ -13,7 +13,7 @@ import (
 
 	"github.com/hashicorp/go-hclog"
 
-	"github.com/armon/go-metrics"
+	"github.com/hashicorp/go-metrics"
 )
 
 const (

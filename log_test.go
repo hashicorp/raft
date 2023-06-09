@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	metrics "github.com/armon/go-metrics"
+	metrics "github.com/hashicorp/go-metrics"
 )
 
 func TestOldestLog(t *testing.T) {
