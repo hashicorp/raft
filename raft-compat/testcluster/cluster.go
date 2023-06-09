@@ -40,14 +40,14 @@ func (r RaftUIT) GetLeaderID() string {
 	return string(id)
 }
 
-func (r *raftCluster[T]) ID(i int) string {
+func (r *RaftCluster[T]) ID(i int) string {
 	return r.rafts[i].GetLocalID()
 }
-func (r *raftCluster[T]) Addr(i int) string {
+func (r *RaftCluster[T]) Addr(i int) string {
 	return r.rafts[i].GetLocalAddr()
 }
 
-func (r *raftCluster[T]) Raft(i int) interface{} {
+func (r *RaftCluster[T]) Raft(i int) interface{} {
 	return r.rafts[i].GetRaft()
 }
 
@@ -90,12 +90,12 @@ type RaftNode interface {
 	NumLogs() int
 }
 
-type raftCluster[T RaftNode] struct {
+type RaftCluster[T RaftNode] struct {
 	rafts []T
 }
 
-func NewRaftCluster[T RaftNode](t *testing.T, count int, name string) raftCluster[T] {
-	rc := raftCluster[T]{}
+func NewRaftCluster[T RaftNode](t *testing.T, count int, name string) RaftCluster[T] {
+	rc := RaftCluster[T]{}
 	rc.rafts = make([]T, count)
 	for i := 0; i < count; i++ {
 		initNode(t, &rc.rafts[i], fmt.Sprintf("%s-%d", name, i))
@@ -103,7 +103,7 @@ func NewRaftCluster[T RaftNode](t *testing.T, count int, name string) raftCluste
 	return rc
 }
 
-func (r *raftCluster[T]) GetLeader() T {
+func (r *RaftCluster[T]) GetLeader() T {
 	var empty T
 	for _, n := range r.rafts {
 		if n.GetLocalID() == n.GetLeaderID() {
