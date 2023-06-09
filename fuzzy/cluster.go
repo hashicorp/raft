@@ -14,7 +14,7 @@ import (
 
 	"github.com/hashicorp/go-hclog"
 
-	"github.com/hashicorp/raft"
+	"github.com/hashicorp/raft/v2"
 )
 
 type appliedItem struct {

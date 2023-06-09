@@ -1,11 +1,12 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
+//go:build batchtest
 // +build batchtest
 
 package fuzzy
 
-import "github.com/hashicorp/raft"
+import "github.com/hashicorp/raft/v2"
 
 // ApplyBatch enables fuzzyFSM to satisfy the BatchingFSM interface. This
 // function is gated by the batchtest build flag.
