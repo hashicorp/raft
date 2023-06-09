@@ -21,7 +21,7 @@ import (
 var userSnapshotErrorsOnNoData = true
 
 // Return configurations optimized for in-memory
-func InmemConfig(t *testing.T) *Config {
+func inmemConfig(t *testing.T) *Config {
 	conf := DefaultConfig()
 	conf.HeartbeatTimeout = 50 * time.Millisecond
 	conf.ElectionTimeout = 50 * time.Millisecond
@@ -759,7 +759,7 @@ type MakeClusterOpts struct {
 // each other.
 func makeCluster(t *testing.T, opts *MakeClusterOpts) *cluster {
 	if opts.Conf == nil {
-		opts.Conf = InmemConfig(t)
+		opts.Conf = inmemConfig(t)
 	}
 
 	c := &cluster{
