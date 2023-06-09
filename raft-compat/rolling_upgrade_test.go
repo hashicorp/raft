@@ -1,9 +1,10 @@
 package raft_compat
 
 import (
-	raftrs "github.com/dhiayachi/raft"
 	"github.com/hashicorp/raft"
+	raftrs "github.com/hashicorp/raft-latest"
 	"github.com/hashicorp/raft/compat/testcluster"
+	"github.com/hashicorp/raft/compat/utils"
 	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
@@ -28,21 +29,13 @@ func TestRaft_RollingUpgrade(t *testing.T) {
 	if err := boot.Error(); err != nil {
 		t.Fatalf("bootstrap err: %v", err)
 	}
-	lCh := raft0.LeaderCh()
-
-	after := time.After(5 * time.Second)
-
-	select {
-	case <-after:
-		t.Fatalf("timedout")
-	case <-lCh:
-	}
+	utils.WaitForNewLeader[testcluster.RaftLatest](t, "", rLatest)
 	getLeader := rLatest.GetLeader()
-	require.NotNil(t, getLeader)
+	require.NotEmpty(t, getLeader)
 	a, _ := getLeader.GetRaft().(*raftrs.Raft).LeaderWithID()
 	require.NotEmpty(t, a)
 	future := getLeader.GetRaft().(*raftrs.Raft).Apply([]byte("test"), time.Second)
-	require.NoError(t, future.Error())
+	utils.WaitFuture(t, future)
 
 	rUIT := testcluster.NewRaftCluster[testcluster.RaftUIT](t, initCount, "raftNew")
 	leader, _ := getLeader.GetRaft().(*raftrs.Raft).LeaderWithID()
@@ -58,8 +51,7 @@ func TestRaft_RollingUpgrade(t *testing.T) {
 
 		future := getLeader.GetRaft().(*raftrs.Raft).AddVoter(raftrs.ServerID(rUIT.ID(i)), raftrs.ServerAddress(rUIT.Addr(i)), 0, 0)
 
-		time.Sleep(1 * time.Second)
-		require.NoError(t, future.Error())
+		utils.WaitFuture(t, future)
 		// Check Leader haven't changed as we are not replacing the leader
 		a, _ := getLeader.GetRaft().(*raftrs.Raft).LeaderWithID()
 		require.Equal(t, a, leader)
@@ -69,17 +61,18 @@ func TestRaft_RollingUpgrade(t *testing.T) {
 	future = getLeader.GetRaft().(*raftrs.Raft).Apply([]byte("test2"), time.Second)
 	require.NoError(t, future.Error())
 
-	f := getLeader.GetRaft().(*raftrs.Raft).AddVoter(raftrs.ServerID(rUIT.ID(leaderIdx)), raftrs.ServerAddress(rUIT.Addr(leaderIdx)), 0, 0)
-	time.Sleep(1 * time.Second)
-	require.NoError(t, f.Error())
+	fa := getLeader.GetRaft().(*raftrs.Raft).AddVoter(raftrs.ServerID(rUIT.ID(leaderIdx)), raftrs.ServerAddress(rUIT.Addr(leaderIdx)), 0, 0)
+	utils.WaitFuture(t, fa)
+
 	// Check Leader haven't changed as we are not replacing the leader
 	a, _ = getLeader.GetRaft().(*raftrs.Raft).LeaderWithID()
 	require.Equal(t, a, leader)
-	getLeader.GetRaft().(*raftrs.Raft).RemoveServer(raftrs.ServerID(rLatest.ID(leaderIdx)), 0, 0)
-	time.Sleep(1 * time.Second)
+	fr := getLeader.GetRaft().(*raftrs.Raft).RemoveServer(raftrs.ServerID(rLatest.ID(leaderIdx)), 0, 0)
+	utils.WaitFuture(t, fr)
 	rLatest.Raft(leaderIdx).(*raftrs.Raft).Shutdown()
-	time.Sleep(1 * time.Second)
+	utils.WaitForNewLeader[testcluster.RaftUIT](t, getLeader.GetLocalID(), rUIT)
 	newLeader := rUIT.GetLeader()
+	require.NotEmpty(t, newLeader)
 	aNew, _ := newLeader.GetRaft().(*raft.Raft).LeaderWithID()
 	require.NotEqual(t, aNew, leader)
 

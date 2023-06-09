@@ -16,14 +16,14 @@ require (
 	golang.org/x/sys v0.0.0-20220503163025-988cb79eb6c6 // indirect
 )
 
-replace github.com/dhiayachi/raft v1.0.0 => ./raftrs
+replace github.com/hashicorp/raft-latest => ./raftrs
 
 replace github.com/hashicorp/raft => ../
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/dhiayachi/raft v1.0.0
 	github.com/hashicorp/raft v1.2.0
+	github.com/hashicorp/raft-latest v1.2.0
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

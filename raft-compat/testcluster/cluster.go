@@ -2,8 +2,8 @@ package testcluster
 
 import (
 	"fmt"
-	raftrs "github.com/dhiayachi/raft"
 	"github.com/hashicorp/raft"
+	raftrs "github.com/hashicorp/raft-latest"
 	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
@@ -111,6 +111,10 @@ func (r *RaftCluster[T]) GetLeader() T {
 		}
 	}
 	return empty
+}
+
+func (r *RaftCluster[T]) Len() int {
+	return len(r.rafts)
 }
 
 func initNode(t *testing.T, node interface{}, id string) {
