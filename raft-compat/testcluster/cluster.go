@@ -3,7 +3,7 @@ package testcluster
 import (
 	"fmt"
 	"github.com/hashicorp/raft"
-	raftrs "github.com/hashicorp/raft-latest"
+	raftlatest "github.com/hashicorp/raft-latest"
 	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
@@ -52,13 +52,13 @@ func (r *RaftCluster[T]) Raft(i int) interface{} {
 }
 
 type RaftLatest struct {
-	raft   *raftrs.Raft
-	trans  *raftrs.NetworkTransport
-	Config *raftrs.Config
-	Store  *raftrs.InmemStore
-	Snap   *raftrs.InmemSnapshotStore
-	id     raftrs.ServerID
-	fsm    *raftrs.MockFSM
+	raft   *raftlatest.Raft
+	trans  *raftlatest.NetworkTransport
+	Config *raftlatest.Config
+	Store  *raftlatest.InmemStore
+	Snap   *raftlatest.InmemSnapshotStore
+	id     raftlatest.ServerID
+	fsm    *raftlatest.MockFSM
 }
 
 func (r RaftLatest) NumLogs() int {
@@ -148,20 +148,20 @@ func initUIT(t *testing.T, node *RaftUIT, id string) {
 }
 
 func initLatest(t *testing.T, node *RaftLatest, id string) {
-	node.Config = raftrs.DefaultConfig()
+	node.Config = raftlatest.DefaultConfig()
 	node.Config.HeartbeatTimeout = 50 * time.Millisecond
 	node.Config.ElectionTimeout = 50 * time.Millisecond
 	node.Config.LeaderLeaseTimeout = 50 * time.Millisecond
 	node.Config.CommitTimeout = 5 * time.Millisecond
-	node.id = raftrs.ServerID(id)
+	node.id = raftlatest.ServerID(id)
 	node.Config.LocalID = node.id
-	node.Store = raftrs.NewInmemStore()
-	node.Snap = raftrs.NewInmemSnapshotStore()
-	node.fsm = &raftrs.MockFSM{}
+	node.Store = raftlatest.NewInmemStore()
+	node.Snap = raftlatest.NewInmemSnapshotStore()
+	node.fsm = &raftlatest.MockFSM{}
 	var err error
-	node.trans, err = raftrs.NewTCPTransport("localhost:0", nil, 2, time.Second, nil)
+	node.trans, err = raftlatest.NewTCPTransport("localhost:0", nil, 2, time.Second, nil)
 	require.NoError(t, err)
-	node.raft, err = raftrs.NewRaft(node.Config, node.fsm, node.Store,
+	node.raft, err = raftlatest.NewRaft(node.Config, node.fsm, node.Store,
 		node.Store, node.Snap, node.trans)
 	require.NoError(t, err)
 }
