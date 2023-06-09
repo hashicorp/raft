@@ -153,7 +153,7 @@ func TestRaft_RecoverCluster(t *testing.T) {
 	snapshotThreshold := 5
 	runRecover := func(t *testing.T, applies int) {
 		var err error
-		conf := InmemConfig(t)
+		conf := inmemConfig(t)
 		conf.TrailingLogs = 10
 		conf.SnapshotThreshold = uint64(snapshotThreshold)
 		c := MakeCluster(3, t, conf)
@@ -296,7 +296,7 @@ func TestRaft_HasExistingState(t *testing.T) {
 }
 
 func TestRaft_SingleNode(t *testing.T) {
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	c := MakeCluster(1, t, conf)
 	defer c.Close()
 	raft := c.rafts[0]
@@ -502,7 +502,7 @@ func TestRaft_ApplyNonLeader(t *testing.T) {
 
 func TestRaft_ApplyConcurrent(t *testing.T) {
 	// Make the cluster
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	conf.HeartbeatTimeout = 2 * conf.HeartbeatTimeout
 	conf.ElectionTimeout = 2 * conf.ElectionTimeout
 	c := MakeCluster(3, t, conf)
@@ -553,7 +553,7 @@ func TestRaft_ApplyConcurrent(t *testing.T) {
 
 func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 	// Make the cluster
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	conf.CommitTimeout = 1 * time.Millisecond
 	conf.HeartbeatTimeout = 2 * conf.HeartbeatTimeout
 	conf.ElectionTimeout = 2 * conf.ElectionTimeout
@@ -621,7 +621,7 @@ func TestRaft_JoinNode(t *testing.T) {
 
 func TestRaft_JoinNode_ConfigStore(t *testing.T) {
 	// Make a cluster
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	c := makeCluster(t, &MakeClusterOpts{
 		Peers:          1,
 		Bootstrap:      true,
@@ -779,7 +779,7 @@ func TestRaft_RemoveLeader(t *testing.T) {
 
 func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	// Make a cluster
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	conf.ShutdownOnRemove = false
 	c := MakeCluster(3, t, conf)
 	defer c.Close()
@@ -842,7 +842,7 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 
 func TestRaft_RemoveFollower_SplitCluster(t *testing.T) {
 	// Make a cluster.
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	c := MakeCluster(4, t, conf)
 	defer c.Close()
 
@@ -957,7 +957,7 @@ func TestRaft_RemoveUnknownPeer(t *testing.T) {
 
 func TestRaft_SnapshotRestore(t *testing.T) {
 	// Make the cluster
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	conf.TrailingLogs = 10
 	c := MakeCluster(1, t, conf)
 	defer c.Close()
@@ -1017,7 +1017,7 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 
 func TestRaft_RestoreSnapshotOnStartup_Monotonic(t *testing.T) {
 	// Make the cluster
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	conf.TrailingLogs = 10
 	opts := &MakeClusterOpts{
 		Peers:         1,
@@ -1099,7 +1099,7 @@ func TestRaft_RestoreSnapshotOnStartup_Monotonic(t *testing.T) {
 
 func TestRaft_SnapshotRestore_Progress(t *testing.T) {
 	// Make the cluster
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	conf.TrailingLogs = 10
 	c := MakeCluster(1, t, conf)
 	defer c.Close()
@@ -1217,7 +1217,7 @@ func (b *lockedBytesBuffer) String() string {
 // up.
 
 func TestRaft_NoRestoreOnStart(t *testing.T) {
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	conf.TrailingLogs = 10
 	conf.NoSnapshotRestoreOnStart = true
 	c := MakeCluster(1, t, conf)
@@ -1262,7 +1262,7 @@ func TestRaft_NoRestoreOnStart(t *testing.T) {
 func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	var err error
 	// Make the cluster.
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	conf.ProtocolVersion = 1
 	conf.TrailingLogs = 10
 	c := MakeCluster(3, t, conf)
@@ -1367,7 +1367,7 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 
 func TestRaft_AutoSnapshot(t *testing.T) {
 	// Make the cluster
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	conf.SnapshotInterval = conf.CommitTimeout * 2
 	conf.SnapshotThreshold = 50
 	conf.TrailingLogs = 10
@@ -1397,7 +1397,7 @@ func TestRaft_AutoSnapshot(t *testing.T) {
 
 func TestRaft_UserSnapshot(t *testing.T) {
 	// Make the cluster.
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	conf.SnapshotThreshold = 50
 	conf.TrailingLogs = 10
 	c := MakeCluster(1, t, conf)
@@ -1437,7 +1437,7 @@ func snapshotAndRestore(t *testing.T, offset uint64, monotonicLogStore bool, res
 	t.Helper()
 
 	// Make the cluster.
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 
 	// snapshot operations perform some file IO operations.
 	// increase times out to account for that
@@ -1599,7 +1599,7 @@ func TestRaft_UserRestore(t *testing.T) {
 
 func TestRaft_SendSnapshotFollower(t *testing.T) {
 	// Make the cluster
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	conf.TrailingLogs = 10
 	c := MakeCluster(3, t, conf)
 	defer c.Close()
@@ -1641,7 +1641,7 @@ func TestRaft_SendSnapshotFollower(t *testing.T) {
 
 func TestRaft_SendSnapshotAndLogsFollower(t *testing.T) {
 	// Make the cluster
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	conf.TrailingLogs = 10
 	c := MakeCluster(3, t, conf)
 	defer c.Close()
@@ -1695,7 +1695,7 @@ func TestRaft_SendSnapshotAndLogsFollower(t *testing.T) {
 
 func TestRaft_ReJoinFollower(t *testing.T) {
 	// Enable operation after a remove.
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	conf.ShutdownOnRemove = false
 	c := MakeCluster(3, t, conf)
 	defer c.Close()
@@ -1772,7 +1772,7 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 
 func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	// Make a cluster
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	c := MakeCluster(2, t, conf)
 	defer c.Close()
 
@@ -1901,7 +1901,7 @@ func TestRaft_VerifyLeader_Single(t *testing.T) {
 
 func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	// Make a cluster
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	c := MakeCluster(2, t, conf)
 	defer c.Close()
 
@@ -1941,7 +1941,7 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 
 func TestRaft_VerifyLeader_PartialConnect(t *testing.T) {
 	// Make a cluster
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	c := MakeCluster(3, t, conf)
 	defer c.Close()
 
@@ -1975,7 +1975,7 @@ func TestRaft_VerifyLeader_PartialConnect(t *testing.T) {
 
 func TestRaft_NotifyCh(t *testing.T) {
 	ch := make(chan bool, 1)
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	conf.NotifyCh = ch
 	c := MakeCluster(1, t, conf)
 	defer c.Close()
@@ -2064,7 +2064,7 @@ func TestRaft_AppendEntry(t *testing.T) {
 }
 
 func TestRaft_VotingGrant_WhenLeaderAvailable(t *testing.T) {
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	conf.ProtocolVersion = 3
 	c := MakeCluster(3, t, conf)
 	defer c.Close()
@@ -2144,13 +2144,13 @@ func TestRaft_ProtocolVersion_RejectRPC(t *testing.T) {
 
 func TestRaft_ProtocolVersion_Upgrade_1_2(t *testing.T) {
 	// Make a cluster back on protocol version 1.
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	conf.ProtocolVersion = 1
 	c := MakeCluster(2, t, conf)
 	defer c.Close()
 
 	// Set up another server speaking protocol version 2.
-	conf = InmemConfig(t)
+	conf = inmemConfig(t)
 	conf.ProtocolVersion = 2
 	c1 := MakeClusterNoBootstrap(1, t, conf)
 
@@ -2187,14 +2187,14 @@ func TestRaft_ProtocolVersion_Upgrade_1_2(t *testing.T) {
 
 func TestRaft_ProtocolVersion_Upgrade_2_3(t *testing.T) {
 	// Make a cluster back on protocol version 2.
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	conf.ProtocolVersion = 2
 	c := MakeCluster(2, t, conf)
 	defer c.Close()
 	oldAddr := c.Followers()[0].localAddr
 
 	// Set up another server speaking protocol version 3.
-	conf = InmemConfig(t)
+	conf = inmemConfig(t)
 	conf.ProtocolVersion = 3
 	c1 := MakeClusterNoBootstrap(1, t, conf)
 
@@ -2221,7 +2221,7 @@ func TestRaft_ProtocolVersion_Upgrade_2_3(t *testing.T) {
 
 func TestRaft_LeaderID_Propagated(t *testing.T) {
 	// Make a cluster on protocol version 3.
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	c := MakeCluster(3, t, conf)
 	defer c.Close()
 	err := waitForLeader(c)
@@ -2648,7 +2648,7 @@ func TestRaft_CacheLogWithStoreError(t *testing.T) {
 }
 
 func TestRaft_ReloadConfig(t *testing.T) {
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	conf.LeaderLeaseTimeout = 40 * time.Millisecond
 	c := MakeCluster(1, t, conf)
 	defer c.Close()
@@ -2679,7 +2679,7 @@ func TestRaft_ReloadConfig(t *testing.T) {
 }
 
 func TestRaft_ReloadConfigValidates(t *testing.T) {
-	conf := InmemConfig(t)
+	conf := inmemConfig(t)
 	c := MakeCluster(1, t, conf)
 	defer c.Close()
 	raft := c.rafts[0]
@@ -2921,7 +2921,7 @@ func TestRaft_ClusterCanRegainStability_WhenNonVoterWithHigherTermJoin(t *testin
 // started when a standby is shut down and restarted.
 func TestRaft_FollowerRemovalNoElection(t *testing.T) {
 	// Make a cluster
-	inmemConf := InmemConfig(t)
+	inmemConf := inmemConfig(t)
 	inmemConf.HeartbeatTimeout = 100 * time.Millisecond
 	inmemConf.ElectionTimeout = 100 * time.Millisecond
 	c := MakeCluster(3, t, inmemConf)
