@@ -3,24 +3,24 @@ package utils
 import (
 	"fmt"
 	"github.com/hashicorp/raft"
-	raftprevious "github.com/hashicorp/raft-previous-version"
+	raftrs "github.com/hashicorp/raft-latest"
 	"github.com/hashicorp/raft/compat/testcluster"
 	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
 )
 
-func WaitForNewLeader(t *testing.T, oldLeader string, c testcluster.RaftCluster) {
+func WaitForNewLeader[T testcluster.RaftNode](t *testing.T, oldLeader string, c testcluster.RaftCluster[T]) {
 
 	leader := func() string {
 		for i := 0; i < c.Len(); i++ {
-			switch r := c.Raft(c.ID(i)).(type) {
+			switch r := c.Raft(i).(type) {
 			case *raft.Raft:
 				if r.State() == raft.Leader {
 					return c.ID(i)
 				}
-			case *raftprevious.Raft:
-				if r.State() == raftprevious.Leader {
+			case *raftrs.Raft:
+				if r.State() == raftrs.Leader {
 					return c.ID(i)
 				}
 			}
