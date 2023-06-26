@@ -3,7 +3,7 @@ package raft_compat
 import (
 	"fmt"
 	"github.com/hashicorp/raft"
-	raftlatest "github.com/hashicorp/raft-latest"
+	raftprevious "github.com/hashicorp/raft-previous-version"
 	"github.com/hashicorp/raft/compat/testcluster"
 	"github.com/hashicorp/raft/compat/utils"
 	"github.com/stretchr/testify/require"
@@ -18,17 +18,17 @@ func TestRaft_RollingUpgrade(t *testing.T) {
 
 	initCount := 3
 	rLatest := testcluster.NewRaftCluster(t, testcluster.InitLatest, initCount, "raftOld")
-	configuration := raftlatest.Configuration{}
+	configuration := raftprevious.Configuration{}
 
 	for i := 0; i < initCount; i++ {
 		var err error
 		require.NoError(t, err)
-		configuration.Servers = append(configuration.Servers, raftlatest.Server{
-			ID:      raftlatest.ServerID(rLatest.ID(i)),
-			Address: raftlatest.ServerAddress(rLatest.Addr(i)),
+		configuration.Servers = append(configuration.Servers, raftprevious.Server{
+			ID:      raftprevious.ServerID(rLatest.ID(i)),
+			Address: raftprevious.ServerAddress(rLatest.Addr(i)),
 		})
 	}
-	raft0 := rLatest.Raft(rLatest.ID(0)).(*raftlatest.Raft)
+	raft0 := rLatest.Raft(rLatest.ID(0)).(*raftprevious.Raft)
 	boot := raft0.BootstrapCluster(configuration)
 	if err := boot.Error(); err != nil {
 		t.Fatalf("bootstrap err: %v", err)
@@ -36,13 +36,13 @@ func TestRaft_RollingUpgrade(t *testing.T) {
 	utils.WaitForNewLeader(t, "", rLatest)
 	getLeader := rLatest.GetLeader()
 	require.NotEmpty(t, getLeader)
-	a, _ := getLeader.GetRaft().(*raftlatest.Raft).LeaderWithID()
+	a, _ := getLeader.GetRaft().(*raftprevious.Raft).LeaderWithID()
 	require.NotEmpty(t, a)
-	future := getLeader.GetRaft().(*raftlatest.Raft).Apply([]byte("test"), time.Second)
+	future := getLeader.GetRaft().(*raftprevious.Raft).Apply([]byte("test"), time.Second)
 	utils.WaitFuture(t, future)
 
 	rUIT := testcluster.NewRaftCluster(t, testcluster.InitUIT, initCount, "raftNew")
-	leader, _ := getLeader.GetRaft().(*raftlatest.Raft).LeaderWithID()
+	leader, _ := getLeader.GetRaft().(*raftprevious.Raft).LeaderWithID()
 	require.NotEmpty(t, leader)
 
 	// Upgrade all the followers
@@ -53,27 +53,27 @@ func TestRaft_RollingUpgrade(t *testing.T) {
 			continue
 		}
 
-		future := getLeader.GetRaft().(*raftlatest.Raft).AddVoter(raftlatest.ServerID(rUIT.ID(i)), raftlatest.ServerAddress(rUIT.Addr(i)), 0, 0)
+		future := getLeader.GetRaft().(*raftprevious.Raft).AddVoter(raftprevious.ServerID(rUIT.ID(i)), raftprevious.ServerAddress(rUIT.Addr(i)), 0, 0)
 
 		utils.WaitFuture(t, future)
 		// Check Leader haven't changed as we are not replacing the leader
-		a, _ := getLeader.GetRaft().(*raftlatest.Raft).LeaderWithID()
+		a, _ := getLeader.GetRaft().(*raftprevious.Raft).LeaderWithID()
 		require.Equal(t, a, leader)
-		getLeader.GetRaft().(*raftlatest.Raft).RemoveServer(raftlatest.ServerID(rLatest.ID(i)), 0, 0)
-		rLatest.Raft(rLatest.ID(i)).(*raftlatest.Raft).Shutdown()
+		getLeader.GetRaft().(*raftprevious.Raft).RemoveServer(raftprevious.ServerID(rLatest.ID(i)), 0, 0)
+		rLatest.Raft(rLatest.ID(i)).(*raftprevious.Raft).Shutdown()
 	}
-	future = getLeader.GetRaft().(*raftlatest.Raft).Apply([]byte("test2"), time.Second)
+	future = getLeader.GetRaft().(*raftprevious.Raft).Apply([]byte("test2"), time.Second)
 	require.NoError(t, future.Error())
 
-	fa := getLeader.GetRaft().(*raftlatest.Raft).AddVoter(raftlatest.ServerID(rUIT.ID(leaderIdx)), raftlatest.ServerAddress(rUIT.Addr(leaderIdx)), 0, 0)
+	fa := getLeader.GetRaft().(*raftprevious.Raft).AddVoter(raftprevious.ServerID(rUIT.ID(leaderIdx)), raftprevious.ServerAddress(rUIT.Addr(leaderIdx)), 0, 0)
 	utils.WaitFuture(t, fa)
 
 	// Check Leader haven't changed as we are not replacing the leader
-	a, _ = getLeader.GetRaft().(*raftlatest.Raft).LeaderWithID()
+	a, _ = getLeader.GetRaft().(*raftprevious.Raft).LeaderWithID()
 	require.Equal(t, a, leader)
-	fr := getLeader.GetRaft().(*raftlatest.Raft).RemoveServer(raftlatest.ServerID(rLatest.ID(leaderIdx)), 0, 0)
+	fr := getLeader.GetRaft().(*raftprevious.Raft).RemoveServer(raftprevious.ServerID(rLatest.ID(leaderIdx)), 0, 0)
 	utils.WaitFuture(t, fr)
-	rLatest.Raft(getLeader.GetLocalID()).(*raftlatest.Raft).Shutdown()
+	rLatest.Raft(getLeader.GetLocalID()).(*raftprevious.Raft).Shutdown()
 	utils.WaitForNewLeader(t, getLeader.GetLocalID(), rUIT)
 	newLeader := rUIT.GetLeader()
 	require.NotEmpty(t, newLeader)
@@ -91,17 +91,17 @@ func TestRaft_ReplaceUpgrade(t *testing.T) {
 
 	initCount := 3
 	rLatest := testcluster.NewRaftCluster(t, testcluster.InitLatest, initCount, "raftOld")
-	configuration := raftlatest.Configuration{}
+	configuration := raftprevious.Configuration{}
 
 	for i := 0; i < initCount; i++ {
 		var err error
 		require.NoError(t, err)
-		configuration.Servers = append(configuration.Servers, raftlatest.Server{
-			ID:      raftlatest.ServerID(rLatest.ID(i)),
-			Address: raftlatest.ServerAddress(rLatest.Addr(i)),
+		configuration.Servers = append(configuration.Servers, raftprevious.Server{
+			ID:      raftprevious.ServerID(rLatest.ID(i)),
+			Address: raftprevious.ServerAddress(rLatest.Addr(i)),
 		})
 	}
-	raft0 := rLatest.Raft(rLatest.ID(0)).(*raftlatest.Raft)
+	raft0 := rLatest.Raft(rLatest.ID(0)).(*raftprevious.Raft)
 	boot := raft0.BootstrapCluster(configuration)
 	if err := boot.Error(); err != nil {
 		t.Fatalf("bootstrap err: %v", err)
@@ -109,12 +109,12 @@ func TestRaft_ReplaceUpgrade(t *testing.T) {
 	utils.WaitForNewLeader(t, "", rLatest)
 	getLeader := rLatest.GetLeader()
 	require.NotEmpty(t, getLeader)
-	a, _ := getLeader.GetRaft().(*raftlatest.Raft).LeaderWithID()
+	a, _ := getLeader.GetRaft().(*raftprevious.Raft).LeaderWithID()
 	require.NotEmpty(t, a)
-	future := getLeader.GetRaft().(*raftlatest.Raft).Apply([]byte("test"), time.Second)
+	future := getLeader.GetRaft().(*raftprevious.Raft).Apply([]byte("test"), time.Second)
 	utils.WaitFuture(t, future)
 
-	leader, _ := getLeader.GetRaft().(*raftlatest.Raft).LeaderWithID()
+	leader, _ := getLeader.GetRaft().(*raftprevious.Raft).LeaderWithID()
 	require.NotEmpty(t, leader)
 	// Upgrade all the followers
 	leaderIdx := 0
@@ -125,12 +125,12 @@ func TestRaft_ReplaceUpgrade(t *testing.T) {
 		}
 
 		// Check Leader haven't changed as we are not replacing the leader
-		a, _ := getLeader.GetRaft().(*raftlatest.Raft).LeaderWithID()
+		a, _ := getLeader.GetRaft().(*raftprevious.Raft).LeaderWithID()
 		require.Equal(t, a, leader)
-		getLeader.GetRaft().(*raftlatest.Raft).RemoveServer(raftlatest.ServerID(rLatest.ID(i)), 0, 0)
+		getLeader.GetRaft().(*raftprevious.Raft).RemoveServer(raftprevious.ServerID(rLatest.ID(i)), 0, 0)
 
 		fmt.Printf("dhayachi:: shutting down %s", rLatest.ID(i))
-		rLatest.Raft(rLatest.ID(i)).(*raftlatest.Raft).Shutdown()
+		rLatest.Raft(rLatest.ID(i)).(*raftprevious.Raft).Shutdown()
 
 		// Keep the store, to be passed to the upgraded node.
 		store := rLatest.Store(rLatest.ID(i))
@@ -139,8 +139,8 @@ func TestRaft_ReplaceUpgrade(t *testing.T) {
 		rLatest.DeleteNode(rLatest.ID(i))
 
 		//Create an upgraded node with the store
-		rUIT := testcluster.InitUITWithStore(t, fmt.Sprintf("New-Raft-%d", i), store.(*raftlatest.InmemStore))
-		future := getLeader.GetRaft().(*raftlatest.Raft).AddVoter(raftlatest.ServerID(rUIT.GetLocalID()), raftlatest.ServerAddress(rUIT.GetLocalAddr()), 0, 0)
+		rUIT := testcluster.InitUITWithStore(t, fmt.Sprintf("New-Raft-%d", i), store.(*raftprevious.InmemStore))
+		future := getLeader.GetRaft().(*raftprevious.Raft).AddVoter(raftprevious.ServerID(rUIT.GetLocalID()), raftprevious.ServerAddress(rUIT.GetLocalAddr()), 0, 0)
 		utils.WaitFuture(t, future)
 		//Add the new node to the cluster
 		rLatest.AddNode(rUIT)
@@ -150,20 +150,20 @@ func TestRaft_ReplaceUpgrade(t *testing.T) {
 	time.Sleep(time.Second)
 
 	//Apply some logs
-	future = getLeader.GetRaft().(*raftlatest.Raft).Apply([]byte("test2"), time.Second)
+	future = getLeader.GetRaft().(*raftprevious.Raft).Apply([]byte("test2"), time.Second)
 	require.NoError(t, future.Error())
 
 	// Check Leader haven't changed as we haven't replaced the leader yet
-	a, _ = getLeader.GetRaft().(*raftlatest.Raft).LeaderWithID()
+	a, _ = getLeader.GetRaft().(*raftprevious.Raft).LeaderWithID()
 	require.Equal(t, a, leader)
 
 	// keep a reference to the store
 	store := rLatest.Store(getLeader.GetLocalID())
 
 	//Remove and shutdown the leader node
-	fr := getLeader.GetRaft().(*raftlatest.Raft).RemoveServer(raftlatest.ServerID(getLeader.GetLocalID()), 0, 0)
+	fr := getLeader.GetRaft().(*raftprevious.Raft).RemoveServer(raftprevious.ServerID(getLeader.GetLocalID()), 0, 0)
 	utils.WaitFuture(t, fr)
-	rLatest.Raft(getLeader.GetLocalID()).(*raftlatest.Raft).Shutdown()
+	rLatest.Raft(getLeader.GetLocalID()).(*raftprevious.Raft).Shutdown()
 
 	// Delete the old leader node from the cluster
 	rLatest.DeleteNode(getLeader.GetLocalID())
@@ -175,7 +175,7 @@ func TestRaft_ReplaceUpgrade(t *testing.T) {
 	require.NotEmpty(t, getLeader)
 
 	// Create a new node to replace the deleted one
-	rUIT := testcluster.InitUITWithStore(t, fmt.Sprintf("New-Raft-%d", leaderIdx), store.(*raftlatest.InmemStore))
+	rUIT := testcluster.InitUITWithStore(t, fmt.Sprintf("New-Raft-%d", leaderIdx), store.(*raftprevious.InmemStore))
 	fa := getLeader.GetRaft().(*raft.Raft).AddVoter(raft.ServerID(rUIT.GetLocalID()), raft.ServerAddress(rUIT.GetLocalAddr()), 0, 0)
 	utils.WaitFuture(t, fa)
 
