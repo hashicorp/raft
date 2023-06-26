@@ -36,7 +36,6 @@ func WaitForNewLeader(t *testing.T, oldLeader string, c testcluster.RaftCluster)
 		case <-ticker.C:
 			id := leader()
 			if id != "" {
-				fmt.Printf("got a leader %s\n", id)
 				if id != oldLeader || oldLeader == "" {
 					return
 				}
