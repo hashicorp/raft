@@ -3,7 +3,7 @@ package testcluster
 import (
 	"fmt"
 	"github.com/hashicorp/raft"
-	raftlatest "github.com/hashicorp/raft-latest"
+	raftprevious "github.com/hashicorp/raft-previous-version"
 	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
@@ -62,13 +62,13 @@ func (r *RaftCluster) Store(id string) interface{} {
 }
 
 type RaftLatest struct {
-	raft   *raftlatest.Raft
-	trans  *raftlatest.NetworkTransport
-	Config *raftlatest.Config
-	Store  *raftlatest.InmemStore
-	Snap   *raftlatest.InmemSnapshotStore
-	id     raftlatest.ServerID
-	fsm    *raftlatest.MockFSM
+	raft   *raftprevious.Raft
+	trans  *raftprevious.NetworkTransport
+	Config *raftprevious.Config
+	Store  *raftprevious.InmemStore
+	Snap   *raftprevious.InmemSnapshotStore
+	id     raftprevious.ServerID
+	fsm    *raftprevious.MockFSM
 }
 
 func (r RaftLatest) NumLogs() int {
@@ -117,7 +117,7 @@ func NewRaftCluster(t *testing.T, f func(t *testing.T, id string) RaftNode, coun
 	return rc
 }
 
-//func NewRaftNodeWitStore[T RaftNode](t *testing.T, name string, store *raftlatest.InmemStore) *T {
+//func NewRaftNodeWitStore[T RaftNode](t *testing.T, name string, store *raftprevious.InmemStore) *T {
 //	raft := new(T)
 //	initNode(t, raft, name, store)
 //	return raft
@@ -135,17 +135,6 @@ func (r *RaftCluster) GetLeader() RaftNode {
 func (r *RaftCluster) Len() int {
 	return len(r.rafts)
 }
-
-//func initNode(t *testing.T, node interface{}, id string, store *raftlatest.InmemStore) {
-//	switch node.(type) {
-//	case *RaftLatest:
-//		initLatest(t, node.(*RaftLatest), id)
-//	case *RaftUIT:
-//		initUIT(t, node.(*RaftUIT), id, convertInMemStore(store))
-//	default:
-//		panic("invalid node type")
-//	}
-//}
 
 func (r *RaftCluster) AddNode(node RaftNode) {
 	r.rafts = append([]RaftNode{node}, r.rafts...)
@@ -171,7 +160,7 @@ func InitUIT(t *testing.T, id string) RaftNode {
 	return InitUITWithStore(t, id, nil)
 }
 
-func InitUITWithStore(t *testing.T, id string, store *raftlatest.InmemStore) RaftNode {
+func InitUITWithStore(t *testing.T, id string, store *raftprevious.InmemStore) RaftNode {
 	node := RaftUIT{}
 	node.Config = raft.DefaultConfig()
 	node.Config.HeartbeatTimeout = 50 * time.Millisecond
@@ -199,27 +188,27 @@ func InitUITWithStore(t *testing.T, id string, store *raftlatest.InmemStore) Raf
 
 func InitLatest(t *testing.T, id string) RaftNode {
 	node := RaftLatest{}
-	node.Config = raftlatest.DefaultConfig()
+	node.Config = raftprevious.DefaultConfig()
 	node.Config.HeartbeatTimeout = 50 * time.Millisecond
 	node.Config.ElectionTimeout = 50 * time.Millisecond
 	node.Config.LeaderLeaseTimeout = 50 * time.Millisecond
 	node.Config.CommitTimeout = 5 * time.Millisecond
-	node.id = raftlatest.ServerID(id)
+	node.id = raftprevious.ServerID(id)
 	node.Config.LocalID = node.id
 
-	node.Store = raftlatest.NewInmemStore()
-	node.Snap = raftlatest.NewInmemSnapshotStore()
-	node.fsm = &raftlatest.MockFSM{}
+	node.Store = raftprevious.NewInmemStore()
+	node.Snap = raftprevious.NewInmemSnapshotStore()
+	node.fsm = &raftprevious.MockFSM{}
 	var err error
-	node.trans, err = raftlatest.NewTCPTransport("localhost:0", nil, 2, time.Second, nil)
+	node.trans, err = raftprevious.NewTCPTransport("localhost:0", nil, 2, time.Second, nil)
 	require.NoError(t, err)
-	node.raft, err = raftlatest.NewRaft(node.Config, node.fsm, node.Store,
+	node.raft, err = raftprevious.NewRaft(node.Config, node.fsm, node.Store,
 		node.Store, node.Snap, node.trans)
 	require.NoError(t, err)
 	return node
 }
 
-func convertLog(ll *raftlatest.Log) *raft.Log {
+func convertLog(ll *raftprevious.Log) *raft.Log {
 	l := new(raft.Log)
 	l.Index = ll.Index
 	l.AppendedAt = ll.AppendedAt
@@ -236,12 +225,12 @@ var (
 	keyLastVoteCand = []byte("LastVoteCand")
 )
 
-func convertInMemStore(s *raftlatest.InmemStore) *raft.InmemStore {
+func convertInMemStore(s *raftprevious.InmemStore) *raft.InmemStore {
 	ss := raft.NewInmemStore()
 	fi, _ := s.FirstIndex()
 	li, _ := s.LastIndex()
 	for i := fi; i <= li; i++ {
-		log := new(raftlatest.Log)
+		log := new(raftprevious.Log)
 		s.GetLog(i, log)
 		ss.StoreLog(convertLog(log))
 	}

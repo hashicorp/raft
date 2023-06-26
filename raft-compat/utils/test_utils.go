@@ -3,7 +3,7 @@ package utils
 import (
 	"fmt"
 	"github.com/hashicorp/raft"
-	raftlatest "github.com/hashicorp/raft-latest"
+	raftprevious "github.com/hashicorp/raft-previous-version"
 	"github.com/hashicorp/raft/compat/testcluster"
 	"github.com/stretchr/testify/require"
 	"testing"
@@ -19,8 +19,8 @@ func WaitForNewLeader(t *testing.T, oldLeader string, c testcluster.RaftCluster)
 				if r.State() == raft.Leader {
 					return c.ID(i)
 				}
-			case *raftlatest.Raft:
-				if r.State() == raftlatest.Leader {
+			case *raftprevious.Raft:
+				if r.State() == raftprevious.Leader {
 					return c.ID(i)
 				}
 			}
