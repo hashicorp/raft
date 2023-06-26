@@ -10,11 +10,11 @@ import (
 	"time"
 )
 
-func WaitForNewLeader[T testcluster.RaftNode](t *testing.T, oldLeader string, c testcluster.RaftCluster[T]) {
+func WaitForNewLeader(t *testing.T, oldLeader string, c testcluster.RaftCluster) {
 
 	leader := func() string {
 		for i := 0; i < c.Len(); i++ {
-			switch r := c.Raft(i).(type) {
+			switch r := c.Raft(c.ID(i)).(type) {
 			case *raft.Raft:
 				if r.State() == raft.Leader {
 					return c.ID(i)
@@ -36,6 +36,7 @@ func WaitForNewLeader[T testcluster.RaftNode](t *testing.T, oldLeader string, c 
 		case <-ticker.C:
 			id := leader()
 			if id != "" {
+				fmt.Printf("got a leader %s\n", id)
 				if id != oldLeader || oldLeader == "" {
 					return
 				}
