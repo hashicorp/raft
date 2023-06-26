@@ -68,7 +68,7 @@ func TestRaft_RollingUpgrade(t *testing.T) {
 	fa := getLeader.GetRaft().(*raftprevious.Raft).AddVoter(raftprevious.ServerID(rUIT.ID(leaderIdx)), raftprevious.ServerAddress(rUIT.Addr(leaderIdx)), 0, 0)
 	utils.WaitFuture(t, fa)
 
-	// Check Leader haven't changed as we are not replacing the leader
+	// Check Leader haven't changed as we haven't replaced it yet
 	a, _ = getLeader.GetRaft().(*raftprevious.Raft).LeaderWithID()
 	require.Equal(t, a, leader)
 	fr := getLeader.GetRaft().(*raftprevious.Raft).RemoveServer(raftprevious.ServerID(rLatest.ID(leaderIdx)), 0, 0)
@@ -124,12 +124,12 @@ func TestRaft_ReplaceUpgrade(t *testing.T) {
 			continue
 		}
 
-		// Check Leader haven't changed as we are not replacing the leader
+		// Check Leader haven't changed
 		a, _ := getLeader.GetRaft().(*raftprevious.Raft).LeaderWithID()
 		require.Equal(t, a, leader)
-		getLeader.GetRaft().(*raftprevious.Raft).RemoveServer(raftprevious.ServerID(rLatest.ID(i)), 0, 0)
 
-		fmt.Printf("dhayachi:: shutting down %s", rLatest.ID(i))
+		//
+		getLeader.GetRaft().(*raftprevious.Raft).RemoveServer(raftprevious.ServerID(rLatest.ID(i)), 0, 0)
 		rLatest.Raft(rLatest.ID(i)).(*raftprevious.Raft).Shutdown()
 
 		// Keep the store, to be passed to the upgraded node.
