@@ -1195,7 +1195,7 @@ func (r *Raft) LastIndex() uint64 {
 }
 
 // CommitIndex returns the committed index.
-// This API maybe helpful for server to implement the read index optimization 
+// This API maybe helpful for server to implement the read index optimization
 // as described in the Raft paper.
 func (r *Raft) CommitIndex() uint64 {
 	return r.getCommitIndex()
