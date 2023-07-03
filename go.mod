@@ -1,6 +1,6 @@
 module github.com/hashicorp/raft
 
-go 1.16
+go 1.17
 
 retract v1.1.3 // Deleted original tag; module checksum may not be accurate.
 
