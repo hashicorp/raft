@@ -60,7 +60,6 @@ func TestRaft_AfterShutdown(t *testing.T) {
 	if f := raft.Shutdown(); f.Error() != nil {
 		t.Fatalf("shutdown should be idempotent")
 	}
-
 }
 
 func TestRaft_LiveBootstrap(t *testing.T) {
@@ -685,7 +684,6 @@ func TestRaft_JoinNode_ConfigStore(t *testing.T) {
 			t.Fatalf("unexpected number of servers in config change: %v", fsm.configurations[2].Servers)
 		}
 	}
-
 }
 
 func TestRaft_RemoveFollower(t *testing.T) {
@@ -1323,7 +1321,7 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	}
 	defer os.RemoveAll(base)
 	peersFile := filepath.Join(base, "peers.json")
-	if err = os.WriteFile(peersFile, content, 0666); err != nil {
+	if err = os.WriteFile(peersFile, content, 0o666); err != nil {
 		t.Fatalf("[ERR] err: %v", err)
 	}
 	configuration, err := ReadPeersJSON(peersFile)
@@ -2857,10 +2855,10 @@ func TestRaft_ClusterCanRegainStability_WhenNonVoterWithHigherTermJoin(t *testin
 		t.Fatalf("err: %v", err)
 	}
 
-	//set that follower term to higher term to faster simulate a partitioning
+	// set that follower term to higher term to faster simulate a partitioning
 	newTerm := leader.getCurrentTerm() + 20
 	followerRemoved.setCurrentTerm(newTerm)
-	//Add the node back as NonVoter
+	// Add the node back as NonVoter
 	future = leader.AddNonvoter(followerRemoved.localID, followerRemoved.localAddr, 0, 0)
 	if err := future.Error(); err != nil {
 		t.Fatalf("err: %v", err)
@@ -2882,7 +2880,7 @@ func TestRaft_ClusterCanRegainStability_WhenNonVoterWithHigherTermJoin(t *testin
 		t.Fatalf("Should not be leader %s", followerRemoved.localID)
 	}
 
-	//Write some logs to ensure they replicate
+	// Write some logs to ensure they replicate
 	for i := 0; i < 100; i++ {
 		future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
 		if err := future.Error(); err != nil {
@@ -2891,7 +2889,7 @@ func TestRaft_ClusterCanRegainStability_WhenNonVoterWithHigherTermJoin(t *testin
 	}
 	c.WaitForReplication(100)
 
-	//Remove the server and add it back as Voter
+	// Remove the server and add it back as Voter
 	future = leader.RemoveServer(followerRemoved.localID, 0, 0)
 	if err := future.Error(); err != nil {
 		t.Fatalf("err: %v", err)
@@ -2901,7 +2899,7 @@ func TestRaft_ClusterCanRegainStability_WhenNonVoterWithHigherTermJoin(t *testin
 	// Wait a while
 	time.Sleep(c.propagateTimeout * 10)
 
-	//Write some logs to ensure they replicate
+	// Write some logs to ensure they replicate
 	for i := 100; i < 200; i++ {
 		future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
 		if err := future.Error(); err != nil {

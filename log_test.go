@@ -28,15 +28,15 @@ func TestOldestLog(t *testing.T) {
 		{
 			Name: "simple case",
 			Logs: []*Log{
-				&Log{
+				{
 					Index: 1234,
 					Term:  1,
 				},
-				&Log{
+				{
 					Index: 1235,
 					Term:  1,
 				},
-				&Log{
+				{
 					Index: 1236,
 					Term:  2,
 				},
@@ -76,16 +76,16 @@ func TestEmitsLogStoreMetrics(t *testing.T) {
 
 	s := NewInmemStore()
 	logs := []*Log{
-		&Log{
+		{
 			Index:      1234,
 			Term:       1,
 			AppendedAt: time.Now(),
 		},
-		&Log{
+		{
 			Index: 1235,
 			Term:  1,
 		},
-		&Log{
+		{
 			Index: 1236,
 			Term:  2,
 		},

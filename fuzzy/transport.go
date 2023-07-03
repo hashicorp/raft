@@ -8,20 +8,19 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/hashicorp/go-hclog"
 	"io"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/hashicorp/go-hclog"
+
 	"github.com/hashicorp/go-msgpack/codec"
 	"github.com/hashicorp/raft"
 )
 
-var (
-	codecHandle codec.MsgpackHandle
-)
+var codecHandle codec.MsgpackHandle
 
 type appendEntries struct {
 	source      string

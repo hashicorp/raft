@@ -735,7 +735,7 @@ func (r *Raft) leaderLoop() {
 
 			start := time.Now()
 			var groupReady []*list.Element
-			var groupFutures = make(map[uint64]*logFuture)
+			groupFutures := make(map[uint64]*logFuture)
 			var lastIdxInGroup uint64
 
 			// Pull all inflight logs that are committed off the queue.
@@ -784,7 +784,6 @@ func (r *Raft) leaderLoop() {
 			if v.quorumSize == 0 {
 				// Just dispatched, start the verification
 				r.verifyLeader(v)
-
 			} else if v.votes < v.quorumSize {
 				// Early return, means there must be a new leader
 				r.logger.Warn("new leader elected, stepping down")
@@ -1411,7 +1410,6 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		var prevLogTerm uint64
 		if a.PrevLogEntry == lastIdx {
 			prevLogTerm = lastTerm
-
 		} else {
 			var prevLog Log
 			if err := r.logs.GetLog(a.PrevLogEntry, &prevLog); err != nil {
