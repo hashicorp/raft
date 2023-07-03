@@ -226,7 +226,6 @@ func makeAppendRPCResponse() AppendEntriesResponse {
 }
 
 func TestNetworkTransport_AppendEntries(t *testing.T) {
-
 	for _, useAddrProvider := range []bool{true, false} {
 		// Transport 1 is consumer
 		trans1, err := makeTransport(t, useAddrProvider, "localhost:0")
@@ -279,7 +278,6 @@ func TestNetworkTransport_AppendEntries(t *testing.T) {
 }
 
 func TestNetworkTransport_AppendEntriesPipeline(t *testing.T) {
-
 	for _, useAddrProvider := range []bool{true, false} {
 		// Transport 1 is consumer
 		trans1, err := makeTransport(t, useAddrProvider, "localhost:0")
@@ -539,7 +537,6 @@ func TestNetworkTransport_AppendEntriesPipeline_MaxRPCsInFlight(t *testing.T) {
 }
 
 func TestNetworkTransport_RequestVote(t *testing.T) {
-
 	for _, useAddrProvider := range []bool{true, false} {
 		// Transport 1 is consumer
 		trans1, err := makeTransport(t, useAddrProvider, "localhost:0")
@@ -601,7 +598,6 @@ func TestNetworkTransport_RequestVote(t *testing.T) {
 }
 
 func TestNetworkTransport_InstallSnapshot(t *testing.T) {
-
 	for _, useAddrProvider := range []bool{true, false} {
 		// Transport 1 is consumer
 		trans1, err := makeTransport(t, useAddrProvider, "localhost:0")
@@ -865,7 +861,6 @@ func (sl testCountingStreamLayer) Dial(address ServerAddress, timeout time.Durat
 // do not result in a tight loop and spam the log. We verify this here by counting the number
 // of calls against Accept() and the logger
 func TestNetworkTransport_ListenBackoff(t *testing.T) {
-
 	// testTime is the amount of time we will allow NetworkTransport#listen() to run
 	// This needs to be long enough that to verify that maxDelay is in force,
 	// but not so long as to be obnoxious when running the test suite.

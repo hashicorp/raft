@@ -18,9 +18,7 @@ import (
 	"github.com/hashicorp/go-msgpack/codec"
 )
 
-var (
-	userSnapshotErrorsOnNoData = true
-)
+var userSnapshotErrorsOnNoData = true
 
 // Return configurations optimized for in-memory
 func inmemConfig(t *testing.T) *Config {
@@ -433,7 +431,7 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 	// Wait until we have a stable instate slice. Each time we see an
 	// observation a state has changed, recheck it and if it has changed,
 	// restart the timer.
-	var pollStartTime = time.Now()
+	pollStartTime := time.Now()
 	for {
 		inState, highestTerm := c.pollState(s)
 		inStateTime := time.Now()
