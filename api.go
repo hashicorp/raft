@@ -1194,6 +1194,13 @@ func (r *Raft) LastIndex() uint64 {
 	return r.getLastIndex()
 }
 
+// CommitIndex returns the committed index.
+// This API maybe helpful for server to implement the read index optimization
+// as described in the Raft paper.
+func (r *Raft) CommitIndex() uint64 {
+	return r.getCommitIndex()
+}
+
 // AppliedIndex returns the last index applied to the FSM. This is generally
 // lagging behind the last index, especially for indexes that are persisted but
 // have not yet been considered committed by the leader. NOTE - this reflects
