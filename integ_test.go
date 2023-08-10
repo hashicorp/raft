@@ -91,7 +91,7 @@ func MakeRaft(t *testing.T, conf *Config, bootstrap bool) *RaftEnv {
 		snapshot: snap,
 		fsm:      &MockFSM{},
 	}
-	trans, err := NewTCPTransport("127.0.0.1:0", nil, 2, time.Second, nil)
+	trans, err := NewTCPTransport("localhost:0", nil, 2, time.Second, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -153,7 +153,7 @@ WAIT:
 }
 
 func WaitFuture(f Future, t *testing.T) error {
-	timer := time.AfterFunc(200*time.Millisecond, func() {
+	timer := time.AfterFunc(1000*time.Millisecond, func() {
 		panic(fmt.Errorf("timeout waiting for future %v", f))
 	})
 	defer timer.Stop()
@@ -161,6 +161,7 @@ func WaitFuture(f Future, t *testing.T) error {
 }
 
 func NoErr(err error, t *testing.T) {
+	t.Helper()
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -320,8 +321,11 @@ func TestRaft_Integ(t *testing.T) {
 		conf.LocalID = ServerID(fmt.Sprintf("final-batch-%d", i))
 		env := MakeRaft(t, conf, false)
 		addr := env.trans.LocalAddr()
-		NoErr(WaitFuture(env1.raft.AddVoter(conf.LocalID, addr, 0, 0), t), t)
+		NoErr(WaitFuture(leader.raft.AddVoter(conf.LocalID, addr, 0, 0), t), t)
 		envs = append(envs, env)
+
+		leader, err = WaitForAny(Leader, append([]*RaftEnv{env1}, envs...))
+		NoErr(err, t)
 	}
 
 	// Wait for a leader

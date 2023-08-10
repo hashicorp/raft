@@ -100,3 +100,48 @@ func TestBackoff(t *testing.T) {
 		t.Fatalf("bad: %v", b)
 	}
 }
+
+func TestOverrideNotifyBool(t *testing.T) {
+	ch := make(chan bool, 1)
+
+	// sanity check - buffered channel don't have any values
+	select {
+	case v := <-ch:
+		t.Fatalf("unexpected receive: %v", v)
+	default:
+	}
+
+	// simple case of a single push
+	overrideNotifyBool(ch, false)
+	select {
+	case v := <-ch:
+		if v != false {
+			t.Fatalf("expected false but got %v", v)
+		}
+	default:
+		t.Fatalf("expected a value but is not ready")
+	}
+
+	// assert that function never blocks and only last item is received
+	overrideNotifyBool(ch, false)
+	overrideNotifyBool(ch, false)
+	overrideNotifyBool(ch, false)
+	overrideNotifyBool(ch, false)
+	overrideNotifyBool(ch, true)
+
+	select {
+	case v := <-ch:
+		if v != true {
+			t.Fatalf("expected true but got %v", v)
+		}
+	default:
+		t.Fatalf("expected a value but is not ready")
+	}
+
+	// no further value is available
+	select {
+	case v := <-ch:
+		t.Fatalf("unexpected receive: %v", v)
+	default:
+	}
+}
