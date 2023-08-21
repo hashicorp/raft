@@ -117,12 +117,6 @@ func NewRaftCluster(t *testing.T, f func(t *testing.T, id string) RaftNode, coun
 	return rc
 }
 
-//func NewRaftNodeWitStore[T RaftNode](t *testing.T, name string, store *raftprevious.InmemStore) *T {
-//	raft := new(T)
-//	initNode(t, raft, name, store)
-//	return raft
-//}
-
 func (r *RaftCluster) GetLeader() RaftNode {
 	for _, n := range r.rafts {
 		if n.GetLocalID() == n.GetLeaderID() {
