@@ -11,7 +11,15 @@ import (
 )
 
 func TestRaft_PreVote_BootStrap_PreVote(t *testing.T) {
-	leave := func(t *testing.T, cluster testcluster.RaftCluster, id string) {
+	leaveTransfer := func(t *testing.T, cluster testcluster.RaftCluster, id string) {
+		if cluster.GetLeader().GetLocalID() == id {
+			transfer := cluster.Raft(id).(*raftprevious.Raft).LeadershipTransfer()
+			utils.WaitFuture(t, transfer)
+		}
+		f := cluster.Raft(id).(*raftprevious.Raft).Shutdown()
+		utils.WaitFuture(t, f)
+	}
+	leaveNoTransfer := func(t *testing.T, cluster testcluster.RaftCluster, id string) {
 		if cluster.GetLeader().GetLocalID() == id {
 			transfer := cluster.Raft(id).(*raftprevious.Raft).LeadershipTransfer()
 			utils.WaitFuture(t, transfer)
@@ -20,21 +28,27 @@ func TestRaft_PreVote_BootStrap_PreVote(t *testing.T) {
 		utils.WaitFuture(t, f)
 	}
 	tcs := []struct {
-		name           string
-		prevoteNum     int
-		noprevoteNum   int
-		preVoteEnabled bool
-		Leave          func(t *testing.T, cluster testcluster.RaftCluster, id string)
+		name     string
+		numNodes int
+		preVote  bool
+		Leave    func(t *testing.T, cluster testcluster.RaftCluster, id string)
 	}{
-		{"majority latest, prevote off", 1, 2, false, leave},
+		{"no prevote -> prevote (leave transfer)", 3, true, leaveTransfer},
+		{"no prevote -> prevote  (leave no transfer)", 3, true, leaveNoTransfer},
+		{"no prevote -> prevote (leave transfer) 5", 5, true, leaveTransfer},
+		{"no prevote -> prevote  (leave no transfer) 5", 5, true, leaveNoTransfer},
+		{"no prevote -> no prevote (leave transfer)", 3, false, leaveTransfer},
+		{"no prevote -> no prevote  (leave no transfer)", 3, false, leaveNoTransfer},
+		{"no prevote -> no prevote (leave transfer) 5", 5, false, leaveTransfer},
+		{"no prevote -> no prevote  (leave no transfer) 5", 5, false, leaveNoTransfer},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
-			initCount := 3
-			cluster := testcluster.NewPreviousRaftCluster(t, initCount, "raftNode")
+
+			cluster := testcluster.NewPreviousRaftCluster(t, tc.numNodes, "raftNode")
 			configuration := raftprevious.Configuration{}
 
-			for i := 0; i < initCount; i++ {
+			for i := 0; i < tc.numNodes; i++ {
 				var err error
 				require.NoError(t, err)
 				configuration.Servers = append(configuration.Servers, raftprevious.Server{
@@ -58,7 +72,7 @@ func TestRaft_PreVote_BootStrap_PreVote(t *testing.T) {
 			leader, _ := getLeader.GetRaft().(*raftprevious.Raft).LeaderWithID()
 			require.NotEmpty(t, leader)
 			// Upgrade all the followers
-			for i := 0; i < initCount; i++ {
+			for i := 0; i < tc.numNodes; i++ {
 				if getLeader.GetLocalID() == cluster.ID(i) {
 					continue
 				}
@@ -79,7 +93,7 @@ func TestRaft_PreVote_BootStrap_PreVote(t *testing.T) {
 
 				//Create an upgraded node with the store
 				rUIT := testcluster.InitUITWithStore(t, id, store.(*raftprevious.InmemStore), func(config *raft.Config) {
-					config.PreVote = true
+					config.PreVote = tc.preVote
 				})
 				future := getLeader.GetRaft().(*raftprevious.Raft).AddVoter(raftprevious.ServerID(rUIT.GetLocalID()), raftprevious.ServerAddress(rUIT.GetLocalAddr()), 0, 0)
 				utils.WaitFuture(t, future)
