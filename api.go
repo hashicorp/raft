@@ -134,7 +134,7 @@ type Raft struct {
 	// candidate because the leader tries to transfer leadership. This flag is
 	// used in RequestVoteRequest to express that a leadership transfer is going
 	// on.
-	candidateFromLeadershipTransfer bool
+	candidateFromLeadershipTransfer atomic.Bool
 
 	// Stores our local server ID, used to avoid sending RPCs to ourself
 	localID ServerID
