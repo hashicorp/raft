@@ -788,12 +788,23 @@ func (r *Raft) LeaderWithID() (ServerAddress, ServerID) {
 // An optional timeout can be provided to limit the amount of time we wait
 // for the command to be started. This must be run on the leader or it
 // will fail.
+//
+// If the node discovers it is no longer the leader while applying the command,
+// it will return ErrLeadershipLost. There is no way to guarantee whether the
+// write succeeded or failed in this case. For example, if the leader is
+// partitioned it can't know if a quorum of followers wrote the log to disk. If
+// at least one did, it may survive into the next leader's term.
+//
+// If a user snapshot is restored while the command is in-flight, an
+// ErrAbortedByRestore is returned. In this case the write effectively failed
+// since its effects will not be present in the FSM after the restore.
 func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
 	return r.ApplyLog(Log{Data: cmd}, timeout)
 }
 
 // ApplyLog performs Apply but takes in a Log directly. The only values
-// currently taken from the submitted Log are Data and Extensions.
+// currently taken from the submitted Log are Data and Extensions. See
+// Apply for details on error cases.
 func (r *Raft) ApplyLog(log Log, timeout time.Duration) ApplyFuture {
 	metrics.IncrCounter([]string{"raft", "apply"}, 1)
 
