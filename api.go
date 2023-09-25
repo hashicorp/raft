@@ -797,7 +797,7 @@ func (r *Raft) LeaderWithID() (ServerAddress, ServerID) {
 //
 // If a user snapshot is restored while the command is in-flight, an 
 // ErrAbortedByRestore is returned. In this case the write effectively failed
-// since it's effects will not be present in the FSM after the restore.
+// since its effects will not be present in the FSM after the restore.
 func (r *Raft) Apply(cmd []byte, timeout time.Duration) ApplyFuture {
 	return r.ApplyLog(Log{Data: cmd}, timeout)
 }
