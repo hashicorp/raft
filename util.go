@@ -12,7 +12,7 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/hashicorp/go-msgpack/codec"
+	"github.com/hashicorp/go-msgpack/v2/codec"
 )
 
 func init() {
