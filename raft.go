@@ -434,6 +434,11 @@ func (r *Raft) runLeader() {
 		select {
 		case notify <- true:
 		case <-r.shutdownCh:
+			// make sure push to the notify channel ( if given )
+			select {
+			case notify <- true:
+			default:
+			}
 		}
 	}
 
