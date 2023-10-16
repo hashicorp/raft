@@ -1,9 +1,11 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package raft
 
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"sync/atomic"
 	"testing"
@@ -74,7 +76,7 @@ func MakeRaft(t *testing.T, conf *Config, bootstrap bool) *RaftEnv {
 		conf = inmemConfig(t)
 	}
 
-	dir, err := ioutil.TempDir("", "raft")
+	dir, err := os.MkdirTemp("", "raft")
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
@@ -412,7 +414,7 @@ func TestRaft_RestartFollower_LongInitialHeartbeat(t *testing.T) {
 			seeNewLeader := func(o *Observation) bool { _, ok := o.Data.(LeaderObservation); return ok }
 			leaderCh := make(chan Observation)
 			// TODO Closing this channel results in panics, even though we're calling Release.
-			//defer close(leaderCh)
+			// defer close(leaderCh)
 			leaderChanges := new(uint32)
 			go func() {
 				for range leaderCh {

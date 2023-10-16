@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package raft
 
 import (
@@ -8,7 +11,6 @@ import (
 	"hash"
 	"hash/crc64"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -97,7 +99,7 @@ func NewFileSnapshotStoreWithLogger(base string, retain int, logger hclog.Logger
 
 	// Ensure our path exists
 	path := filepath.Join(base, snapPath)
-	if err := os.MkdirAll(path, 0755); err != nil && !os.IsExist(err) {
+	if err := os.MkdirAll(path, 0o755); err != nil && !os.IsExist(err) {
 		return nil, fmt.Errorf("snapshot path not accessible: %v", err)
 	}
 
@@ -168,7 +170,7 @@ func (f *FileSnapshotStore) Create(version SnapshotVersion, index, term uint64,
 	f.logger.Info("creating new snapshot", "path", path)
 
 	// Make the directory
-	if err := os.MkdirAll(path, 0755); err != nil {
+	if err := os.MkdirAll(path, 0o755); err != nil {
 		f.logger.Error("failed to make snapshot directly", "error", err)
 		return nil, err
 	}
@@ -242,7 +244,7 @@ func (f *FileSnapshotStore) List() ([]*SnapshotMeta, error) {
 // getSnapshots returns all the known snapshots.
 func (f *FileSnapshotStore) getSnapshots() ([]*fileSnapshotMeta, error) {
 	// Get the eligible snapshots
-	snapshots, err := ioutil.ReadDir(f.path)
+	snapshots, err := os.ReadDir(f.path)
 	if err != nil {
 		f.logger.Error("failed to scan snapshot directory", "error", err)
 		return nil, err

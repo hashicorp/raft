@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package raft
 
 import (
@@ -5,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"reflect"
 	"sync"
@@ -16,9 +18,7 @@ import (
 	"github.com/hashicorp/go-msgpack/codec"
 )
 
-var (
-	userSnapshotErrorsOnNoData = true
-)
+var userSnapshotErrorsOnNoData = true
 
 // Return configurations optimized for in-memory
 func inmemConfig(t *testing.T) *Config {
@@ -130,6 +130,47 @@ func (m *MockSnapshot) Persist(sink SnapshotSink) error {
 func (m *MockSnapshot) Release() {
 }
 
+// MockMonotonicLogStore is a LogStore wrapper for testing the
+// MonotonicLogStore interface.
+type MockMonotonicLogStore struct {
+	s LogStore
+}
+
+// IsMonotonic implements the MonotonicLogStore interface.
+func (m *MockMonotonicLogStore) IsMonotonic() bool {
+	return true
+}
+
+// FirstIndex implements the LogStore interface.
+func (m *MockMonotonicLogStore) FirstIndex() (uint64, error) {
+	return m.s.FirstIndex()
+}
+
+// LastIndex implements the LogStore interface.
+func (m *MockMonotonicLogStore) LastIndex() (uint64, error) {
+	return m.s.LastIndex()
+}
+
+// GetLog implements the LogStore interface.
+func (m *MockMonotonicLogStore) GetLog(index uint64, log *Log) error {
+	return m.s.GetLog(index, log)
+}
+
+// StoreLog implements the LogStore interface.
+func (m *MockMonotonicLogStore) StoreLog(log *Log) error {
+	return m.s.StoreLog(log)
+}
+
+// StoreLogs implements the LogStore interface.
+func (m *MockMonotonicLogStore) StoreLogs(logs []*Log) error {
+	return m.s.StoreLogs(logs)
+}
+
+// DeleteRange implements the LogStore interface.
+func (m *MockMonotonicLogStore) DeleteRange(min uint64, max uint64) error {
+	return m.s.DeleteRange(min, max)
+}
+
 // This can be used as the destination for a logger and it'll
 // map them into calls to testing.T.Log, so that you only see
 // the logging for failed tests.
@@ -156,13 +197,18 @@ func newTestLogger(t *testing.T) hclog.Logger {
 	return newTestLoggerWithPrefix(t, "")
 }
 
-// newTestLoggerWithPrefix returns a Logger that can be used in tests. prefix will
-// be added as the name of the logger.
+// newTestLoggerWithPrefix returns a Logger that can be used in tests. prefix
+// will be added as the name of the logger.
 //
 // If tests are run with -v (verbose mode, or -json which implies verbose) the
-// log output will go to stderr directly.
-// If tests are run in regular "quiet" mode, logs will be sent to t.Log so that
-// the logs only appear when a test fails.
+// log output will go to stderr directly. If tests are run in regular "quiet"
+// mode, logs will be sent to t.Log so that the logs only appear when a test
+// fails.
+//
+// Be careful where this is used though - calling t.Log after the test completes
+// causes a panic. This is common if you use it for a NetworkTransport for
+// example and then close the transport at the end of the test because an error
+// is logged after the test is complete.
 func newTestLoggerWithPrefix(t *testing.T, prefix string) hclog.Logger {
 	if testing.Verbose() {
 		return hclog.New(&hclog.LoggerOptions{Name: prefix})
@@ -385,7 +431,7 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 	// Wait until we have a stable instate slice. Each time we see an
 	// observation a state has changed, recheck it and if it has changed,
 	// restart the timer.
-	var pollStartTime = time.Now()
+	pollStartTime := time.Now()
 	for {
 		inState, highestTerm := c.pollState(s)
 		inStateTime := time.Now()
@@ -670,6 +716,7 @@ type MakeClusterOpts struct {
 	ConfigStoreFSM  bool
 	MakeFSMFunc     func() FSM
 	LongstopTimeout time.Duration
+	MonotonicLogs   bool
 }
 
 // makeCluster will return a cluster with the given config and number of peers.
@@ -700,7 +747,7 @@ func makeCluster(t *testing.T, opts *MakeClusterOpts) *cluster {
 
 	// Setup the stores and transports
 	for i := 0; i < opts.Peers; i++ {
-		dir, err := ioutil.TempDir("", "raft")
+		dir, err := os.MkdirTemp("", "raft")
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
@@ -745,10 +792,15 @@ func makeCluster(t *testing.T, opts *MakeClusterOpts) *cluster {
 	// Create all the rafts
 	c.startTime = time.Now()
 	for i := 0; i < opts.Peers; i++ {
-		logs := c.stores[i]
+		var logs LogStore
+		logs = c.stores[i]
 		store := c.stores[i]
 		snap := c.snaps[i]
 		trans := c.trans[i]
+
+		if opts.MonotonicLogs {
+			logs = &MockMonotonicLogStore{s: logs}
+		}
 
 		peerConf := opts.Conf
 		peerConf.LocalID = configuration.Servers[i].ID
@@ -801,7 +853,7 @@ func MakeClusterCustom(t *testing.T, opts *MakeClusterOpts) *cluster {
 // NOTE: This is exposed for middleware testing purposes and is not a stable API
 func FileSnapTest(t *testing.T) (string, *FileSnapshotStore) {
 	// Create a test dir
-	dir, err := ioutil.TempDir("", "raft")
+	dir, err := os.MkdirTemp("", "raft")
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}

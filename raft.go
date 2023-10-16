@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package raft
 
 import (
@@ -5,7 +8,6 @@ import (
 	"container/list"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"sync/atomic"
 	"time"
 
@@ -214,7 +216,7 @@ func (r *Raft) runFollower() {
 
 			// Check if we have had a successful contact
 			lastContact := r.LastContact()
-			if time.Now().Sub(lastContact) < hbTimeout {
+			if time.Since(lastContact) < hbTimeout {
 				continue
 			}
 
@@ -297,7 +299,7 @@ func (r *Raft) runCandidate() {
 	// which will make other servers vote even though they have a leader already.
 	// It is important to reset that flag, because this priviledge could be abused
 	// otherwise.
-	defer func() { r.candidateFromLeadershipTransfer = false }()
+	defer func() { r.candidateFromLeadershipTransfer.Store(false) }()
 
 	electionTimeout := r.config().ElectionTimeout
 	electionTimer := randomTimeout(electionTimeout)
@@ -489,6 +491,11 @@ func (r *Raft) runLeader() {
 		select {
 		case notify <- true:
 		case <-r.shutdownCh:
+			// make sure push to the notify channel ( if given )
+			select {
+			case notify <- true:
+			default:
+			}
 		}
 	}
 
@@ -790,7 +797,7 @@ func (r *Raft) leaderLoop() {
 
 			start := time.Now()
 			var groupReady []*list.Element
-			var groupFutures = make(map[uint64]*logFuture)
+			groupFutures := make(map[uint64]*logFuture)
 			var lastIdxInGroup uint64
 
 			// Pull all inflight logs that are committed off the queue.
@@ -839,7 +846,6 @@ func (r *Raft) leaderLoop() {
 			if v.quorumSize == 0 {
 				// Just dispatched, start the verification
 				r.verifyLeader(v)
-
 			} else if v.votes < v.quorumSize {
 				// Early return, means there must be a new leader
 				r.logger.Warn("new leader elected, stepping down")
@@ -1176,7 +1182,14 @@ func (r *Raft) restoreUserSnapshot(meta *SnapshotMeta, reader io.Reader) error {
 	r.setLastApplied(lastIndex)
 	r.setLastSnapshot(lastIndex, term)
 
-	r.logger.Info("restored user snapshot", "index", latestIndex)
+	// Remove old logs if r.logs is a MonotonicLogStore. Log any errors and continue.
+	if logs, ok := r.logs.(MonotonicLogStore); ok && logs.IsMonotonic() {
+		if err := r.removeOldLogs(); err != nil {
+			r.logger.Error("failed to remove old logs", "error", err)
+		}
+	}
+
+	r.logger.Info("restored user snapshot", "index", lastIndex)
 	return nil
 }
 
@@ -1439,7 +1452,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 
 	// Increase the term if we see a newer one, also transition to follower
 	// if we ever get an appendEntries call
-	if a.Term > r.getCurrentTerm() || (r.getState() != Follower && !r.candidateFromLeadershipTransfer) {
+	if a.Term > r.getCurrentTerm() || (r.getState() != Follower && !r.candidateFromLeadershipTransfer.Load()) {
 		// Ensure transition to follower
 		r.setState(Follower)
 		r.setCurrentTerm(a.Term)
@@ -1459,7 +1472,6 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		var prevLogTerm uint64
 		if a.PrevLogEntry == lastIdx {
 			prevLogTerm = lastTerm
-
 		} else {
 			var prevLog Log
 			if err := r.logs.GetLog(a.PrevLogEntry, &prevLog); err != nil {
@@ -1558,7 +1570,6 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	// Everything went well, set success
 	resp.Success = true
 	r.setLastContact()
-	return
 }
 
 // processConfigurationLogEntry takes a log entry and updates the latest
@@ -1733,7 +1744,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	}
 	var rpcErr error
 	defer func() {
-		io.Copy(ioutil.Discard, rpc.Reader) // ensure we always consume all the snapshot data from the stream [see issue #212]
+		_, _ = io.Copy(io.Discard, rpc.Reader) // ensure we always consume all the snapshot data from the stream [see issue #212]
 		rpc.Respond(resp, rpcErr)
 	}()
 
@@ -1850,15 +1861,19 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	r.setLatestConfiguration(reqConfiguration, reqConfigurationIndex)
 	r.setCommittedConfiguration(reqConfiguration, reqConfigurationIndex)
 
-	// Compact logs, continue even if this fails
-	if err := r.compactLogs(req.LastLogIndex); err != nil {
+	// Clear old logs if r.logs is a MonotonicLogStore. Otherwise compact the
+	// logs. In both cases, log any errors and continue.
+	if mlogs, ok := r.logs.(MonotonicLogStore); ok && mlogs.IsMonotonic() {
+		if err := r.removeOldLogs(); err != nil {
+			r.logger.Error("failed to reset logs", "error", err)
+		}
+	} else if err := r.compactLogs(req.LastLogIndex); err != nil {
 		r.logger.Error("failed to compact logs", "error", err)
 	}
 
 	r.logger.Info("Installed remote snapshot")
 	resp.Success = true
 	r.setLastContact()
-	return
 }
 
 // setLastContact is used to set the last contact time to now
@@ -1895,7 +1910,7 @@ func (r *Raft) electSelf(preVote bool) <-chan *voteResult {
 		Candidate:          r.trans.EncodePeer(r.localID, r.localAddr),
 		LastLogIndex:       lastIdx,
 		LastLogTerm:        lastTerm,
-		LeadershipTransfer: r.candidateFromLeadershipTransfer,
+		LeadershipTransfer: r.candidateFromLeadershipTransfer.Load(),
 		PreVote:            preVote,
 	}
 
@@ -2033,7 +2048,7 @@ func (r *Raft) initiateLeadershipTransfer(id *ServerID, address *ServerAddress) 
 func (r *Raft) timeoutNow(rpc RPC, req *TimeoutNowRequest) {
 	r.setLeader("", "")
 	r.setState(Candidate)
-	r.candidateFromLeadershipTransfer = true
+	r.candidateFromLeadershipTransfer.Store(true)
 	rpc.Respond(&TimeoutNowResponse{}, nil)
 }
 
