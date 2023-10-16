@@ -215,7 +215,6 @@ func TestCommitment_noVoterSanity(t *testing.T) {
 	if drainNotifyCh(commitCh) {
 		t.Fatalf("unexpected commit notify")
 	}
-
 }
 
 // Single voter commits immediately.

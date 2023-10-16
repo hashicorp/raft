@@ -414,7 +414,7 @@ func TestRaft_RestartFollower_LongInitialHeartbeat(t *testing.T) {
 			seeNewLeader := func(o *Observation) bool { _, ok := o.Data.(LeaderObservation); return ok }
 			leaderCh := make(chan Observation)
 			// TODO Closing this channel results in panics, even though we're calling Release.
-			//defer close(leaderCh)
+			// defer close(leaderCh)
 			leaderChanges := new(uint32)
 			go func() {
 				for range leaderCh {

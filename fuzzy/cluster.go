@@ -298,7 +298,7 @@ func (c *cluster) RecordState(t *testing.T) {
 	copyDir(td, sd)
 	dump := func(n *raftNode) {
 		nt := filepath.Join(td, n.name)
-		os.Mkdir(nt, 0777)
+		os.Mkdir(nt, 0o777)
 		n.fsm.WriteTo(filepath.Join(nt, "fsm.txt"))
 		n.transport.DumpLog(nt)
 	}
@@ -315,7 +315,7 @@ func copyDir(target, src string) {
 	filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		relPath := path[len(src):]
 		if info.IsDir() {
-			return os.MkdirAll(filepath.Join(target, relPath), 0777)
+			return os.MkdirAll(filepath.Join(target, relPath), 0o777)
 		}
 		return copyFile(filepath.Join(target, relPath), path)
 	})

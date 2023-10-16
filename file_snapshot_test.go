@@ -49,8 +49,8 @@ func TestFileSS_CreateSnapshotMissingParentDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("should not fail when using non existing parent")
 	}
-
 }
+
 func TestFileSS_CreateSnapshot(t *testing.T) {
 	// Create a test dir
 	dir, err := os.MkdirTemp("", "raft")
@@ -264,7 +264,7 @@ func TestFileSS_BadPerm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}
-	if err = os.Chmod(dir2, 000); err != nil {
+	if err = os.Chmod(dir2, 0o00); err != nil {
 		t.Fatalf("err: %s", err)
 	}
 	defer os.Chmod(dir2, 777) // Set perms back for delete
