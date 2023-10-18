@@ -15,19 +15,19 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-hclog"
-	"github.com/hashicorp/go-msgpack/codec"
+	"github.com/hashicorp/go-msgpack/v2/codec"
 )
 
 var userSnapshotErrorsOnNoData = true
 
 // Return configurations optimized for in-memory
-func inmemConfig(t *testing.T) *Config {
+func inmemConfig(tb testing.TB) *Config {
 	conf := DefaultConfig()
 	conf.HeartbeatTimeout = 50 * time.Millisecond
 	conf.ElectionTimeout = 50 * time.Millisecond
 	conf.LeaderLeaseTimeout = 50 * time.Millisecond
 	conf.CommitTimeout = 5 * time.Millisecond
-	conf.Logger = newTestLogger(t)
+	conf.Logger = newTestLogger(tb)
 	return conf
 }
 
@@ -175,7 +175,7 @@ func (m *MockMonotonicLogStore) DeleteRange(min uint64, max uint64) error {
 // map them into calls to testing.T.Log, so that you only see
 // the logging for failed tests.
 type testLoggerAdapter struct {
-	t      *testing.T
+	tb     testing.TB
 	prefix string
 }
 
@@ -185,16 +185,16 @@ func (a *testLoggerAdapter) Write(d []byte) (int, error) {
 	}
 	if a.prefix != "" {
 		l := a.prefix + ": " + string(d)
-		a.t.Log(l)
+		a.tb.Log(l)
 		return len(l), nil
 	}
 
-	a.t.Log(string(d))
+	a.tb.Log(string(d))
 	return len(d), nil
 }
 
-func newTestLogger(t *testing.T) hclog.Logger {
-	return newTestLoggerWithPrefix(t, "")
+func newTestLogger(tb testing.TB) hclog.Logger {
+	return newTestLoggerWithPrefix(tb, "")
 }
 
 // newTestLoggerWithPrefix returns a Logger that can be used in tests. prefix
@@ -209,14 +209,14 @@ func newTestLogger(t *testing.T) hclog.Logger {
 // causes a panic. This is common if you use it for a NetworkTransport for
 // example and then close the transport at the end of the test because an error
 // is logged after the test is complete.
-func newTestLoggerWithPrefix(t *testing.T, prefix string) hclog.Logger {
+func newTestLoggerWithPrefix(tb testing.TB, prefix string) hclog.Logger {
 	if testing.Verbose() {
 		return hclog.New(&hclog.LoggerOptions{Name: prefix})
 	}
 
 	return hclog.New(&hclog.LoggerOptions{
 		Name:   prefix,
-		Output: &testLoggerAdapter{t: t, prefix: prefix},
+		Output: &testLoggerAdapter{tb: tb, prefix: prefix},
 	})
 }
 
