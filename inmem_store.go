@@ -6,12 +6,19 @@ package raft
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 )
 
 // InmemStore implements the LogStore and StableStore interface.
 // It should NOT EVER be used for production. It is used only for
 // unit tests. Use the MDBStore implementation instead.
 type InmemStore struct {
+	storeFail uint32 // accessed atomically as a bool 0/1
+
+	// storeSem lets the test control exactly when s StoreLog(s) call takes
+	// effect.
+	storeSem chan struct{}
+
 	l         sync.RWMutex
 	lowIndex  uint64
 	highIndex uint64
@@ -24,11 +31,33 @@ type InmemStore struct {
 // use for production. Only for testing.
 func NewInmemStore() *InmemStore {
 	i := &InmemStore{
-		logs:  make(map[uint64]*Log),
-		kv:    make(map[string][]byte),
-		kvInt: make(map[string]uint64),
+		storeSem: make(chan struct{}, 1),
+		logs:     make(map[uint64]*Log),
+		kv:       make(map[string][]byte),
+		kvInt:    make(map[string]uint64),
 	}
 	return i
+}
+
+// BlockStore will cause further calls to StoreLog(s) to block indefinitely
+// until the returned cancel func is called. Note that if the code or test is
+// buggy this could cause a deadlock
+func (i *InmemStore) BlockStore() func() {
+	i.storeSem <- struct{}{}
+	cancelled := false
+	return func() {
+		// Allow multiple calls, subsequent ones are a no op
+		if !cancelled {
+			<-i.storeSem
+			cancelled = true
+		}
+	}
+}
+
+// FailNext signals that the next call to StoreLog(s) should return an error
+// without modifying the log contents. Subsequent calls will succeed again.
+func (i *InmemStore) FailNext() {
+	atomic.StoreUint32(&i.storeFail, 1)
 }
 
 // FirstIndex implements the LogStore interface.
@@ -64,8 +93,23 @@ func (i *InmemStore) StoreLog(log *Log) error {
 
 // StoreLogs implements the LogStore interface.
 func (i *InmemStore) StoreLogs(logs []*Log) error {
+	// Block waiting for the semaphore slot if BlockStore has been called. We must
+	// do this before we take the lock because otherwise we'll block GetLog and
+	// others too by holding the lock while blocked.
+	i.storeSem <- struct{}{}
+	defer func() {
+		<-i.storeSem
+	}()
+
+	// Switch out fail if it is set so we only fail once
+	shouldFail := atomic.SwapUint32(&i.storeFail, 0)
+	if shouldFail == 1 {
+		return errors.New("IO error")
+	}
+
 	i.l.Lock()
 	defer i.l.Unlock()
+
 	for _, l := range logs {
 		i.logs[l.Index] = l
 		if i.lowIndex == 0 {
