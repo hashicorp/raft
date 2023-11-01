@@ -472,6 +472,7 @@ func (r *Raft) setupLeaderState() {
 		// so having a huge backlog won't help.
 		r.leaderState.logWriteCompletionCh = make(chan LogWriteCompletion, 8)
 		asyncStore.EnableAsync(r.leaderState.logWriteCompletionCh)
+		r.logger.Debug("enabling async mode on log store")
 
 		// Note we need to disable Async when we leave the leader loop but we do it
 		// in the big defer below to make it easier to reason about ordering.
@@ -545,6 +546,7 @@ func (r *Raft) runLeader() {
 			als := r.logs.(AsyncLogStore)
 			als.DisableAsync()
 			r.leaderState.logWriteCompletionCh = nil
+			r.logger.Debug("disabling async mode on log store")
 		}
 		r.leaderState.commitCh = nil
 		r.leaderState.commitment = nil

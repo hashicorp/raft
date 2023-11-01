@@ -59,13 +59,13 @@ type syncRequest struct {
 // raft config then writes could eventually stall. Since this is unrecoverable
 // the server will panic. Take care if you allow user configurable
 // MaxAppendEntries!
-func NewLogCacheAsync(capacity uint64, store LogStore) (*LogCacheAsync, error) {
+func NewLogCacheAsync(capacity int, store LogStore) (*LogCacheAsync, error) {
 	last, err := store.LastIndex()
 	if err != nil {
 		return nil, err
 	}
 
-	size := nextPowerOf2(capacity)
+	size := nextPowerOf2(uint64(capacity))
 
 	c := &LogCacheAsync{
 		lastIndex:       last,
