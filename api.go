@@ -377,6 +377,38 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 
 	// The snapshot information is the best known end point for the data
 	// until we play back the Raft log entries.
+	return recoverClusterConclusion(conf, fsm, logs, snaps, trans, configuration, snapshotIndex, snapshotTerm)
+}
+
+func RecoverClusterNoSnapRestore(conf *Config, fsm FSM, logs LogStore, stable StableStore,
+	snaps SnapshotStore, trans Transport, configuration Configuration, snapshotIndex uint64, snapshotTerm uint64) error {
+
+	// Validate the Raft server config.
+	if err := ValidateConfig(conf); err != nil {
+		return err
+	}
+
+	// Sanity check the Raft peer configuration.
+	if err := checkConfiguration(configuration); err != nil {
+		return err
+	}
+
+	// Refuse to recover if there's no existing state. This would be safe to
+	// do, but it is likely an indication of an operator error where they
+	// expect data to be there and it's not. By refusing, we force them
+	// to show intent to start a cluster fresh by explicitly doing a
+	// bootstrap, rather than quietly fire up a fresh cluster here.
+	if hasState, err := HasExistingState(logs, stable, snaps); err != nil {
+		return fmt.Errorf("failed to check for existing state: %v", err)
+	} else if !hasState {
+		return fmt.Errorf("refused to recover cluster with no initial state, this is probably an operator error")
+	}
+
+	return recoverClusterConclusion(conf, fsm, logs, snaps, trans, configuration, snapshotIndex, snapshotTerm)
+}
+
+func recoverClusterConclusion(conf *Config, fsm FSM, logs LogStore,
+	snaps SnapshotStore, trans Transport, configuration Configuration, snapshotIndex uint64, snapshotTerm uint64) error {
 	lastIndex := snapshotIndex
 	lastTerm := snapshotTerm
 
