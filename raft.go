@@ -6,7 +6,9 @@ package raft
 import (
 	"bytes"
 	"container/list"
+	"context"
 	"fmt"
+	"golang.org/x/sync/semaphore"
 	"io"
 	"sync/atomic"
 	"time"
@@ -92,6 +94,7 @@ type leaderState struct {
 	replState                    map[ServerID]*followerReplication
 	notify                       map[*verifyFuture]struct{}
 	stepDown                     chan struct{}
+	applyable                    *semaphore.Weighted
 }
 
 // setLeader is used to modify the current leader Address and ID of the cluster
@@ -401,7 +404,7 @@ func (r *Raft) setLeadershipTransferInProgress(v bool) {
 
 func (r *Raft) getLeadershipTransferInProgress() bool {
 	v := atomic.LoadInt32(&r.leaderState.leadershipTransferInProgress)
-	return v == 1
+	return v > 0
 }
 
 func (r *Raft) setupLeaderState() {
@@ -413,6 +416,7 @@ func (r *Raft) setupLeaderState() {
 	r.leaderState.replState = make(map[ServerID]*followerReplication)
 	r.leaderState.notify = make(map[*verifyFuture]struct{})
 	r.leaderState.stepDown = make(chan struct{}, 1)
+	r.leaderState.applyable = semaphore.NewWeighted(1)
 }
 
 // runLeader runs the main loop while in leader state. Do the setup here and drop into
@@ -483,6 +487,7 @@ func (r *Raft) runLeader() {
 		r.leaderState.replState = nil
 		r.leaderState.notify = nil
 		r.leaderState.stepDown = nil
+		r.leaderState.applyable = nil
 
 		// If we are stepping down for some reason, no known leader.
 		// We may have stepped down due to an RPC call, which would
@@ -521,7 +526,9 @@ func (r *Raft) runLeader() {
 	// maintain that there exists at most one uncommitted configuration entry in
 	// any log, so we have to do proper no-ops here.
 	noop := &logFuture{log: Log{Type: LogNoop}}
+	r.leaderState.applyable.Acquire(context.Background(), 1)
 	r.dispatchLogs([]*logFuture{noop})
+	r.leaderState.applyable.Release(1)
 
 	// Sit in the leader loop until we step down
 	r.leaderLoop()
@@ -648,7 +655,7 @@ func (r *Raft) leaderLoop() {
 				continue
 			}
 
-			r.logger.Debug("starting leadership transfer", "id", future.ID, "address", future.Address)
+			r.logger.Debug("starting leadership transfer", "id", *future.ID, "address", *future.Address)
 
 			// When we are leaving leaderLoop, we are no longer
 			// leader, so we should stop transferring.
@@ -843,10 +850,13 @@ func (r *Raft) leaderLoop() {
 
 		case newLog := <-r.applyCh:
 			r.mainThreadSaturation.working()
-			if r.getLeadershipTransferInProgress() {
+			//if r.getLeadershipTransferInProgress() {
+			//}
+			if !r.leaderState.applyable.TryAcquire(1) {
 				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
 				newLog.respond(ErrLeadershipTransferInProgress)
 				continue
+
 			}
 			// Group commit, gather all the ready commits
 			ready := []*logFuture{newLog}
@@ -869,6 +879,7 @@ func (r *Raft) leaderLoop() {
 			} else {
 				r.dispatchLogs(ready)
 			}
+			r.leaderState.applyable.Release(1)
 
 		case <-lease:
 			r.mainThreadSaturation.working()
@@ -928,13 +939,18 @@ func (r *Raft) verifyLeader(v *verifyFuture) {
 // leadershipTransfer is doing the heavy lifting for the leadership transfer.
 func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress, repl *followerReplication, stopCh chan struct{}, doneCh chan error) {
 	// make sure we are not already stopped
-	select {
-	case <-stopCh:
-		doneCh <- nil
-		return
-	default:
-	}
 
+	for !r.leaderState.applyable.TryAcquire(1) {
+		select {
+		case <-stopCh:
+			doneCh <- nil
+			return
+		default:
+		}
+	}
+	defer r.leaderState.applyable.Release(1)
+
+	r.logger.Trace("leadership transfer progress", "my_last_index", r.getLastIndex(), "follower_next_index", repl.nextIndex)
 	for atomic.LoadUint64(&repl.nextIndex) <= r.getLastIndex() {
 		err := &deferError{}
 		err.init()
@@ -950,6 +966,7 @@ func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress, repl *foll
 			return
 		}
 	}
+	r.logger.Trace("leadership transfer progress", "my_last_index", r.getLastIndex(), "follower_next_index", repl.nextIndex)
 
 	// Step ?: the thesis describes in chap 6.4.1: Using clocks to reduce
 	// messaging for read-only queries. If this is implemented, the lease
@@ -1140,6 +1157,12 @@ func (r *Raft) restoreUserSnapshot(meta *SnapshotMeta, reader io.Reader) error {
 // configuration entry to the log. This must only be called from the
 // main thread.
 func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
+	if !r.leaderState.applyable.TryAcquire(1) {
+		future.respond(fmt.Errorf("can't apply, semaphor held"))
+		return
+	}
+	defer r.leaderState.applyable.Release(1)
+
 	configuration, err := nextConfiguration(r.configurations.latest, r.configurations.latestIndex, future.req)
 	if err != nil {
 		future.respond(err)
@@ -1212,6 +1235,7 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 	}
 	r.leaderState.commitment.match(r.localID, lastIndex)
 
+	r.logger.Trace("dispatchLogs", "lastIndex", lastIndex)
 	// Update the last log since it's on disk now
 	r.setLastLog(lastIndex, term)
 

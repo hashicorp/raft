@@ -2338,16 +2338,38 @@ func TestRaft_LeadershipTransferWithOneNode(t *testing.T) {
 }
 
 func TestRaft_LeadershipTransferWithSevenNodes(t *testing.T) {
-	c := MakeCluster(7, t, nil)
+	conf := inmemConfig(t)
+	conf.Logger = hclog.New(&hclog.LoggerOptions{Level: hclog.Trace})
+	c := MakeCluster(7, t, conf)
 	defer c.Close()
 
-	oldLeader := c.Leader().localID
+	// Wait for a leader
+	leader := c.Leader()
+
+	doneCh := make(chan struct{})
+	defer close(doneCh)
+	go func() {
+		for {
+			select {
+			case <-doneCh:
+				return
+			default:
+				future := leader.Apply([]byte("test"), 0)
+				if err := future.Error(); err != nil {
+					t.Logf("[ERR] err: %v", err)
+				}
+				time.Sleep(time.Microsecond / 10)
+			}
+		}
+	}()
+	time.Sleep(time.Second / 2)
+
 	follower := c.GetInState(Follower)[0]
-	future := c.Leader().LeadershipTransferToServer(follower.localID, follower.localAddr)
+	future := leader.LeadershipTransferToServer(follower.localID, follower.localAddr)
 	if future.Error() != nil {
 		t.Fatalf("Didn't expect error: %v", future.Error())
 	}
-	if oldLeader == c.Leader().localID {
+	if follower.localID != c.Leader().localID {
 		t.Error("Leadership should have been transitioned to specified server.")
 	}
 }
