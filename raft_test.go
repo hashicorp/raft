@@ -2347,7 +2347,9 @@ func TestRaft_LeadershipTransferWithSevenNodes(t *testing.T) {
 	leader := c.Leader()
 
 	doneCh := make(chan struct{})
-	defer close(doneCh)
+	t.Cleanup(func() {
+		close(doneCh)
+	})
 	go func() {
 		for {
 			select {
@@ -2356,6 +2358,9 @@ func TestRaft_LeadershipTransferWithSevenNodes(t *testing.T) {
 			default:
 				future := leader.Apply([]byte("test"), 0)
 				if err := future.Error(); err != nil {
+					if errors.Is(err, ErrRaftShutdown) || errors.Is(err, ErrNotLeader) {
+						return
+					}
 					t.Logf("[ERR] err: %v", err)
 				}
 				time.Sleep(time.Microsecond / 10)
@@ -2532,7 +2537,7 @@ func TestRaft_LeadershipTransferIgnoresNonvoters(t *testing.T) {
 }
 
 func TestRaft_LeadershipTransferStopRightAway(t *testing.T) {
-	r := Raft{leaderState: leaderState{}}
+	r := Raft{leaderState: leaderState{}, logger: hclog.New(nil)}
 	r.setupLeaderState()
 
 	stopCh := make(chan struct{})

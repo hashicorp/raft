@@ -655,7 +655,7 @@ func (r *Raft) leaderLoop() {
 				continue
 			}
 
-			r.logger.Debug("starting leadership transfer", "id", *future.ID, "address", *future.Address)
+			r.logger.Debug("starting leadership transfer", "id", future.ID, "address", future.Address)
 
 			// When we are leaving leaderLoop, we are no longer
 			// leader, so we should stop transferring.
@@ -850,9 +850,7 @@ func (r *Raft) leaderLoop() {
 
 		case newLog := <-r.applyCh:
 			r.mainThreadSaturation.working()
-			//if r.getLeadershipTransferInProgress() {
-			//}
-			if !r.leaderState.applyable.TryAcquire(1) {
+			if r.getLeadershipTransferInProgress() || !r.leaderState.applyable.TryAcquire(1) {
 				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
 				newLog.respond(ErrLeadershipTransferInProgress)
 				continue
@@ -939,18 +937,30 @@ func (r *Raft) verifyLeader(v *verifyFuture) {
 // leadershipTransfer is doing the heavy lifting for the leadership transfer.
 func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress, repl *followerReplication, stopCh chan struct{}, doneCh chan error) {
 	// make sure we are not already stopped
+	r.logger.Debug("leadershipTransfer", "id", id, "address", address)
 
-	for !r.leaderState.applyable.TryAcquire(1) {
+	select {
+	case <-stopCh:
+		doneCh <- nil
+		return
+	default:
+	}
+
+LOOP:
+	for {
 		select {
 		case <-stopCh:
 			doneCh <- nil
 			return
 		default:
+			if r.leaderState.applyable.TryAcquire(1) {
+				break LOOP
+			}
 		}
 	}
 	defer r.leaderState.applyable.Release(1)
 
-	r.logger.Trace("leadership transfer progress", "my_last_index", r.getLastIndex(), "follower_next_index", repl.nextIndex)
+	r.logger.Trace("leadershipTransfer", "my_last_index", r.getLastIndex(), "follower_next_index", atomic.LoadUint64(&repl.nextIndex))
 	for atomic.LoadUint64(&repl.nextIndex) <= r.getLastIndex() {
 		err := &deferError{}
 		err.init()
@@ -966,7 +976,7 @@ func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress, repl *foll
 			return
 		}
 	}
-	r.logger.Trace("leadership transfer progress", "my_last_index", r.getLastIndex(), "follower_next_index", repl.nextIndex)
+	r.logger.Trace("leadershipTransfer", "my_last_index", r.getLastIndex(), "follower_next_index", repl.nextIndex)
 
 	// Step ?: the thesis describes in chap 6.4.1: Using clocks to reduce
 	// messaging for read-only queries. If this is implemented, the lease
