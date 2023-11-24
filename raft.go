@@ -701,6 +701,19 @@ func (r *Raft) leaderLoop() {
 						r.logger.Debug(err.Error())
 					}
 					future.respond(err)
+					if err == nil {
+						// Wait for up to ElectionTimeout before flagging the
+						// leadership transfer as done and unblocking applies in
+						// the leaderLoop.
+						select {
+						case <-time.After(r.config().ElectionTimeout):
+							err := fmt.Errorf("leadership transfer timeout")
+							r.logger.Debug(err.Error())
+						case <-leftLeaderLoop:
+							err := fmt.Errorf("lost leadership during transfer (expected)")
+							r.logger.Debug(err.Error())
+						}
+					}
 				}
 			}()
 
@@ -854,8 +867,8 @@ func (r *Raft) leaderLoop() {
 				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
 				newLog.respond(ErrLeadershipTransferInProgress)
 				continue
-
 			}
+
 			// Group commit, gather all the ready commits
 			ready := []*logFuture{newLog}
 		GROUP_COMMIT_LOOP:
