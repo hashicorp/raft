@@ -2361,9 +2361,11 @@ func TestRaft_LeadershipTransferWithSevenNodes(t *testing.T) {
 					if errors.Is(err, ErrRaftShutdown) || errors.Is(err, ErrNotLeader) {
 						return
 					}
-					t.Logf("[ERR] err: %v", err)
+					if !errors.Is(err, ErrLeadershipTransferInProgress) {
+						t.Logf("[ERR] err: %v", err)
+					}
 				}
-				time.Sleep(time.Microsecond / 10)
+				time.Sleep(time.Microsecond)
 			}
 		}
 	}()
