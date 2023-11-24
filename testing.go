@@ -433,7 +433,7 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 	// restart the timer.
 	pollStartTime := time.Now()
 	for {
-		inState, highestTerm := c.pollState(s)
+		_, highestTerm := c.pollState(s)
 		inStateTime := time.Now()
 
 		// Sometimes this routine is called very early on before the
@@ -479,8 +479,9 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 				c.t.Fatalf("timer channel errored")
 			}
 
-			c.logger.Info(fmt.Sprintf("stable state for %s reached at %s (%d nodes), %s from start of poll, %s from cluster start. Timeout at %s, %s after stability",
-				s, inStateTime, len(inState), inStateTime.Sub(pollStartTime), inStateTime.Sub(c.startTime), t, t.Sub(inStateTime)))
+			inState, highestTerm := c.pollState(s)
+			c.logger.Info(fmt.Sprintf("stable state for %s reached at %s (%d nodes), highestTerm is %d, %s from start of poll, %s from cluster start. Timeout at %s, %s after stability",
+				s, inStateTime, len(inState), highestTerm, inStateTime.Sub(pollStartTime), inStateTime.Sub(c.startTime), t, t.Sub(inStateTime)))
 			return inState
 		}
 	}
