@@ -692,8 +692,21 @@ func (r *Raft) leaderLoop() {
 				case err := <-doneCh:
 					if err != nil {
 						r.logger.Debug(err.Error())
+						future.respond(err)
+					} else {
+						// Wait for up to ElectionTimeout before flagging the
+						// leadership transfer as done and unblocking applies in
+						// the leaderLoop.
+						select {
+						case <-time.After(r.config().ElectionTimeout):
+							err := fmt.Errorf("leadership transfer timeout")
+							r.logger.Debug(err.Error())
+							future.respond(err)
+						case <-leftLeaderLoop:
+							r.logger.Debug("lost leadership during transfer (expected)")
+							future.respond(nil)
+						}
 					}
-					future.respond(err)
 				}
 			}()
 

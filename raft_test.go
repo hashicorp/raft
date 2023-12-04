@@ -2337,17 +2337,71 @@ func TestRaft_LeadershipTransferWithOneNode(t *testing.T) {
 	}
 }
 
+func TestRaft_LeadershipTransferWithWrites(t *testing.T) {
+	conf := inmemConfig(t)
+	conf.Logger = hclog.New(&hclog.LoggerOptions{Level: hclog.Trace})
+	c := MakeCluster(7, t, conf)
+	defer c.Close()
+
+	doneCh := make(chan struct{})
+	var writerErr error
+	var wg sync.WaitGroup
+	var writes int
+	wg.Add(1)
+	leader := c.Leader()
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-doneCh:
+				return
+			default:
+				future := leader.Apply([]byte("test"), 0)
+				switch err := future.Error(); {
+				case errors.Is(err, ErrRaftShutdown):
+					return
+				case errors.Is(err, ErrNotLeader):
+					leader = c.Leader()
+				case errors.Is(err, ErrLeadershipTransferInProgress):
+					continue
+				case errors.Is(err, ErrLeadershipLost):
+					continue
+				case err == nil:
+					writes++
+				default:
+					writerErr = err
+				}
+				time.Sleep(time.Millisecond)
+			}
+		}
+	}()
+
+	follower := c.Followers()[0]
+	future := c.Leader().LeadershipTransferToServer(follower.localID, follower.localAddr)
+	if future.Error() != nil {
+		t.Fatalf("Didn't expect error: %v", future.Error())
+	}
+	if follower.localID != c.Leader().localID {
+		t.Error("Leadership should have been transitioned to specified server.")
+	}
+	close(doneCh)
+	wg.Wait()
+	if writerErr != nil {
+		t.Fatal(writerErr)
+	}
+	t.Logf("writes: %d", writes)
+}
+
 func TestRaft_LeadershipTransferWithSevenNodes(t *testing.T) {
 	c := MakeCluster(7, t, nil)
 	defer c.Close()
 
-	oldLeader := c.Leader().localID
 	follower := c.GetInState(Follower)[0]
 	future := c.Leader().LeadershipTransferToServer(follower.localID, follower.localAddr)
 	if future.Error() != nil {
 		t.Fatalf("Didn't expect error: %v", future.Error())
 	}
-	if oldLeader == c.Leader().localID {
+	if follower.localID != c.Leader().localID {
 		t.Error("Leadership should have been transitioned to specified server.")
 	}
 }
@@ -2510,7 +2564,7 @@ func TestRaft_LeadershipTransferIgnoresNonvoters(t *testing.T) {
 }
 
 func TestRaft_LeadershipTransferStopRightAway(t *testing.T) {
-	r := Raft{leaderState: leaderState{}}
+	r := Raft{leaderState: leaderState{}, logger: hclog.New(nil)}
 	r.setupLeaderState()
 
 	stopCh := make(chan struct{})
