@@ -1923,7 +1923,7 @@ func (r *Raft) electSelf(preVote bool) <-chan *voteResult {
 		Candidate:          r.trans.EncodePeer(r.localID, r.localAddr),
 		LastLogIndex:       lastIdx,
 		LastLogTerm:        lastTerm,
-		LeadershipTransfer: r.candidateFromLeadershipTransfer,
+		LeadershipTransfer: r.candidateFromLeadershipTransfer.Load(),
 		PreVote:            preVote,
 	}
 
