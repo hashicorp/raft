@@ -1925,7 +1925,6 @@ func (r *Raft) electSelf(preVote bool) <-chan *voteResult {
 		LastLogTerm:        lastTerm,
 		LeadershipTransfer: r.candidateFromLeadershipTransfer.Load(),
 		PreVote:            preVote,
-		PreVote:            preVote,
 	}
 
 	// Construct a function to ask for a vote
