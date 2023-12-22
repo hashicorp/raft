@@ -12,7 +12,7 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/hashicorp/go-msgpack/codec"
+	"github.com/hashicorp/go-msgpack/v2/codec"
 )
 
 func init() {
@@ -129,7 +129,11 @@ func decodeMsgPack(buf []byte, out interface{}) error {
 // Encode writes an encoded object to a new bytes buffer.
 func encodeMsgPack(in interface{}) (*bytes.Buffer, error) {
 	buf := bytes.NewBuffer(nil)
-	hd := codec.MsgpackHandle{}
+	hd := codec.MsgpackHandle{
+		BasicHandle: codec.BasicHandle{
+			TimeNotBuiltin: true,
+		},
+	}
 	enc := codec.NewEncoder(buf, &hd)
 	err := enc.Encode(in)
 	return buf, err

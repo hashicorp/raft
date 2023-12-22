@@ -14,9 +14,9 @@ import (
 	"sync"
 	"time"
 
-	metrics "github.com/armon/go-metrics"
+	"github.com/armon/go-metrics"
 	"github.com/hashicorp/go-hclog"
-	"github.com/hashicorp/go-msgpack/codec"
+	"github.com/hashicorp/go-msgpack/v2/codec"
 )
 
 const (
@@ -106,6 +106,8 @@ type NetworkTransport struct {
 
 	timeout      time.Duration
 	TimeoutScale int
+
+	msgpackUseNewTimeFormat bool
 }
 
 // NetworkTransportConfig encapsulates configuration for the network transport layer.
@@ -157,6 +159,12 @@ type NetworkTransportConfig struct {
 	// Timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
 	// the timeout by (SnapshotSize / TimeoutScale).
 	Timeout time.Duration
+
+	// MsgpackUseNewTimeFormat when set to true, force the underlying msgpack
+	// codec to use the new format of time.Time when encoding (used in
+	// go-msgpack v1.1.5 by default). Decoding is not affected, as all
+	// go-msgpack v2.1.0+ decoders know how to decode both formats.
+	MsgpackUseNewTimeFormat bool
 }
 
 // ServerAddressProvider is a target address to which we invoke an RPC when establishing a connection
@@ -214,16 +222,17 @@ func NewNetworkTransportWithConfig(
 		maxInFlight = DefaultMaxRPCsInFlight
 	}
 	trans := &NetworkTransport{
-		connPool:              make(map[ServerAddress][]*netConn),
-		consumeCh:             make(chan RPC),
-		logger:                config.Logger,
-		maxPool:               config.MaxPool,
-		maxInFlight:           maxInFlight,
-		shutdownCh:            make(chan struct{}),
-		stream:                config.Stream,
-		timeout:               config.Timeout,
-		TimeoutScale:          DefaultTimeoutScale,
-		serverAddressProvider: config.ServerAddressProvider,
+		connPool:                make(map[ServerAddress][]*netConn),
+		consumeCh:               make(chan RPC),
+		logger:                  config.Logger,
+		maxPool:                 config.MaxPool,
+		maxInFlight:             maxInFlight,
+		shutdownCh:              make(chan struct{}),
+		stream:                  config.Stream,
+		timeout:                 config.Timeout,
+		TimeoutScale:            DefaultTimeoutScale,
+		serverAddressProvider:   config.ServerAddressProvider,
+		msgpackUseNewTimeFormat: config.MsgpackUseNewTimeFormat,
 	}
 
 	// Create the connection context and then start our listener.
@@ -407,7 +416,11 @@ func (n *NetworkTransport) getConn(target ServerAddress) (*netConn, error) {
 		w:      bufio.NewWriterSize(conn, connSendBufferSize),
 	}
 
-	netConn.enc = codec.NewEncoder(netConn.w, &codec.MsgpackHandle{})
+	netConn.enc = codec.NewEncoder(netConn.w, &codec.MsgpackHandle{
+		BasicHandle: codec.BasicHandle{
+			TimeNotBuiltin: !n.msgpackUseNewTimeFormat,
+		},
+	})
 
 	// Done
 	return netConn, nil
@@ -586,7 +599,11 @@ func (n *NetworkTransport) handleConn(connCtx context.Context, conn net.Conn) {
 	r := bufio.NewReaderSize(conn, connReceiveBufferSize)
 	w := bufio.NewWriter(conn)
 	dec := codec.NewDecoder(r, &codec.MsgpackHandle{})
-	enc := codec.NewEncoder(w, &codec.MsgpackHandle{})
+	enc := codec.NewEncoder(w, &codec.MsgpackHandle{
+		BasicHandle: codec.BasicHandle{
+			TimeNotBuiltin: !n.msgpackUseNewTimeFormat,
+		},
+	})
 
 	for {
 		select {

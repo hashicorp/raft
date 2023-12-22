@@ -1,5 +1,28 @@
 # UNRELEASED
 
+# 1.6.0 (November 15th, 2023)
+
+CHANGES
+
+* Upgrade hashicorp/go-msgpack to v2, with go.mod upgraded from v0.5.5 to v2.1.1. [GH-577](https://github.com/hashicorp/raft/pull/577)
+
+  go-msgpack v2.1.1 is by default binary compatible with v0.5.5 ("non-builtin" encoding of `time.Time`), but can decode messages produced by v1.1.5 as well ("builtin" encoding of `time.Time`).
+
+  However, if users of this libary overrode the version of go-msgpack (especially to v1), this **could break** compatibility if raft nodes are running a mix of versions.
+
+  This compatibility can be configured at runtime in Raft using `NetworkTransportConfig.MsgpackUseNewTimeFormat` -- the default is `false`, which maintains compatibility with `go-msgpack` v0.5.5, but if set to `true`, will be compatible with `go-msgpack` v1.1.5.
+
+IMPROVEMENTS
+
+* Push to notify channel when shutting down. [GH-567](https://github.com/hashicorp/raft/pull/567)
+* Add CommitIndex API [GH-560](https://github.com/hashicorp/raft/pull/560)
+* Document some Apply error cases better [GH-561](https://github.com/hashicorp/raft/pull/561)
+
+BUG FIXES
+
+* Race with `candidateFromLeadershipTransfer` [GH-570](https://github.com/hashicorp/raft/pull/570)
+
+
 # 1.5.0 (April 21st, 2023)
 
 IMPROVEMENTS
@@ -11,7 +34,7 @@ FEATURES
 * Support log stores with a monotonically increasing index.  Implementing a log store with the `MonotonicLogStore` interface where `IsMonotonic()` returns true will allow Raft to clear all previous logs on user restores of Raft snapshots.
 
 BUG FIXES
-* Restoring a snapshot with the raft-wal log store caused a panic due to index gap that is created during snapshot restores. 
+* Restoring a snapshot with the raft-wal log store caused a panic due to index gap that is created during snapshot restores.
 
 # 1.3.0 (April 22nd, 2021)
 
