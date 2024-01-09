@@ -232,8 +232,8 @@ type Config struct {
 	// raft's configuration and index values.
 	NoSnapshotRestoreOnStart bool
 
-	// skipStartup allows NewRaft() to bypass all background work goroutines
-	skipStartup bool
+	// SkipStartup allows NewRaft() to bypass all background work goroutines
+	SkipStartup bool
 }
 
 func (conf *Config) getOrCreateLogger() hclog.Logger {
