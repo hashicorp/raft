@@ -1750,37 +1750,55 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 		return
 	}
 
-	// Separately track the progress of streaming a snapshot over the network
-	// because this too can take a long time.
-	countingRPCReader := newCountingReader(rpc.Reader)
+	// Spill the remote snapshot to disk.
+	// Spawn a goroutine to copy the snapshot, so we can handle a
+	// shutdown signal as well.
+	diskCopyErrCh := make(chan error, 1)
+	go func() {
+		// Separately track the progress of streaming a snapshot over the network
+		// because this too can take a long time.
+		countingRPCReader := newCountingReader(rpc.Reader)
+		transferMonitor := startSnapshotRestoreMonitor(r.logger, countingRPCReader, req.Size, true)
+		n, err := io.Copy(sink, countingRPCReader)
+		transferMonitor.StopAndWait()
+		if err != nil {
+			sink.Cancel()
+			r.logger.Error("failed to copy snapshot", "error", err)
+			diskCopyErrCh <- err
+			return
+		}
 
-	// Spill the remote snapshot to disk
-	transferMonitor := startSnapshotRestoreMonitor(r.logger, countingRPCReader, req.Size, true)
-	n, err := io.Copy(sink, countingRPCReader)
-	transferMonitor.StopAndWait()
-	if err != nil {
+		// Check that we received it all
+		if n != req.Size {
+			sink.Cancel()
+			r.logger.Error("failed to receive whole snapshot",
+				"received", hclog.Fmt("%d / %d", n, req.Size))
+			diskCopyErrCh <- fmt.Errorf("short read")
+			return
+		}
+
+		// Finalize the snapshot
+		if err := sink.Close(); err != nil {
+			r.logger.Error("failed to finalize snapshot", "error", err)
+			diskCopyErrCh <- err
+			return
+		}
+		r.logger.Info("copied to local snapshot", "bytes", n)
+		diskCopyErrCh <- nil
+	}()
+
+	// Wait for snapshot transfer or shutdown
+	select {
+	case err := <-diskCopyErrCh:
+		if err != nil {
+			rpcErr = err
+			return
+		}
+	case <-r.shutdownCh:
 		sink.Cancel()
-		r.logger.Error("failed to copy snapshot", "error", err)
-		rpcErr = err
+		rpcErr = ErrRaftShutdown
 		return
 	}
-
-	// Check that we received it all
-	if n != req.Size {
-		sink.Cancel()
-		r.logger.Error("failed to receive whole snapshot",
-			"received", hclog.Fmt("%d / %d", n, req.Size))
-		rpcErr = fmt.Errorf("short read")
-		return
-	}
-
-	// Finalize the snapshot
-	if err := sink.Close(); err != nil {
-		r.logger.Error("failed to finalize snapshot", "error", err)
-		rpcErr = err
-		return
-	}
-	r.logger.Info("copied to local snapshot", "bytes", n)
 
 	// Restore snapshot
 	future := &restoreFuture{ID: sink.ID()}
