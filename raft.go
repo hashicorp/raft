@@ -1762,7 +1762,6 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 		n, err := io.Copy(sink, countingRPCReader)
 		transferMonitor.StopAndWait()
 		if err != nil {
-			sink.Cancel()
 			r.logger.Error("failed to copy snapshot", "error", err)
 			diskCopyErrCh <- err
 			return
@@ -1770,19 +1769,12 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 
 		// Check that we received it all
 		if n != req.Size {
-			sink.Cancel()
 			r.logger.Error("failed to receive whole snapshot",
 				"received", hclog.Fmt("%d / %d", n, req.Size))
 			diskCopyErrCh <- fmt.Errorf("short read")
 			return
 		}
 
-		// Finalize the snapshot
-		if err := sink.Close(); err != nil {
-			r.logger.Error("failed to finalize snapshot", "error", err)
-			diskCopyErrCh <- err
-			return
-		}
 		r.logger.Info("copied to local snapshot", "bytes", n)
 		diskCopyErrCh <- nil
 	}()
@@ -1791,12 +1783,20 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	select {
 	case err := <-diskCopyErrCh:
 		if err != nil {
+			sink.Cancel()
 			rpcErr = err
 			return
 		}
 	case <-r.shutdownCh:
 		sink.Cancel()
 		rpcErr = ErrRaftShutdown
+		return
+	}
+
+	// Finalize the snapshot
+	if err := sink.Close(); err != nil {
+		r.logger.Error("failed to finalize snapshot", "error", err)
+		diskCopyErrCh <- err
 		return
 	}
 
