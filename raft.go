@@ -1796,7 +1796,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	// Finalize the snapshot
 	if err := sink.Close(); err != nil {
 		r.logger.Error("failed to finalize snapshot", "error", err)
-		diskCopyErrCh <- err
+		rpcErr = err
 		return
 	}
 
