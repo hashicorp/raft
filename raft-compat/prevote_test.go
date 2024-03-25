@@ -20,6 +20,8 @@ func TestRaft_PreVote_BootStrap_PreVote(t *testing.T) {
 		utils.WaitFuture(t, f)
 	}
 	leaveNoTransfer := func(t *testing.T, cluster testcluster.RaftCluster, id string) {
+		fr := cluster.GetLeader().GetRaft().(*raftprevious.Raft).RemoveServer(raftprevious.ServerID(id), 0, 0)
+		utils.WaitFuture(t, fr)
 		f := cluster.Raft(id).(*raftprevious.Raft).Shutdown()
 		utils.WaitFuture(t, f)
 	}
@@ -160,6 +162,8 @@ func TestRaft_PreVote_Rollback(t *testing.T) {
 		utils.WaitFuture(t, f)
 	}
 	leaveNoTransfer := func(t *testing.T, cluster testcluster.RaftCluster, id string) {
+		fr := cluster.GetLeader().GetRaft().(*raft.Raft).RemoveServer(raft.ServerID(id), 0, 0)
+		utils.WaitFuture(t, fr)
 		f := cluster.Raft(id).(*raft.Raft).Shutdown()
 		utils.WaitFuture(t, f)
 	}
