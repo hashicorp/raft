@@ -211,7 +211,7 @@ func newTestLogger(tb testing.TB) hclog.Logger {
 // is logged after the test is complete.
 func newTestLoggerWithPrefix(tb testing.TB, prefix string) hclog.Logger {
 	if testing.Verbose() {
-		return hclog.New(&hclog.LoggerOptions{Name: prefix})
+		return hclog.New(&hclog.LoggerOptions{Name: prefix, Level: hclog.Trace})
 	}
 
 	return hclog.New(&hclog.LoggerOptions{

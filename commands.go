@@ -92,7 +92,6 @@ type RequestVoteRequest struct {
 	// transfer. It is required for leadership transfer to work, because servers
 	// wouldn't vote otherwise if they are aware of an existing leader.
 	LeadershipTransfer bool
-	PreVote            bool
 }
 
 // GetRPCHeader - See WithRPCHeader.
@@ -114,13 +113,57 @@ type RequestVoteResponse struct {
 
 	// Is the vote granted.
 	Granted bool
-
-	// Is it a preVote response
-	PreVote bool
 }
 
 // GetRPCHeader - See WithRPCHeader.
 func (r *RequestVoteResponse) GetRPCHeader() RPCHeader {
+	return r.RPCHeader
+}
+
+// RequestPreVoteRequest is the command used by a candidate to ask a Raft peer
+// for a vote in an election.
+type RequestPreVoteRequest struct {
+	RPCHeader
+
+	// Provide the term and our id
+	Term uint64
+
+	// Deprecated: use RPCHeader.Addr instead
+	Candidate []byte
+
+	// Used to ensure safety
+	LastLogIndex uint64
+	LastLogTerm  uint64
+
+	// Used to indicate to peers if this vote was triggered by a leadership
+	// transfer. It is required for leadership transfer to work, because servers
+	// wouldn't vote otherwise if they are aware of an existing leader.
+	LeadershipTransfer bool
+}
+
+// GetRPCHeader - See WithRPCHeader.
+func (r *RequestPreVoteRequest) GetRPCHeader() RPCHeader {
+	return r.RPCHeader
+}
+
+// RequestPreVoteResponse is the response returned from a RequestPreVoteRequest.
+type RequestPreVoteResponse struct {
+	RPCHeader
+
+	// Newer term if leader is out of date.
+	Term uint64
+
+	// Peers is deprecated, but required by servers that only understand
+	// protocol version 0. This is not populated in protocol version 2
+	// and later.
+	Peers []byte
+
+	// Is the vote granted.
+	Granted bool
+}
+
+// GetRPCHeader - See WithRPCHeader.
+func (r *RequestPreVoteResponse) GetRPCHeader() RPCHeader {
 	return r.RPCHeader
 }
 
