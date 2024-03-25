@@ -501,6 +501,12 @@ func (c *cluster) Leader() *Raft {
 // state.
 func (c *cluster) Followers() []*Raft {
 	expFollowers := len(c.rafts) - 1
+	return c.WaitForFollowers(expFollowers)
+}
+
+// WaitForFollowers waits for the cluster to have a given number of followers and stay in a stable
+// state.
+func (c *cluster) WaitForFollowers(expFollowers int) []*Raft {
 	followers := c.GetInState(Follower)
 	if len(followers) != expFollowers {
 		c.t.Fatalf("timeout waiting for %d followers (followers are %v)", expFollowers, followers)

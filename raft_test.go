@@ -2119,6 +2119,37 @@ func TestRaft_PreVoteMixedCluster(t *testing.T) {
 
 }
 
+func TestRaft_PreVoteAvoidElectionWithPartition(t *testing.T) {
+	// Make a prevote cluster.
+	conf := inmemConfig(t)
+	conf.PreVote = true
+	c := MakeCluster(5, t, conf)
+	defer c.Close()
+
+	oldLeaderTerm := c.Leader().getCurrentTerm()
+	followers := c.Followers()
+	require.Len(t, followers, 4)
+
+	//Partition a node and wait enough for it to increase its term
+	c.Partition([]ServerAddress{followers[0].localAddr})
+	time.Sleep(10 * c.propagateTimeout)
+
+	// Check the leader is stable and the followers are as expected
+	leaderTerm := c.Leader().getCurrentTerm()
+	require.Equal(t, leaderTerm, oldLeaderTerm)
+	require.Len(t, c.WaitForFollowers(3), 3)
+
+	// reconnect the partitioned node
+	c.FullyConnect()
+	time.Sleep(3 * c.propagateTimeout)
+
+	// Check that the number of followers increase and
+	require.Len(t, c.Followers(), 4)
+	leaderTerm = c.Leader().getCurrentTerm()
+	require.Equal(t, leaderTerm, oldLeaderTerm)
+
+}
+
 func TestRaft_VotingGrant_WhenLeaderAvailable(t *testing.T) {
 	conf := inmemConfig(t)
 	conf.ProtocolVersion = 3
