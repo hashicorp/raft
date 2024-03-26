@@ -218,8 +218,6 @@ func TestRaft_PreVote_Rollback(t *testing.T) {
 				// Check Leader haven't changed
 				a, _ := getLeader.GetRaft().(*raft.Raft).LeaderWithID()
 				require.Equal(t, a, leader)
-
-				//
 				tc.Leave(t, cluster, cluster.ID(i))
 
 				// Keep the store, to be passed to the upgraded node.
