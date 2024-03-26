@@ -73,8 +73,7 @@ func (r *RaftEnv) Restart(t *testing.T) {
 func MakeRaft(tb testing.TB, conf *Config, bootstrap bool) *RaftEnv {
 	// Set the config
 	if conf == nil {
-		t := tb.(*testing.T)
-		conf = inmemConfig(t)
+		conf = inmemConfig(tb)
 	}
 
 	dir, err := os.MkdirTemp("", "raft")

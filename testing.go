@@ -21,7 +21,7 @@ import (
 var userSnapshotErrorsOnNoData = true
 
 // Return configurations optimized for in-memory
-func inmemConfig(t *testing.T) *Config {
+func inmemConfig(t testing.TB) *Config {
 	conf := DefaultConfig()
 	conf.HeartbeatTimeout = 50 * time.Millisecond
 	conf.ElectionTimeout = 50 * time.Millisecond
