@@ -2143,7 +2143,7 @@ func TestRaft_PreVoteAvoidElectionWithPartition(t *testing.T) {
 	c.FullyConnect()
 	time.Sleep(3 * c.propagateTimeout)
 
-	// Check that the number of followers increase and
+	// Check that the number of followers increase and the term is not increased
 	require.Len(t, c.Followers(), 4)
 	leaderTerm = c.Leader().getCurrentTerm()
 	require.Equal(t, leaderTerm, oldLeaderTerm)

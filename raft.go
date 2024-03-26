@@ -325,8 +325,7 @@ func (r *Raft) runCandidate() {
 			r.mainThreadSaturation.working()
 			r.processRPC(rpc)
 		case preVote := <-prevoteCh:
-			// This a pre-preVote case but could lead to winning an election, in the case that majority of other nodes
-			// don't support pre-preVote or have pre-preVote deactivated.
+			// This a pre-vote case it should trigger a "real" election if the pre-vote is won.
 			r.mainThreadSaturation.working()
 			r.logger.Debug("got a prevote!!", "from", preVote.voterID, "term", preVote.Term, "tally", preVoteGrantedVotes)
 			// Check if the term is greater than ours, bail
@@ -346,7 +345,7 @@ func (r *Raft) runCandidate() {
 				r.logger.Debug("prevote refused", "from", preVote.voterID, "term", preVote.Term, "tally", preVoteGrantedVotes)
 			}
 
-			// Check if we've won the pre-preVote and proceed to election if so
+			// Check if we've won the pre-vote and proceed to election if so
 			if preVoteGrantedVotes >= votesNeeded {
 				r.logger.Info("pre election won", "term", preVote.Term, "tally", preVoteGrantedVotes, "votesNeeded", votesNeeded-1)
 				preVoteGrantedVotes = 0
@@ -355,7 +354,7 @@ func (r *Raft) runCandidate() {
 				prevoteCh = nil
 				voteCh = r.electSelf()
 			}
-			// Check if we've lost the pre-Vote and wait for the election to timeout so we can do another time of
+			// Check if we've lost the pre-vote and wait for the election to timeout so we can do another time of
 			// prevote.
 			if preVoteRefusedVotes >= votesNeeded {
 				r.logger.Info("pre election lost, wait for election to timeout", "term", preVote.Term, "tally", preVoteGrantedVotes, "votesNeeded", votesNeeded-1)
@@ -373,7 +372,7 @@ func (r *Raft) runCandidate() {
 			// Check if the preVote is granted
 			if vote.Granted {
 				grantedVotes++
-				r.logger.Debug("v ote granted", "from", vote.voterID, "term", vote.Term, "tally", grantedVotes)
+				r.logger.Debug("vote granted", "from", vote.voterID, "term", vote.Term, "tally", grantedVotes)
 			}
 
 			// Check if we've become the leader
@@ -1762,16 +1761,16 @@ func (r *Raft) requestPreVote(rpc RPC, req *RequestPreVoteRequest) {
 
 	// For older raft version ID is not part of the packed message
 	// We assume that the peer is part of the configuration and skip this check
-	if len(req.ID) > 0 {
-		candidateID := ServerID(req.ID)
-		// if the Servers list is empty that mean the cluster is very likely trying to bootstrap,
-		// Grant the vote
-		if len(r.configurations.latest.Servers) > 0 && !inConfiguration(r.configurations.latest, candidateID) {
-			r.logger.Warn("rejecting pre-vote request since node is not in configuration",
-				"from", candidate)
-			return
-		}
+
+	candidateID := ServerID(req.ID)
+	// if the Servers list is empty that mean the cluster is very likely trying to bootstrap,
+	// Grant the vote
+	if len(r.configurations.latest.Servers) > 0 && !inConfiguration(r.configurations.latest, candidateID) {
+		r.logger.Warn("rejecting pre-vote request since node is not in configuration",
+			"from", candidate)
+		return
 	}
+
 	if leaderAddr, leaderID := r.LeaderWithID(); leaderAddr != "" && leaderAddr != candidate && !req.LeadershipTransfer {
 		r.logger.Warn("rejecting pre-vote request since we have a leader",
 			"from", candidate,
@@ -1787,10 +1786,9 @@ func (r *Raft) requestPreVote(rpc RPC, req *RequestPreVoteRequest) {
 
 	// Increase the term if we see a newer one
 	if req.Term > r.getCurrentTerm() {
-		// Ensure we grant the pre-vote as in a "real" vote this will transition us to follower
+		// continue processing here to possibly grant the pre-vote as in a "real" vote this will transition us to follower
 		r.logger.Debug("received a requestPreVote with a newer term, grant the pre-vote")
 		resp.Term = req.Term
-		resp.Granted = true
 	}
 
 	// if we get a request for vote from a nonVoter  and the request term is higher,
@@ -1798,12 +1796,11 @@ func (r *Raft) requestPreVote(rpc RPC, req *RequestPreVoteRequest) {
 	// This could happen when a node, previously voter, is converted to non-voter
 	// The reason we need to step in is to permit to the cluster to make progress in such a scenario
 	// More details about that in https://github.com/hashicorp/raft/pull/526
-	if len(req.ID) > 0 {
-		candidateID := ServerID(req.ID)
-		if len(r.configurations.latest.Servers) > 0 && !hasVote(r.configurations.latest, candidateID) {
-			r.logger.Warn("rejecting pre-vote request since node is not a voter", "from", candidate)
-			return
-		}
+
+	candidateID := ServerID(req.ID)
+	if len(r.configurations.latest.Servers) > 0 && !hasVote(r.configurations.latest, candidateID) {
+		r.logger.Warn("rejecting pre-vote request since node is not a voter", "from", candidate)
+		return
 	}
 
 	// Reject if their term is older
