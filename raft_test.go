@@ -2061,6 +2061,99 @@ func TestRaft_AppendEntry(t *testing.T) {
 	require.True(t, resp2.Success)
 }
 
+// TestRaft_PreVoteMixedCluster focus on testing a cluster with
+// a mix of nodes that have pre-vote activated and deactivated.
+// Once the cluster is created, we force an election by partioning the leader
+// and verify that the cluster regain stability.
+func TestRaft_PreVoteMixedCluster(t *testing.T) {
+
+	tcs := []struct {
+		name         string
+		prevoteNum   int
+		noprevoteNum int
+	}{
+		{"majority no pre-vote", 2, 3},
+		{"majority pre-vote", 3, 2},
+		{"majority no pre-vote", 1, 2},
+		{"majority pre-vote", 2, 1},
+		{"all pre-vote", 3, 0},
+		{"all no pre-vote", 0, 3},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+
+			// Make majority cluster.
+			majority := tc.prevoteNum
+			minority := tc.noprevoteNum
+			if tc.prevoteNum < tc.noprevoteNum {
+				majority = tc.noprevoteNum
+				minority = tc.prevoteNum
+			}
+
+			conf := inmemConfig(t)
+			conf.PreVoteDisabled = tc.prevoteNum <= tc.noprevoteNum
+			c := MakeCluster(majority, t, conf)
+			defer c.Close()
+
+			// Set up another server speaking protocol version 2.
+			conf = inmemConfig(t)
+			conf.PreVoteDisabled = tc.prevoteNum >= tc.noprevoteNum
+			c1 := MakeClusterNoBootstrap(minority, t, conf)
+
+			// Merge clusters.
+			c.Merge(c1)
+			c.FullyConnect()
+
+			for _, r := range c1.rafts {
+				future := c.Leader().AddVoter(r.localID, r.localAddr, 0, 0)
+				if err := future.Error(); err != nil {
+					t.Fatalf("err: %v", err)
+				}
+			}
+			time.Sleep(c.propagateTimeout * 10)
+
+			leaderOld := c.Leader()
+			c.Followers()
+			c.Partition([]ServerAddress{leaderOld.localAddr})
+			time.Sleep(c.propagateTimeout * 3)
+			leader := c.Leader()
+			require.NotEqual(t, leader.leaderID, leaderOld.leaderID)
+		})
+	}
+
+}
+
+func TestRaft_PreVoteAvoidElectionWithPartition(t *testing.T) {
+	// Make a prevote cluster.
+	conf := inmemConfig(t)
+	conf.PreVoteDisabled = false
+	c := MakeCluster(5, t, conf)
+	defer c.Close()
+
+	oldLeaderTerm := c.Leader().getCurrentTerm()
+	followers := c.Followers()
+	require.Len(t, followers, 4)
+
+	//Partition a node and wait enough for it to increase its term
+	c.Partition([]ServerAddress{followers[0].localAddr})
+	time.Sleep(10 * c.propagateTimeout)
+
+	// Check the leader is stable and the followers are as expected
+	leaderTerm := c.Leader().getCurrentTerm()
+	require.Equal(t, leaderTerm, oldLeaderTerm)
+	require.Len(t, c.WaitForFollowers(3), 3)
+
+	// reconnect the partitioned node
+	c.FullyConnect()
+	time.Sleep(3 * c.propagateTimeout)
+
+	// Check that the number of followers increase and the term is not increased
+	require.Len(t, c.Followers(), 4)
+	leaderTerm = c.Leader().getCurrentTerm()
+	require.Equal(t, leaderTerm, oldLeaderTerm)
+
+}
+
 func TestRaft_VotingGrant_WhenLeaderAvailable(t *testing.T) {
 	conf := inmemConfig(t)
 	conf.ProtocolVersion = 3
@@ -3065,7 +3158,6 @@ func TestRaft_VoteWithNoIDNoAddr(t *testing.T) {
 	var resp RequestVoteResponse
 	followerT := c.trans[c.IndexOf(followers[1])]
 	c.Partition([]ServerAddress{leader.localAddr})
-	time.Sleep(c.propagateTimeout)
 
 	// wait for the remaining follower to trigger an election
 	waitForState(follower, Candidate)

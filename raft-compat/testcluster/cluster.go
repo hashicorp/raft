@@ -117,6 +117,14 @@ func NewRaftCluster(t *testing.T, f func(t *testing.T, id string) RaftNode, coun
 	return rc
 }
 
+func NewPreviousRaftCluster(t *testing.T, count int, name string) RaftCluster {
+	return NewRaftCluster(t, InitPrevious, count, name)
+}
+
+func NewUITRaftCluster(t *testing.T, count int, name string) RaftCluster {
+	return NewRaftCluster(t, InitUIT, count, name)
+}
+
 func (r *RaftCluster) GetLeader() RaftNode {
 	for _, n := range r.rafts {
 		if n.GetLocalID() == n.GetLeaderID() {
@@ -151,12 +159,13 @@ func (r *RaftCluster) GetIndex(id string) int {
 }
 
 func InitUIT(t *testing.T, id string) RaftNode {
-	return InitUITWithStore(t, id, nil)
+	return InitUITWithStore(t, id, nil, func(config *raft.Config) {})
 }
 
-func InitUITWithStore(t *testing.T, id string, store *raftprevious.InmemStore) RaftNode {
+func InitUITWithStore(t *testing.T, id string, store *raftprevious.InmemStore, cfgMod func(config *raft.Config)) RaftNode {
 	node := RaftUIT{}
 	node.Config = raft.DefaultConfig()
+	cfgMod(node.Config)
 	node.Config.HeartbeatTimeout = 50 * time.Millisecond
 	node.Config.ElectionTimeout = 50 * time.Millisecond
 	node.Config.LeaderLeaseTimeout = 50 * time.Millisecond
@@ -164,7 +173,7 @@ func InitUITWithStore(t *testing.T, id string, store *raftprevious.InmemStore) R
 	node.id = raft.ServerID(id)
 	node.Config.LocalID = node.id
 	if store != nil {
-		node.Store = convertInMemStore(store)
+		node.Store = convertInMemStoreToUIT(store)
 	} else {
 		node.Store = raft.NewInmemStore()
 	}
@@ -180,7 +189,12 @@ func InitUITWithStore(t *testing.T, id string, store *raftprevious.InmemStore) R
 	return node
 }
 
-func InitLatest(t *testing.T, id string) RaftNode {
+func InitPrevious(t *testing.T, id string) RaftNode {
+	return InitPreviousWithStore(t, id, nil, func(config *raftprevious.Config) {
+	})
+}
+
+func InitPreviousWithStore(t *testing.T, id string, store *raft.InmemStore, f func(config *raftprevious.Config)) RaftNode {
 	node := RaftLatest{}
 	node.Config = raftprevious.DefaultConfig()
 	node.Config.HeartbeatTimeout = 50 * time.Millisecond
@@ -189,8 +203,13 @@ func InitLatest(t *testing.T, id string) RaftNode {
 	node.Config.CommitTimeout = 5 * time.Millisecond
 	node.id = raftprevious.ServerID(id)
 	node.Config.LocalID = node.id
+	f(node.Config)
 
-	node.Store = raftprevious.NewInmemStore()
+	if store != nil {
+		node.Store = convertInMemStoreToPrevious(store)
+	} else {
+		node.Store = raftprevious.NewInmemStore()
+	}
 	node.Snap = raftprevious.NewInmemSnapshotStore()
 	node.fsm = &raftprevious.MockFSM{}
 	var err error
@@ -202,11 +221,21 @@ func InitLatest(t *testing.T, id string) RaftNode {
 	return node
 }
 
-func convertLog(ll *raftprevious.Log) *raft.Log {
+func convertLogToUIT(ll *raftprevious.Log) *raft.Log {
 	l := new(raft.Log)
 	l.Index = ll.Index
 	l.AppendedAt = ll.AppendedAt
 	l.Type = raft.LogType(ll.Type)
+	l.Term = ll.Term
+	l.Data = ll.Data
+	l.Extensions = ll.Extensions
+	return l
+}
+func convertLogToPrevious(ll *raft.Log) *raftprevious.Log {
+	l := new(raftprevious.Log)
+	l.Index = ll.Index
+	l.AppendedAt = ll.AppendedAt
+	l.Type = raftprevious.LogType(ll.Type)
 	l.Term = ll.Term
 	l.Data = ll.Data
 	l.Extensions = ll.Extensions
@@ -219,14 +248,45 @@ var (
 	keyLastVoteCand = []byte("LastVoteCand")
 )
 
-func convertInMemStore(s *raftprevious.InmemStore) *raft.InmemStore {
+func convertInMemStoreToPrevious(s *raft.InmemStore) *raftprevious.InmemStore {
+	ss := raftprevious.NewInmemStore()
+	fi, _ := s.FirstIndex()
+	li, _ := s.LastIndex()
+	for i := fi; i <= li; i++ {
+		log := new(raft.Log)
+		s.GetLog(i, log)
+		ss.StoreLog(convertLogToPrevious(log))
+	}
+
+	get, _ := ss.Get(keyCurrentTerm)
+	ss.Set(keyCurrentTerm, get)
+
+	get, _ = ss.Get(keyLastVoteTerm)
+	ss.Set(keyLastVoteTerm, get)
+
+	get, _ = ss.Get(keyLastVoteCand)
+	ss.Set(keyLastVoteCand, get)
+
+	get64, _ := ss.GetUint64(keyCurrentTerm)
+	ss.SetUint64(keyCurrentTerm, get64)
+
+	get64, _ = ss.GetUint64(keyLastVoteTerm)
+	ss.SetUint64(keyLastVoteTerm, get64)
+
+	get64, _ = ss.GetUint64(keyLastVoteCand)
+	ss.SetUint64(keyLastVoteCand, get64)
+
+	return ss
+}
+
+func convertInMemStoreToUIT(s *raftprevious.InmemStore) *raft.InmemStore {
 	ss := raft.NewInmemStore()
 	fi, _ := s.FirstIndex()
 	li, _ := s.LastIndex()
 	for i := fi; i <= li; i++ {
 		log := new(raftprevious.Log)
 		s.GetLog(i, log)
-		ss.StoreLog(convertLog(log))
+		ss.StoreLog(convertLogToUIT(log))
 	}
 
 	get, _ := ss.Get(keyCurrentTerm)

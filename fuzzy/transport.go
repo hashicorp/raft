@@ -221,6 +221,11 @@ func (t *transport) RequestVote(id raft.ServerID, target raft.ServerAddress, arg
 	return t.sendRPC(string(target), args, resp)
 }
 
+// RequestPreVote sends the appropriate RPC to the target node.
+func (t *transport) RequestPreVote(id raft.ServerID, target raft.ServerAddress, args *raft.RequestPreVoteRequest, resp *raft.RequestPreVoteResponse) error {
+	return t.sendRPC(string(target), args, resp)
+}
+
 // InstallSnapshot is used to push a snapshot down to a follower. The data is read from
 // the ReadCloser and streamed to the client.
 func (t *transport) InstallSnapshot(id raft.ServerID, target raft.ServerAddress, args *raft.InstallSnapshotRequest, resp *raft.InstallSnapshotResponse, data io.Reader) error {
