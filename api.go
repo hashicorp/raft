@@ -534,6 +534,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		applyCh = make(chan *logFuture, conf.MaxAppendEntries)
 	}
 
+	_, transportSupportPreVote := trans.(WithPreVote)
 	// Create Raft struct.
 	r := &Raft{
 		protocolVersion:       protocolVersion,
@@ -563,7 +564,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		leaderNotifyCh:        make(chan struct{}, 1),
 		followerNotifyCh:      make(chan struct{}, 1),
 		mainThreadSaturation:  newSaturationMetric([]string{"raft", "thread", "main", "saturation"}, 1*time.Second),
-		preVote:               conf.PreVote,
+		preVote:               conf.PreVote && transportSupportPreVote,
 	}
 
 	r.conf.Store(*conf)

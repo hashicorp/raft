@@ -291,10 +291,11 @@ func (r *Raft) runCandidate() {
 	var voteCh <-chan *voteResult
 	var prevoteCh <-chan *preVoteResult
 
-	// check if the transport support prevote requests
-	_, ok := r.trans.(WithPreVote)
+	// check if pre-vote is active and that this is not a leader transfer
 
-	if r.preVote && ok {
+	// Leader transfer do not perform prevote by design, as the selected server is very likely to be fit
+	// and an election will happen in all cases.
+	if r.preVote && !r.candidateFromLeadershipTransfer.Load() {
 		prevoteCh = r.preElectSelf()
 	} else {
 		voteCh = r.electSelf()
@@ -327,10 +328,10 @@ func (r *Raft) runCandidate() {
 		case preVote := <-prevoteCh:
 			// This a pre-vote case it should trigger a "real" election if the pre-vote is won.
 			r.mainThreadSaturation.working()
-			r.logger.Debug("got a prevote!!", "from", preVote.voterID, "term", preVote.Term, "tally", preVoteGrantedVotes)
+			r.logger.Debug("pre-vote received", "from", preVote.voterID, "term", preVote.Term, "tally", preVoteGrantedVotes)
 			// Check if the term is greater than ours, bail
 			if preVote.Term > term {
-				r.logger.Debug("newer term discovered on pre-preVote, fallback to follower", "term", preVote.Term)
+				r.logger.Debug("pre-vote denied: found newer term, falling back to follower", "term", preVote.Term)
 				r.setState(Follower)
 				r.setCurrentTerm(preVote.Term)
 				return
@@ -339,15 +340,15 @@ func (r *Raft) runCandidate() {
 			// Check if the preVote is granted
 			if preVote.Granted {
 				preVoteGrantedVotes++
-				r.logger.Debug("prevote granted", "from", preVote.voterID, "term", preVote.Term, "tally", preVoteGrantedVotes)
+				r.logger.Debug("pre-vote granted", "from", preVote.voterID, "term", preVote.Term, "tally", preVoteGrantedVotes)
 			} else {
 				preVoteRefusedVotes++
-				r.logger.Debug("prevote refused", "from", preVote.voterID, "term", preVote.Term, "tally", preVoteGrantedVotes)
+				r.logger.Debug("pre-vote denied", "from", preVote.voterID, "term", preVote.Term, "tally", preVoteGrantedVotes)
 			}
 
 			// Check if we've won the pre-vote and proceed to election if so
 			if preVoteGrantedVotes >= votesNeeded {
-				r.logger.Info("pre election won", "term", preVote.Term, "tally", preVoteGrantedVotes, "votesNeeded", votesNeeded-1)
+				r.logger.Info("pre-vote successful, starting election", "term", preVote.Term, "tally", preVoteGrantedVotes, "votesNeeded", votesNeeded-1)
 				preVoteGrantedVotes = 0
 				preVoteRefusedVotes = 0
 				electionTimer = randomTimeout(electionTimeout)
@@ -357,7 +358,7 @@ func (r *Raft) runCandidate() {
 			// Check if we've lost the pre-vote and wait for the election to timeout so we can do another time of
 			// prevote.
 			if preVoteRefusedVotes >= votesNeeded {
-				r.logger.Info("pre election lost, wait for election to timeout", "term", preVote.Term, "tally", preVoteGrantedVotes, "votesNeeded", votesNeeded-1)
+				r.logger.Info("pre-vote campaign failed, waiting for election timeout", "term", preVote.Term, "tally", preVoteGrantedVotes, "votesNeeded", votesNeeded-1)
 			}
 		case vote := <-voteCh:
 			r.mainThreadSaturation.working()
@@ -369,7 +370,7 @@ func (r *Raft) runCandidate() {
 				return
 			}
 
-			// Check if the preVote is granted
+			// Check if the vote is granted
 			if vote.Granted {
 				grantedVotes++
 				r.logger.Debug("vote granted", "from", vote.voterID, "term", vote.Term, "tally", grantedVotes)
@@ -1721,7 +1722,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 		return
 	}
 
-	// Persist a vote for safety\
+	// Persist a vote for safety
 	if err := r.persistVote(req.Term, candidateBytes); err != nil {
 		r.logger.Error("failed to persist vote", "error", err)
 		return
@@ -1731,7 +1732,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	r.setLastContact()
 }
 
-// requestPreVote is invoked when we get a request vote RPC call.
+// requestPreVote is invoked when we get a request Pre-Vote RPC call.
 func (r *Raft) requestPreVote(rpc RPC, req *RequestPreVoteRequest) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "requestVote"}, time.Now())
 	r.observe(*req)
@@ -1746,12 +1747,6 @@ func (r *Raft) requestPreVote(rpc RPC, req *RequestPreVoteRequest) {
 	defer func() {
 		rpc.Respond(resp, rpcErr)
 	}()
-
-	// Version 0 servers will panic unless the peers is present. It's only
-	// used on them to produce a warning message.
-	if r.protocolVersion < 2 {
-		resp.Peers = encodePeers(r.configurations.latest, r.trans)
-	}
 
 	// Check if we have an existing leader [who's not the candidate] and also
 	// check the LeadershipTransfer flag is set. Usually votes are rejected if
@@ -1768,7 +1763,7 @@ func (r *Raft) requestPreVote(rpc RPC, req *RequestPreVoteRequest) {
 		return
 	}
 
-	if leaderAddr, leaderID := r.LeaderWithID(); leaderAddr != "" && leaderAddr != candidate && !req.LeadershipTransfer {
+	if leaderAddr, leaderID := r.LeaderWithID(); leaderAddr != "" && leaderAddr != candidate {
 		r.logger.Warn("rejecting pre-vote request since we have a leader",
 			"from", candidate,
 			"leader", leaderAddr,
@@ -1781,18 +1776,14 @@ func (r *Raft) requestPreVote(rpc RPC, req *RequestPreVoteRequest) {
 		return
 	}
 
-	// Increase the term if we see a newer one
 	if req.Term > r.getCurrentTerm() {
 		// continue processing here to possibly grant the pre-vote as in a "real" vote this will transition us to follower
 		r.logger.Debug("received a requestPreVote with a newer term, grant the pre-vote")
 		resp.Term = req.Term
 	}
 
-	// if we get a request for vote from a nonVoter  and the request term is higher,
-	// step down and update term, but reject the vote request
+	// if we get a request for a pre-vote from a nonVoter  and the request term is higher, do not grant the Pre-Vote
 	// This could happen when a node, previously voter, is converted to non-voter
-	// The reason we need to step in is to permit to the cluster to make progress in such a scenario
-	// More details about that in https://github.com/hashicorp/raft/pull/526
 	if len(r.configurations.latest.Servers) > 0 && !hasVote(r.configurations.latest, candidateID) {
 		r.logger.Warn("rejecting pre-vote request since node is not a voter", "from", candidate)
 		return
@@ -1801,7 +1792,7 @@ func (r *Raft) requestPreVote(rpc RPC, req *RequestPreVoteRequest) {
 	// Reject if their term is older
 	lastIdx, lastTerm := r.getLastEntry()
 	if lastTerm > req.LastLogTerm {
-		r.logger.Warn("rejecting vote request since our last term is greater",
+		r.logger.Warn("rejecting pre-vote request since our last term is greater",
 			"candidate", candidate,
 			"last-term", lastTerm,
 			"last-candidate-term", req.LastLogTerm)
@@ -1809,7 +1800,7 @@ func (r *Raft) requestPreVote(rpc RPC, req *RequestPreVoteRequest) {
 	}
 
 	if lastTerm == req.LastLogTerm && lastIdx > req.LastLogIndex {
-		r.logger.Warn("rejecting vote request since our last index is greater",
+		r.logger.Warn("rejecting pre-vote request since our last index is greater",
 			"candidate", candidate,
 			"last-index", lastIdx,
 			"last-candidate-index", req.LastLogIndex)
@@ -2055,10 +2046,11 @@ func (r *Raft) electSelf() <-chan *voteResult {
 	return respCh
 }
 
-// preElectSelf is used to send a RequestVote RPC to all peers, and vote for
-// ourself. This has the side affecting of incrementing the current term. The
+// preElectSelf is used to send a RequestPreVote RPC to all peers, and vote for
+// ourself. This will not increment the current term. The
 // response channel returned is used to wait for all the responses (including a
-// vote for ourself). This must only be called from the main thread.
+// vote for ourself).
+// This must only be called from the main thread.
 func (r *Raft) preElectSelf() <-chan *preVoteResult {
 	// Create a response channel
 	respCh := make(chan *preVoteResult, len(r.configurations.latest.Servers))
@@ -2072,10 +2064,9 @@ func (r *Raft) preElectSelf() <-chan *preVoteResult {
 		RPCHeader: r.getRPCHeader(),
 		Term:      newTerm,
 		// this is needed for retro compatibility, before RPCHeader.Addr was added
-		Candidate:          r.trans.EncodePeer(r.localID, r.localAddr),
-		LastLogIndex:       lastIdx,
-		LastLogTerm:        lastTerm,
-		LeadershipTransfer: r.candidateFromLeadershipTransfer.Load(),
+		Candidate:    r.trans.EncodePeer(r.localID, r.localAddr),
+		LastLogIndex: lastIdx,
+		LastLogTerm:  lastTerm,
 	}
 
 	// Construct a function to ask for a vote
@@ -2113,8 +2104,8 @@ func (r *Raft) preElectSelf() <-chan *preVoteResult {
 		if server.Suffrage == Voter {
 			if server.ID == r.localID {
 				r.logger.Debug("pre-voting for self", "term", req.Term, "id", r.localID)
-				// Persist a vote for ourselves
-				// Include our own vote
+
+				// cast a pre-vote for our self
 				respCh <- &preVoteResult{
 					RequestPreVoteResponse: RequestPreVoteResponse{
 						RPCHeader: r.getRPCHeader(),

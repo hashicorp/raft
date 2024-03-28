@@ -2061,6 +2061,10 @@ func TestRaft_AppendEntry(t *testing.T) {
 	require.True(t, resp2.Success)
 }
 
+// TestRaft_PreVoteMixedCluster focus on testing a cluster with
+// a mix of nodes that have pre-vote activated and deactivated.
+// Once the cluster is created, we force an election by partioning the leader
+// and verify that the cluster regain stability.
 func TestRaft_PreVoteMixedCluster(t *testing.T) {
 
 	tcs := []struct {

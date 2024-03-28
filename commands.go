@@ -134,11 +134,6 @@ type RequestPreVoteRequest struct {
 	// Used to ensure safety
 	LastLogIndex uint64
 	LastLogTerm  uint64
-
-	// Used to indicate to peers if this vote was triggered by a leadership
-	// transfer. It is required for leadership transfer to work, because servers
-	// wouldn't vote otherwise if they are aware of an existing leader.
-	LeadershipTransfer bool
 }
 
 // GetRPCHeader - See WithRPCHeader.
@@ -152,11 +147,6 @@ type RequestPreVoteResponse struct {
 
 	// Newer term if leader is out of date.
 	Term uint64
-
-	// Peers is deprecated, but required by servers that only understand
-	// protocol version 0. This is not populated in protocol version 2
-	// and later.
-	Peers []byte
 
 	// Is the vote granted.
 	Granted bool

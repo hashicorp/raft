@@ -232,11 +232,11 @@ type Config struct {
 	// raft's configuration and index values.
 	NoSnapshotRestoreOnStart bool
 
-	// skipStartup allows NewRaft() to bypass all background work goroutines
-	skipStartup bool
-
 	// PreVote activate the pre-vote feature
 	PreVote bool
+
+	// skipStartup allows NewRaft() to bypass all background work goroutines
+	skipStartup bool
 }
 
 func (conf *Config) getOrCreateLogger() hclog.Logger {
@@ -320,7 +320,7 @@ func DefaultConfig() *Config {
 		SnapshotInterval:   120 * time.Second,
 		SnapshotThreshold:  8192,
 		LeaderLeaseTimeout: 500 * time.Millisecond,
-		LogLevel:           "TRACE",
+		LogLevel:           "DEBUG",
 	}
 }
 
