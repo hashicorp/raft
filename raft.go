@@ -291,11 +291,9 @@ func (r *Raft) runCandidate() {
 	var voteCh <-chan *voteResult
 	var prevoteCh <-chan *preVoteResult
 
-	// check if pre-vote is active and that this is not a leader transfer
-
-	// Leader transfer do not perform prevote by design, as the selected server is very likely to be fit
-	// and an election will happen in all cases.
-	if r.preVote && !r.candidateFromLeadershipTransfer.Load() {
+	// check if pre-vote is active and that this is not a leader transfer.
+	// Leader transfer do not perform prevote by design
+	if !r.preVoteDisabled && !r.candidateFromLeadershipTransfer.Load() {
 		prevoteCh = r.preElectSelf()
 	} else {
 		voteCh = r.electSelf()

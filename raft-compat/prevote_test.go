@@ -89,7 +89,7 @@ func TestRaft_PreVote_BootStrap_PreVote(t *testing.T) {
 
 				//Create an upgraded node with the store
 				rUIT := testcluster.InitUITWithStore(t, id, store.(*raftprevious.InmemStore), func(config *raft.Config) {
-					config.PreVote = tc.preVote
+					config.PreVoteDisabled = !tc.preVote
 				})
 				future := getLeader.GetRaft().(*raftprevious.Raft).AddVoter(raftprevious.ServerID(rUIT.GetLocalID()), raftprevious.ServerAddress(rUIT.GetLocalAddr()), 0, 0)
 				utils.WaitFuture(t, future)
@@ -124,7 +124,7 @@ func TestRaft_PreVote_BootStrap_PreVote(t *testing.T) {
 			require.NotEmpty(t, getLeader)
 
 			// Create a new node to replace the deleted one
-			rUIT := testcluster.InitUITWithStore(t, id, store.(*raftprevious.InmemStore), func(config *raft.Config) { config.PreVote = true })
+			rUIT := testcluster.InitUITWithStore(t, id, store.(*raftprevious.InmemStore), func(config *raft.Config) { config.PreVoteDisabled = false })
 			fa := getLeader.GetRaft().(*raft.Raft).AddVoter(raft.ServerID(rUIT.GetLocalID()), raft.ServerAddress(rUIT.GetLocalAddr()), 0, 0)
 			utils.WaitFuture(t, fa)
 

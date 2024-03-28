@@ -2091,13 +2091,13 @@ func TestRaft_PreVoteMixedCluster(t *testing.T) {
 			}
 
 			conf := inmemConfig(t)
-			conf.PreVote = tc.prevoteNum > tc.noprevoteNum
+			conf.PreVoteDisabled = tc.prevoteNum <= tc.noprevoteNum
 			c := MakeCluster(majority, t, conf)
 			defer c.Close()
 
 			// Set up another server speaking protocol version 2.
 			conf = inmemConfig(t)
-			conf.PreVote = tc.prevoteNum < tc.noprevoteNum
+			conf.PreVoteDisabled = tc.prevoteNum >= tc.noprevoteNum
 			c1 := MakeClusterNoBootstrap(minority, t, conf)
 
 			// Merge clusters.
@@ -2126,7 +2126,7 @@ func TestRaft_PreVoteMixedCluster(t *testing.T) {
 func TestRaft_PreVoteAvoidElectionWithPartition(t *testing.T) {
 	// Make a prevote cluster.
 	conf := inmemConfig(t)
-	conf.PreVote = true
+	conf.PreVoteDisabled = false
 	c := MakeCluster(5, t, conf)
 	defer c.Close()
 

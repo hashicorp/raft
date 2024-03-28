@@ -214,8 +214,9 @@ type Raft struct {
 	// mainThreadSaturation measures the saturation of the main raft goroutine.
 	mainThreadSaturation *saturationMetric
 
-	// preVote control if the pre-vote feature is activated
-	preVote bool
+	// preVoteDisabled control if the pre-vote feature is activated,
+	// prevote feature is disabled if set to true.
+	preVoteDisabled bool
 }
 
 // BootstrapCluster initializes a server's storage with the given cluster
@@ -564,7 +565,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		leaderNotifyCh:        make(chan struct{}, 1),
 		followerNotifyCh:      make(chan struct{}, 1),
 		mainThreadSaturation:  newSaturationMetric([]string{"raft", "thread", "main", "saturation"}, 1*time.Second),
-		preVote:               conf.PreVote && transportSupportPreVote,
+		preVoteDisabled:       conf.PreVoteDisabled || !transportSupportPreVote,
 	}
 
 	r.conf.Store(*conf)
