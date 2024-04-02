@@ -128,9 +128,6 @@ type RequestPreVoteRequest struct {
 	// Provide the term and our id
 	Term uint64
 
-	// Deprecated: use RPCHeader.Addr instead
-	Candidate []byte
-
 	// Used to ensure safety
 	LastLogIndex uint64
 	LastLogTerm  uint64

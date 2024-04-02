@@ -2059,10 +2059,8 @@ func (r *Raft) preElectSelf() <-chan *preVoteResult {
 	// Construct the request
 	lastIdx, lastTerm := r.getLastEntry()
 	req := &RequestPreVoteRequest{
-		RPCHeader: r.getRPCHeader(),
-		Term:      newTerm,
-		// this is needed for retro compatibility, before RPCHeader.Addr was added
-		Candidate:    r.trans.EncodePeer(r.localID, r.localAddr),
+		RPCHeader:    r.getRPCHeader(),
+		Term:         newTerm,
 		LastLogIndex: lastIdx,
 		LastLogTerm:  lastTerm,
 	}
