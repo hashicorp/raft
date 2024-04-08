@@ -567,6 +567,9 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		mainThreadSaturation:  newSaturationMetric([]string{"raft", "thread", "main", "saturation"}, 1*time.Second),
 		preVoteDisabled:       conf.PreVoteDisabled || !transportSupportPreVote,
 	}
+	if !transportSupportPreVote && !conf.PreVoteDisabled {
+		r.logger.Warn("pre-vote is disabled because it is not supported by the Transport")
+	}
 
 	r.conf.Store(*conf)
 
