@@ -1747,9 +1747,6 @@ func (r *Raft) requestPreVote(rpc RPC, req *RequestPreVoteRequest) {
 	}()
 
 	// Check if we have an existing leader [who's not the candidate] and also
-	// check the LeadershipTransfer flag is set. Usually votes are rejected if
-	// there is a known leader. But if the leader initiated a leadership transfer,
-	// vote!
 	var candidate ServerAddress
 	candidateID := ServerID(req.ID)
 
@@ -2050,6 +2047,14 @@ func (r *Raft) electSelf() <-chan *voteResult {
 // vote for ourself).
 // This must only be called from the main thread.
 func (r *Raft) preElectSelf() <-chan *preVoteResult {
+
+	// At this point transport should support pre-vote
+	// but check just in case
+	prevoteTrans, prevoteTransSupported := r.trans.(WithPreVote)
+	if !prevoteTransSupported {
+		panic("preElection is not possible if the transport don't support pre-vote")
+	}
+
 	// Create a response channel
 	respCh := make(chan *preVoteResult, len(r.configurations.latest.Servers))
 
@@ -2068,30 +2073,30 @@ func (r *Raft) preElectSelf() <-chan *preVoteResult {
 	// Construct a function to ask for a vote
 	askPeer := func(peer Server) {
 		r.goFunc(func() {
-			defer metrics.MeasureSince([]string{"raft", "candidate", "electSelf"}, time.Now())
+			defer metrics.MeasureSince([]string{"raft", "candidate", "preElectSelf"}, time.Now())
 			resp := &preVoteResult{voterID: peer.ID}
-			if prevoteTrans, ok := r.trans.(WithPreVote); ok {
-				err := prevoteTrans.RequestPreVote(peer.ID, peer.Address, req, &resp.RequestPreVoteResponse)
 
-				// If the target server do not support Pre-vote RPC we count this as a granted vote to allow
-				// the cluster to progress.
-				if err != nil && strings.Contains(err.Error(), rpcUnexpectedCommandError) {
-					r.logger.Error("target do not support pre-vote RPC",
-						"target", peer,
-						"error", err,
-						"term", req.Term)
-					resp.Term = req.Term
-					resp.Granted = true
-				} else if err != nil {
-					r.logger.Error("failed to make requestVote RPC",
-						"target", peer,
-						"error", err,
-						"term", req.Term)
-					resp.Term = req.Term
-					resp.Granted = false
-				}
-				respCh <- resp
+			err := prevoteTrans.RequestPreVote(peer.ID, peer.Address, req, &resp.RequestPreVoteResponse)
+
+			// If the target server do not support Pre-vote RPC we count this as a granted vote to allow
+			// the cluster to progress.
+			if err != nil && strings.Contains(err.Error(), rpcUnexpectedCommandError) {
+				r.logger.Error("target do not support pre-vote RPC",
+					"target", peer,
+					"error", err,
+					"term", req.Term)
+				resp.Term = req.Term
+				resp.Granted = true
+			} else if err != nil {
+				r.logger.Error("failed to make requestVote RPC",
+					"target", peer,
+					"error", err,
+					"term", req.Term)
+				resp.Term = req.Term
+				resp.Granted = false
 			}
+			respCh <- resp
+
 		})
 	}
 
