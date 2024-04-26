@@ -91,6 +91,7 @@ type NetworkTransport struct {
 	maxPool     int
 	maxInFlight int
 
+	serverAddressLock     sync.RWMutex
 	serverAddressProvider ServerAddressProvider
 
 	shutdown     bool
@@ -384,6 +385,8 @@ func (n *NetworkTransport) getConnFromAddressProvider(id ServerID, target Server
 }
 
 func (n *NetworkTransport) getProviderAddressOrFallback(id ServerID, target ServerAddress) ServerAddress {
+	n.serverAddressLock.RLock()
+	defer n.serverAddressLock.RUnlock()
 	if n.serverAddressProvider != nil {
 		serverAddressOverride, err := n.serverAddressProvider.ServerAddr(id)
 		if err != nil {
