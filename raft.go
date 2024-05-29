@@ -2058,7 +2058,7 @@ func (r *Raft) preElectSelf() <-chan *preVoteResult {
 	// Create a response channel
 	respCh := make(chan *preVoteResult, len(r.configurations.latest.Servers))
 
-	// Increment the term
+	// Propose the next term without actually changing our state
 	newTerm := r.getCurrentTerm() + 1
 
 	// Construct the request
@@ -2081,7 +2081,7 @@ func (r *Raft) preElectSelf() <-chan *preVoteResult {
 			// If the target server do not support Pre-vote RPC we count this as a granted vote to allow
 			// the cluster to progress.
 			if err != nil && strings.Contains(err.Error(), rpcUnexpectedCommandError) {
-				r.logger.Error("target do not support pre-vote RPC",
+				r.logger.Error("target does not support pre-vote RPC, treating as granted",
 					"target", peer,
 					"error", err,
 					"term", req.Term)
