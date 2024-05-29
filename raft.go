@@ -346,7 +346,8 @@ func (r *Raft) runCandidate() {
 
 			// Check if we've won the pre-vote and proceed to election if so
 			if preVoteGrantedVotes >= votesNeeded {
-				r.logger.Info("pre-vote successful, starting election", "term", preVote.Term, "tally", preVoteGrantedVotes, "votesNeeded", votesNeeded-1)
+				r.logger.Info("pre-vote successful, starting election", "term", preVote.Term,
+					"tally", preVoteGrantedVotes, "refused", preVoteRefusedVotes, "votesNeeded", votesNeeded)
 				preVoteGrantedVotes = 0
 				preVoteRefusedVotes = 0
 				electionTimer = randomTimeout(electionTimeout)
@@ -356,7 +357,8 @@ func (r *Raft) runCandidate() {
 			// Check if we've lost the pre-vote and wait for the election to timeout so we can do another time of
 			// prevote.
 			if preVoteRefusedVotes >= votesNeeded {
-				r.logger.Info("pre-vote campaign failed, waiting for election timeout", "term", preVote.Term, "tally", preVoteGrantedVotes, "votesNeeded", votesNeeded-1)
+				r.logger.Info("pre-vote campaign failed, waiting for election timeout", "term", preVote.Term,
+					"tally", preVoteGrantedVotes, "refused", preVoteRefusedVotes, "votesNeeded", votesNeeded)
 			}
 		case vote := <-voteCh:
 			r.mainThreadSaturation.working()
