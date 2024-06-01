@@ -59,7 +59,7 @@ var (
 	ErrEnqueueTimeout = errors.New("timed out enqueuing operation")
 
 	// ErrNothingNewToSnapshot is returned when trying to create a snapshot
-	// but there's nothing new commited to the FSM since we started.
+	// but there's nothing new committed to the FSM since we started.
 	ErrNothingNewToSnapshot = errors.New("nothing new to snapshot")
 
 	// ErrUnsupportedProtocol is returned when an operation is attempted
@@ -1090,12 +1090,12 @@ func (r *Raft) State() RaftState {
 // lose it.
 //
 // Receivers can expect to receive a notification only if leadership
-// transition has occured.
+// transition has occurred.
 //
 // If receivers aren't ready for the signal, signals may drop and only the
 // latest leadership transition. For example, if a receiver receives subsequent
 // `true` values, they may deduce that leadership was lost and regained while
-// the the receiver was processing first leadership transition.
+// the receiver was processing first leadership transition.
 func (r *Raft) LeaderCh() <-chan bool {
 	return r.leaderCh
 }

@@ -1,7 +1,7 @@
 # Raft Apply
 
 Apply is the primary operation provided by raft. A client calls `raft.Apply` to apply
-a command to the FSM. A command will first be commited, i.e., durably stored on a
+a command to the FSM. A command will first be committed, i.e., durably stored on a
 quorum of raft nodes. Then, the committed command is applied to fsm.
 
 This sequence diagram shows the steps involved in a `raft.Apply` operation. Each box
@@ -63,7 +63,7 @@ leader's lastIndex). Another parameter to AppendEntries is the LeaderCommitIndex
 is some examples:
 
 ```
-AppenEntries(Log: 1..5, LeaderCommitIndex: 0)    // Replicating log entries 1..5, 
+AppendEntries(Log: 1..5, LeaderCommitIndex: 0)   // Replicating log entries 1..5, 
                                                  // the leader hasn't committed any log entry;
 AppendEntries(Log: 6..8, LeaderCommitIndex: 4)   // Replicating log entries 6..8,
                                                  // log 0..4 are committed after the leader receives
@@ -92,7 +92,7 @@ Therefore, it's possible that a very small window of time exists when all follow
 committed the log to disk, the write has been realized in the FSM of the leader but the
 followers have not yet applied the log to their FSM.
 
-7. The peer applies the commited entries to the FSM.
+7. The peer applies the committed entries to the FSM.
 
 8. If all went well, the follower responds success (`resp.Success = true`) to the 
 `appendEntries` RPC call.
@@ -108,9 +108,9 @@ grouping the entries that can be applied to the fsm.
 
 11. `processLogs` applies all the committed entries that haven't been applied by batching the log entries and forwarding them through the `fsmMutateCh` channel to fsm.
 
-12. The actual place applying the commited log entries is in the main loop of `runFSM()`.
+12. The actual place applying the committed log entries is in the main loop of `runFSM()`.
 
 13. After the log entries that contains the client req are applied to the fsm, the fsm
-module will set the reponses to the client request (`req.future.respond(nil)`). From the
+module will set the responses to the client request (`req.future.respond(nil)`). From the
 client's point of view, the future returned by `raft.Apply` should now be unblocked and
 calls to `Error()` or `Response()` should return the data at this point.
