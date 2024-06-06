@@ -1,5 +1,34 @@
 # UNRELEASED
 
+# 1.7.0 (June 5th, 2024)
+
+CHANGES
+
+* Raft multi version testing [GH-559](https://github.com/hashicorp/raft/pull/559)
+
+IMPROVEMENTS
+
+* Raft pre-vote extension implementation, activated by default. [GH-530](https://github.com/hashicorp/raft/pull/530)
+
+BUG FIXES
+
+* Fix serialize NetworkTransport data race on ServerAddr(). [GH-591](https://github.com/hashicorp/raft/pull/591)
+
+# 1.6.1 (January 8th, 2024)
+
+CHANGES
+
+* Add reference use of Hashicorp Raft. [GH-584](https://github.com/hashicorp/raft/pull/584)
+* [COMPLIANCE] Add Copyright and License Headers. [GH-580](https://github.com/hashicorp/raft/pull/580)
+
+IMPROVEMENTS
+
+* Bump github.com/hashicorp/go-hclog from 1.5.0 to 1.6.2. [GH-583](https://github.com/hashicorp/raft/pull/583)
+
+BUG FIXES
+
+* Fix rare leadership transfer failures when writes happen during transfer. [GH-581](https://github.com/hashicorp/raft/pull/581)
+
 # 1.6.0 (November 15th, 2023)
 
 CHANGES
