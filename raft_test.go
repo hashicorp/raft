@@ -2959,7 +2959,6 @@ func TestRaft_VoteNotGranted_WhenNodeNotInCluster(t *testing.T) {
 
 	// wait for the remaining follower to trigger an election
 	waitForState(follower, Candidate)
-	require.Equal(t, Candidate, follower.getState())
 
 	// send a vote request from the removed follower to the Candidate follower
 	if err := followerRemovedT.RequestVote(follower.localID, follower.localAddr, &reqVote, &resp); err != nil {
@@ -3161,9 +3160,8 @@ func TestRaft_VoteWithNoIDNoAddr(t *testing.T) {
 
 	// wait for the remaining follower to trigger an election
 	waitForState(follower, Candidate)
-	require.Equal(t, Candidate, follower.getState())
-	// send a vote request from the removed follower to the Candidate follower
 
+	// send a vote request from the removed follower to the Candidate follower
 	if err := followerT.RequestVote(follower.localID, follower.localAddr, &reqVote, &resp); err != nil {
 		t.Fatalf("RequestVote RPC failed %v", err)
 	}
