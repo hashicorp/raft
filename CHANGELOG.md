@@ -1,5 +1,19 @@
 # UNRELEASED
 
+# 1.7.0 (June 5th, 2024)
+
+CHANGES
+
+* Raft multi version testing [GH-559](https://github.com/hashicorp/raft/pull/559)
+
+IMPROVEMENTS
+
+* Raft pre-vote extension implementation, activated by default. [GH-530](https://github.com/hashicorp/raft/pull/530)
+
+BUG FIXES
+
+* Fix serialize NetworkTransport data race on ServerAddr(). [GH-591](https://github.com/hashicorp/raft/pull/591)
+
 # 1.6.1 (January 8th, 2024)
 
 CHANGES
