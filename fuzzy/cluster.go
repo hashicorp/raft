@@ -184,7 +184,7 @@ func (c *cluster) Stop(t *testing.T, maxWait time.Duration) {
 }
 
 // WaitTilUptoDate blocks until all nodes in the cluster have gotten their
-// commitedIndex upto the Index from the last successful call to Apply
+// committedIndex upto the Index from the last successful call to Apply
 func (c *cluster) WaitTilUptoDate(t *testing.T, maxWait time.Duration) {
 	idx := c.lastApplySuccess.Index()
 	start := time.Now()

@@ -34,7 +34,7 @@ func NewLogCache(capacity int, store LogStore) (*LogCache, error) {
 }
 
 // IsMonotonic implements the MonotonicLogStore interface. This is a shim to
-// expose the underyling store as monotonically indexed or not.
+// expose the underlying store as monotonically indexed or not.
 func (c *LogCache) IsMonotonic() bool {
 	if store, ok := c.store.(MonotonicLogStore); ok {
 		return store.IsMonotonic()
