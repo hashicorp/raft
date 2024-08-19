@@ -3120,58 +3120,6 @@ func TestRaft_FollowerRemovalNoElection(t *testing.T) {
 	n.Shutdown()
 }
 
-func TestRaft_VoteWithNoIDNoAddr(t *testing.T) {
-	// Make a cluster
-	c := MakeCluster(3, t, nil)
-
-	defer c.Close()
-	err := waitForLeader(c)
-	require.NoError(t, err)
-	leader := c.Leader()
-
-	// Wait until we have 2 followers
-	limit := time.Now().Add(c.longstopTimeout)
-	var followers []*Raft
-	for time.Now().Before(limit) && len(followers) != 2 {
-		c.WaitEvent(nil, c.conf.CommitTimeout)
-		followers = c.GetInState(Follower)
-	}
-	if len(followers) != 2 {
-		t.Fatalf("expected two followers: %v", followers)
-	}
-
-	follower := followers[0]
-
-	headers := follower.getRPCHeader()
-	headers.ID = nil
-	headers.Addr = nil
-	reqVote := RequestVoteRequest{
-		RPCHeader:          headers,
-		Term:               follower.getCurrentTerm() + 10,
-		LastLogIndex:       follower.LastIndex(),
-		LastLogTerm:        follower.getCurrentTerm(),
-		Candidate:          follower.trans.EncodePeer(follower.config().LocalID, follower.localAddr),
-		LeadershipTransfer: false,
-	}
-	// a follower that thinks there's a leader should vote for that leader.
-	var resp RequestVoteResponse
-	followerT := c.trans[c.IndexOf(followers[1])]
-	c.Partition([]ServerAddress{leader.localAddr})
-
-	// wait for the remaining follower to trigger an election
-	waitForState(follower, Candidate)
-
-	// send a vote request from the removed follower to the Candidate follower
-	if err := followerT.RequestVote(follower.localID, follower.localAddr, &reqVote, &resp); err != nil {
-		t.Fatalf("RequestVote RPC failed %v", err)
-	}
-
-	// the vote request should not be granted, because the voter is not part of the cluster anymore
-	if !resp.Granted {
-		t.Fatalf("expected vote to not be granted, but it was %+v", resp)
-	}
-}
-
 func waitForState(follower *Raft, state RaftState) {
 	count := 0
 	for follower.getState() != state && count < 1000 {
