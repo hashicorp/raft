@@ -3240,7 +3240,7 @@ func TestRaft_PreVote_ShouldNotRejectLeader(t *testing.T) {
 
 	// A follower who thinks that x is the leader should not reject x's pre-vote
 	follower := followers[0]
-	require.Equal(t, leader.localAddr, follower.leaderAddr)
+	require.Equal(t, leader.localAddr, follower.Leader())
 
 	reqPreVote := RequestPreVoteRequest{
 		RPCHeader:    leader.getRPCHeader(),
@@ -3282,7 +3282,7 @@ func TestRaft_PreVote_ShouldRejectNonLeader(t *testing.T) {
 	// A follower who thinks that x is the leader should reject another node's pre-vote request
 	follower := followers[0]
 	anotherFollower := followers[1]
-	require.NotEqual(t, anotherFollower, follower.leaderAddr)
+	require.NotEqual(t, anotherFollower.localAddr, follower.Leader())
 
 	reqPreVote := RequestPreVoteRequest{
 		RPCHeader:    anotherFollower.getRPCHeader(),
