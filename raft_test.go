@@ -3242,7 +3242,7 @@ func TestRaft_PreVote_ShouldNotRejectLeader(t *testing.T) {
 	follower := followers[0]
 	require.Equal(t, leader.localAddr, follower.leaderAddr)
 
-	reqPrevote := RequestPreVoteRequest{
+	reqPreVote := RequestPreVoteRequest{
 		RPCHeader:    leader.getRPCHeader(),
 		Term:         leader.getCurrentTerm() + 1,
 		LastLogIndex: leader.lastLogIndex,
@@ -3251,12 +3251,54 @@ func TestRaft_PreVote_ShouldNotRejectLeader(t *testing.T) {
 
 	var resp RequestPreVoteResponse
 	leaderT := c.trans[c.IndexOf(leader)]
-	if err := leaderT.RequestPreVote(follower.localID, follower.localAddr, &reqPrevote, &resp); err != nil {
+	if err := leaderT.RequestPreVote(follower.localID, follower.localAddr, &reqPreVote, &resp); err != nil {
 		t.Fatalf("RequestPreVote RPC failed %v", err)
 	}
 
 	// the pre-vote should be granted
 	if !resp.Granted {
-		t.Fatalf("expected pre-vote to be granted, but it wasn't %+v", resp)
+		t.Fatalf("expected pre-vote to be granted, but it wasn't, %+v", resp)
+	}
+}
+
+func TestRaft_PreVote_ShouldRejectNonLeader(t *testing.T) {
+	// Make a cluster
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+	err := waitForLeader(c)
+	require.NoError(t, err)
+
+	// Wait until we have 2 followers
+	limit := time.Now().Add(c.longstopTimeout)
+	var followers []*Raft
+	for time.Now().Before(limit) && len(followers) != 2 {
+		c.WaitEvent(nil, c.conf.CommitTimeout)
+		followers = c.GetInState(Follower)
+	}
+	if len(followers) != 2 {
+		t.Fatalf("expected two followers: %v", followers)
+	}
+
+	// A follower who thinks that x is the leader should reject another node's pre-vote request
+	follower := followers[0]
+	anotherFollower := followers[1]
+	require.NotEqual(t, anotherFollower, follower.leaderAddr)
+
+	reqPreVote := RequestPreVoteRequest{
+		RPCHeader:    anotherFollower.getRPCHeader(),
+		Term:         anotherFollower.getCurrentTerm() + 1,
+		LastLogIndex: anotherFollower.lastLogIndex,
+		LastLogTerm:  anotherFollower.getCurrentTerm(),
+	}
+
+	var resp RequestPreVoteResponse
+	anotherFollowerT := c.trans[c.IndexOf(anotherFollower)]
+	if err := anotherFollowerT.RequestPreVote(follower.localID, follower.localAddr, &reqPreVote, &resp); err != nil {
+		t.Fatalf("RequestPreVote RPC failed %v", err)
+	}
+
+	// the pre-vote should not be granted
+	if resp.Granted {
+		t.Fatalf("expected pre-vote to not be granted, but it was granted, %+v", resp)
 	}
 }
