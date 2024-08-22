@@ -8,7 +8,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/armon/go-metrics"
+	"github.com/hashicorp/go-metrics"
 	hclog "github.com/hashicorp/go-hclog"
 )
 

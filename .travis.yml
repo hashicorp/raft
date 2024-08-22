@@ -4,7 +4,7 @@
 language: go
 
 go:
-    # Disabled until https://github.com/armon/go-metrics/issues/59 is fixed
+    # Disabled until https://github.com/hashicorp/go-metrics/issues/59 is fixed
     # - 1.6
     - 1.8
     - 1.9
