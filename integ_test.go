@@ -542,7 +542,7 @@ func TestRaft_PreVote_LeaderSpam(t *testing.T) {
 				reqPreVote := RequestPreVoteRequest{
 					RPCHeader:    leader.raft.getRPCHeader(),
 					Term:         leader.raft.getCurrentTerm() + 1,
-					LastLogIndex: leader.raft.lastLogIndex,
+					LastLogIndex: leader.raft.getLastIndex(),
 					LastLogTerm:  leader.raft.getCurrentTerm(),
 				}
 				// We don't need to check the error here because when leader change
@@ -562,15 +562,15 @@ func TestRaft_PreVote_LeaderSpam(t *testing.T) {
 	// the purpose of this test is to verify that spamming nodes with pre-votes don't cause them to never
 	// transition to Candidates.
 	for _, f := range followers {
-		f.trans.SetHeartbeatHandler(func(rpc RPC) {
-			fmt.Println("dhayachi:: calling cb skip!")
+		//copy f to avoid data race
+		f1 := f
+		f1.trans.SetHeartbeatHandler(func(rpc RPC) {
 			if a, ok := rpc.Command.(*AppendEntriesRequest); ok {
 				if ServerID(a.GetRPCHeader().ID) == leader.raft.localID {
-					fmt.Println("dhayachi:: skipping hearbeat!")
 					resp := &AppendEntriesResponse{
-						RPCHeader:      f.raft.getRPCHeader(),
-						Term:           f.raft.getCurrentTerm(),
-						LastLog:        f.raft.getLastIndex(),
+						RPCHeader:      f1.raft.getRPCHeader(),
+						Term:           f1.raft.getCurrentTerm(),
+						LastLog:        f1.raft.getLastIndex(),
 						Success:        false,
 						NoRetryBackoff: false,
 					}
