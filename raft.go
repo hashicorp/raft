@@ -1805,7 +1805,6 @@ func (r *Raft) requestPreVote(rpc RPC, req *RequestPreVoteRequest) {
 	}
 
 	resp.Granted = true
-	r.setLastContact()
 }
 
 // installSnapshot is invoked when we get a InstallSnapshot RPC call.
