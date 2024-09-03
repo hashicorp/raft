@@ -195,8 +195,3 @@ type CommitTrackingLogStore interface {
 	SetCommitIndex(idx uint64) error
 	ReadCommitIndex() (uint64, error)
 }
-
-func isCommitTrackingLogStore(s LogStore) bool {
-	_, ok := s.(CommitTrackingLogStore)
-	return ok
-}
