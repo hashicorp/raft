@@ -611,8 +611,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	// to be called concurrently with a blocking RPC.
 	trans.SetHeartbeatHandler(r.processHeartbeat)
 
-	// TODO: if `fastRecovery` is enabled and the store also implements `CommitTrackingLogStore`,
-	// we should read the commit index from the store and set it here. Then feed [lastapplied, commitindex] logs to the FSM.
+	r.recoverFromCommitedLogs()
 
 	if conf.skipStartup {
 		return r, nil
@@ -703,6 +702,29 @@ func (r *Raft) tryRestoreSingleSnapshot(snapshot *SnapshotMeta) bool {
 	snapLogger.Info("restored from snapshot")
 
 	return true
+}
+
+// recoverFromCommitedLogs recovers the Raft node from committed logs.
+func (r *Raft) recoverFromCommitedLogs() error {
+	if !r.fastRecovery {
+		return nil
+	}
+	// If the store implements CommitTrackingLogStore, we can read the commit index from the store.
+	// This is useful when the store is able to track the commit index and we can avoid replaying logs.
+	store, ok := r.logs.(CommitTrackingLogStore)
+	if !ok {
+		return nil
+	}
+	commitIndex, err := store.ReadCommitIndex()
+	if err != nil {
+		return fmt.Errorf("failed to read commit index from store: %w", err)
+	}
+	if commitIndex == 0 {
+		return nil
+	}
+
+	r.processLogs(commitIndex, nil)
+	return nil
 }
 
 func (r *Raft) config() Config {
