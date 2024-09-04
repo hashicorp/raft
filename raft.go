@@ -1354,6 +1354,8 @@ func (r *Raft) processLogs(index uint64, futures map[uint64]*logFuture) {
 		applyBatch(batch)
 	}
 
+	r.persistCommitIndex(index)
+
 	// Update the lastApplied index and term
 	r.setLastApplied(index)
 }
@@ -1383,6 +1385,20 @@ func (r *Raft) prepareLog(l *Log, future *logFuture) *commitTuple {
 	}
 
 	return nil
+}
+
+// persistCommitIndex updates the commit index in persist store if fast recovery is enabled.
+func (r *Raft) persistCommitIndex(index uint64) {
+	if !r.fastRecovery {
+		return
+	}
+	store, ok := r.logs.(CommitTrackingLogStore)
+	if !ok {
+		return
+	}
+	if err := store.SetCommitIndex(index); err != nil {
+		r.logger.Error("failed to set commit index in commit tracking log store", "index", index, "error", err)
+	}
 }
 
 // processRPC is called to handle an incoming RPC request. This must only be

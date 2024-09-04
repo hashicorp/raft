@@ -217,6 +217,10 @@ type Raft struct {
 	// preVoteDisabled control if the pre-vote feature is activated,
 	// prevote feature is disabled if set to true.
 	preVoteDisabled bool
+
+	// fastRecovery is used to enable fast recovery mode
+	// fast recovery mode is disabled if set to false.
+	fastRecovery bool
 }
 
 // BootstrapCluster initializes a server's storage with the given cluster
@@ -566,6 +570,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		followerNotifyCh:      make(chan struct{}, 1),
 		mainThreadSaturation:  newSaturationMetric([]string{"raft", "thread", "main", "saturation"}, 1*time.Second),
 		preVoteDisabled:       conf.PreVoteDisabled || !transportSupportPreVote,
+		fastRecovery:          conf.FastRecovery,
 	}
 	if !transportSupportPreVote && !conf.PreVoteDisabled {
 		r.logger.Warn("pre-vote is disabled because it is not supported by the Transport")
@@ -605,6 +610,9 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	// blocking where possible. It MUST be safe for this
 	// to be called concurrently with a blocking RPC.
 	trans.SetHeartbeatHandler(r.processHeartbeat)
+
+	// TODO: if `fastRecovery` is enabled and the store also implements `CommitTrackingLogStore`,
+	// we should read the commit index from the store and set it here. Then feed [lastapplied, commitindex] logs to the FSM.
 
 	if conf.skipStartup {
 		return r, nil

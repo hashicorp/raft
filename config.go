@@ -235,6 +235,11 @@ type Config struct {
 	// PreVoteDisabled deactivate the pre-vote feature when set to true
 	PreVoteDisabled bool
 
+	// FastRecovery controls if the Raft server should use the fast recovery
+	// mechanism. This mechanism allows a server to apply logs to the FSM till
+	// the last committed log
+	FastRecovery bool
+
 	// skipStartup allows NewRaft() to bypass all background work goroutines
 	skipStartup bool
 }
