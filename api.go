@@ -715,7 +715,7 @@ func (r *Raft) recoverFromCommitedLogs() error {
 	if !ok {
 		return nil
 	}
-	commitIndex, err := store.ReadCommitIndex()
+	commitIndex, err := store.GetCommitIndex()
 	if err != nil {
 		return fmt.Errorf("failed to read commit index from store: %w", err)
 	}

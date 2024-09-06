@@ -193,5 +193,5 @@ func emitLogStoreMetrics(s LogStore, prefix []string, interval time.Duration, st
 
 type CommitTrackingLogStore interface {
 	SetCommitIndex(idx uint64) error
-	ReadCommitIndex() (uint64, error)
+	GetCommitIndex() (uint64, error)
 }

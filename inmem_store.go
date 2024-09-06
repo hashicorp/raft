@@ -131,3 +131,31 @@ func (i *InmemStore) GetUint64(key []byte) (uint64, error) {
 	defer i.l.RUnlock()
 	return i.kvInt[string(key)], nil
 }
+
+type InmemCommitTrackingStore struct {
+	*InmemStore
+	commitIndexLock sync.RWMutex
+	commitIndex     uint64
+}
+
+// NewInmemCommitTrackingStore returns a new in-memory backend that tracks the commit index. Do not ever
+// use for production. Only for testing.
+func NewInmemCommitTrackingStore() *InmemCommitTrackingStore {
+	i := &InmemCommitTrackingStore{
+		InmemStore: NewInmemStore(),
+	}
+	return i
+}
+
+func (i *InmemCommitTrackingStore) SetCommitIndex(index uint64) error {
+	i.commitIndexLock.Lock()
+	defer i.commitIndexLock.Unlock()
+	i.commitIndex = index
+	return nil
+}
+
+func (i *InmemCommitTrackingStore) GetCommitIndex() (uint64, error) {
+	i.commitIndexLock.RLock()
+	defer i.commitIndexLock.RUnlock()
+	return i.commitIndex, nil
+}
