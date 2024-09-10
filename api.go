@@ -723,6 +723,7 @@ func (r *Raft) recoverFromCommitedLogs() error {
 		return nil
 	}
 
+	r.setCommitIndex(commitIndex)
 	r.processLogs(commitIndex, nil)
 	return nil
 }
