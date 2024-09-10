@@ -590,9 +590,12 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		return nil, err
 	}
 
+	r.recoverFromCommitedLogs()
+
 	// Scan through the log for any configuration change entries.
 	snapshotIndex, _ := r.getLastSnapshot()
-	for index := snapshotIndex + 1; index <= lastLog.Index; index++ {
+	lastappliedIndex := r.getLastApplied()
+	for index := max(snapshotIndex, lastappliedIndex) + 1; index <= lastLog.Index; index++ {
 		var entry Log
 		if err := r.logs.GetLog(index, &entry); err != nil {
 			r.logger.Error("failed to get log", "index", index, "error", err)
@@ -610,8 +613,6 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	// blocking where possible. It MUST be safe for this
 	// to be called concurrently with a blocking RPC.
 	trans.SetHeartbeatHandler(r.processHeartbeat)
-
-	r.recoverFromCommitedLogs()
 
 	if conf.skipStartup {
 		return r, nil
