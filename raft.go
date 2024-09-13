@@ -1388,7 +1388,7 @@ func (r *Raft) prepareLog(l *Log, future *logFuture) *commitTuple {
 }
 
 // persistCommitIndex updates the commit index in persist store if fast recovery is enabled.
-func (r *Raft) persistCommitIndex(index uint64) {
+func (r *Raft) persistCommitIndex(commitIndex uint64) {
 	if !r.fastRecovery {
 		return
 	}
@@ -1396,8 +1396,8 @@ func (r *Raft) persistCommitIndex(index uint64) {
 	if !ok {
 		return
 	}
-	if err := store.SetCommitIndex(index); err != nil {
-		r.logger.Error("failed to set commit index in commit tracking log store", "index", index, "error", err)
+	if err := store.SetCommitIndex(commitIndex); err != nil {
+		r.logger.Error("failed to set commit index in commit tracking log store", "index", commitIndex, "error", err)
 	}
 }
 
