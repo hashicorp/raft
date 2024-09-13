@@ -1262,6 +1262,9 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 		r.leaderState.inflight.PushBack(applyLog)
 	}
 
+	commitIndex := r.getCommitIndex()
+	r.persistCommitIndex(commitIndex)
+
 	// Write the log entry locally
 	if err := r.logs.StoreLogs(logs); err != nil {
 		r.logger.Error("failed to commit logs", "error", err)
@@ -1353,8 +1356,6 @@ func (r *Raft) processLogs(index uint64, futures map[uint64]*logFuture) {
 	if len(batch) != 0 {
 		applyBatch(batch)
 	}
-
-	r.persistCommitIndex(index)
 
 	// Update the lastApplied index and term
 	r.setLastApplied(index)
@@ -1551,6 +1552,9 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		}
 
 		if n := len(newEntries); n > 0 {
+			commitIndex := r.getCommitIndex()
+			r.persistCommitIndex(commitIndex)
+
 			// Append the new entries
 			if err := r.logs.StoreLogs(newEntries); err != nil {
 				r.logger.Error("failed to append to logs", "error", err)
