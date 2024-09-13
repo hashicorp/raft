@@ -590,7 +590,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		return nil, err
 	}
 
-	r.recoverFromCommitedLogs()
+	r.recoverFromCommittedLogs()
 
 	// Scan through the log for any configuration change entries.
 	snapshotIndex, _ := r.getLastSnapshot()
@@ -705,8 +705,8 @@ func (r *Raft) tryRestoreSingleSnapshot(snapshot *SnapshotMeta) bool {
 	return true
 }
 
-// recoverFromCommitedLogs recovers the Raft node from committed logs.
-func (r *Raft) recoverFromCommitedLogs() error {
+// recoverFromCommittedLogs recovers the Raft node from committed logs.
+func (r *Raft) recoverFromCommittedLogs() error {
 	if !r.fastRecovery {
 		return nil
 	}
