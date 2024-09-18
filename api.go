@@ -720,7 +720,8 @@ func (r *Raft) recoverFromCommittedLogs() error {
 	if err != nil {
 		return fmt.Errorf("failed to read commit index from store: %w", err)
 	}
-	if commitIndex == 0 {
+	lastApplied := r.getLastApplied()
+	if commitIndex <= lastApplied {
 		return nil
 	}
 
