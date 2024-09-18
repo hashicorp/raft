@@ -1095,6 +1095,180 @@ func TestRaft_RestoreSnapshotOnStartup_Monotonic(t *testing.T) {
 	assert.Equal(t, lastIdx, last)
 }
 
+func TestRaft_RestoreSnapshotOnStartup_CommitTrackingLogs(t *testing.T) {
+	// Make the cluster
+	conf := inmemConfig(t)
+	conf.TrailingLogs = 10
+	opts := &MakeClusterOpts{
+		Peers:              1,
+		Bootstrap:          true,
+		Conf:               conf,
+		CommitTrackingLogs: true,
+	}
+	c := MakeClusterCustom(t, opts)
+	defer c.Close()
+
+	leader := c.Leader()
+
+	// Commit a lot of things
+	var future Future
+	for i := 0; i < 100; i++ {
+		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	// Wait for the last future to apply
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Take a snapshot
+	snapFuture := leader.Snapshot()
+	if err := snapFuture.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Check for snapshot
+	snaps, _ := leader.snapshots.List()
+	if len(snaps) != 1 {
+		t.Fatalf("should have a snapshot")
+	}
+	snap := snaps[0]
+
+	// Logs should be trimmed
+	firstIdx, err := leader.logs.FirstIndex()
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	lastIdx, err := leader.logs.LastIndex()
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if firstIdx != snap.Index-conf.TrailingLogs+1 {
+		t.Fatalf("should trim logs to %d: but is %d", snap.Index-conf.TrailingLogs+1, firstIdx)
+	}
+
+	// Shutdown
+	shutdown := leader.Shutdown()
+	if err := shutdown.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Restart the Raft
+	r := leader
+	// Can't just reuse the old transport as it will be closed
+	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
+	cfg := r.config()
+	r, err = NewRaft(&cfg, r.fsm, r.logs, r.stable, r.snapshots, trans2)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	c.rafts[0] = r
+
+	// We should have restored from the snapshot!
+	if last := r.getLastApplied(); last != snap.Index {
+		t.Fatalf("bad last index: %d, expecting %d", last, snap.Index)
+	}
+
+	// Verify that logs have not been reset
+	first, _ := r.logs.FirstIndex()
+	last, _ := r.logs.LastIndex()
+	assert.Equal(t, firstIdx, first)
+	assert.Equal(t, lastIdx, last)
+}
+
+func TestRaft_FastRecovery(t *testing.T) {
+	// Make the cluster
+	conf := inmemConfig(t)
+	conf.TrailingLogs = 10
+	conf.FastRecovery = true
+	opts := &MakeClusterOpts{
+		Peers:              1,
+		Bootstrap:          true,
+		Conf:               conf,
+		CommitTrackingLogs: true,
+	}
+	c := MakeClusterCustom(t, opts)
+	defer c.Close()
+
+	leader := c.Leader()
+
+	// Commit a lot of things
+	var future Future
+	for i := 0; i < 100; i++ {
+		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	// Wait for the last future to apply
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Take a snapshot
+	snapFuture := leader.Snapshot()
+	if err := snapFuture.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Check for snapshot
+	snaps, _ := leader.snapshots.List()
+	if len(snaps) != 1 {
+		t.Fatalf("should have a snapshot")
+	}
+	snap := snaps[0]
+
+	// Logs should be trimmed
+	firstIdx, err := leader.logs.FirstIndex()
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if firstIdx != snap.Index-conf.TrailingLogs+1 {
+		t.Fatalf("should trim logs to %d: but is %d", snap.Index-conf.TrailingLogs+1, firstIdx)
+	}
+
+	// Commit a lot of things (for fast recovery test)
+	for i := 0; i < 100; i++ {
+		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	// Wait for the last future to apply
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Shutdown
+	shutdown := leader.Shutdown()
+	if err := shutdown.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Restart the Raft
+	r := leader
+	// Can't just reuse the old transport as it will be closed
+	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
+	cfg := r.config()
+	r, err = NewRaft(&cfg, r.fsm, r.logs, r.stable, r.snapshots, trans2)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	c.rafts[0] = r
+
+	commitIdx, err := r.logs.(CommitTrackingLogStore).GetCommitIndex()
+	// We should have applied all committed logs
+	if last := r.getLastApplied(); last != commitIdx {
+		t.Fatalf("bad last index: %d, expecting %d", last, commitIdx)
+	}
+
+	// Expect: snap.Index --- commitIdx --- lastIdx
+	lastIdx, err := r.logs.LastIndex()
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	assert.LessOrEqual(t, snap.Index, commitIdx)
+	assert.LessOrEqual(t, commitIdx, lastIdx)
+}
+
 func TestRaft_SnapshotRestore_Progress(t *testing.T) {
 	// Make the cluster
 	conf := inmemConfig(t)
