@@ -1263,7 +1263,7 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 	}
 
 	commitIndex := r.getCommitIndex()
-	r.tryPersistCommitIndex(commitIndex)
+	r.tryStageCommitIndex(commitIndex)
 
 	// Write the log entry locally
 	if err := r.logs.StoreLogs(logs); err != nil {
@@ -1388,8 +1388,8 @@ func (r *Raft) prepareLog(l *Log, future *logFuture) *commitTuple {
 	return nil
 }
 
-// tryPersistCommitIndex updates the commit index in persist store if fast recovery is enabled and log store implements CommitTrackingLogStore.
-func (r *Raft) tryPersistCommitIndex(commitIndex uint64) {
+// tryStageCommitIndex updates the commit index in persist store if fast recovery is enabled and log store implements CommitTrackingLogStore.
+func (r *Raft) tryStageCommitIndex(commitIndex uint64) {
 	if !r.fastRecovery {
 		return
 	}
