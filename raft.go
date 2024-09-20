@@ -1397,7 +1397,7 @@ func (r *Raft) tryStageCommitIndex(commitIndex uint64) {
 	if !ok {
 		return
 	}
-	if err := store.SetCommitIndex(commitIndex); err != nil {
+	if err := store.StagCommitIndex(commitIndex); err != nil {
 		r.logger.Error("failed to set commit index in commit tracking log store", "index", commitIndex, "error", err)
 	}
 }
@@ -1552,8 +1552,10 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		}
 
 		if n := len(newEntries); n > 0 {
-			commitIndex := r.getCommitIndex()
-			r.tryPersistCommitIndex(commitIndex)
+			// Stage the future commit index if possible
+			lastNewIndex := newEntries[len(newEntries)-1].Index
+			commitIndex := min(a.LeaderCommitIndex, lastNewIndex)
+			r.tryStageCommitIndex(commitIndex)
 
 			// Append the new entries
 			if err := r.logs.StoreLogs(newEntries); err != nil {
