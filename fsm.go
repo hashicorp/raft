@@ -39,7 +39,7 @@ type FSM interface {
 	// Snapshot() will actually be stored by Raft. In fact it's quite possible that
 	// any Snapshot returned by this call will be discarded, and that
 	// FSMSnapshot.Persist will never be called. Raft will always call
-	// FRSSnapshot.Release however.
+	// FSMSnapshot.Release however.
 	Snapshot() (FSMSnapshot, error)
 
 	// Restore is used to restore an FSM from a snapshot. It is not called
