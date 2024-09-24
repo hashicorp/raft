@@ -493,7 +493,7 @@ func TestNetworkTransport_AppendEntriesPipeline_MaxRPCsInFlight(t *testing.T) {
 
 			for i := 0; i < expectedMax-1; i++ {
 				// We should be able to send `max - 1` rpcs before `AppendEntries`
-				// blocks. It blocks on the `max` one because it it sends before pushing
+				// blocks. It blocks on the `max` one because it sends before pushing
 				// to the chan. It will block forever when it does because nothing is
 				// responding yet.
 				out := new(AppendEntriesResponse)

@@ -180,7 +180,7 @@ func hasVote(configuration Configuration, id ServerID) bool {
 	return false
 }
 
-// inConfiguration returns true if the server identified by 'id' is in in the
+// inConfiguration returns true if the server identified by 'id' is in the
 // provided Configuration.
 func inConfiguration(configuration Configuration, id ServerID) bool {
 	for _, server := range configuration.Servers {
