@@ -1397,8 +1397,8 @@ func (r *Raft) tryStageCommitIndex(commitIndex uint64) {
 	if !ok {
 		return
 	}
-	if err := store.StagCommitIndex(commitIndex); err != nil {
-		r.logger.Error("failed to set commit index in commit tracking log store", "index", commitIndex, "error", err)
+	if err := store.StageCommitIndex(commitIndex); err != nil {
+		r.logger.Error("failed to stage commit index in commit tracking log store", "index", commitIndex, "error", err)
 	}
 }
 

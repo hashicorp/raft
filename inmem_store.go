@@ -144,14 +144,14 @@ type InmemCommitTrackingStore struct {
 
 // NewInmemCommitTrackingStore returns a new in-memory backend that tracks the commit index. Do not ever
 // use for production. Only for testing.
-func NewInmemCommitTrackingStore() *InmemCommitTrackingStore {
+func NewInmemCommitTrackingStore() CommitTrackingLogStore {
 	i := &InmemCommitTrackingStore{
 		InmemStore: *NewInmemStore(),
 	}
 	return i
 }
 
-func (i *InmemCommitTrackingStore) SetCommitIndex(index uint64) error {
+func (i *InmemCommitTrackingStore) StageCommitIndex(index uint64) error {
 	i.commitIndex.Store(index)
 	return nil
 }

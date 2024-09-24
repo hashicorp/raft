@@ -192,6 +192,8 @@ func emitLogStoreMetrics(s LogStore, prefix []string, interval time.Duration, st
 }
 
 type CommitTrackingLogStore interface {
+	LogStore
+
 	// StageCommitIndex stages a new commit index to be persisted.
 	// The staged commit index MUST only be persisted in a manner that is atomic
 	// with the following StoreLogs call in the face of a crash.
@@ -206,6 +208,6 @@ type CommitTrackingLogStore interface {
 	// even if a higher value has been staged with this method.
 	//
 	// idx is the new commit index to stage.
-	StagCommitIndex(idx uint64) error
+	StageCommitIndex(idx uint64) error
 	GetCommitIndex() (uint64, error)
 }
