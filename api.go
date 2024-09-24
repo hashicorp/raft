@@ -710,19 +710,27 @@ func (r *Raft) recoverFromCommittedLogs() error {
 	if !r.fastRecovery {
 		return nil
 	}
+
 	// If the store implements CommitTrackingLogStore, we can read the commit index from the store.
 	// This is useful when the store is able to track the commit index and we can avoid replaying logs.
 	store, ok := r.logs.(CommitTrackingLogStore)
 	if !ok {
 		return nil
 	}
+
 	commitIndex, err := store.GetCommitIndex()
 	if err != nil {
-		return fmt.Errorf("failed to read commit index from store: %w", err)
+		r.logger.Error("failed to get commit index from store", "error", err)
+		panic(err)
 	}
-	lastApplied := r.getLastApplied()
-	if commitIndex <= lastApplied {
-		return nil
+
+	lastIndex, err := r.logs.LastIndex()
+	if err != nil {
+		r.logger.Error("failed to get last log index from store", "error", err)
+		panic(err)
+	}
+	if commitIndex > lastIndex {
+		commitIndex = lastIndex
 	}
 
 	r.setCommitIndex(commitIndex)
