@@ -245,16 +245,36 @@ func (c *LogCacheAsync) EnableAsync(cc chan<- LogWriteCompletion) {
 }
 
 func (c *LogCacheAsync) runFlusher() {
-	var batch []*Log
+	batch := make([]*Log, 0, 128)
+	consecutiveErrors := 0
+	var lastErrTime time.Time
 
 	for {
 		syncReq := <-c.state.triggerChan
+
+		// If we've had more than one error in a row, back off a little to avoid a
+		// hot loop. Note that we specifically don't wait after the first error in
+		// case it was a one-off but will start backing off after 2 failures. This
+		// is not exponential because storage should be fast and we only are
+		// protecting against spinning on a software bug or similar not actually.
+		if consecutiveErrors > 1 {
+			waitTime := time.Duration(consecutiveErrors) * 10 * time.Millisecond
+			if waitTime > 100*time.Millisecond {
+				waitTime = 100 * time.Millisecond
+			}
+			// Only wait if we're being triggered faster than the backoff time anyway.
+			if time.Since(lastErrTime) < waitTime {
+				time.Sleep(waitTime - time.Since(lastErrTime))
+			}
+		}
 
 		// Load the state under lock
 		c.state.Lock()
 		persistedIdx := atomic.LoadUint64(&c.persistentIndex)
 		lastIdx := atomic.LoadUint64(&c.lastIndex)
 
+		// Make sure to reset batch!
+		batch = batch[:0]
 		for idx := persistedIdx + 1; idx <= lastIdx; idx++ {
 			batch = append(batch, c.state.cache[idx&c.sizeMask])
 		}
@@ -283,17 +303,31 @@ func (c *LogCacheAsync) runFlusher() {
 		// Might be a no-op if batch is empty
 		lwc := c.doFlush(batch, syncReq.startTime)
 
-		// Note: if the flush failed we might retry it on the next loop. This is
-		// safe assuming that the LogStore is atomic and not left in an invalid
-		// state (which Raft assumes in general already). It might loop and retry
-		// the write of the same logs next time which may fail again or may even
-		// succeed before the leaderloop notices the error and steps down. But
-		// either way it's fine because we don't advance the persistedIndex if it
-		// fails so we'll keep trying to write the same logs at least not leave a
-		// gap. Actually if we do error, even if there is no immediate sync trigger
+		// Note: if the flush failed we will retry it on the next loop. This is safe
+		// assuming that the LogStore is atomic and not left in an invalid state
+		// (which Raft assumes in general already). It might loop and retry the
+		// write of the same logs next time which may fail again or may even succeed
+		// before the leader loop notices the error and steps down. But either way
+		// it's fine because we don't advance the persistedIndex if it fails so
+		// we'll keep trying to write the same logs at least not leave a gap.
+		// Actually if we do error, even if there is no immediate sync trigger
 		// waiting, the leader will step down and disable async which will mean we
 		// attempt to flush again anyway. If that fails though (in the stop case
-		// above) we won't keep retrying and will just re-report the error.
+		// above) we won't keep retrying and will just re-report the error. If the
+		// error is coming back hard and we have new logs piling up we could end up
+		// in a hot loop until the leader steps down. That's probably not a big deal
+		// since that shouldn't take long but we'll be defensive and back off a
+		// little too just in case.
+		if lwc != nil {
+			if lwc.Error != nil {
+				consecutiveErrors++
+				lastErrTime = time.Now()
+			} else {
+				// Note we only reset this if we actually just flushed something not
+				// when lwc is nil.
+				consecutiveErrors = 0
+			}
+		}
 
 		// Need a lock to deliver the completion and update persistent index
 		c.state.Lock()

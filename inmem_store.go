@@ -5,6 +5,7 @@ package raft
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 )
@@ -13,7 +14,7 @@ import (
 // It should NOT EVER be used for production. It is used only for
 // unit tests. Use the MDBStore implementation instead.
 type InmemStore struct {
-	storeFail uint32 // accessed atomically as a bool 0/1
+	storeFail atomic.Bool
 
 	// storeSem lets the test control exactly when s StoreLog(s) call takes
 	// effect.
@@ -25,7 +26,13 @@ type InmemStore struct {
 	logs      map[uint64]*Log
 	kv        map[string][]byte
 	kvInt     map[string]uint64
+	monotonic bool
 }
+
+var (
+	_ LogStore          = (*InmemStore)(nil)
+	_ MonotonicLogStore = (*InmemStore)(nil)
+)
 
 // NewInmemStore returns a new in-memory backend. Do not ever
 // use for production. Only for testing.
@@ -57,7 +64,7 @@ func (i *InmemStore) BlockStore() func() {
 // FailNext signals that the next call to StoreLog(s) should return an error
 // without modifying the log contents. Subsequent calls will succeed again.
 func (i *InmemStore) FailNext() {
-	atomic.StoreUint32(&i.storeFail, 1)
+	i.storeFail.Store(true)
 }
 
 // FirstIndex implements the LogStore interface.
@@ -102,8 +109,8 @@ func (i *InmemStore) StoreLogs(logs []*Log) error {
 	}()
 
 	// Switch out fail if it is set so we only fail once
-	shouldFail := atomic.SwapUint32(&i.storeFail, 0)
-	if shouldFail == 1 {
+	shouldFail := i.storeFail.Swap(false)
+	if shouldFail {
 		return errors.New("IO error")
 	}
 
@@ -111,6 +118,10 @@ func (i *InmemStore) StoreLogs(logs []*Log) error {
 	defer i.l.Unlock()
 
 	for _, l := range logs {
+		if i.monotonic && l.Index != i.highIndex+1 {
+			return fmt.Errorf("non-monotonic write, log index: %d, last index %d, batch range: [%d, %d]",
+				l.Index, i.highIndex, logs[0].Index, logs[len(logs)-1].Index)
+		}
 		i.logs[l.Index] = l
 		if i.lowIndex == 0 {
 			i.lowIndex = l.Index
@@ -174,4 +185,18 @@ func (i *InmemStore) GetUint64(key []byte) (uint64, error) {
 	i.l.RLock()
 	defer i.l.RUnlock()
 	return i.kvInt[string(key)], nil
+}
+
+// IsMonotonic implements MonotonicLogStore
+func (i *InmemStore) IsMonotonic() bool {
+	return i.monotonic
+}
+
+// SetMonotonic allows the test to choose if the store should enforce monotonic
+// writes. This is useful for testing the leader loop's handling of
+// non-monotonic log stores.
+func (i *InmemStore) SetMonotonic(v bool) {
+	i.l.Lock()
+	defer i.l.Unlock()
+	i.monotonic = v
 }

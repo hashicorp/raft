@@ -11,6 +11,10 @@ import (
 func TestLogCacheAsyncBasics(t *testing.T) {
 	underlying := NewInmemStore()
 
+	// Set it to behave monotonically to ensure we only ever write the necessary
+	// logs in correct sequence and not re-write the old ones.
+	underlying.SetMonotonic(true)
+
 	c, err := NewLogCacheAsync(32, underlying)
 	require.NoError(t, err)
 
@@ -53,15 +57,9 @@ func TestLogCacheAsyncBasics(t *testing.T) {
 	// Unblock the write on the underlying log
 	blockCancel()
 
-	// Wait for the completion event
-	select {
-	case lwc := <-compCh:
-		require.NoError(t, lwc.Error)
-		// Should get a single completion for all logs up to 10
-		require.Equal(t, 10, int(lwc.PersistentIndex))
-	case <-time.After(100 * time.Millisecond):
-		t.Fatal("timeout waiting for IO completion")
-	}
+	// Wait for the completion event (note that we might get one completion for
+	// both writes or separate ones depending on timing).
+	assertOKCompletions(t, compCh, 8, 10)
 
 	// Now the underlying should have all the logs
 	assertLogContents(t, underlying, 1, 10)
@@ -84,10 +82,60 @@ func TestLogCacheAsyncBasics(t *testing.T) {
 	// Fail the underlying write
 	underlying.FailNext()
 	blockCancel()
+
+	// We should get the write error reported on the next completion.
+	lwc := expectCompletion(t, compCh)
+	require.ErrorContains(t, lwc.Error, "IO error")
+	// Persistent index should be unchanged since the flush failed
+	require.Equal(t, 10, int(lwc.PersistentIndex))
+
+	// But then eventually the write should succeed even if no more writes happen.
+	// We might see just one or both writes flush together.
+	assertOKCompletions(t, compCh, 12, 15)
+
+	assertLogContents(t, underlying, 1, 15)
 }
 
-// TODO:
-//   yt
+func expectCompletion(t *testing.T, compCh <-chan LogWriteCompletion) LogWriteCompletion {
+	t.Helper()
+	select {
+	case lwc := <-compCh:
+		return lwc
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("timeout waiting for IO completion")
+	}
+	return LogWriteCompletion{}
+}
+
+// assertOKCompletions helps to assert that one or more non-error completions
+// are received. The max index written in  each call to StoreLogsAsync should be
+// passed since it's non deterministic which ones are persisted together. They
+// must be in ascending order. We will assert that a completion arrives in a
+// timely manner, and that it's for a valid prefix of the batches written. If
+// it's not all of them, we keep waiting for the rest recursively.
+func assertOKCompletions(t *testing.T, compCh <-chan LogWriteCompletion, maxBatchIndexes ...int) {
+	t.Helper()
+	lwc := expectCompletion(t, compCh)
+	require.NoError(t, lwc.Error)
+
+	foundBatchIdx := -1
+	for i, idx := range maxBatchIndexes {
+		if int(lwc.PersistentIndex) == idx {
+			foundBatchIdx = i
+			break
+		}
+	}
+	require.GreaterOrEqual(t, foundBatchIdx, 0,
+		"unexpected persistent index in completion: %d, wanted one of %v",
+		lwc.PersistentIndex,
+		maxBatchIndexes,
+	)
+
+	if foundBatchIdx < len(maxBatchIndexes)-1 {
+		// We didn't get all the batches acknowledged yet, keep waiting.
+		assertOKCompletions(t, compCh, maxBatchIndexes[foundBatchIdx+1:]...)
+	}
+}
 
 func assertLogContents(t *testing.T, s LogStore, min, max int) {
 	t.Helper()
@@ -96,6 +144,14 @@ func assertLogContents(t *testing.T, s LogStore, min, max int) {
 	// of just asserting things match peicemeal, build a humaan-readable dump and
 	// check it matches expectations.
 	var expected, got []string
+
+	// Ensure that the min and max are the actual range the log contains!
+	first, err := s.FirstIndex()
+	require.NoError(t, err)
+	require.Equal(t, min, int(first))
+	last, err := s.LastIndex()
+	require.NoError(t, err)
+	require.Equal(t, max, int(last))
 
 	var log Log
 	for idx := min; idx <= max; idx++ {
