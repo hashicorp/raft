@@ -1208,8 +1208,8 @@ func (r *Raft) Stats() map[string]string {
 	return s
 }
 
-// Term returns the current term.
-func (r *Raft) Term() uint64 {
+// CurrentTerm returns the current term.
+func (r *Raft) CurrentTerm() uint64 {
 	return r.getCurrentTerm()
 }
 
