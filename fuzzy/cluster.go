@@ -1,10 +1,12 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package fuzzy
 
 import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
@@ -291,12 +293,12 @@ func (c *cluster) VerifyFSM(t *testing.T) {
 }
 
 func (c *cluster) RecordState(t *testing.T) {
-	td, _ := ioutil.TempDir(os.Getenv("TEST_FAIL_DIR"), "failure")
+	td, _ := os.MkdirTemp(os.Getenv("TEST_FAIL_DIR"), "failure")
 	sd, _ := resolveDirectory("data", false)
 	copyDir(td, sd)
 	dump := func(n *raftNode) {
 		nt := filepath.Join(td, n.name)
-		os.Mkdir(nt, 0777)
+		os.Mkdir(nt, 0o777)
 		n.fsm.WriteTo(filepath.Join(nt, "fsm.txt"))
 		n.transport.DumpLog(nt)
 	}
@@ -313,7 +315,7 @@ func copyDir(target, src string) {
 	filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		relPath := path[len(src):]
 		if info.IsDir() {
-			return os.MkdirAll(filepath.Join(target, relPath), 0777)
+			return os.MkdirAll(filepath.Join(target, relPath), 0o777)
 		}
 		return copyFile(filepath.Join(target, relPath), path)
 	})

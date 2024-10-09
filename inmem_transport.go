@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package raft
 
 import (
@@ -118,6 +121,18 @@ func (i *InmemTransport) RequestVote(id ServerID, target ServerAddress, args *Re
 
 	// Copy the result back
 	out := rpcResp.Response.(*RequestVoteResponse)
+	*resp = *out
+	return nil
+}
+
+func (i *InmemTransport) RequestPreVote(id ServerID, target ServerAddress, args *RequestPreVoteRequest, resp *RequestPreVoteResponse) error {
+	rpcResp, err := i.makeRPC(target, args, nil, i.timeout)
+	if err != nil {
+		return err
+	}
+
+	// Copy the result back
+	out := rpcResp.Response.(*RequestPreVoteResponse)
 	*resp = *out
 	return nil
 }

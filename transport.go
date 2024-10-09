@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package raft
 
 import (
@@ -63,6 +66,16 @@ type Transport interface {
 	TimeoutNow(id ServerID, target ServerAddress, args *TimeoutNowRequest, resp *TimeoutNowResponse) error
 }
 
+// WithPreVote is an interface that a transport may provide which
+// allows a transport to support a PreVote request.
+//
+// It is defined separately from Transport as unfortunately it wasn't in the
+// original interface specification.
+type WithPreVote interface {
+	// RequestPreVote sends the appropriate RPC to the target node.
+	RequestPreVote(id ServerID, target ServerAddress, args *RequestPreVoteRequest, resp *RequestPreVoteResponse) error
+}
+
 // WithClose is an interface that a transport may provide which
 // allows a transport to be shut down cleanly when a Raft instance
 // shuts down.
@@ -78,9 +91,10 @@ type WithClose interface {
 // LoopbackTransport is an interface that provides a loopback transport suitable for testing
 // e.g. InmemTransport. It's there so we don't have to rewrite tests.
 type LoopbackTransport interface {
-	Transport // Embedded transport reference
-	WithPeers // Embedded peer management
-	WithClose // with a close routine
+	Transport   // Embedded transport reference
+	WithPeers   // Embedded peer management
+	WithClose   // with a close routine
+	WithPreVote // with a prevote
 }
 
 // WithPeers is an interface that a transport may provide which allows for connection and

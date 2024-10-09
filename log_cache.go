@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package raft
 
 import (
@@ -28,6 +31,16 @@ func NewLogCache(capacity int, store LogStore) (*LogCache, error) {
 		cache: make([]*Log, capacity),
 	}
 	return c, nil
+}
+
+// IsMonotonic implements the MonotonicLogStore interface. This is a shim to
+// expose the underyling store as monotonically indexed or not.
+func (c *LogCache) IsMonotonic() bool {
+	if store, ok := c.store.(MonotonicLogStore); ok {
+		return store.IsMonotonic()
+	}
+
+	return false
 }
 
 func (c *LogCache) GetLog(idx uint64, log *Log) error {

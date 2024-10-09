@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package raft
 
 // RPCHeader is a common sub-structure used to pass along protocol version and
@@ -8,6 +11,10 @@ type RPCHeader struct {
 	// ProtocolVersion is the version of the protocol the sender is
 	// speaking.
 	ProtocolVersion ProtocolVersion
+	// ID is the ServerID of the node sending the RPC Request or Response
+	ID []byte
+	// Addr is the ServerAddr of the node sending the RPC Request or Response
+	Addr []byte
 }
 
 // WithRPCHeader is an interface that exposes the RPC header.
@@ -21,7 +28,9 @@ type AppendEntriesRequest struct {
 	RPCHeader
 
 	// Provide the current term and leader
-	Term   uint64
+	Term uint64
+
+	// Deprecated: use RPCHeader.Addr instead
 	Leader []byte
 
 	// Provide the previous entries for integrity checking
@@ -70,7 +79,9 @@ type RequestVoteRequest struct {
 	RPCHeader
 
 	// Provide the term and our id
-	Term      uint64
+	Term uint64
+
+	// Deprecated: use RPCHeader.Addr instead
 	Candidate []byte
 
 	// Used to ensure safety
@@ -109,6 +120,40 @@ func (r *RequestVoteResponse) GetRPCHeader() RPCHeader {
 	return r.RPCHeader
 }
 
+// RequestPreVoteRequest is the command used by a candidate to ask a Raft peer
+// for a vote in an election.
+type RequestPreVoteRequest struct {
+	RPCHeader
+
+	// Provide the term and our id
+	Term uint64
+
+	// Used to ensure safety
+	LastLogIndex uint64
+	LastLogTerm  uint64
+}
+
+// GetRPCHeader - See WithRPCHeader.
+func (r *RequestPreVoteRequest) GetRPCHeader() RPCHeader {
+	return r.RPCHeader
+}
+
+// RequestPreVoteResponse is the response returned from a RequestPreVoteRequest.
+type RequestPreVoteResponse struct {
+	RPCHeader
+
+	// Newer term if leader is out of date.
+	Term uint64
+
+	// Is the vote granted.
+	Granted bool
+}
+
+// GetRPCHeader - See WithRPCHeader.
+func (r *RequestPreVoteResponse) GetRPCHeader() RPCHeader {
+	return r.RPCHeader
+}
+
 // InstallSnapshotRequest is the command sent to a Raft peer to bootstrap its
 // log (and state machine) from a snapshot on another peer.
 type InstallSnapshotRequest struct {
@@ -122,9 +167,10 @@ type InstallSnapshotRequest struct {
 	LastLogIndex uint64
 	LastLogTerm  uint64
 
-	// Peer Set in the snapshot. This is deprecated in favor of Configuration
+	// Peer Set in the snapshot.
 	// but remains here in case we receive an InstallSnapshot from a leader
 	// that's running old code.
+	// Deprecated: This is deprecated in favor of Configuration
 	Peers []byte
 
 	// Cluster membership.

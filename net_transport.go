@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package raft
 
 import (
@@ -11,8 +14,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/armon/go-metrics"
 	"github.com/hashicorp/go-hclog"
-	"github.com/hashicorp/go-msgpack/codec"
+	"github.com/hashicorp/go-msgpack/v2/codec"
 )
 
 const (
@@ -20,13 +24,34 @@ const (
 	rpcRequestVote
 	rpcInstallSnapshot
 	rpcTimeoutNow
+	rpcRequestPreVote
 
 	// DefaultTimeoutScale is the default TimeoutScale in a NetworkTransport.
 	DefaultTimeoutScale = 256 * 1024 // 256KB
 
-	// rpcMaxPipeline controls the maximum number of outstanding
-	// AppendEntries RPC calls.
-	rpcMaxPipeline = 128
+	// DefaultMaxRPCsInFlight is the default value used for pipelining configuration
+	// if a zero value is passed. See https://github.com/hashicorp/raft/pull/541
+	// for rationale. Note, if this is changed we should update the doc comments
+	// below for NetworkTransportConfig.MaxRPCsInFlight.
+	DefaultMaxRPCsInFlight = 2
+
+	// connReceiveBufferSize is the size of the buffer we will use for reading RPC requests into
+	// on followers
+	connReceiveBufferSize = 256 * 1024 // 256KB
+
+	// connSendBufferSize is the size of the buffer we will use for sending RPC request data from
+	// the leader to followers.
+	connSendBufferSize = 256 * 1024 // 256KB
+
+	// minInFlightForPipelining is a property of our current pipelining
+	// implementation and must not be changed unless we change the invariants of
+	// that implementation. Roughly speaking even with a zero-length in-flight
+	// buffer we still allow 2 requests to be in-flight before we block because we
+	// only block after sending and the receiving go-routine always unblocks the
+	// chan right after first send. This is a constant just to provide context
+	// rather than a magic number in a few places we have to check invariants to
+	// avoid panics etc.
+	minInFlightForPipelining = 2
 )
 
 var (
@@ -38,25 +63,21 @@ var (
 	ErrPipelineShutdown = errors.New("append pipeline closed")
 )
 
-/*
-
-NetworkTransport provides a network based transport that can be
-used to communicate with Raft on remote machines. It requires
-an underlying stream layer to provide a stream abstraction, which can
-be simple TCP, TLS, etc.
-
-This transport is very simple and lightweight. Each RPC request is
-framed by sending a byte that indicates the message type, followed
-by the MsgPack encoded request.
-
-The response is an error string followed by the response object,
-both are encoded using MsgPack.
-
-InstallSnapshot is special, in that after the RPC request we stream
-the entire state. That socket is not re-used as the connection state
-is not known if there is an error.
-
-*/
+// NetworkTransport provides a network based transport that can be
+// used to communicate with Raft on remote machines. It requires
+// an underlying stream layer to provide a stream abstraction, which can
+// be simple TCP, TLS, etc.
+//
+// This transport is very simple and lightweight. Each RPC request is
+// framed by sending a byte that indicates the message type, followed
+// by the MsgPack encoded request.
+//
+// The response is an error string followed by the response object,
+// both are encoded using MsgPack.
+//
+// InstallSnapshot is special, in that after the RPC request we stream
+// the entire state. That socket is not re-used as the connection state
+// is not known if there is an error.
 type NetworkTransport struct {
 	connPool     map[ServerAddress][]*netConn
 	connPoolLock sync.Mutex
@@ -68,8 +89,10 @@ type NetworkTransport struct {
 
 	logger hclog.Logger
 
-	maxPool int
+	maxPool     int
+	maxInFlight int
 
+	serverAddressLock     sync.RWMutex
 	serverAddressProvider ServerAddressProvider
 
 	shutdown     bool
@@ -85,6 +108,8 @@ type NetworkTransport struct {
 
 	timeout      time.Duration
 	TimeoutScale int
+
+	msgpackUseNewTimeFormat bool
 }
 
 // NetworkTransportConfig encapsulates configuration for the network transport layer.
@@ -100,9 +125,48 @@ type NetworkTransportConfig struct {
 	// MaxPool controls how many connections we will pool
 	MaxPool int
 
+	// MaxRPCsInFlight controls the pipelining "optimization" when replicating
+	// entries to followers.
+	//
+	// Setting this to 1 explicitly disables pipelining since no overlapping of
+	// request processing is allowed. If set to 1 the pipelining code path is
+	// skipped entirely and every request is entirely synchronous.
+	//
+	// If zero is set (or left as default), DefaultMaxRPCsInFlight is used which
+	// is currently 2. A value of 2 overlaps the preparation and sending of the
+	// next request while waiting for the previous response, but avoids additional
+	// queuing.
+	//
+	// Historically this was internally fixed at (effectively) 130 however
+	// performance testing has shown that in practice the pipelining optimization
+	// combines badly with batching and actually has a very large negative impact
+	// on commit latency when throughput is high, whilst having very little
+	// benefit on latency or throughput in any other case! See
+	// [#541](https://github.com/hashicorp/raft/pull/541) for more analysis of the
+	// performance impacts.
+	//
+	// Increasing this beyond 2 is likely to be beneficial only in very
+	// high-latency network conditions. HashiCorp doesn't recommend using our own
+	// products this way.
+	//
+	// To maintain the behavior from before version 1.4.1 exactly, set this to
+	// 130. The old internal constant was 128 but was used directly as a channel
+	// buffer size. Since we send before blocking on the channel and unblock the
+	// channel as soon as the receiver is done with the earliest outstanding
+	// request, even an unbuffered channel (buffer=0) allows one request to be
+	// sent while waiting for the previous one (i.e. 2 inflight). so the old
+	// buffer actually allowed 130 RPCs to be inflight at once.
+	MaxRPCsInFlight int
+
 	// Timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
 	// the timeout by (SnapshotSize / TimeoutScale).
 	Timeout time.Duration
+
+	// MsgpackUseNewTimeFormat when set to true, force the underlying msgpack
+	// codec to use the new format of time.Time when encoding (used in
+	// go-msgpack v1.1.5 by default). Decoding is not affected, as all
+	// go-msgpack v2.1.0+ decoders know how to decode both formats.
+	MsgpackUseNewTimeFormat bool
 }
 
 // ServerAddressProvider is a target address to which we invoke an RPC when establishing a connection
@@ -154,16 +218,23 @@ func NewNetworkTransportWithConfig(
 			Level:  hclog.DefaultLevel,
 		})
 	}
+	maxInFlight := config.MaxRPCsInFlight
+	if maxInFlight == 0 {
+		// Default zero value
+		maxInFlight = DefaultMaxRPCsInFlight
+	}
 	trans := &NetworkTransport{
-		connPool:              make(map[ServerAddress][]*netConn),
-		consumeCh:             make(chan RPC),
-		logger:                config.Logger,
-		maxPool:               config.MaxPool,
-		shutdownCh:            make(chan struct{}),
-		stream:                config.Stream,
-		timeout:               config.Timeout,
-		TimeoutScale:          DefaultTimeoutScale,
-		serverAddressProvider: config.ServerAddressProvider,
+		connPool:                make(map[ServerAddress][]*netConn),
+		consumeCh:               make(chan RPC),
+		logger:                  config.Logger,
+		maxPool:                 config.MaxPool,
+		maxInFlight:             maxInFlight,
+		shutdownCh:              make(chan struct{}),
+		stream:                  config.Stream,
+		timeout:                 config.Timeout,
+		TimeoutScale:            DefaultTimeoutScale,
+		serverAddressProvider:   config.ServerAddressProvider,
+		msgpackUseNewTimeFormat: config.MsgpackUseNewTimeFormat,
 	}
 
 	// Create the connection context and then start our listener.
@@ -224,7 +295,7 @@ func (n *NetworkTransport) getStreamContext() context.Context {
 	return n.streamCtx
 }
 
-// SetHeartbeatHandler is used to setup a heartbeat handler
+// SetHeartbeatHandler is used to set up a heartbeat handler
 // as a fast-pass. This is to avoid head-of-line blocking from
 // disk IO.
 func (n *NetworkTransport) SetHeartbeatHandler(cb func(rpc RPC)) {
@@ -315,6 +386,8 @@ func (n *NetworkTransport) getConnFromAddressProvider(id ServerID, target Server
 }
 
 func (n *NetworkTransport) getProviderAddressOrFallback(id ServerID, target ServerAddress) ServerAddress {
+	n.serverAddressLock.RLock()
+	defer n.serverAddressLock.RUnlock()
 	if n.serverAddressProvider != nil {
 		serverAddressOverride, err := n.serverAddressProvider.ServerAddr(id)
 		if err != nil {
@@ -344,10 +417,14 @@ func (n *NetworkTransport) getConn(target ServerAddress) (*netConn, error) {
 		target: target,
 		conn:   conn,
 		dec:    codec.NewDecoder(bufio.NewReader(conn), &codec.MsgpackHandle{}),
-		w:      bufio.NewWriter(conn),
+		w:      bufio.NewWriterSize(conn, connSendBufferSize),
 	}
 
-	netConn.enc = codec.NewEncoder(netConn.w, &codec.MsgpackHandle{})
+	netConn.enc = codec.NewEncoder(netConn.w, &codec.MsgpackHandle{
+		BasicHandle: codec.BasicHandle{
+			TimeNotBuiltin: !n.msgpackUseNewTimeFormat,
+		},
+	})
 
 	// Done
 	return netConn, nil
@@ -359,7 +436,7 @@ func (n *NetworkTransport) returnConn(conn *netConn) {
 	defer n.connPoolLock.Unlock()
 
 	key := conn.target
-	conns, _ := n.connPool[key]
+	conns := n.connPool[key]
 
 	if !n.IsShutdown() && len(conns) < n.maxPool {
 		n.connPool[key] = append(conns, conn)
@@ -371,6 +448,12 @@ func (n *NetworkTransport) returnConn(conn *netConn) {
 // AppendEntriesPipeline returns an interface that can be used to pipeline
 // AppendEntries requests.
 func (n *NetworkTransport) AppendEntriesPipeline(id ServerID, target ServerAddress) (AppendPipeline, error) {
+	if n.maxInFlight < minInFlightForPipelining {
+		// Pipelining is disabled since no more than one request can be outstanding
+		// at once. Skip the whole code path and use synchronous requests.
+		return nil, ErrPipelineReplicationNotSupported
+	}
+
 	// Get a connection
 	conn, err := n.getConnFromAddressProvider(id, target)
 	if err != nil {
@@ -378,7 +461,7 @@ func (n *NetworkTransport) AppendEntriesPipeline(id ServerID, target ServerAddre
 	}
 
 	// Create the pipeline
-	return newNetPipeline(n, conn), nil
+	return newNetPipeline(n, conn, n.maxInFlight), nil
 }
 
 // AppendEntries implements the Transport interface.
@@ -389,6 +472,11 @@ func (n *NetworkTransport) AppendEntries(id ServerID, target ServerAddress, args
 // RequestVote implements the Transport interface.
 func (n *NetworkTransport) RequestVote(id ServerID, target ServerAddress, args *RequestVoteRequest, resp *RequestVoteResponse) error {
 	return n.genericRPC(id, target, rpcRequestVote, args, resp)
+}
+
+// RequestPreVote implements the Transport interface.
+func (n *NetworkTransport) RequestPreVote(id ServerID, target ServerAddress, args *RequestPreVoteRequest, resp *RequestPreVoteResponse) error {
+	return n.genericRPC(id, target, rpcRequestPreVote, args, resp)
 }
 
 // genericRPC handles a simple request/response RPC.
@@ -517,10 +605,14 @@ func (n *NetworkTransport) listen() {
 // closed.
 func (n *NetworkTransport) handleConn(connCtx context.Context, conn net.Conn) {
 	defer conn.Close()
-	r := bufio.NewReader(conn)
+	r := bufio.NewReaderSize(conn, connReceiveBufferSize)
 	w := bufio.NewWriter(conn)
 	dec := codec.NewDecoder(r, &codec.MsgpackHandle{})
-	enc := codec.NewEncoder(w, &codec.MsgpackHandle{})
+	enc := codec.NewEncoder(w, &codec.MsgpackHandle{
+		BasicHandle: codec.BasicHandle{
+			TimeNotBuiltin: !n.msgpackUseNewTimeFormat,
+		},
+	})
 
 	for {
 		select {
@@ -545,11 +637,18 @@ func (n *NetworkTransport) handleConn(connCtx context.Context, conn net.Conn) {
 
 // handleCommand is used to decode and dispatch a single command.
 func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, enc *codec.Encoder) error {
+	getTypeStart := time.Now()
+
 	// Get the rpc type
 	rpcType, err := r.ReadByte()
 	if err != nil {
 		return err
 	}
+
+	// measuring the time to get the first byte separately because the heartbeat conn will hang out here
+	// for a good while waiting for a heartbeat whereas the append entries/rpc conn should not.
+	metrics.MeasureSince([]string{"raft", "net", "getRPCType"}, getTypeStart)
+	decodeStart := time.Now()
 
 	// Create the RPC object
 	respCh := make(chan RPCResponse, 1)
@@ -559,6 +658,7 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 
 	// Decode the command
 	isHeartbeat := false
+	var labels []metrics.Label
 	switch rpcType {
 	case rpcAppendEntries:
 		var req AppendEntriesRequest
@@ -567,20 +667,37 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 		}
 		rpc.Command = &req
 
+		leaderAddr := req.RPCHeader.Addr
+		if len(leaderAddr) == 0 {
+			leaderAddr = req.Leader
+		}
+
 		// Check if this is a heartbeat
-		if req.Term != 0 && req.Leader != nil &&
+		if req.Term != 0 && leaderAddr != nil &&
 			req.PrevLogEntry == 0 && req.PrevLogTerm == 0 &&
 			len(req.Entries) == 0 && req.LeaderCommitIndex == 0 {
 			isHeartbeat = true
 		}
 
+		if isHeartbeat {
+			labels = []metrics.Label{{Name: "rpcType", Value: "Heartbeat"}}
+		} else {
+			labels = []metrics.Label{{Name: "rpcType", Value: "AppendEntries"}}
+		}
 	case rpcRequestVote:
 		var req RequestVoteRequest
 		if err := dec.Decode(&req); err != nil {
 			return err
 		}
 		rpc.Command = &req
-
+		labels = []metrics.Label{{Name: "rpcType", Value: "RequestVote"}}
+	case rpcRequestPreVote:
+		var req RequestPreVoteRequest
+		if err := dec.Decode(&req); err != nil {
+			return err
+		}
+		rpc.Command = &req
+		labels = []metrics.Label{{Name: "rpcType", Value: "RequestPreVote"}}
 	case rpcInstallSnapshot:
 		var req InstallSnapshotRequest
 		if err := dec.Decode(&req); err != nil {
@@ -588,17 +705,21 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 		}
 		rpc.Command = &req
 		rpc.Reader = io.LimitReader(r, req.Size)
-
+		labels = []metrics.Label{{Name: "rpcType", Value: "InstallSnapshot"}}
 	case rpcTimeoutNow:
 		var req TimeoutNowRequest
 		if err := dec.Decode(&req); err != nil {
 			return err
 		}
 		rpc.Command = &req
-
+		labels = []metrics.Label{{Name: "rpcType", Value: "TimeoutNow"}}
 	default:
 		return fmt.Errorf("unknown rpc type %d", rpcType)
 	}
+
+	metrics.MeasureSinceWithLabels([]string{"raft", "net", "rpcDecode"}, decodeStart, labels)
+
+	processStart := time.Now()
 
 	// Check for heartbeat fast-path
 	if isHeartbeat {
@@ -620,8 +741,12 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 
 	// Wait for response
 RESP:
+	// we will differentiate the heartbeat fast path from normal RPCs with labels
+	metrics.MeasureSinceWithLabels([]string{"raft", "net", "rpcEnqueue"}, processStart, labels)
+	respWaitStart := time.Now()
 	select {
 	case resp := <-respCh:
+		defer metrics.MeasureSinceWithLabels([]string{"raft", "net", "rpcRespond"}, respWaitStart, labels)
 		// Send the error first
 		respErr := ""
 		if resp.Error != nil {
@@ -686,14 +811,25 @@ func sendRPC(conn *netConn, rpcType uint8, args interface{}) error {
 	return nil
 }
 
-// newNetPipeline is used to construct a netPipeline from a given
-// transport and connection.
-func newNetPipeline(trans *NetworkTransport, conn *netConn) *netPipeline {
+// newNetPipeline is used to construct a netPipeline from a given transport and
+// connection. It is a bug to ever call this with maxInFlight less than 2
+// (minInFlightForPipelining) and will cause a panic.
+func newNetPipeline(trans *NetworkTransport, conn *netConn, maxInFlight int) *netPipeline {
+	if maxInFlight < minInFlightForPipelining {
+		// Shouldn't happen (tm) since we validate this in the one call site and
+		// skip pipelining if it's lower.
+		panic("pipelining makes no sense if maxInFlight < 2")
+	}
 	n := &netPipeline{
-		conn:         conn,
-		trans:        trans,
-		doneCh:       make(chan AppendFuture, rpcMaxPipeline),
-		inprogressCh: make(chan *appendFuture, rpcMaxPipeline),
+		conn:  conn,
+		trans: trans,
+		// The buffer size is 2 less than the configured max because we send before
+		// waiting on the channel and the decode routine unblocks the channel as
+		// soon as it's waiting on the first request. So a zero-buffered channel
+		// still allows 1 request to be sent even while decode is still waiting for
+		// a response from the previous one. i.e. two are inflight at the same time.
+		inprogressCh: make(chan *appendFuture, maxInFlight-2),
+		doneCh:       make(chan AppendFuture, maxInFlight-2),
 		shutdownCh:   make(chan struct{}),
 	}
 	go n.decodeResponses()
@@ -759,7 +895,7 @@ func (n *netPipeline) Consumer() <-chan AppendFuture {
 	return n.doneCh
 }
 
-// Closed is used to shutdown the pipeline connection.
+// Close is used to shut down the pipeline connection.
 func (n *netPipeline) Close() error {
 	n.shutdownLock.Lock()
 	defer n.shutdownLock.Unlock()

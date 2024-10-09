@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package raft
 
 import (
@@ -41,7 +44,6 @@ func TestTransport_AppendEntries(t *testing.T) {
 		// Make the RPC request
 		args := AppendEntriesRequest{
 			Term:         10,
-			Leader:       []byte("cartman"),
 			PrevLogEntry: 100,
 			PrevLogTerm:  4,
 			Entries: []*Log{
@@ -52,7 +54,9 @@ func TestTransport_AppendEntries(t *testing.T) {
 				},
 			},
 			LeaderCommitIndex: 90,
+			RPCHeader:         RPCHeader{Addr: []byte("cartman")},
 		}
+
 		resp := AppendEntriesResponse{
 			Term:    4,
 			LastLog: 90,
@@ -104,7 +108,6 @@ func TestTransport_AppendEntriesPipeline(t *testing.T) {
 		// Make the RPC request
 		args := AppendEntriesRequest{
 			Term:         10,
-			Leader:       []byte("cartman"),
 			PrevLogEntry: 100,
 			PrevLogTerm:  4,
 			Entries: []*Log{
@@ -115,7 +118,9 @@ func TestTransport_AppendEntriesPipeline(t *testing.T) {
 				},
 			},
 			LeaderCommitIndex: 90,
+			RPCHeader:         RPCHeader{Addr: []byte("cartman")},
 		}
+
 		resp := AppendEntriesResponse{
 			Term:    4,
 			LastLog: 90,
@@ -185,9 +190,9 @@ func TestTransport_RequestVote(t *testing.T) {
 		// Make the RPC request
 		args := RequestVoteRequest{
 			Term:         20,
-			Candidate:    []byte("butters"),
 			LastLogIndex: 100,
 			LastLogTerm:  19,
+			RPCHeader:    RPCHeader{Addr: []byte("butters")},
 		}
 		resp := RequestVoteResponse{
 			Term:    100,
@@ -240,12 +245,13 @@ func TestTransport_InstallSnapshot(t *testing.T) {
 		// Make the RPC request
 		args := InstallSnapshotRequest{
 			Term:         10,
-			Leader:       []byte("kyle"),
 			LastLogIndex: 100,
 			LastLogTerm:  9,
 			Peers:        []byte("blah blah"),
 			Size:         10,
+			RPCHeader:    RPCHeader{Addr: []byte("kyle")},
 		}
+
 		resp := InstallSnapshotResponse{
 			Term:    10,
 			Success: true,

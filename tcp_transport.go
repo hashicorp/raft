@@ -1,11 +1,15 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package raft
 
 import (
 	"errors"
-	"github.com/hashicorp/go-hclog"
 	"io"
 	"net"
 	"time"
+
+	"github.com/hashicorp/go-hclog"
 )
 
 var (

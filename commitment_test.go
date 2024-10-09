@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package raft
 
 import (
@@ -212,7 +215,6 @@ func TestCommitment_noVoterSanity(t *testing.T) {
 	if drainNotifyCh(commitCh) {
 		t.Fatalf("unexpected commit notify")
 	}
-
 }
 
 // Single voter commits immediately.

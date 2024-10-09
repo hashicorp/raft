@@ -1,10 +1,31 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package raft
 
 import (
+	"bytes"
 	"regexp"
 	"testing"
 	"time"
 )
+
+// TestMsgpackEncodeTime ensures that we don't break backwards compatibility when updating go-msgpack with
+// Raft binary formats.
+func TestMsgpackEncodeTimeDefaultFormat(t *testing.T) {
+	stamp := "2006-01-02T15:04:05Z"
+	tm, err := time.Parse(time.RFC3339, stamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf, err := encodeMsgPack(tm)
+
+	expected := []byte{175, 1, 0, 0, 0, 14, 187, 75, 55, 229, 0, 0, 0, 0, 255, 255}
+
+	if !bytes.Equal(buf.Bytes(), expected) {
+		t.Errorf("Expected time %s to encode as %+v but got %+v", stamp, expected, buf.Bytes())
+	}
+}
 
 func TestRandomTimeout(t *testing.T) {
 	start := time.Now()

@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package raft
 
 import (
@@ -317,9 +320,10 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 
 	// Setup the request
 	req := InstallSnapshotRequest{
-		RPCHeader:          r.getRPCHeader(),
-		SnapshotVersion:    meta.Version,
-		Term:               s.currentTerm,
+		RPCHeader:       r.getRPCHeader(),
+		SnapshotVersion: meta.Version,
+		Term:            s.currentTerm,
+		// this is needed for retro compatibility, before RPCHeader.Addr was added
 		Leader:             r.trans.EncodePeer(r.localID, r.localAddr),
 		LastLogIndex:       meta.Index,
 		LastLogTerm:        meta.Term,
@@ -381,8 +385,10 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 	req := AppendEntriesRequest{
 		RPCHeader: r.getRPCHeader(),
 		Term:      s.currentTerm,
-		Leader:    r.trans.EncodePeer(r.localID, r.localAddr),
+		// this is needed for retro compatibility, before RPCHeader.Addr was added
+		Leader: r.trans.EncodePeer(r.localID, r.localAddr),
 	}
+
 	var resp AppendEntriesResponse
 	for {
 		// Wait for the next heartbeat interval or forced notify
@@ -399,12 +405,15 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 
 		start := time.Now()
 		if err := r.trans.AppendEntries(peer.ID, peer.Address, &req, &resp); err != nil {
-			r.logger.Error("failed to heartbeat to", "peer", peer.Address, "error", err)
+			nextBackoffTime := cappedExponentialBackoff(failureWait, failures, maxFailureScale, r.config().HeartbeatTimeout/2)
+			r.logger.Error("failed to heartbeat to", "peer", peer.Address, "backoff time",
+				nextBackoffTime, "error", err)
 			r.observe(FailedHeartbeatObservation{PeerID: peer.ID, LastContact: s.LastContact()})
 			failures++
 			select {
-			case <-time.After(backoff(failureWait, failures, maxFailureScale)):
+			case <-time.After(nextBackoffTime):
 			case <-stopCh:
+				return
 			}
 		} else {
 			if failures > 0 {
@@ -552,6 +561,7 @@ func (r *Raft) pipelineDecode(s *followerReplication, p AppendPipeline, stopCh, 
 func (r *Raft) setupAppendEntries(s *followerReplication, req *AppendEntriesRequest, nextIndex, lastIndex uint64) error {
 	req.RPCHeader = r.getRPCHeader()
 	req.Term = s.currentTerm
+	// this is needed for retro compatibility, before RPCHeader.Addr was added
 	req.Leader = r.trans.EncodePeer(r.localID, r.localAddr)
 	req.LeaderCommitIndex = r.getCommitIndex()
 	if err := r.setPreviousLog(req, nextIndex); err != nil {

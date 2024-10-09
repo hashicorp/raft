@@ -1,0 +1,88 @@
+name: ci
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches: ["main"]
+    tags: ["*"]
+
+permissions:
+  contents: read
+
+jobs:
+  go-fmt-and-vet:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@ac593985615ec2ede58e132d2e21d2b1cbd6127c # v3.3.0
+    - uses: actions/setup-go@6edd4406fa81c3da01a34fa6f6343087c207a568 # v3.5.0
+      with:
+        go-version: '1.20'
+        cache: true
+    - run: |
+        files=$(go fmt ./...)
+        if [ -n "$files" ]; then
+          echo "The following file(s) do not conform to go fmt:"
+          echo "$files"
+          exit 1
+        fi
+    - run: |
+        PACKAGE_NAMES=$(go list ./... | grep -v github.com/hashicorp/raft/fuzzy)
+        go vet $PACKAGE_NAMES
+
+  go-test:
+    needs: go-fmt-and-vet
+    strategy:
+      matrix:
+        go: ['1.19', '1.20']
+        arch: ['x32', 'x64']
+    runs-on: ubuntu-22.04
+    env:
+      INTEG_TESTS: yes
+    steps:
+    - uses: actions/checkout@ac593985615ec2ede58e132d2e21d2b1cbd6127c # v3.3.0
+    - uses: actions/setup-go@6edd4406fa81c3da01a34fa6f6343087c207a568 # v3.5.0
+      with:
+        go-version: ${{ matrix.go }}
+        architecture: ${{ matrix.arch }}
+        cache: true
+    # x86 specific build.
+    - if: matrix.arch == 'x32'
+      run: |
+        sudo apt-get update
+        sudo apt-get install gcc-multilib
+        go test --tags batchtest ./...
+    # x86-64 specific build.
+    - if: matrix.arch == 'x64'
+      run: go test -race --tags batchtest ./...
+  go-test-compat:
+    needs: go-test
+    strategy:
+      matrix:
+        go: [ '1.20', '1.21', '1.22' ]
+        arch: [ 'x32', 'x64' ]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@ac593985615ec2ede58e132d2e21d2b1cbd6127c # v3.3.0
+      - uses: actions/setup-go@6edd4406fa81c3da01a34fa6f6343087c207a568 # v3.5.0
+        with:
+          go-version: ${{ matrix.go }}
+          architecture: ${{ matrix.arch }}
+          cache: true
+          submodules: true
+      # x86 specific build.
+      - if: matrix.arch == 'x32'
+        run: |
+          sudo apt-get update
+          sudo apt-get install gcc-multilib
+          git submodule update --init --recursive
+          cd raft-compat
+          go mod tidy
+          go test ./...
+      # x86-64 specific build.
+      - if: matrix.arch == 'x64'
+        run: |
+          git submodule update --init --recursive
+          cd raft-compat
+          go mod tidy
+          go test -race ./...

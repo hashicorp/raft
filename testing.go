@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package raft
 
 import (
@@ -5,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"reflect"
 	"sync"
@@ -13,15 +15,13 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-hclog"
-	"github.com/hashicorp/go-msgpack/codec"
+	"github.com/hashicorp/go-msgpack/v2/codec"
 )
 
-var (
-	userSnapshotErrorsOnNoData = true
-)
+var userSnapshotErrorsOnNoData = true
 
 // Return configurations optimized for in-memory
-func inmemConfig(t *testing.T) *Config {
+func inmemConfig(t testing.TB) *Config {
 	conf := DefaultConfig()
 	conf.HeartbeatTimeout = 50 * time.Millisecond
 	conf.ElectionTimeout = 50 * time.Millisecond
@@ -130,11 +130,52 @@ func (m *MockSnapshot) Persist(sink SnapshotSink) error {
 func (m *MockSnapshot) Release() {
 }
 
+// MockMonotonicLogStore is a LogStore wrapper for testing the
+// MonotonicLogStore interface.
+type MockMonotonicLogStore struct {
+	s LogStore
+}
+
+// IsMonotonic implements the MonotonicLogStore interface.
+func (m *MockMonotonicLogStore) IsMonotonic() bool {
+	return true
+}
+
+// FirstIndex implements the LogStore interface.
+func (m *MockMonotonicLogStore) FirstIndex() (uint64, error) {
+	return m.s.FirstIndex()
+}
+
+// LastIndex implements the LogStore interface.
+func (m *MockMonotonicLogStore) LastIndex() (uint64, error) {
+	return m.s.LastIndex()
+}
+
+// GetLog implements the LogStore interface.
+func (m *MockMonotonicLogStore) GetLog(index uint64, log *Log) error {
+	return m.s.GetLog(index, log)
+}
+
+// StoreLog implements the LogStore interface.
+func (m *MockMonotonicLogStore) StoreLog(log *Log) error {
+	return m.s.StoreLog(log)
+}
+
+// StoreLogs implements the LogStore interface.
+func (m *MockMonotonicLogStore) StoreLogs(logs []*Log) error {
+	return m.s.StoreLogs(logs)
+}
+
+// DeleteRange implements the LogStore interface.
+func (m *MockMonotonicLogStore) DeleteRange(min uint64, max uint64) error {
+	return m.s.DeleteRange(min, max)
+}
+
 // This can be used as the destination for a logger and it'll
 // map them into calls to testing.T.Log, so that you only see
 // the logging for failed tests.
 type testLoggerAdapter struct {
-	t      *testing.T
+	tb     testing.TB
 	prefix string
 }
 
@@ -144,33 +185,38 @@ func (a *testLoggerAdapter) Write(d []byte) (int, error) {
 	}
 	if a.prefix != "" {
 		l := a.prefix + ": " + string(d)
-		a.t.Log(l)
+		a.tb.Log(l)
 		return len(l), nil
 	}
 
-	a.t.Log(string(d))
+	a.tb.Log(string(d))
 	return len(d), nil
 }
 
-func newTestLogger(t *testing.T) hclog.Logger {
-	return newTestLoggerWithPrefix(t, "")
+func newTestLogger(tb testing.TB) hclog.Logger {
+	return newTestLoggerWithPrefix(tb, "")
 }
 
-// newTestLoggerWithPrefix returns a Logger that can be used in tests. prefix will
-// be added as the name of the logger.
+// newTestLoggerWithPrefix returns a Logger that can be used in tests. prefix
+// will be added as the name of the logger.
 //
 // If tests are run with -v (verbose mode, or -json which implies verbose) the
-// log output will go to stderr directly.
-// If tests are run in regular "quiet" mode, logs will be sent to t.Log so that
-// the logs only appear when a test fails.
-func newTestLoggerWithPrefix(t *testing.T, prefix string) hclog.Logger {
+// log output will go to stderr directly. If tests are run in regular "quiet"
+// mode, logs will be sent to t.Log so that the logs only appear when a test
+// fails.
+//
+// Be careful where this is used though - calling t.Log after the test completes
+// causes a panic. This is common if you use it for a NetworkTransport for
+// example and then close the transport at the end of the test because an error
+// is logged after the test is complete.
+func newTestLoggerWithPrefix(tb testing.TB, prefix string) hclog.Logger {
 	if testing.Verbose() {
-		return hclog.New(&hclog.LoggerOptions{Name: prefix})
+		return hclog.New(&hclog.LoggerOptions{Name: prefix, Level: hclog.Trace})
 	}
 
 	return hclog.New(&hclog.LoggerOptions{
 		Name:   prefix,
-		Output: &testLoggerAdapter{t: t, prefix: prefix},
+		Output: &testLoggerAdapter{tb: tb, prefix: prefix},
 	})
 }
 
@@ -201,6 +247,15 @@ func (c *cluster) Merge(other *cluster) {
 	c.snaps = append(c.snaps, other.snaps...)
 	c.trans = append(c.trans, other.trans...)
 	c.rafts = append(c.rafts, other.rafts...)
+}
+
+func (c *cluster) RemoveServer(id ServerID) {
+	for i, n := range c.rafts {
+		if n.localID == id {
+			c.rafts = append(c.rafts[:i], c.rafts[i+1:]...)
+			return
+		}
+	}
 }
 
 // notifyFailed will close the failed channel which can signal the goroutine
@@ -376,9 +431,9 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 	// Wait until we have a stable instate slice. Each time we see an
 	// observation a state has changed, recheck it and if it has changed,
 	// restart the timer.
-	var pollStartTime = time.Now()
+	pollStartTime := time.Now()
 	for {
-		inState, highestTerm := c.pollState(s)
+		_, highestTerm := c.pollState(s)
 		inStateTime := time.Now()
 
 		// Sometimes this routine is called very early on before the
@@ -424,8 +479,9 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 				c.t.Fatalf("timer channel errored")
 			}
 
-			c.logger.Info(fmt.Sprintf("stable state for %s reached at %s (%d nodes), %s from start of poll, %s from cluster start. Timeout at %s, %s after stability",
-				s, inStateTime, len(inState), inStateTime.Sub(pollStartTime), inStateTime.Sub(c.startTime), t, t.Sub(inStateTime)))
+			inState, highestTerm := c.pollState(s)
+			c.logger.Info(fmt.Sprintf("stable state for %s reached at %s (%d nodes), highestTerm is %d, %s from start of poll, %s from cluster start. Timeout at %s, %s after stability",
+				s, inStateTime, len(inState), highestTerm, inStateTime.Sub(pollStartTime), inStateTime.Sub(c.startTime), t, t.Sub(inStateTime)))
 			return inState
 		}
 	}
@@ -445,6 +501,12 @@ func (c *cluster) Leader() *Raft {
 // state.
 func (c *cluster) Followers() []*Raft {
 	expFollowers := len(c.rafts) - 1
+	return c.WaitForFollowers(expFollowers)
+}
+
+// WaitForFollowers waits for the cluster to have a given number of followers and stay in a stable
+// state.
+func (c *cluster) WaitForFollowers(expFollowers int) []*Raft {
 	followers := c.GetInState(Follower)
 	if len(followers) != expFollowers {
 		c.t.Fatalf("timeout waiting for %d followers (followers are %v)", expFollowers, followers)
@@ -529,15 +591,16 @@ func (c *cluster) EnsureLeader(t *testing.T, expect ServerAddress) {
 	// think the leader is correct
 	fail := false
 	for _, r := range c.rafts {
-		leader := ServerAddress(r.Leader())
-		if leader != expect {
-			if leader == "" {
-				leader = "[none]"
+		leaderAddr, _ := r.LeaderWithID()
+
+		if leaderAddr != expect {
+			if leaderAddr == "" {
+				leaderAddr = "[none]"
 			}
 			if expect == "" {
-				c.logger.Error("peer sees incorrect leader", "peer", r, "leader", leader, "expected-leader", "[none]")
+				c.logger.Error("peer sees incorrect leader", "peer", r, "leader", leaderAddr, "expected-leader", "[none]")
 			} else {
-				c.logger.Error("peer sees incorrect leader", "peer", r, "leader", leader, "expected-leader", expect)
+				c.logger.Error("peer sees incorrect leader", "peer", r, "leader", leaderAddr, "expected-leader", expect)
 			}
 			fail = true
 		}
@@ -660,6 +723,7 @@ type MakeClusterOpts struct {
 	ConfigStoreFSM  bool
 	MakeFSMFunc     func() FSM
 	LongstopTimeout time.Duration
+	MonotonicLogs   bool
 }
 
 // makeCluster will return a cluster with the given config and number of peers.
@@ -690,7 +754,7 @@ func makeCluster(t *testing.T, opts *MakeClusterOpts) *cluster {
 
 	// Setup the stores and transports
 	for i := 0; i < opts.Peers; i++ {
-		dir, err := ioutil.TempDir("", "raft")
+		dir, err := os.MkdirTemp("", "raft")
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
@@ -735,10 +799,15 @@ func makeCluster(t *testing.T, opts *MakeClusterOpts) *cluster {
 	// Create all the rafts
 	c.startTime = time.Now()
 	for i := 0; i < opts.Peers; i++ {
-		logs := c.stores[i]
+		var logs LogStore
+		logs = c.stores[i]
 		store := c.stores[i]
 		snap := c.snaps[i]
 		trans := c.trans[i]
+
+		if opts.MonotonicLogs {
+			logs = &MockMonotonicLogStore{s: logs}
+		}
 
 		peerConf := opts.Conf
 		peerConf.LocalID = configuration.Servers[i].ID
@@ -791,7 +860,7 @@ func MakeClusterCustom(t *testing.T, opts *MakeClusterOpts) *cluster {
 // NOTE: This is exposed for middleware testing purposes and is not a stable API
 func FileSnapTest(t *testing.T) (string, *FileSnapshotStore) {
 	// Create a test dir
-	dir, err := ioutil.TempDir("", "raft")
+	dir, err := os.MkdirTemp("", "raft")
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}

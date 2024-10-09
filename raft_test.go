@@ -1,9 +1,13 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package raft
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,6 +18,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-hclog"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -55,7 +60,6 @@ func TestRaft_AfterShutdown(t *testing.T) {
 	if f := raft.Shutdown(); f.Error() != nil {
 		t.Fatalf("shutdown should be idempotent")
 	}
-
 }
 
 func TestRaft_LiveBootstrap(t *testing.T) {
@@ -94,6 +98,31 @@ func TestRaft_LiveBootstrap(t *testing.T) {
 	// Make sure the live bootstrap fails now that things are started up.
 	boot = c.rafts[0].BootstrapCluster(configuration)
 	if err := boot.Error(); err != ErrCantBootstrap {
+		t.Fatalf("bootstrap should have failed: %v", err)
+	}
+}
+
+func TestRaft_LiveBootstrap_From_NonVoter(t *testing.T) {
+	// Make the cluster.
+	c := MakeClusterNoBootstrap(2, t, nil)
+	defer c.Close()
+
+	// Build the configuration.
+	configuration := Configuration{}
+	for i, r := range c.rafts {
+		server := Server{
+			ID:      r.localID,
+			Address: r.localAddr,
+		}
+		if i == 0 {
+			server.Suffrage = Nonvoter
+		}
+		configuration.Servers = append(configuration.Servers, server)
+	}
+
+	// Bootstrap one of the nodes live (the non-voter).
+	boot := c.rafts[0].BootstrapCluster(configuration)
+	if err := boot.Error(); err != ErrNotVoter {
 		t.Fatalf("bootstrap should have failed: %v", err)
 	}
 }
@@ -396,12 +425,9 @@ func TestRaft_LeaderFail(t *testing.T) {
 		if len(fsm.logs) != 2 {
 			t.Fatalf("did not apply both to FSM! %v", fsm.logs)
 		}
-		if bytes.Compare(fsm.logs[0], []byte("test")) != 0 {
-			t.Fatalf("first entry should be 'test'")
-		}
-		if bytes.Compare(fsm.logs[1], []byte("apply")) != 0 {
-			t.Fatalf("second entry should be 'apply'")
-		}
+
+		require.Equal(t, fsm.logs[0], []byte("test"))
+		require.Equal(t, fsm.logs[1], []byte("apply"))
 		fsm.Unlock()
 	}
 }
@@ -658,7 +684,6 @@ func TestRaft_JoinNode_ConfigStore(t *testing.T) {
 			t.Fatalf("unexpected number of servers in config change: %v", fsm.configurations[2].Servers)
 		}
 	}
-
 }
 
 func TestRaft_RemoveFollower(t *testing.T) {
@@ -988,6 +1013,201 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 	}
 }
 
+func TestRaft_RestoreSnapshotOnStartup_Monotonic(t *testing.T) {
+	// Make the cluster
+	conf := inmemConfig(t)
+	conf.TrailingLogs = 10
+	opts := &MakeClusterOpts{
+		Peers:         1,
+		Bootstrap:     true,
+		Conf:          conf,
+		MonotonicLogs: true,
+	}
+	c := MakeClusterCustom(t, opts)
+	defer c.Close()
+
+	leader := c.Leader()
+
+	// Commit a lot of things
+	var future Future
+	for i := 0; i < 100; i++ {
+		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	// Wait for the last future to apply
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Take a snapshot
+	snapFuture := leader.Snapshot()
+	if err := snapFuture.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Check for snapshot
+	snaps, _ := leader.snapshots.List()
+	if len(snaps) != 1 {
+		t.Fatalf("should have a snapshot")
+	}
+	snap := snaps[0]
+
+	// Logs should be trimmed
+	firstIdx, err := leader.logs.FirstIndex()
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	lastIdx, err := leader.logs.LastIndex()
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if firstIdx != snap.Index-conf.TrailingLogs+1 {
+		t.Fatalf("should trim logs to %d: but is %d", snap.Index-conf.TrailingLogs+1, firstIdx)
+	}
+
+	// Shutdown
+	shutdown := leader.Shutdown()
+	if err := shutdown.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Restart the Raft
+	r := leader
+	// Can't just reuse the old transport as it will be closed
+	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
+	cfg := r.config()
+	r, err = NewRaft(&cfg, r.fsm, r.logs, r.stable, r.snapshots, trans2)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	c.rafts[0] = r
+
+	// We should have restored from the snapshot!
+	if last := r.getLastApplied(); last != snap.Index {
+		t.Fatalf("bad last index: %d, expecting %d", last, snap.Index)
+	}
+
+	// Verify that logs have not been reset
+	first, _ := r.logs.FirstIndex()
+	last, _ := r.logs.LastIndex()
+	assert.Equal(t, firstIdx, first)
+	assert.Equal(t, lastIdx, last)
+}
+
+func TestRaft_SnapshotRestore_Progress(t *testing.T) {
+	// Make the cluster
+	conf := inmemConfig(t)
+	conf.TrailingLogs = 10
+	c := MakeCluster(1, t, conf)
+	defer c.Close()
+
+	// Commit a lot of things
+	leader := c.Leader()
+	var future Future
+	for i := 0; i < 100; i++ {
+		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+	}
+
+	// Wait for the last future to apply
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Take a snapshot
+	snapFuture := leader.Snapshot()
+	if err := snapFuture.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Check for snapshot
+	snaps, _ := leader.snapshots.List()
+	if len(snaps) != 1 {
+		t.Fatalf("should have a snapshot")
+	}
+	snap := snaps[0]
+
+	// Logs should be trimmed
+	if idx, _ := leader.logs.FirstIndex(); idx != snap.Index-conf.TrailingLogs+1 {
+		t.Fatalf("should trim logs to %d: but is %d", snap.Index-conf.TrailingLogs+1, idx)
+	}
+
+	// Shutdown
+	shutdown := leader.Shutdown()
+	if err := shutdown.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Restart the Raft
+	r := leader
+	// Can't just reuse the old transport as it will be closed
+	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
+	cfg := r.config()
+
+	// Intercept logs and look for specific log messages.
+	var logbuf lockedBytesBuffer
+	cfg.Logger = hclog.New(&hclog.LoggerOptions{
+		Name:       "test",
+		JSONFormat: true,
+		Level:      hclog.Info,
+		Output:     &logbuf,
+	})
+	r, err := NewRaft(&cfg, r.fsm, r.logs, r.stable, r.snapshots, trans2)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	c.rafts[0] = r
+
+	// We should have restored from the snapshot!
+	if last := r.getLastApplied(); last != snap.Index {
+		t.Fatalf("bad last index: %d, expecting %d", last, snap.Index)
+	}
+
+	{
+		dec := json.NewDecoder(strings.NewReader(logbuf.String()))
+
+		found := false
+
+		type partialRecord struct {
+			Message         string `json:"@message"`
+			PercentComplete string `json:"percent-complete"`
+		}
+
+		for !found {
+			var record partialRecord
+			if err := dec.Decode(&record); err != nil {
+				t.Fatalf("error while decoding json logs: %v", err)
+			}
+
+			if record.Message == "snapshot restore progress" && record.PercentComplete == "100.00%" {
+				found = true
+				break
+			}
+
+		}
+		if !found {
+			t.Fatalf("could not find a log line indicating that snapshot restore progress was being logged")
+		}
+	}
+}
+
+type lockedBytesBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBytesBuffer) Write(p []byte) (n int, err error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBytesBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 // TODO: Need a test that has a previous format Snapshot and check that it can
 // be read/installed on the new code.
 
@@ -1095,13 +1315,13 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	content := []byte(fmt.Sprintf("[%s]", strings.Join(peers, ",")))
 
 	// Perform a manual recovery on the cluster.
-	base, err := ioutil.TempDir("", "")
+	base, err := os.MkdirTemp("", "")
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	defer os.RemoveAll(base)
 	peersFile := filepath.Join(base, "peers.json")
-	if err = ioutil.WriteFile(peersFile, content, 0666); err != nil {
+	if err = os.WriteFile(peersFile, content, 0o666); err != nil {
 		t.Fatalf("[ERR] err: %v", err)
 	}
 	configuration, err := ReadPeersJSON(peersFile)
@@ -1211,7 +1431,9 @@ func TestRaft_UserSnapshot(t *testing.T) {
 
 // snapshotAndRestore does a snapshot and restore sequence and applies the given
 // offset to the snapshot index, so we can try out different situations.
-func snapshotAndRestore(t *testing.T, offset uint64) {
+func snapshotAndRestore(t *testing.T, offset uint64, monotonicLogStore bool, restoreNewCluster bool) {
+	t.Helper()
+
 	// Make the cluster.
 	conf := inmemConfig(t)
 
@@ -1221,7 +1443,19 @@ func snapshotAndRestore(t *testing.T, offset uint64) {
 	conf.ElectionTimeout = 500 * time.Millisecond
 	conf.LeaderLeaseTimeout = 500 * time.Millisecond
 
-	c := MakeCluster(3, t, conf)
+	var c *cluster
+	numPeers := 3
+	optsMonotonic := &MakeClusterOpts{
+		Peers:         numPeers,
+		Bootstrap:     true,
+		Conf:          conf,
+		MonotonicLogs: true,
+	}
+	if monotonicLogStore {
+		c = MakeClusterCustom(t, optsMonotonic)
+	} else {
+		c = MakeCluster(numPeers, t, conf)
+	}
 	defer c.Close()
 
 	// Wait for things to get stable and commit some things.
@@ -1251,6 +1485,17 @@ func snapshotAndRestore(t *testing.T, offset uint64) {
 	// Get the last index before the restore.
 	preIndex := leader.getLastIndex()
 
+	if restoreNewCluster {
+		var c2 *cluster
+		if monotonicLogStore {
+			c2 = MakeClusterCustom(t, optsMonotonic)
+		} else {
+			c2 = MakeCluster(numPeers, t, conf)
+		}
+		c = c2
+		leader = c.Leader()
+	}
+
 	// Restore the snapshot, twiddling the index with the offset.
 	meta, reader, err := snap.Open()
 	meta.Index += offset
@@ -1266,17 +1511,40 @@ func snapshotAndRestore(t *testing.T, offset uint64) {
 	// an index to create a hole, and then we apply a no-op after the
 	// restore.
 	var expected uint64
-	if meta.Index < preIndex {
+	if !restoreNewCluster && meta.Index < preIndex {
 		expected = preIndex + 2
 	} else {
+		// restoring onto a new cluster should always have a last index based
+		// off of the snaphsot meta index
 		expected = meta.Index + 2
 	}
+
 	lastIndex := leader.getLastIndex()
 	if lastIndex != expected {
 		t.Fatalf("Index was not updated correctly: %d vs. %d", lastIndex, expected)
 	}
 
-	// Ensure all the logs are the same and that we have everything that was
+	// Ensure raft logs are removed for monotonic log stores but remain
+	// untouched for non-monotic (BoltDB) logstores.
+	// When first index = 1, then logs have remained untouched.
+	// When first indext is set to the next commit index / last index, then
+	// it means logs have been removed.
+	raftNodes := make([]*Raft, 0, numPeers+1)
+	raftNodes = append(raftNodes, leader)
+	raftNodes = append(raftNodes, c.Followers()...)
+	for _, raftNode := range raftNodes {
+		firstLogIndex, err := raftNode.logs.FirstIndex()
+		require.NoError(t, err)
+		lastLogIndex, err := raftNode.logs.LastIndex()
+		require.NoError(t, err)
+		if monotonicLogStore {
+			require.Equal(t, expected, firstLogIndex)
+		} else {
+			require.Equal(t, uint64(1), firstLogIndex)
+		}
+		require.Equal(t, expected, lastLogIndex)
+	}
+	// Ensure all the fsm logs are the same and that we have everything that was
 	// part of the original snapshot, and that the contents after were
 	// reverted.
 	c.EnsureSame(t)
@@ -1287,9 +1555,7 @@ func snapshotAndRestore(t *testing.T, offset uint64) {
 	}
 	for i, entry := range fsm.logs {
 		expected := []byte(fmt.Sprintf("test %d", i))
-		if bytes.Compare(entry, expected) != 0 {
-			t.Fatalf("Log entry bad: %v", entry)
-		}
+		require.Equal(t, entry, expected)
 	}
 	fsm.Unlock()
 
@@ -1315,10 +1581,17 @@ func TestRaft_UserRestore(t *testing.T) {
 		10000,
 	}
 
+	restoreToNewClusterCases := []bool{false, true}
+
 	for _, c := range cases {
-		t.Run(fmt.Sprintf("case %v", c), func(t *testing.T) {
-			snapshotAndRestore(t, c)
-		})
+		for _, restoreNewCluster := range restoreToNewClusterCases {
+			t.Run(fmt.Sprintf("case %v | restored to new cluster: %t", c, restoreNewCluster), func(t *testing.T) {
+				snapshotAndRestore(t, c, false, restoreNewCluster)
+			})
+			t.Run(fmt.Sprintf("monotonic case %v | restored to new cluster: %t", c, restoreNewCluster), func(t *testing.T) {
+				snapshotAndRestore(t, c, true, restoreNewCluster)
+			})
+		}
 	}
 }
 
@@ -1554,10 +1827,10 @@ LOOP:
 	}
 
 	// Ensure both have cleared their leader
-	if l := leader.Leader(); l != "" {
+	if l, id := leader.LeaderWithID(); l != "" && id != "" {
 		t.Fatalf("bad: %v", l)
 	}
-	if l := follower.Leader(); l != "" {
+	if l, id := follower.LeaderWithID(); l != "" && id != "" {
 		t.Fatalf("bad: %v", l)
 	}
 }
@@ -1659,7 +1932,7 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	}
 
 	// Ensure the known leader is cleared
-	if l := leader.Leader(); l != "" {
+	if l, _ := leader.LeaderWithID(); l != "" {
 		t.Fatalf("bad: %v", l)
 	}
 }
@@ -1729,8 +2002,162 @@ func TestRaft_NotifyCh(t *testing.T) {
 	}
 }
 
-func TestRaft_Voting(t *testing.T) {
+func TestRaft_AppendEntry(t *testing.T) {
 	c := MakeCluster(3, t, nil)
+	defer c.Close()
+	followers := c.Followers()
+	ldr := c.Leader()
+	ldrT := c.trans[c.IndexOf(ldr)]
+
+	reqAppendEntries := AppendEntriesRequest{
+		RPCHeader:    ldr.getRPCHeader(),
+		Term:         ldr.getCurrentTerm() + 1,
+		PrevLogEntry: 0,
+		PrevLogTerm:  ldr.getCurrentTerm(),
+		Leader:       nil,
+		Entries: []*Log{
+			{
+				Index: 1,
+				Term:  ldr.getCurrentTerm() + 1,
+				Type:  LogCommand,
+				Data:  []byte("log 1"),
+			},
+		},
+		LeaderCommitIndex: 90,
+	}
+	// a follower that thinks there's a leader should vote for that leader.
+	var resp AppendEntriesResponse
+	if err := ldrT.AppendEntries(followers[0].localID, followers[0].localAddr, &reqAppendEntries, &resp); err != nil {
+		t.Fatalf("RequestVote RPC failed %v", err)
+	}
+
+	require.True(t, resp.Success)
+
+	headers := ldr.getRPCHeader()
+	headers.ID = nil
+	headers.Addr = nil
+	reqAppendEntries = AppendEntriesRequest{
+		RPCHeader:    headers,
+		Term:         ldr.getCurrentTerm() + 1,
+		PrevLogEntry: 0,
+		PrevLogTerm:  ldr.getCurrentTerm(),
+		Leader:       ldr.trans.EncodePeer(ldr.config().LocalID, ldr.localAddr),
+		Entries: []*Log{
+			{
+				Index: 1,
+				Term:  ldr.getCurrentTerm() + 1,
+				Type:  LogCommand,
+				Data:  []byte("log 1"),
+			},
+		},
+		LeaderCommitIndex: 90,
+	}
+	// a follower that thinks there's a leader should vote for that leader.
+	var resp2 AppendEntriesResponse
+	if err := ldrT.AppendEntries(followers[0].localID, followers[0].localAddr, &reqAppendEntries, &resp2); err != nil {
+		t.Fatalf("RequestVote RPC failed %v", err)
+	}
+
+	require.True(t, resp2.Success)
+}
+
+// TestRaft_PreVoteMixedCluster focus on testing a cluster with
+// a mix of nodes that have pre-vote activated and deactivated.
+// Once the cluster is created, we force an election by partioning the leader
+// and verify that the cluster regain stability.
+func TestRaft_PreVoteMixedCluster(t *testing.T) {
+
+	tcs := []struct {
+		name         string
+		prevoteNum   int
+		noprevoteNum int
+	}{
+		{"majority no pre-vote", 2, 3},
+		{"majority pre-vote", 3, 2},
+		{"majority no pre-vote", 1, 2},
+		{"majority pre-vote", 2, 1},
+		{"all pre-vote", 3, 0},
+		{"all no pre-vote", 0, 3},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+
+			// Make majority cluster.
+			majority := tc.prevoteNum
+			minority := tc.noprevoteNum
+			if tc.prevoteNum < tc.noprevoteNum {
+				majority = tc.noprevoteNum
+				minority = tc.prevoteNum
+			}
+
+			conf := inmemConfig(t)
+			conf.PreVoteDisabled = tc.prevoteNum <= tc.noprevoteNum
+			c := MakeCluster(majority, t, conf)
+			defer c.Close()
+
+			// Set up another server speaking protocol version 2.
+			conf = inmemConfig(t)
+			conf.PreVoteDisabled = tc.prevoteNum >= tc.noprevoteNum
+			c1 := MakeClusterNoBootstrap(minority, t, conf)
+
+			// Merge clusters.
+			c.Merge(c1)
+			c.FullyConnect()
+
+			for _, r := range c1.rafts {
+				future := c.Leader().AddVoter(r.localID, r.localAddr, 0, 0)
+				if err := future.Error(); err != nil {
+					t.Fatalf("err: %v", err)
+				}
+			}
+			time.Sleep(c.propagateTimeout * 10)
+
+			leaderOld := c.Leader()
+			c.Followers()
+			c.Partition([]ServerAddress{leaderOld.localAddr})
+			time.Sleep(c.propagateTimeout * 3)
+			leader := c.Leader()
+			require.NotEqual(t, leader.leaderID, leaderOld.leaderID)
+		})
+	}
+
+}
+
+func TestRaft_PreVoteAvoidElectionWithPartition(t *testing.T) {
+	// Make a prevote cluster.
+	conf := inmemConfig(t)
+	conf.PreVoteDisabled = false
+	c := MakeCluster(5, t, conf)
+	defer c.Close()
+
+	oldLeaderTerm := c.Leader().getCurrentTerm()
+	followers := c.Followers()
+	require.Len(t, followers, 4)
+
+	//Partition a node and wait enough for it to increase its term
+	c.Partition([]ServerAddress{followers[0].localAddr})
+	time.Sleep(10 * c.propagateTimeout)
+
+	// Check the leader is stable and the followers are as expected
+	leaderTerm := c.Leader().getCurrentTerm()
+	require.Equal(t, leaderTerm, oldLeaderTerm)
+	require.Len(t, c.WaitForFollowers(3), 3)
+
+	// reconnect the partitioned node
+	c.FullyConnect()
+	time.Sleep(3 * c.propagateTimeout)
+
+	// Check that the number of followers increase and the term is not increased
+	require.Len(t, c.Followers(), 4)
+	leaderTerm = c.Leader().getCurrentTerm()
+	require.Equal(t, leaderTerm, oldLeaderTerm)
+
+}
+
+func TestRaft_VotingGrant_WhenLeaderAvailable(t *testing.T) {
+	conf := inmemConfig(t)
+	conf.ProtocolVersion = 3
+	c := MakeCluster(3, t, conf)
 	defer c.Close()
 	followers := c.Followers()
 	ldr := c.Leader()
@@ -1739,8 +2166,8 @@ func TestRaft_Voting(t *testing.T) {
 	reqVote := RequestVoteRequest{
 		RPCHeader:          ldr.getRPCHeader(),
 		Term:               ldr.getCurrentTerm() + 10,
-		Candidate:          ldrT.EncodePeer(ldr.localID, ldr.localAddr),
 		LastLogIndex:       ldr.LastIndex(),
+		Candidate:          ldrT.EncodePeer(ldr.localID, ldr.localAddr),
 		LastLogTerm:        ldr.getCurrentTerm(),
 		LeadershipTransfer: false,
 	}
@@ -1753,6 +2180,7 @@ func TestRaft_Voting(t *testing.T) {
 		t.Fatalf("expected vote to be granted, but wasn't %+v", resp)
 	}
 	// a follower that thinks there's a leader shouldn't vote for a different candidate
+	reqVote.Addr = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
 	reqVote.Candidate = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
 	if err := ldrT.RequestVote(followers[1].localID, followers[1].localAddr, &reqVote, &resp); err != nil {
 		t.Fatalf("RequestVote RPC failed %v", err)
@@ -1763,6 +2191,7 @@ func TestRaft_Voting(t *testing.T) {
 	// a follower that thinks there's a leader, but the request has the leadership transfer flag, should
 	// vote for a different candidate
 	reqVote.LeadershipTransfer = true
+	reqVote.Addr = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
 	reqVote.Candidate = ldrT.EncodePeer(followers[0].localID, followers[0].localAddr)
 	if err := ldrT.RequestVote(followers[1].localID, followers[1].localAddr, &reqVote, &resp); err != nil {
 		t.Fatalf("RequestVote RPC failed %v", err)
@@ -1782,9 +2211,9 @@ func TestRaft_ProtocolVersion_RejectRPC(t *testing.T) {
 	reqVote := RequestVoteRequest{
 		RPCHeader: RPCHeader{
 			ProtocolVersion: ProtocolVersionMax + 1,
+			Addr:            ldrT.EncodePeer(ldr.localID, ldr.localAddr),
 		},
 		Term:         ldr.getCurrentTerm() + 10,
-		Candidate:    ldrT.EncodePeer(ldr.localID, ldr.localAddr),
 		LastLogIndex: ldr.LastIndex(),
 		LastLogTerm:  ldr.getCurrentTerm(),
 	}
@@ -1881,6 +2310,35 @@ func TestRaft_ProtocolVersion_Upgrade_2_3(t *testing.T) {
 	}
 }
 
+func TestRaft_LeaderID_Propagated(t *testing.T) {
+	// Make a cluster on protocol version 3.
+	conf := inmemConfig(t)
+	c := MakeCluster(3, t, conf)
+	defer c.Close()
+	err := waitForLeader(c)
+	require.NoError(t, err)
+
+	for _, n := range c.rafts {
+		require.Equal(t, ProtocolVersion(3), n.protocolVersion)
+		addr, id := n.LeaderWithID()
+		require.NotEmpty(t, id)
+		require.NotEmpty(t, addr)
+	}
+	for i := 0; i < 5; i++ {
+		future := c.Leader().Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+		if err := future.Error(); err != nil {
+			t.Fatalf("[ERR] err: %v", err)
+		}
+	}
+	// Wait a while
+	time.Sleep(c.propagateTimeout)
+
+	// Sanity check the cluster.
+	c.EnsureSame(t)
+	c.EnsureSamePeers(t)
+	c.EnsureLeader(t, c.Leader().localAddr)
+}
+
 func TestRaft_LeadershipTransferInProgress(t *testing.T) {
 	r := &Raft{leaderState: leaderState{}}
 	r.setupLeaderState()
@@ -1972,17 +2430,71 @@ func TestRaft_LeadershipTransferWithOneNode(t *testing.T) {
 	}
 }
 
+func TestRaft_LeadershipTransferWithWrites(t *testing.T) {
+	conf := inmemConfig(t)
+	conf.Logger = hclog.New(&hclog.LoggerOptions{Level: hclog.Trace})
+	c := MakeCluster(7, t, conf)
+	defer c.Close()
+
+	doneCh := make(chan struct{})
+	var writerErr error
+	var wg sync.WaitGroup
+	var writes int
+	wg.Add(1)
+	leader := c.Leader()
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-doneCh:
+				return
+			default:
+				future := leader.Apply([]byte("test"), 0)
+				switch err := future.Error(); {
+				case errors.Is(err, ErrRaftShutdown):
+					return
+				case errors.Is(err, ErrNotLeader):
+					leader = c.Leader()
+				case errors.Is(err, ErrLeadershipTransferInProgress):
+					continue
+				case errors.Is(err, ErrLeadershipLost):
+					continue
+				case err == nil:
+					writes++
+				default:
+					writerErr = err
+				}
+				time.Sleep(time.Millisecond)
+			}
+		}
+	}()
+
+	follower := c.Followers()[0]
+	future := c.Leader().LeadershipTransferToServer(follower.localID, follower.localAddr)
+	if future.Error() != nil {
+		t.Fatalf("Didn't expect error: %v", future.Error())
+	}
+	if follower.localID != c.Leader().localID {
+		t.Error("Leadership should have been transitioned to specified server.")
+	}
+	close(doneCh)
+	wg.Wait()
+	if writerErr != nil {
+		t.Fatal(writerErr)
+	}
+	t.Logf("writes: %d", writes)
+}
+
 func TestRaft_LeadershipTransferWithSevenNodes(t *testing.T) {
 	c := MakeCluster(7, t, nil)
 	defer c.Close()
 
-	oldLeader := c.Leader().localID
 	follower := c.GetInState(Follower)[0]
 	future := c.Leader().LeadershipTransferToServer(follower.localID, follower.localAddr)
 	if future.Error() != nil {
 		t.Fatalf("Didn't expect error: %v", future.Error())
 	}
-	if oldLeader == c.Leader().localID {
+	if follower.localID != c.Leader().localID {
 		t.Error("Leadership should have been transitioned to specified server.")
 	}
 }
@@ -2145,7 +2657,7 @@ func TestRaft_LeadershipTransferIgnoresNonvoters(t *testing.T) {
 }
 
 func TestRaft_LeadershipTransferStopRightAway(t *testing.T) {
-	r := Raft{leaderState: leaderState{}}
+	r := Raft{leaderState: leaderState{}, logger: hclog.New(nil)}
 	r.setupLeaderState()
 
 	stopCh := make(chan struct{})
@@ -2157,6 +2669,7 @@ func TestRaft_LeadershipTransferStopRightAway(t *testing.T) {
 		t.Errorf("leadership shouldn't have started, but instead it error with: %v", err)
 	}
 }
+
 func TestRaft_GetConfigurationNoBootstrap(t *testing.T) {
 	c := MakeCluster(2, t, nil)
 	defer c.Close()
@@ -2192,6 +2705,41 @@ func TestRaft_GetConfigurationNoBootstrap(t *testing.T) {
 	if !reflect.DeepEqual(observed, expected) {
 		t.Errorf("GetConfiguration result differ from Raft.GetConfiguration: observed %+v, expected %+v", observed, expected)
 	}
+}
+
+func TestRaft_LogStoreIsMonotonic(t *testing.T) {
+	c := MakeCluster(1, t, nil)
+	defer c.Close()
+
+	// Should be one leader
+	leader := c.Leader()
+	c.EnsureLeader(t, leader.localAddr)
+
+	// Test the monotonic type assertion on the InmemStore.
+	_, ok := leader.logs.(MonotonicLogStore)
+	assert.False(t, ok)
+
+	var log LogStore
+
+	// Wrapping the non-monotonic store as a LogCache should make it pass the
+	// type assertion, but the underlying store is still non-monotonic.
+	log, _ = NewLogCache(100, leader.logs)
+	mcast, ok := log.(MonotonicLogStore)
+	require.True(t, ok)
+	assert.False(t, mcast.IsMonotonic())
+
+	// Now create a new MockMonotonicLogStore using the leader logs and expect
+	// it to work.
+	log = &MockMonotonicLogStore{s: leader.logs}
+	mcast, ok = log.(MonotonicLogStore)
+	require.True(t, ok)
+	assert.True(t, mcast.IsMonotonic())
+
+	// Wrap the mock logstore in a LogCache and check again.
+	log, _ = NewLogCache(100, log)
+	mcast, ok = log.(MonotonicLogStore)
+	require.True(t, ok)
+	assert.True(t, mcast.IsMonotonic())
 }
 
 func TestRaft_CacheLogWithStoreError(t *testing.T) {
@@ -2246,6 +2794,7 @@ func TestRaft_CacheLogWithStoreError(t *testing.T) {
 
 func TestRaft_ReloadConfig(t *testing.T) {
 	conf := inmemConfig(t)
+	conf.LeaderLeaseTimeout = 40 * time.Millisecond
 	c := MakeCluster(1, t, conf)
 	defer c.Close()
 	raft := c.rafts[0]
@@ -2260,6 +2809,8 @@ func TestRaft_ReloadConfig(t *testing.T) {
 		TrailingLogs:      12345,
 		SnapshotInterval:  234 * time.Second,
 		SnapshotThreshold: 6789,
+		HeartbeatTimeout:  45 * time.Millisecond,
+		ElectionTimeout:   46 * time.Millisecond,
 	}
 
 	require.NoError(t, raft.ReloadConfig(newCfg))
@@ -2268,6 +2819,8 @@ func TestRaft_ReloadConfig(t *testing.T) {
 	require.Equal(t, newCfg.TrailingLogs, raft.config().TrailingLogs)
 	require.Equal(t, newCfg.SnapshotInterval, raft.config().SnapshotInterval)
 	require.Equal(t, newCfg.SnapshotThreshold, raft.config().SnapshotThreshold)
+	require.Equal(t, newCfg.HeartbeatTimeout, raft.config().HeartbeatTimeout)
+	require.Equal(t, newCfg.ElectionTimeout, raft.config().ElectionTimeout)
 }
 
 func TestRaft_ReloadConfigValidates(t *testing.T) {
@@ -2344,4 +2897,408 @@ func TestRaft_InstallSnapshot_InvalidPeers(t *testing.T) {
 	resp := <-chResp
 	require.Error(t, resp.Error)
 	require.Contains(t, resp.Error.Error(), "failed to decode peers")
+}
+
+func TestRaft_VoteNotGranted_WhenNodeNotInCluster(t *testing.T) {
+	// Make a cluster
+	c := MakeCluster(3, t, nil)
+
+	defer c.Close()
+
+	// Get the leader
+	leader := c.Leader()
+
+	// Wait until we have 2 followers
+	limit := time.Now().Add(c.longstopTimeout)
+	var followers []*Raft
+	for time.Now().Before(limit) && len(followers) != 2 {
+		c.WaitEvent(nil, c.conf.CommitTimeout)
+		followers = c.GetInState(Follower)
+	}
+	if len(followers) != 2 {
+		t.Fatalf("expected two followers: %v", followers)
+	}
+
+	// Remove a follower
+	followerRemoved := followers[0]
+	future := leader.RemoveServer(followerRemoved.localID, 0, 0)
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Wait a while
+	time.Sleep(c.propagateTimeout)
+
+	// Other nodes should have fewer peers
+	if configuration := c.getConfiguration(leader); len(configuration.Servers) != 2 {
+		t.Fatalf("too many peers")
+	}
+	if configuration := c.getConfiguration(followers[1]); len(configuration.Servers) != 2 {
+		t.Fatalf("too many peers")
+	}
+	waitForState(followerRemoved, Follower)
+	// The removed node should be still in Follower state
+	require.Equal(t, Follower, followerRemoved.getState())
+
+	// Prepare a Vote request from the removed follower
+	follower := followers[1]
+	followerRemovedT := c.trans[c.IndexOf(followerRemoved)]
+	reqVote := RequestVoteRequest{
+		RPCHeader:          followerRemoved.getRPCHeader(),
+		Term:               followerRemoved.getCurrentTerm() + 10,
+		LastLogIndex:       followerRemoved.LastIndex(),
+		LastLogTerm:        followerRemoved.getCurrentTerm(),
+		LeadershipTransfer: false,
+	}
+	// a follower that thinks there's a leader should vote for that leader.
+	var resp RequestVoteResponse
+
+	// partiton the leader to simulate an unstable cluster
+	c.Partition([]ServerAddress{leader.localAddr})
+	time.Sleep(c.propagateTimeout)
+
+	// wait for the remaining follower to trigger an election
+	waitForState(follower, Candidate)
+
+	// send a vote request from the removed follower to the Candidate follower
+	if err := followerRemovedT.RequestVote(follower.localID, follower.localAddr, &reqVote, &resp); err != nil {
+		t.Fatalf("RequestVote RPC failed %v", err)
+	}
+
+	// the vote request should not be granted, because the voter is not part of the cluster anymore
+	if resp.Granted {
+		t.Fatalf("expected vote to not be granted, but it was %+v", resp)
+	}
+}
+
+func TestRaft_ClusterCanRegainStability_WhenNonVoterWithHigherTermJoin(t *testing.T) {
+	// Make a cluster
+	c := MakeCluster(3, t, nil)
+
+	defer c.Close()
+
+	// Get the leader
+	leader := c.Leader()
+
+	// Wait until we have 2 followers
+	limit := time.Now().Add(c.longstopTimeout)
+	var followers []*Raft
+	for time.Now().Before(limit) && len(followers) != 2 {
+		c.WaitEvent(nil, c.conf.CommitTimeout)
+		followers = c.GetInState(Follower)
+	}
+	if len(followers) != 2 {
+		t.Fatalf("expected two followers: %v", followers)
+	}
+
+	// Remove a follower
+	followerRemoved := followers[0]
+	c.Disconnect(followerRemoved.localAddr)
+	time.Sleep(c.propagateTimeout)
+
+	future := leader.RemoveServer(followerRemoved.localID, 0, 0)
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// set that follower term to higher term to faster simulate a partitioning
+	newTerm := leader.getCurrentTerm() + 20
+	followerRemoved.setCurrentTerm(newTerm)
+	// Add the node back as NonVoter
+	future = leader.AddNonvoter(followerRemoved.localID, followerRemoved.localAddr, 0, 0)
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	c.FullyConnect()
+
+	// Wait a while
+	time.Sleep(c.propagateTimeout)
+	// Check the term is now a new term
+	leader = c.Leader()
+	currentTerm := leader.getCurrentTerm()
+	if newTerm > currentTerm {
+		t.Fatalf("term should have changed,%d < %d", newTerm, currentTerm)
+	}
+
+	// check nonVoter is not elected
+	if leader.localID == followerRemoved.localID {
+		t.Fatalf("Should not be leader %s", followerRemoved.localID)
+	}
+
+	// Write some logs to ensure they replicate
+	for i := 0; i < 100; i++ {
+		future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+		if err := future.Error(); err != nil {
+			t.Fatalf("[ERR] apply err: %v", err)
+		}
+	}
+	c.WaitForReplication(100)
+
+	// Remove the server and add it back as Voter
+	future = leader.RemoveServer(followerRemoved.localID, 0, 0)
+	if err := future.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	leader.AddVoter(followerRemoved.localID, followerRemoved.localAddr, 0, 0)
+
+	// Wait a while
+	time.Sleep(c.propagateTimeout * 10)
+
+	// Write some logs to ensure they replicate
+	for i := 100; i < 200; i++ {
+		future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+		if err := future.Error(); err != nil {
+			t.Fatalf("[ERR] apply err: %v", err)
+		}
+	}
+	c.WaitForReplication(200)
+
+	// Check leader stable
+	newLeader := c.Leader()
+	if newLeader.leaderID != leader.leaderID {
+		t.Fatalf("leader changed")
+	}
+}
+
+// TestRaft_FollowerRemovalNoElection ensures that a leader election is not
+// started when a standby is shut down and restarted.
+func TestRaft_FollowerRemovalNoElection(t *testing.T) {
+	// Make a cluster
+	inmemConf := inmemConfig(t)
+	inmemConf.HeartbeatTimeout = 100 * time.Millisecond
+	inmemConf.ElectionTimeout = 100 * time.Millisecond
+	c := MakeCluster(3, t, inmemConf)
+
+	defer c.Close()
+	err := waitForLeader(c)
+	require.NoError(t, err)
+	leader := c.Leader()
+
+	// Wait until we have 2 followers
+	limit := time.Now().Add(c.longstopTimeout)
+	var followers []*Raft
+	for time.Now().Before(limit) && len(followers) != 2 {
+		c.WaitEvent(nil, c.conf.CommitTimeout)
+		followers = c.GetInState(Follower)
+	}
+	if len(followers) != 2 {
+		t.Fatalf("expected two followers: %v", followers)
+	}
+
+	// Disconnect one of the followers and wait for the heartbeat timeout
+	i := 0
+	follower := c.rafts[i]
+	if follower == c.Leader() {
+		i = 1
+		follower = c.rafts[i]
+	}
+	logs := follower.logs
+	t.Logf("[INFO] restarting %v", follower)
+	// Shutdown follower
+	if f := follower.Shutdown(); f.Error() != nil {
+		t.Fatalf("error shuting down follower: %v", f.Error())
+	}
+
+	_, trans := NewInmemTransport(follower.localAddr)
+	conf := follower.config()
+	n, err := NewRaft(&conf, &MockFSM{}, logs, follower.stable, follower.snapshots, trans)
+	if err != nil {
+		t.Fatalf("error restarting follower: %v", err)
+	}
+	c.rafts[i] = n
+	c.trans[i] = n.trans.(*InmemTransport)
+	c.fsms[i] = n.fsm.(*MockFSM)
+	c.FullyConnect()
+	// There should be no re-election during this sleep
+	time.Sleep(250 * time.Millisecond)
+
+	// Let things settle and make sure we recovered.
+	c.EnsureLeader(t, leader.localAddr)
+	c.EnsureSame(t)
+	c.EnsureSamePeers(t)
+	n.Shutdown()
+}
+
+func waitForState(follower *Raft, state RaftState) {
+	count := 0
+	for follower.getState() != state && count < 1000 {
+		count++
+		time.Sleep(1 * time.Millisecond)
+	}
+}
+
+func waitForLeader(c *cluster) error {
+	count := 0
+	for count < 100 {
+		r := c.GetInState(Leader)
+		if len(r) >= 1 {
+			return nil
+		}
+		count++
+		time.Sleep(50 * time.Millisecond)
+	}
+	return errors.New("no leader elected")
+}
+
+func TestRaft_runFollower_State_Transition(t *testing.T) {
+	type fields struct {
+		conf     *Config
+		servers  []Server
+		serverID ServerID
+	}
+	tests := []struct {
+		name          string
+		fields        fields
+		expectedState RaftState
+	}{
+		{"NonVoter", fields{conf: DefaultConfig(), servers: []Server{{Nonvoter, "first", ""}}, serverID: "first"}, Follower},
+		{"Voter", fields{conf: DefaultConfig(), servers: []Server{{Voter, "first", ""}}, serverID: "first"}, Candidate},
+		{"Not in Config", fields{conf: DefaultConfig(), servers: []Server{{Voter, "second", ""}}, serverID: "first"}, Follower},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// set timeout to tests specific
+			tt.fields.conf.LocalID = tt.fields.serverID
+			tt.fields.conf.HeartbeatTimeout = 50 * time.Millisecond
+			tt.fields.conf.ElectionTimeout = 50 * time.Millisecond
+			tt.fields.conf.LeaderLeaseTimeout = 50 * time.Millisecond
+			tt.fields.conf.CommitTimeout = 5 * time.Millisecond
+			tt.fields.conf.SnapshotThreshold = 100
+			tt.fields.conf.TrailingLogs = 10
+			tt.fields.conf.skipStartup = true
+
+			// Create a raft instance and set the latest configuration
+			env1 := MakeRaft(t, tt.fields.conf, false)
+			env1.raft.setLatestConfiguration(Configuration{Servers: tt.fields.servers}, 1)
+			env1.raft.setState(Follower)
+
+			// run the follower loop exclusively
+			go env1.raft.runFollower()
+
+			// wait enough time to have HeartbeatTimeout
+			time.Sleep(tt.fields.conf.HeartbeatTimeout * 3)
+
+			// Check the follower loop set the right state
+			require.Equal(t, tt.expectedState, env1.raft.getState())
+		})
+	}
+}
+
+func TestRaft_runFollower_ReloadTimeoutConfigs(t *testing.T) {
+	conf := DefaultConfig()
+	conf.LocalID = ServerID("first")
+	conf.HeartbeatTimeout = 500 * time.Millisecond
+	conf.ElectionTimeout = 500 * time.Millisecond
+	conf.LeaderLeaseTimeout = 50 * time.Millisecond
+	conf.CommitTimeout = 5 * time.Millisecond
+	conf.SnapshotThreshold = 100
+	conf.TrailingLogs = 10
+	conf.skipStartup = true
+
+	env := MakeRaft(t, conf, false)
+	servers := []Server{{Voter, "first", ""}}
+	env.raft.setLatestConfiguration(Configuration{Servers: servers}, 1)
+	env.raft.setState(Follower)
+
+	// run the follower loop exclusively
+	go env.raft.runFollower()
+
+	newCfg := ReloadableConfig{
+		TrailingLogs:      conf.TrailingLogs,
+		SnapshotInterval:  conf.SnapshotInterval,
+		SnapshotThreshold: conf.SnapshotThreshold,
+		HeartbeatTimeout:  50 * time.Millisecond,
+		ElectionTimeout:   50 * time.Millisecond,
+	}
+	require.NoError(t, env.raft.ReloadConfig(newCfg))
+	// wait enough time to have HeartbeatTimeout
+	time.Sleep(3 * newCfg.HeartbeatTimeout)
+
+	// Check the follower loop set the right state
+	require.Equal(t, Candidate, env.raft.getState())
+}
+
+func TestRaft_PreVote_ShouldNotRejectLeader(t *testing.T) {
+	// Make a cluster
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+	err := waitForLeader(c)
+	require.NoError(t, err)
+	leader := c.Leader()
+
+	// Wait until we have 2 followers
+	limit := time.Now().Add(c.longstopTimeout)
+	var followers []*Raft
+	for time.Now().Before(limit) && len(followers) != 2 {
+		c.WaitEvent(nil, c.conf.CommitTimeout)
+		followers = c.GetInState(Follower)
+	}
+	if len(followers) != 2 {
+		t.Fatalf("expected two followers: %v", followers)
+	}
+
+	// A follower who thinks that x is the leader should not reject x's pre-vote
+	follower := followers[0]
+	require.Equal(t, leader.localAddr, follower.Leader())
+
+	reqPreVote := RequestPreVoteRequest{
+		RPCHeader:    leader.getRPCHeader(),
+		Term:         leader.getCurrentTerm() + 1,
+		LastLogIndex: leader.lastLogIndex,
+		LastLogTerm:  leader.getCurrentTerm(),
+	}
+
+	var resp RequestPreVoteResponse
+	leaderT := c.trans[c.IndexOf(leader)]
+	if err := leaderT.RequestPreVote(follower.localID, follower.localAddr, &reqPreVote, &resp); err != nil {
+		t.Fatalf("RequestPreVote RPC failed %v", err)
+	}
+
+	// the pre-vote should be granted
+	if !resp.Granted {
+		t.Fatalf("expected pre-vote to be granted, but it wasn't, %+v", resp)
+	}
+}
+
+func TestRaft_PreVote_ShouldRejectNonLeader(t *testing.T) {
+	// Make a cluster
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+	err := waitForLeader(c)
+	require.NoError(t, err)
+
+	// Wait until we have 2 followers
+	limit := time.Now().Add(c.longstopTimeout)
+	var followers []*Raft
+	for time.Now().Before(limit) && len(followers) != 2 {
+		c.WaitEvent(nil, c.conf.CommitTimeout)
+		followers = c.GetInState(Follower)
+	}
+	if len(followers) != 2 {
+		t.Fatalf("expected two followers: %v", followers)
+	}
+
+	// A follower who thinks that x is the leader should reject another node's pre-vote request
+	follower := followers[0]
+	anotherFollower := followers[1]
+	require.NotEqual(t, anotherFollower.localAddr, follower.Leader())
+
+	reqPreVote := RequestPreVoteRequest{
+		RPCHeader:    anotherFollower.getRPCHeader(),
+		Term:         anotherFollower.getCurrentTerm() + 1,
+		LastLogIndex: anotherFollower.lastLogIndex,
+		LastLogTerm:  anotherFollower.getCurrentTerm(),
+	}
+
+	var resp RequestPreVoteResponse
+	anotherFollowerT := c.trans[c.IndexOf(anotherFollower)]
+	if err := anotherFollowerT.RequestPreVote(follower.localID, follower.localAddr, &reqPreVote, &resp); err != nil {
+		t.Fatalf("RequestPreVote RPC failed %v", err)
+	}
+
+	// the pre-vote should not be granted
+	if resp.Granted {
+		t.Fatalf("expected pre-vote to not be granted, but it was granted, %+v", resp)
+	}
 }

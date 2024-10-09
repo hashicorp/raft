@@ -1,7 +1,11 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package raft
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net"
 	"reflect"
@@ -35,7 +39,6 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 	// Make the RPC request
 	args := AppendEntriesRequest{
 		Term:         10,
-		Leader:       []byte("cartman"),
 		PrevLogEntry: 100,
 		PrevLogTerm:  4,
 		Entries: []*Log{
@@ -46,12 +49,19 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 			},
 		},
 		LeaderCommitIndex: 90,
+		RPCHeader:         RPCHeader{Addr: []byte("cartman")},
 	}
+
 	resp := AppendEntriesResponse{
 		Term:    4,
 		LastLog: 90,
 		Success: true,
 	}
+
+	// errCh is used to report errors from any of the goroutines
+	// created in this test.
+	// It is buffered as to not block.
+	errCh := make(chan error, 100)
 
 	// Listen for a request
 	go func() {
@@ -61,7 +71,7 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 				// Verify the command
 				req := rpc.Command.(*AppendEntriesRequest)
 				if !reflect.DeepEqual(req, &args) {
-					t.Errorf("command mismatch: %#v %#v", *req, args)
+					errCh <- fmt.Errorf("command mismatch: %#v %#v", *req, args)
 					return
 				}
 				rpc.Respond(&resp, nil)
@@ -78,32 +88,37 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	defer trans2.Close()
-	var i int
-	for i = 0; i < 2; i++ {
+
+	for i := 0; i < 2; i++ {
 		// Create wait group
 		wg := &sync.WaitGroup{}
-		wg.Add(5)
-
-		appendFunc := func() {
-			defer wg.Done()
-			var out AppendEntriesResponse
-			if err := trans2.AppendEntries("id1", trans1.LocalAddr(), &args, &out); err != nil {
-				t.Fatalf("err: %v", err)
-			}
-
-			// Verify the response
-			if !reflect.DeepEqual(resp, out) {
-				t.Fatalf("command mismatch: %#v %#v", resp, out)
-			}
-		}
 
 		// Try to do parallel appends, should stress the conn pool
 		for i = 0; i < 5; i++ {
-			go appendFunc()
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				var out AppendEntriesResponse
+				if err := trans2.AppendEntries("id1", trans1.LocalAddr(), &args, &out); err != nil {
+					errCh <- err
+					return
+				}
+
+				// Verify the response
+				if !reflect.DeepEqual(resp, out) {
+					errCh <- fmt.Errorf("command mismatch: %#v %#v", resp, out)
+					return
+				}
+			}()
 		}
 
 		// Wait for the routines to finish
 		wg.Wait()
+
+		// Check if we received any errors from the above goroutines.
+		if len(errCh) > 0 {
+			t.Fatal(<-errCh)
+		}
 
 		// Check the conn pool size
 		addr := trans1.LocalAddr()
@@ -138,9 +153,11 @@ func TestNetworkTransport_Heartbeat_FastPath(t *testing.T) {
 
 	// Make the RPC request
 	args := AppendEntriesRequest{
-		Term:   10,
-		Leader: []byte("cartman"),
+		Term:      10,
+		RPCHeader: RPCHeader{ProtocolVersion: ProtocolVersionMax, Addr: []byte("cartman")},
+		Leader:    []byte("cartman"),
 	}
+
 	resp := AppendEntriesResponse{
 		Term:    4,
 		LastLog: 90,
@@ -183,8 +200,32 @@ func TestNetworkTransport_Heartbeat_FastPath(t *testing.T) {
 	}
 }
 
-func TestNetworkTransport_AppendEntries(t *testing.T) {
+func makeAppendRPC() AppendEntriesRequest {
+	return AppendEntriesRequest{
+		Term:         10,
+		PrevLogEntry: 100,
+		PrevLogTerm:  4,
+		Entries: []*Log{
+			{
+				Index: 101,
+				Term:  4,
+				Type:  LogNoop,
+			},
+		},
+		LeaderCommitIndex: 90,
+		RPCHeader:         RPCHeader{Addr: []byte("cartman")},
+	}
+}
 
+func makeAppendRPCResponse() AppendEntriesResponse {
+	return AppendEntriesResponse{
+		Term:    4,
+		LastLog: 90,
+		Success: true,
+	}
+}
+
+func TestNetworkTransport_AppendEntries(t *testing.T) {
 	for _, useAddrProvider := range []bool{true, false} {
 		// Transport 1 is consumer
 		trans1, err := makeTransport(t, useAddrProvider, "localhost:0")
@@ -195,25 +236,8 @@ func TestNetworkTransport_AppendEntries(t *testing.T) {
 		rpcCh := trans1.Consumer()
 
 		// Make the RPC request
-		args := AppendEntriesRequest{
-			Term:         10,
-			Leader:       []byte("cartman"),
-			PrevLogEntry: 100,
-			PrevLogTerm:  4,
-			Entries: []*Log{
-				{
-					Index: 101,
-					Term:  4,
-					Type:  LogNoop,
-				},
-			},
-			LeaderCommitIndex: 90,
-		}
-		resp := AppendEntriesResponse{
-			Term:    4,
-			LastLog: 90,
-			Success: true,
-		}
+		args := makeAppendRPC()
+		resp := makeAppendRPCResponse()
 
 		// Listen for a request
 		go func() {
@@ -254,7 +278,6 @@ func TestNetworkTransport_AppendEntries(t *testing.T) {
 }
 
 func TestNetworkTransport_AppendEntriesPipeline(t *testing.T) {
-
 	for _, useAddrProvider := range []bool{true, false} {
 		// Transport 1 is consumer
 		trans1, err := makeTransport(t, useAddrProvider, "localhost:0")
@@ -265,25 +288,8 @@ func TestNetworkTransport_AppendEntriesPipeline(t *testing.T) {
 		rpcCh := trans1.Consumer()
 
 		// Make the RPC request
-		args := AppendEntriesRequest{
-			Term:         10,
-			Leader:       []byte("cartman"),
-			PrevLogEntry: 100,
-			PrevLogTerm:  4,
-			Entries: []*Log{
-				{
-					Index: 101,
-					Term:  4,
-					Type:  LogNoop,
-				},
-			},
-			LeaderCommitIndex: 90,
-		}
-		resp := AppendEntriesResponse{
-			Term:    4,
-			LastLog: 90,
-			Success: true,
-		}
+		args := makeAppendRPC()
+		resp := makeAppendRPCResponse()
 
 		// Listen for a request
 		go func() {
@@ -350,25 +356,8 @@ func TestNetworkTransport_AppendEntriesPipeline_CloseStreams(t *testing.T) {
 	rpcCh := trans1.Consumer()
 
 	// Make the RPC request
-	args := AppendEntriesRequest{
-		Term:         10,
-		Leader:       []byte("cartman"),
-		PrevLogEntry: 100,
-		PrevLogTerm:  4,
-		Entries: []*Log{
-			{
-				Index: 101,
-				Term:  4,
-				Type:  LogNoop,
-			},
-		},
-		LeaderCommitIndex: 90,
-	}
-	resp := AppendEntriesResponse{
-		Term:    4,
-		LastLog: 90,
-		Success: true,
-	}
+	args := makeAppendRPC()
+	resp := makeAppendRPCResponse()
 
 	shutdownCh := make(chan struct{})
 	defer close(shutdownCh)
@@ -448,8 +437,106 @@ func TestNetworkTransport_AppendEntriesPipeline_CloseStreams(t *testing.T) {
 	}
 }
 
-func TestNetworkTransport_RequestVote(t *testing.T) {
+func TestNetworkTransport_AppendEntriesPipeline_MaxRPCsInFlight(t *testing.T) {
+	// Test the important cases 0 (default to 2), 1 (disabled), 2 and "some"
+	for _, max := range []int{0, 1, 2, 10} {
+		t.Run(fmt.Sprintf("max=%d", max), func(t *testing.T) {
+			config := &NetworkTransportConfig{
+				MaxPool:         2,
+				MaxRPCsInFlight: max,
+				Timeout:         time.Second,
+				// Don't use test logger as the transport has multiple goroutines and
+				// causes panics.
+				ServerAddressProvider: &testAddrProvider{"localhost:0"},
+			}
 
+			// Transport 1 is consumer
+			trans1, err := NewTCPTransportWithConfig("localhost:0", nil, config)
+			require.NoError(t, err)
+			defer trans1.Close()
+
+			// Make the RPC request
+			args := makeAppendRPC()
+			resp := makeAppendRPCResponse()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			// Transport 2 makes outbound request
+			config.ServerAddressProvider = &testAddrProvider{string(trans1.LocalAddr())}
+			trans2, err := NewTCPTransportWithConfig("localhost:0", nil, config)
+			require.NoError(t, err)
+			defer trans2.Close()
+
+			// Kill the transports on the timeout to unblock. That means things that
+			// shouldn't have blocked did block.
+			go func() {
+				<-ctx.Done()
+				trans2.Close()
+				trans1.Close()
+			}()
+
+			// Attempt to pipeline
+			pipeline, err := trans2.AppendEntriesPipeline("id1", trans1.LocalAddr())
+			if max == 1 {
+				// Max == 1 implies no pipelining
+				require.EqualError(t, err, ErrPipelineReplicationNotSupported.Error())
+				return
+			}
+			require.NoError(t, err)
+
+			expectedMax := max
+			if max == 0 {
+				// Should have defaulted to 2
+				expectedMax = 2
+			}
+
+			for i := 0; i < expectedMax-1; i++ {
+				// We should be able to send `max - 1` rpcs before `AppendEntries`
+				// blocks. It blocks on the `max` one because it it sends before pushing
+				// to the chan. It will block forever when it does because nothing is
+				// responding yet.
+				out := new(AppendEntriesResponse)
+				_, err := pipeline.AppendEntries(&args, out)
+				require.NoError(t, err)
+			}
+
+			// Verify the next send blocks without blocking test forever
+			errCh := make(chan error, 1)
+			go func() {
+				out := new(AppendEntriesResponse)
+				_, err := pipeline.AppendEntries(&args, out)
+				errCh <- err
+			}()
+
+			select {
+			case err := <-errCh:
+				require.NoError(t, err)
+				t.Fatalf("AppendEntries didn't block with %d in flight", max)
+			case <-time.After(50 * time.Millisecond):
+				// OK it's probably blocked or we got _really_ unlucky with scheduling!
+			}
+
+			// Verify that once we receive/respond another one can be sent.
+			rpc := <-trans1.Consumer()
+			rpc.Respond(resp, nil)
+
+			// We also need to consume the response from the pipeline in case chan is
+			// unbuffered (inflight is 2 or 1)
+			<-pipeline.Consumer()
+
+			// The last append should unblock once the response is received.
+			select {
+			case <-errCh:
+				// OK
+			case <-time.After(50 * time.Millisecond):
+				t.Fatalf("last append didn't unblock")
+			}
+		})
+	}
+}
+
+func TestNetworkTransport_RequestVote(t *testing.T) {
 	for _, useAddrProvider := range []bool{true, false} {
 		// Transport 1 is consumer
 		trans1, err := makeTransport(t, useAddrProvider, "localhost:0")
@@ -462,10 +549,11 @@ func TestNetworkTransport_RequestVote(t *testing.T) {
 		// Make the RPC request
 		args := RequestVoteRequest{
 			Term:         20,
-			Candidate:    []byte("butters"),
 			LastLogIndex: 100,
 			LastLogTerm:  19,
+			RPCHeader:    RPCHeader{Addr: []byte("butters")},
 		}
+
 		resp := RequestVoteResponse{
 			Term:    100,
 			Granted: false,
@@ -510,7 +598,6 @@ func TestNetworkTransport_RequestVote(t *testing.T) {
 }
 
 func TestNetworkTransport_InstallSnapshot(t *testing.T) {
-
 	for _, useAddrProvider := range []bool{true, false} {
 		// Transport 1 is consumer
 		trans1, err := makeTransport(t, useAddrProvider, "localhost:0")
@@ -523,12 +610,13 @@ func TestNetworkTransport_InstallSnapshot(t *testing.T) {
 		// Make the RPC request
 		args := InstallSnapshotRequest{
 			Term:         10,
-			Leader:       []byte("kyle"),
 			LastLogIndex: 100,
 			LastLogTerm:  9,
 			Peers:        []byte("blah blah"),
 			Size:         10,
+			RPCHeader:    RPCHeader{Addr: []byte("kyle")},
 		}
+
 		resp := InstallSnapshotResponse{
 			Term:    10,
 			Success: true,
@@ -550,7 +638,7 @@ func TestNetworkTransport_InstallSnapshot(t *testing.T) {
 				rpc.Reader.Read(buf)
 
 				// Compare
-				if bytes.Compare(buf, []byte("0123456789")) != 0 {
+				if !bytes.Equal(buf, []byte("0123456789")) {
 					t.Errorf("bad buf %v", buf)
 					return
 				}
@@ -631,7 +719,6 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 	// Make the RPC request
 	args := AppendEntriesRequest{
 		Term:         10,
-		Leader:       []byte("cartman"),
 		PrevLogEntry: 100,
 		PrevLogTerm:  4,
 		Entries: []*Log{
@@ -642,12 +729,19 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 			},
 		},
 		LeaderCommitIndex: 90,
+		RPCHeader:         RPCHeader{Addr: []byte("cartman")},
 	}
+
 	resp := AppendEntriesResponse{
 		Term:    4,
 		LastLog: 90,
 		Success: true,
 	}
+
+	// errCh is used to report errors from any of the goroutines
+	// created in this test.
+	// It is buffered as to not block.
+	errCh := make(chan error, 100)
 
 	// Listen for a request
 	go func() {
@@ -657,7 +751,7 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 				// Verify the command
 				req := rpc.Command.(*AppendEntriesRequest)
 				if !reflect.DeepEqual(req, &args) {
-					t.Errorf("command mismatch: %#v %#v", *req, args)
+					errCh <- fmt.Errorf("command mismatch: %#v %#v", *req, args)
 					return
 				}
 				rpc.Respond(&resp, nil)
@@ -677,28 +771,34 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 
 	// Create wait group
 	wg := &sync.WaitGroup{}
-	wg.Add(5)
-
-	appendFunc := func() {
-		defer wg.Done()
-		var out AppendEntriesResponse
-		if err := trans2.AppendEntries("id1", trans1.LocalAddr(), &args, &out); err != nil {
-			t.Fatalf("err: %v", err)
-		}
-
-		// Verify the response
-		if !reflect.DeepEqual(resp, out) {
-			t.Fatalf("command mismatch: %#v %#v", resp, out)
-		}
-	}
 
 	// Try to do parallel appends, should stress the conn pool
 	for i := 0; i < 5; i++ {
-		go appendFunc()
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+			var out AppendEntriesResponse
+			if err := trans2.AppendEntries("id1", trans1.LocalAddr(), &args, &out); err != nil {
+				errCh <- err
+				return
+			}
+
+			// Verify the response
+			if !reflect.DeepEqual(resp, out) {
+				errCh <- fmt.Errorf("command mismatch: %#v %#v", resp, out)
+				return
+			}
+		}()
 	}
 
 	// Wait for the routines to finish
 	wg.Wait()
+
+	// Check if we received any errors from the above goroutines.
+	if len(errCh) > 0 {
+		t.Fatal(<-errCh)
+	}
 
 	// Check the conn pool size
 	addr := trans1.LocalAddr()
@@ -708,11 +808,18 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 }
 
 func makeTransport(t *testing.T, useAddrProvider bool, addressOverride string) (*NetworkTransport, error) {
-	if useAddrProvider {
-		config := &NetworkTransportConfig{MaxPool: 2, Timeout: time.Second, Logger: newTestLogger(t), ServerAddressProvider: &testAddrProvider{addressOverride}}
-		return NewTCPTransportWithConfig("localhost:0", nil, config)
+	config := &NetworkTransportConfig{
+		MaxPool: 2,
+		// Setting this because older tests for pipelining were written when this
+		// was a constant and block forever if it's not large enough.
+		MaxRPCsInFlight: 130,
+		Timeout:         time.Second,
+		Logger:          newTestLogger(t),
 	}
-	return NewTCPTransportWithLogger("localhost:0", nil, 2, time.Second, newTestLogger(t))
+	if useAddrProvider {
+		config.ServerAddressProvider = &testAddrProvider{addressOverride}
+	}
+	return NewTCPTransportWithConfig("localhost:0", nil, config)
 }
 
 type testCountingWriter struct {
@@ -754,7 +861,6 @@ func (sl testCountingStreamLayer) Dial(address ServerAddress, timeout time.Durat
 // do not result in a tight loop and spam the log. We verify this here by counting the number
 // of calls against Accept() and the logger
 func TestNetworkTransport_ListenBackoff(t *testing.T) {
-
 	// testTime is the amount of time we will allow NetworkTransport#listen() to run
 	// This needs to be long enough that to verify that maxDelay is in force,
 	// but not so long as to be obnoxious when running the test suite.

@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package fuzzy
 
 import (
@@ -5,20 +8,18 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/hashicorp/go-hclog"
 	"io"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
-	"github.com/hashicorp/go-msgpack/codec"
+	"github.com/hashicorp/go-hclog"
+	"github.com/hashicorp/go-msgpack/v2/codec"
 	"github.com/hashicorp/raft"
 )
 
-var (
-	codecHandle codec.MsgpackHandle
-)
+var codecHandle codec.MsgpackHandle
 
 type appendEntries struct {
 	source      string
@@ -217,6 +218,11 @@ func lastIndex(a *raft.AppendEntriesRequest) uint64 {
 
 // RequestVote sends the appropriate RPC to the target node.
 func (t *transport) RequestVote(id raft.ServerID, target raft.ServerAddress, args *raft.RequestVoteRequest, resp *raft.RequestVoteResponse) error {
+	return t.sendRPC(string(target), args, resp)
+}
+
+// RequestPreVote sends the appropriate RPC to the target node.
+func (t *transport) RequestPreVote(id raft.ServerID, target raft.ServerAddress, args *raft.RequestPreVoteRequest, resp *raft.RequestPreVoteResponse) error {
 	return t.sendRPC(string(target), args, resp)
 }
 

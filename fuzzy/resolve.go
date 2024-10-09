@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package fuzzy
 
 import (
@@ -28,7 +31,7 @@ func resolveDirectory(dir string, create bool) (string, error) {
 	}
 	if create {
 		if _, err := os.Stat(resolved); os.IsNotExist(err) {
-			if err := os.MkdirAll(resolved, 0744); err != nil {
+			if err := os.MkdirAll(resolved, 0o744); err != nil {
 				return "", err
 			}
 		}
