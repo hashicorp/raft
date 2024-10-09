@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 )
 
+var _ CommitTrackingLogStore = &InmemCommitTrackingStore{}
+
 // InmemStore implements the LogStore and StableStore interface.
 // It should NOT EVER be used for production. It is used only for
 // unit tests. Use the MDBStore implementation instead.
@@ -144,7 +146,7 @@ type InmemCommitTrackingStore struct {
 
 // NewInmemCommitTrackingStore returns a new in-memory backend that tracks the commit index. Do not ever
 // use for production. Only for testing.
-func NewInmemCommitTrackingStore() CommitTrackingLogStore {
+func NewInmemCommitTrackingStore() *InmemCommitTrackingStore {
 	i := &InmemCommitTrackingStore{
 		InmemStore: *NewInmemStore(),
 	}
