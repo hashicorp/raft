@@ -1254,7 +1254,11 @@ func TestRaft_FastRecovery(t *testing.T) {
 	}
 	c.rafts[0] = r
 
-	commitIdx, err := r.logs.(CommitTrackingLogStore).GetCommitIndex()
+	store, ok := r.logs.(CommitTrackingLogStore)
+	if !ok {
+		t.Fatal("err: raft log store does not implement CommitTrackingLogStore interface")
+	}
+	commitIdx, err := store.GetCommitIndex()
 	// We should have applied all committed logs
 	if last := r.getLastApplied(); last != commitIdx {
 		t.Fatalf("bad last index: %d, expecting %d", last, commitIdx)
