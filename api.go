@@ -1208,6 +1208,11 @@ func (r *Raft) Stats() map[string]string {
 	return s
 }
 
+// CurrentTerm returns the current term.
+func (r *Raft) CurrentTerm() uint64 {
+	return r.getCurrentTerm()
+}
+
 // LastIndex returns the last index in stable storage,
 // either from the last log or from the last snapshot.
 func (r *Raft) LastIndex() uint64 {
