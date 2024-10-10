@@ -1262,6 +1262,8 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 		r.leaderState.inflight.PushBack(applyLog)
 	}
 
+	r.tryStageCommitIndex()
+
 	// Write the log entry locally
 	if err := r.logs.StoreLogs(logs); err != nil {
 		r.logger.Error("failed to commit logs", "error", err)
@@ -1383,6 +1385,21 @@ func (r *Raft) prepareLog(l *Log, future *logFuture) *commitTuple {
 	}
 
 	return nil
+}
+
+// tryStageCommitIndex updates the commit index in persist store if fast recovery is enabled and log store implements CommitTrackingLogStore.
+func (r *Raft) tryStageCommitIndex() {
+	commitIndex := r.getCommitIndex()
+	if !r.fastRecovery {
+		return
+	}
+	store, ok := r.logs.(CommitTrackingLogStore)
+	if !ok {
+		return
+	}
+	if err := store.StageCommitIndex(commitIndex); err != nil {
+		r.logger.Error("failed to stage commit index in commit tracking log store", "index", commitIndex, "error", err)
+	}
 }
 
 // processRPC is called to handle an incoming RPC request. This must only be
@@ -1535,6 +1552,11 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		}
 
 		if n := len(newEntries); n > 0 {
+			// Stage the future commit index if possible
+			lastNewIndex := newEntries[len(newEntries)-1].Index
+			commitIndex := min(a.LeaderCommitIndex, lastNewIndex)
+			r.tryStageCommitIndex(commitIndex)
+
 			// Append the new entries
 			if err := r.logs.StoreLogs(newEntries); err != nil {
 				r.logger.Error("failed to append to logs", "error", err)

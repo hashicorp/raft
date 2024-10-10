@@ -717,13 +717,14 @@ WAIT:
 
 // NOTE: This is exposed for middleware testing purposes and is not a stable API
 type MakeClusterOpts struct {
-	Peers           int
-	Bootstrap       bool
-	Conf            *Config
-	ConfigStoreFSM  bool
-	MakeFSMFunc     func() FSM
-	LongstopTimeout time.Duration
-	MonotonicLogs   bool
+	Peers              int
+	Bootstrap          bool
+	Conf               *Config
+	ConfigStoreFSM     bool
+	MakeFSMFunc        func() FSM
+	LongstopTimeout    time.Duration
+	MonotonicLogs      bool
+	CommitTrackingLogs bool
 }
 
 // makeCluster will return a cluster with the given config and number of peers.
@@ -807,6 +808,8 @@ func makeCluster(t *testing.T, opts *MakeClusterOpts) *cluster {
 
 		if opts.MonotonicLogs {
 			logs = &MockMonotonicLogStore{s: logs}
+		} else if opts.CommitTrackingLogs {
+			logs = NewInmemCommitTrackingStore()
 		}
 
 		peerConf := opts.Conf

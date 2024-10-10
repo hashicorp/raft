@@ -217,6 +217,10 @@ type Raft struct {
 	// preVoteDisabled control if the pre-vote feature is activated,
 	// prevote feature is disabled if set to true.
 	preVoteDisabled bool
+
+	// fastRecovery is used to enable fast recovery mode
+	// fast recovery mode is disabled if set to false.
+	fastRecovery bool
 }
 
 // BootstrapCluster initializes a server's storage with the given cluster
@@ -566,6 +570,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		followerNotifyCh:      make(chan struct{}, 1),
 		mainThreadSaturation:  newSaturationMetric([]string{"raft", "thread", "main", "saturation"}, 1*time.Second),
 		preVoteDisabled:       conf.PreVoteDisabled || !transportSupportPreVote,
+		fastRecovery:          conf.FastRecovery,
 	}
 	if !transportSupportPreVote && !conf.PreVoteDisabled {
 		r.logger.Warn("pre-vote is disabled because it is not supported by the Transport")
@@ -585,9 +590,12 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		return nil, err
 	}
 
+	r.recoverFromCommittedLogs()
+
 	// Scan through the log for any configuration change entries.
 	snapshotIndex, _ := r.getLastSnapshot()
-	for index := snapshotIndex + 1; index <= lastLog.Index; index++ {
+	lastappliedIndex := r.getLastApplied()
+	for index := max(snapshotIndex, lastappliedIndex) + 1; index <= lastLog.Index; index++ {
 		var entry Log
 		if err := r.logs.GetLog(index, &entry); err != nil {
 			r.logger.Error("failed to get log", "index", index, "error", err)
@@ -695,6 +703,39 @@ func (r *Raft) tryRestoreSingleSnapshot(snapshot *SnapshotMeta) bool {
 	snapLogger.Info("restored from snapshot")
 
 	return true
+}
+
+// recoverFromCommittedLogs recovers the Raft node from committed logs.
+func (r *Raft) recoverFromCommittedLogs() {
+	if !r.fastRecovery {
+		return
+	}
+
+	// If the store implements CommitTrackingLogStore, we can read the commit index from the store.
+	// This is useful when the store is able to track the commit index and we can avoid replaying logs.
+	store, ok := r.logs.(CommitTrackingLogStore)
+	if !ok {
+		r.logger.Warn("fast recovery enabled but log store does not support it", "log_store", fmt.Sprintf("%T", r.logs))
+		return
+	}
+
+	commitIndex, err := store.GetCommitIndex()
+	if err != nil {
+		r.logger.Error("failed to get commit index from store", "error", err)
+		panic(err)
+	}
+
+	lastIndex, err := r.logs.LastIndex()
+	if err != nil {
+		r.logger.Error("failed to get last log index from store", "error", err)
+		panic(err)
+	}
+	if commitIndex > lastIndex {
+		commitIndex = lastIndex
+	}
+
+	r.setCommitIndex(commitIndex)
+	r.processLogs(commitIndex, nil)
 }
 
 func (r *Raft) config() Config {
