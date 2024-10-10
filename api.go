@@ -706,9 +706,9 @@ func (r *Raft) tryRestoreSingleSnapshot(snapshot *SnapshotMeta) bool {
 }
 
 // recoverFromCommittedLogs recovers the Raft node from committed logs.
-func (r *Raft) recoverFromCommittedLogs() error {
+func (r *Raft) recoverFromCommittedLogs() {
 	if !r.fastRecovery {
-		return nil
+		return
 	}
 
 	// If the store implements CommitTrackingLogStore, we can read the commit index from the store.
@@ -716,7 +716,7 @@ func (r *Raft) recoverFromCommittedLogs() error {
 	store, ok := r.logs.(CommitTrackingLogStore)
 	if !ok {
 		r.logger.Warn("fast recovery enabled but log store does not support it", "log_store", fmt.Sprintf("%T", r.logs))
-		return nil
+		return
 	}
 
 	commitIndex, err := store.GetCommitIndex()
@@ -736,7 +736,6 @@ func (r *Raft) recoverFromCommittedLogs() error {
 
 	r.setCommitIndex(commitIndex)
 	r.processLogs(commitIndex, nil)
-	return nil
 }
 
 func (r *Raft) config() Config {
