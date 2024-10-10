@@ -715,6 +715,7 @@ func (r *Raft) recoverFromCommittedLogs() error {
 	// This is useful when the store is able to track the commit index and we can avoid replaying logs.
 	store, ok := r.logs.(CommitTrackingLogStore)
 	if !ok {
+		r.logger.Warn("fast recovery enabled but log store does not support it", "log_store", fmt.Sprintf("%T", r.logs))
 		return nil
 	}
 
