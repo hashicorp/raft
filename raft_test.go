@@ -23,12 +23,14 @@ import (
 )
 
 func TestRaft_StartStop(t *testing.T) {
-	c := MakeCluster(1, t, nil)
+	c, err := MakeCluster(1, t, nil)
+	require.NoError(t, err)
 	c.Close()
 }
 
 func TestRaft_AfterShutdown(t *testing.T) {
-	c := MakeCluster(1, t, nil)
+	c, err := MakeCluster(1, t, nil)
+	require.NoError(t, err)
 	c.Close()
 	raft := c.rafts[0]
 
@@ -64,7 +66,8 @@ func TestRaft_AfterShutdown(t *testing.T) {
 
 func TestRaft_LiveBootstrap(t *testing.T) {
 	// Make the cluster.
-	c := MakeClusterNoBootstrap(3, t, nil)
+	c, err := MakeClusterNoBootstrap(3, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Build the configuration.
@@ -104,7 +107,8 @@ func TestRaft_LiveBootstrap(t *testing.T) {
 
 func TestRaft_LiveBootstrap_From_NonVoter(t *testing.T) {
 	// Make the cluster.
-	c := MakeClusterNoBootstrap(2, t, nil)
+	c, err := MakeClusterNoBootstrap(2, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Build the configuration.
@@ -128,7 +132,8 @@ func TestRaft_LiveBootstrap_From_NonVoter(t *testing.T) {
 }
 
 func TestRaft_RecoverCluster_NoState(t *testing.T) {
-	c := MakeClusterNoBootstrap(1, t, nil)
+	c, err := MakeClusterNoBootstrap(1, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	r := c.rafts[0]
@@ -141,8 +146,9 @@ func TestRaft_RecoverCluster_NoState(t *testing.T) {
 		},
 	}
 	cfg := r.config()
-	err := RecoverCluster(&cfg, &MockFSM{}, r.logs, r.stable,
+	err = RecoverCluster(&cfg, &MockFSM{}, r.logs, r.stable,
 		r.snapshots, r.trans, configuration)
+	require.Error(t, err)
 	if err == nil || !strings.Contains(err.Error(), "no initial state") {
 		t.Fatalf("should have failed for no initial state: %v", err)
 	}
@@ -155,7 +161,8 @@ func TestRaft_RecoverCluster(t *testing.T) {
 		conf := inmemConfig(t)
 		conf.TrailingLogs = 10
 		conf.SnapshotThreshold = uint64(snapshotThreshold)
-		c := MakeCluster(3, t, conf)
+		c, err := MakeCluster(3, t, conf)
+		require.NoError(t, err)
 		defer c.Close()
 
 		// Perform some commits.
@@ -255,11 +262,13 @@ func TestRaft_RecoverCluster(t *testing.T) {
 func TestRaft_HasExistingState(t *testing.T) {
 	var err error
 	// Make a cluster.
-	c := MakeCluster(2, t, nil)
+	c, err := MakeCluster(2, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Make a new cluster of 1.
-	c1 := MakeClusterNoBootstrap(1, t, nil)
+	c1, err := MakeClusterNoBootstrap(1, t, nil)
+	require.NoError(t, err)
 
 	// Make sure the initial state is clean.
 	var hasState bool
@@ -296,7 +305,8 @@ func TestRaft_HasExistingState(t *testing.T) {
 
 func TestRaft_SingleNode(t *testing.T) {
 	conf := inmemConfig(t)
-	c := MakeCluster(1, t, conf)
+	c, err := MakeCluster(1, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
 	raft := c.rafts[0]
 
@@ -339,7 +349,8 @@ func TestRaft_SingleNode(t *testing.T) {
 
 func TestRaft_TripleNode(t *testing.T) {
 	// Make the cluster
-	c := MakeCluster(3, t, nil)
+	c, err := MakeCluster(3, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Should be one leader
@@ -357,7 +368,8 @@ func TestRaft_TripleNode(t *testing.T) {
 
 func TestRaft_LeaderFail(t *testing.T) {
 	// Make the cluster
-	c := MakeCluster(3, t, nil)
+	c, err := MakeCluster(3, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Should be one leader
@@ -434,7 +446,8 @@ func TestRaft_LeaderFail(t *testing.T) {
 
 func TestRaft_BehindFollower(t *testing.T) {
 	// Make the cluster
-	c := MakeCluster(3, t, nil)
+	c, err := MakeCluster(3, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Disconnect one follower
@@ -474,7 +487,8 @@ func TestRaft_BehindFollower(t *testing.T) {
 
 func TestRaft_ApplyNonLeader(t *testing.T) {
 	// Make the cluster
-	c := MakeCluster(3, t, nil)
+	c, err := MakeCluster(3, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Wait for a leader
@@ -504,7 +518,8 @@ func TestRaft_ApplyConcurrent(t *testing.T) {
 	conf := inmemConfig(t)
 	conf.HeartbeatTimeout = 2 * conf.HeartbeatTimeout
 	conf.ElectionTimeout = 2 * conf.ElectionTimeout
-	c := MakeCluster(3, t, conf)
+	c, err := MakeCluster(3, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Wait for a leader
@@ -556,7 +571,8 @@ func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 	conf.CommitTimeout = 1 * time.Millisecond
 	conf.HeartbeatTimeout = 2 * conf.HeartbeatTimeout
 	conf.ElectionTimeout = 2 * conf.ElectionTimeout
-	c := MakeCluster(1, t, conf)
+	c, err := MakeCluster(1, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Wait for a leader
@@ -592,11 +608,13 @@ func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 
 func TestRaft_JoinNode(t *testing.T) {
 	// Make a cluster
-	c := MakeCluster(2, t, nil)
+	c, err := MakeCluster(2, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Make a new cluster of 1
-	c1 := MakeClusterNoBootstrap(1, t, nil)
+	c1, err := MakeClusterNoBootstrap(1, t, nil)
+	require.NoError(t, err)
 
 	// Merge clusters
 	c.Merge(c1)
@@ -621,28 +639,30 @@ func TestRaft_JoinNode(t *testing.T) {
 func TestRaft_JoinNode_ConfigStore(t *testing.T) {
 	// Make a cluster
 	conf := inmemConfig(t)
-	c := makeCluster(t, &MakeClusterOpts{
+	c, err := makeCluster(t, &MakeClusterOpts{
 		Peers:          1,
 		Bootstrap:      true,
 		Conf:           conf,
 		ConfigStoreFSM: true,
 	})
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Make a new nodes
-	c1 := makeCluster(t, &MakeClusterOpts{
+	c1, err := makeCluster(t, &MakeClusterOpts{
 		Peers:          1,
 		Bootstrap:      false,
 		Conf:           conf,
 		ConfigStoreFSM: true,
 	})
-	c2 := makeCluster(t, &MakeClusterOpts{
+	require.NoError(t, err)
+	c2, err := makeCluster(t, &MakeClusterOpts{
 		Peers:          1,
 		Bootstrap:      false,
 		Conf:           conf,
 		ConfigStoreFSM: true,
 	})
-
+	require.NoError(t, err)
 	// Merge clusters
 	c.Merge(c1)
 	c.Merge(c2)
@@ -688,7 +708,8 @@ func TestRaft_JoinNode_ConfigStore(t *testing.T) {
 
 func TestRaft_RemoveFollower(t *testing.T) {
 	// Make a cluster
-	c := MakeCluster(3, t, nil)
+	c, err := MakeCluster(3, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Get the leader
@@ -729,7 +750,8 @@ func TestRaft_RemoveFollower(t *testing.T) {
 
 func TestRaft_RemoveLeader(t *testing.T) {
 	// Make a cluster
-	c := MakeCluster(3, t, nil)
+	c, err := MakeCluster(3, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Get the leader
@@ -779,7 +801,8 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 	// Make a cluster
 	conf := inmemConfig(t)
 	conf.ShutdownOnRemove = false
-	c := MakeCluster(3, t, conf)
+	c, err := MakeCluster(3, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Get the leader
@@ -841,7 +864,8 @@ func TestRaft_RemoveLeader_NoShutdown(t *testing.T) {
 func TestRaft_RemoveFollower_SplitCluster(t *testing.T) {
 	// Make a cluster.
 	conf := inmemConfig(t)
-	c := MakeCluster(4, t, conf)
+	c, err := MakeCluster(4, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Wait for a leader to get elected.
@@ -877,7 +901,8 @@ func TestRaft_RemoveFollower_SplitCluster(t *testing.T) {
 
 func TestRaft_AddKnownPeer(t *testing.T) {
 	// Make a cluster
-	c := MakeCluster(3, t, nil)
+	c, err := MakeCluster(3, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Get the leader
@@ -916,7 +941,8 @@ func TestRaft_AddKnownPeer(t *testing.T) {
 
 func TestRaft_RemoveUnknownPeer(t *testing.T) {
 	// Make a cluster
-	c := MakeCluster(3, t, nil)
+	c, err := MakeCluster(3, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Get the leader
@@ -957,7 +983,8 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 	// Make the cluster
 	conf := inmemConfig(t)
 	conf.TrailingLogs = 10
-	c := MakeCluster(1, t, conf)
+	c, err := MakeCluster(1, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Commit a lot of things
@@ -1001,7 +1028,7 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 	// Can't just reuse the old transport as it will be closed
 	_, trans2 := NewInmemTransport(r.trans.LocalAddr())
 	cfg := r.config()
-	r, err := NewRaft(&cfg, r.fsm, r.logs, r.stable, r.snapshots, trans2)
+	r, err = NewRaft(&cfg, r.fsm, r.logs, r.stable, r.snapshots, trans2)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -1023,7 +1050,8 @@ func TestRaft_RestoreSnapshotOnStartup_Monotonic(t *testing.T) {
 		Conf:          conf,
 		MonotonicLogs: true,
 	}
-	c := MakeClusterCustom(t, opts)
+	c, err := MakeClusterCustom(t, opts)
+	require.NoError(t, err)
 	defer c.Close()
 
 	leader := c.Leader()
@@ -1105,7 +1133,8 @@ func TestRaft_RestoreSnapshotOnStartup_CommitTrackingLogs(t *testing.T) {
 		Conf:               conf,
 		CommitTrackingLogs: true,
 	}
-	c := MakeClusterCustom(t, opts)
+	c, err := MakeClusterCustom(t, opts)
+	require.NoError(t, err)
 	defer c.Close()
 
 	leader := c.Leader()
@@ -1188,7 +1217,8 @@ func TestRaft_RestoreCommittedLogs(t *testing.T) {
 		Conf:               conf,
 		CommitTrackingLogs: true,
 	}
-	c := MakeClusterCustom(t, opts)
+	c, err := MakeClusterCustom(t, opts)
+	require.NoError(t, err)
 	defer c.Close()
 
 	leader := c.Leader()
@@ -1277,7 +1307,8 @@ func TestRaft_SnapshotRestore_Progress(t *testing.T) {
 	// Make the cluster
 	conf := inmemConfig(t)
 	conf.TrailingLogs = 10
-	c := MakeCluster(1, t, conf)
+	c, err := MakeCluster(1, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Commit a lot of things
@@ -1330,7 +1361,7 @@ func TestRaft_SnapshotRestore_Progress(t *testing.T) {
 		Level:      hclog.Info,
 		Output:     &logbuf,
 	})
-	r, err := NewRaft(&cfg, r.fsm, r.logs, r.stable, r.snapshots, trans2)
+	r, err = NewRaft(&cfg, r.fsm, r.logs, r.stable, r.snapshots, trans2)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -1396,7 +1427,8 @@ func TestRaft_NoRestoreOnStart(t *testing.T) {
 	conf := inmemConfig(t)
 	conf.TrailingLogs = 10
 	conf.NoSnapshotRestoreOnStart = true
-	c := MakeCluster(1, t, conf)
+	c, err := MakeCluster(1, t, conf)
+	require.NoError(t, err)
 
 	// Commit a lot of things.
 	leader := c.Leader()
@@ -1425,7 +1457,7 @@ func TestRaft_NoRestoreOnStart(t *testing.T) {
 	_, trans := NewInmemTransport(leader.localAddr)
 	newFSM := &MockFSM{}
 	cfg := leader.config()
-	_, err := NewRaft(&cfg, newFSM, leader.logs, leader.stable, leader.snapshots, trans)
+	_, err = NewRaft(&cfg, newFSM, leader.logs, leader.stable, leader.snapshots, trans)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -1441,7 +1473,8 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	conf := inmemConfig(t)
 	conf.ProtocolVersion = 1
 	conf.TrailingLogs = 10
-	c := MakeCluster(3, t, conf)
+	c, err := MakeCluster(3, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Commit a lot of things.
@@ -1469,7 +1502,8 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	}
 
 	// Make a separate cluster.
-	c2 := MakeClusterNoBootstrap(2, t, conf)
+	c2, err := MakeClusterNoBootstrap(2, t, conf)
+	require.NoError(t, err)
 	defer c2.Close()
 
 	// Kill the old cluster.
@@ -1547,7 +1581,8 @@ func TestRaft_AutoSnapshot(t *testing.T) {
 	conf.SnapshotInterval = conf.CommitTimeout * 2
 	conf.SnapshotThreshold = 50
 	conf.TrailingLogs = 10
-	c := MakeCluster(1, t, conf)
+	c, err := MakeCluster(1, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Commit a lot of things
@@ -1576,7 +1611,8 @@ func TestRaft_UserSnapshot(t *testing.T) {
 	conf := inmemConfig(t)
 	conf.SnapshotThreshold = 50
 	conf.TrailingLogs = 10
-	c := MakeCluster(1, t, conf)
+	c, err := MakeCluster(1, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// With nothing committed, asking for a snapshot should return an error.
@@ -1622,6 +1658,7 @@ func snapshotAndRestore(t *testing.T, offset uint64, monotonicLogStore bool, res
 	conf.LeaderLeaseTimeout = 500 * time.Millisecond
 
 	var c *cluster
+	var err error
 	numPeers := 3
 	optsMonotonic := &MakeClusterOpts{
 		Peers:         numPeers,
@@ -1630,9 +1667,11 @@ func snapshotAndRestore(t *testing.T, offset uint64, monotonicLogStore bool, res
 		MonotonicLogs: true,
 	}
 	if monotonicLogStore {
-		c = MakeClusterCustom(t, optsMonotonic)
+		c, err = MakeClusterCustom(t, optsMonotonic)
+		require.NoError(t, err)
 	} else {
-		c = MakeCluster(numPeers, t, conf)
+		c, err = MakeCluster(numPeers, t, conf)
+		require.NoError(t, err)
 	}
 	defer c.Close()
 
@@ -1666,9 +1705,11 @@ func snapshotAndRestore(t *testing.T, offset uint64, monotonicLogStore bool, res
 	if restoreNewCluster {
 		var c2 *cluster
 		if monotonicLogStore {
-			c2 = MakeClusterCustom(t, optsMonotonic)
+			c2, err = MakeClusterCustom(t, optsMonotonic)
+			require.NoError(t, err)
 		} else {
-			c2 = MakeCluster(numPeers, t, conf)
+			c2, err = MakeCluster(numPeers, t, conf)
+			require.NoError(t, err)
 		}
 		c = c2
 		leader = c.Leader()
@@ -1777,7 +1818,8 @@ func TestRaft_SendSnapshotFollower(t *testing.T) {
 	// Make the cluster
 	conf := inmemConfig(t)
 	conf.TrailingLogs = 10
-	c := MakeCluster(3, t, conf)
+	c, err := MakeCluster(3, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Disconnect one follower
@@ -1819,7 +1861,8 @@ func TestRaft_SendSnapshotAndLogsFollower(t *testing.T) {
 	// Make the cluster
 	conf := inmemConfig(t)
 	conf.TrailingLogs = 10
-	c := MakeCluster(3, t, conf)
+	c, err := MakeCluster(3, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Disconnect one follower
@@ -1873,7 +1916,8 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	// Enable operation after a remove.
 	conf := inmemConfig(t)
 	conf.ShutdownOnRemove = false
-	c := MakeCluster(3, t, conf)
+	c, err := MakeCluster(3, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Get the leader.
@@ -1949,7 +1993,8 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	// Make a cluster
 	conf := inmemConfig(t)
-	c := MakeCluster(2, t, conf)
+	c, err := MakeCluster(2, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Get the leader
@@ -2015,7 +2060,8 @@ LOOP:
 
 func TestRaft_Barrier(t *testing.T) {
 	// Make the cluster
-	c := MakeCluster(3, t, nil)
+	c, err := MakeCluster(3, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Get the leader
@@ -2043,7 +2089,8 @@ func TestRaft_Barrier(t *testing.T) {
 
 func TestRaft_VerifyLeader(t *testing.T) {
 	// Make the cluster
-	c := MakeCluster(3, t, nil)
+	c, err := MakeCluster(3, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Get the leader
@@ -2060,7 +2107,8 @@ func TestRaft_VerifyLeader(t *testing.T) {
 
 func TestRaft_VerifyLeader_Single(t *testing.T) {
 	// Make the cluster
-	c := MakeCluster(1, t, nil)
+	c, err := MakeCluster(1, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Get the leader
@@ -2078,7 +2126,8 @@ func TestRaft_VerifyLeader_Single(t *testing.T) {
 func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	// Make a cluster
 	conf := inmemConfig(t)
-	c := MakeCluster(2, t, conf)
+	c, err := MakeCluster(2, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
 
 	leader := c.Leader()
@@ -2118,7 +2167,8 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 func TestRaft_VerifyLeader_PartialConnect(t *testing.T) {
 	// Make a cluster
 	conf := inmemConfig(t)
-	c := MakeCluster(3, t, conf)
+	c, err := MakeCluster(3, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Get the leader
@@ -2153,7 +2203,8 @@ func TestRaft_NotifyCh(t *testing.T) {
 	ch := make(chan bool, 1)
 	conf := inmemConfig(t)
 	conf.NotifyCh = ch
-	c := MakeCluster(1, t, conf)
+	c, err := MakeCluster(1, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Watch leaderCh for change
@@ -2181,7 +2232,8 @@ func TestRaft_NotifyCh(t *testing.T) {
 }
 
 func TestRaft_AppendEntry(t *testing.T) {
-	c := MakeCluster(3, t, nil)
+	c, err := MakeCluster(3, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 	followers := c.Followers()
 	ldr := c.Leader()
@@ -2270,13 +2322,15 @@ func TestRaft_PreVoteMixedCluster(t *testing.T) {
 
 			conf := inmemConfig(t)
 			conf.PreVoteDisabled = tc.prevoteNum <= tc.noprevoteNum
-			c := MakeCluster(majority, t, conf)
+			c, err := MakeCluster(majority, t, conf)
+			require.NoError(t, err)
 			defer c.Close()
 
 			// Set up another server speaking protocol version 2.
 			conf = inmemConfig(t)
 			conf.PreVoteDisabled = tc.prevoteNum >= tc.noprevoteNum
-			c1 := MakeClusterNoBootstrap(minority, t, conf)
+			c1, err := MakeClusterNoBootstrap(minority, t, conf)
+			require.NoError(t, err)
 
 			// Merge clusters.
 			c.Merge(c1)
@@ -2305,7 +2359,8 @@ func TestRaft_PreVoteAvoidElectionWithPartition(t *testing.T) {
 	// Make a prevote cluster.
 	conf := inmemConfig(t)
 	conf.PreVoteDisabled = false
-	c := MakeCluster(5, t, conf)
+	c, err := MakeCluster(5, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
 
 	oldLeaderTerm := c.Leader().getCurrentTerm()
@@ -2335,7 +2390,8 @@ func TestRaft_PreVoteAvoidElectionWithPartition(t *testing.T) {
 func TestRaft_VotingGrant_WhenLeaderAvailable(t *testing.T) {
 	conf := inmemConfig(t)
 	conf.ProtocolVersion = 3
-	c := MakeCluster(3, t, conf)
+	c, err := MakeCluster(3, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
 	followers := c.Followers()
 	ldr := c.Leader()
@@ -2380,7 +2436,8 @@ func TestRaft_VotingGrant_WhenLeaderAvailable(t *testing.T) {
 }
 
 func TestRaft_ProtocolVersion_RejectRPC(t *testing.T) {
-	c := MakeCluster(3, t, nil)
+	c, err := MakeCluster(3, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 	followers := c.Followers()
 	ldr := c.Leader()
@@ -2398,7 +2455,7 @@ func TestRaft_ProtocolVersion_RejectRPC(t *testing.T) {
 
 	// Reject a message from a future version we don't understand.
 	var resp RequestVoteResponse
-	err := ldrT.RequestVote(followers[0].localID, followers[0].localAddr, &reqVote, &resp)
+	err = ldrT.RequestVote(followers[0].localID, followers[0].localAddr, &reqVote, &resp)
 	if err == nil || !strings.Contains(err.Error(), "protocol version") {
 		t.Fatalf("expected RPC to get rejected: %v", err)
 	}
@@ -2415,13 +2472,15 @@ func TestRaft_ProtocolVersion_Upgrade_1_2(t *testing.T) {
 	// Make a cluster back on protocol version 1.
 	conf := inmemConfig(t)
 	conf.ProtocolVersion = 1
-	c := MakeCluster(2, t, conf)
+	c, err := MakeCluster(2, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Set up another server speaking protocol version 2.
 	conf = inmemConfig(t)
 	conf.ProtocolVersion = 2
-	c1 := MakeClusterNoBootstrap(1, t, conf)
+	c1, err := MakeClusterNoBootstrap(1, t, conf)
+	require.NoError(t, err)
 
 	// Merge clusters.
 	c.Merge(c1)
@@ -2458,14 +2517,16 @@ func TestRaft_ProtocolVersion_Upgrade_2_3(t *testing.T) {
 	// Make a cluster back on protocol version 2.
 	conf := inmemConfig(t)
 	conf.ProtocolVersion = 2
-	c := MakeCluster(2, t, conf)
+	c, err := MakeCluster(2, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
 	oldAddr := c.Followers()[0].localAddr
 
 	// Set up another server speaking protocol version 3.
 	conf = inmemConfig(t)
 	conf.ProtocolVersion = 3
-	c1 := MakeClusterNoBootstrap(1, t, conf)
+	c1, err := MakeClusterNoBootstrap(1, t, conf)
+	require.NoError(t, err)
 
 	// Merge clusters.
 	c.Merge(c1)
@@ -2491,9 +2552,10 @@ func TestRaft_ProtocolVersion_Upgrade_2_3(t *testing.T) {
 func TestRaft_LeaderID_Propagated(t *testing.T) {
 	// Make a cluster on protocol version 3.
 	conf := inmemConfig(t)
-	c := MakeCluster(3, t, conf)
+	c, err := MakeCluster(3, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
-	err := waitForLeader(c)
+	err = waitForLeader(c)
 	require.NoError(t, err)
 
 	for _, n := range c.rafts {
@@ -2578,13 +2640,14 @@ func TestRaft_LeadershipTransferPickServer(t *testing.T) {
 }
 
 func TestRaft_LeadershipTransfer(t *testing.T) {
-	c := MakeCluster(3, t, nil)
+	c, err := MakeCluster(3, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	oldLeader := string(c.Leader().localID)
-	err := c.Leader().LeadershipTransfer()
-	if err.Error() != nil {
-		t.Fatalf("Didn't expect error: %v", err.Error())
+	future := c.Leader().LeadershipTransfer()
+	if future.Error() != nil {
+		t.Fatalf("Didn't expect error: %v", future.Error())
 	}
 	newLeader := string(c.Leader().localID)
 	if oldLeader == newLeader {
@@ -2593,7 +2656,8 @@ func TestRaft_LeadershipTransfer(t *testing.T) {
 }
 
 func TestRaft_LeadershipTransferWithOneNode(t *testing.T) {
-	c := MakeCluster(1, t, nil)
+	c, err := MakeCluster(1, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	future := c.Leader().LeadershipTransfer()
@@ -2611,7 +2675,8 @@ func TestRaft_LeadershipTransferWithOneNode(t *testing.T) {
 func TestRaft_LeadershipTransferWithWrites(t *testing.T) {
 	conf := inmemConfig(t)
 	conf.Logger = hclog.New(&hclog.LoggerOptions{Level: hclog.Trace})
-	c := MakeCluster(7, t, conf)
+	c, err := MakeCluster(7, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
 
 	doneCh := make(chan struct{})
@@ -2664,7 +2729,8 @@ func TestRaft_LeadershipTransferWithWrites(t *testing.T) {
 }
 
 func TestRaft_LeadershipTransferWithSevenNodes(t *testing.T) {
-	c := MakeCluster(7, t, nil)
+	c, err := MakeCluster(7, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	follower := c.GetInState(Follower)[0]
@@ -2678,7 +2744,8 @@ func TestRaft_LeadershipTransferWithSevenNodes(t *testing.T) {
 }
 
 func TestRaft_LeadershipTransferToInvalidID(t *testing.T) {
-	c := MakeCluster(3, t, nil)
+	c, err := MakeCluster(3, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	future := c.Leader().LeadershipTransferToServer(ServerID("abc"), ServerAddress("localhost"))
@@ -2694,7 +2761,8 @@ func TestRaft_LeadershipTransferToInvalidID(t *testing.T) {
 }
 
 func TestRaft_LeadershipTransferToInvalidAddress(t *testing.T) {
-	c := MakeCluster(3, t, nil)
+	c, err := MakeCluster(3, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	follower := c.GetInState(Follower)[0]
@@ -2710,7 +2778,8 @@ func TestRaft_LeadershipTransferToInvalidAddress(t *testing.T) {
 }
 
 func TestRaft_LeadershipTransferToBehindServer(t *testing.T) {
-	c := MakeCluster(3, t, nil)
+	c, err := MakeCluster(3, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	l := c.Leader()
@@ -2731,7 +2800,8 @@ func TestRaft_LeadershipTransferToBehindServer(t *testing.T) {
 }
 
 func TestRaft_LeadershipTransferToItself(t *testing.T) {
-	c := MakeCluster(3, t, nil)
+	c, err := MakeCluster(3, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	l := c.Leader()
@@ -2748,7 +2818,8 @@ func TestRaft_LeadershipTransferToItself(t *testing.T) {
 }
 
 func TestRaft_LeadershipTransferLeaderRejectsClientRequests(t *testing.T) {
-	c := MakeCluster(3, t, nil)
+	c, err := MakeCluster(3, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 	l := c.Leader()
 	l.setLeadershipTransferInProgress(true)
@@ -2782,7 +2853,8 @@ func TestRaft_LeadershipTransferLeaderRejectsClientRequests(t *testing.T) {
 }
 
 func TestRaft_LeadershipTransferLeaderReplicationTimeout(t *testing.T) {
-	c := MakeCluster(3, t, nil)
+	c, err := MakeCluster(3, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	l := c.Leader()
@@ -2812,7 +2884,8 @@ func TestRaft_LeadershipTransferLeaderReplicationTimeout(t *testing.T) {
 }
 
 func TestRaft_LeadershipTransferIgnoresNonvoters(t *testing.T) {
-	c := MakeCluster(2, t, nil)
+	c, err := MakeCluster(2, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	follower := c.Followers()[0]
@@ -2849,7 +2922,8 @@ func TestRaft_LeadershipTransferStopRightAway(t *testing.T) {
 }
 
 func TestRaft_GetConfigurationNoBootstrap(t *testing.T) {
-	c := MakeCluster(2, t, nil)
+	c, err := MakeCluster(2, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Should be one leader
@@ -2886,7 +2960,8 @@ func TestRaft_GetConfigurationNoBootstrap(t *testing.T) {
 }
 
 func TestRaft_LogStoreIsMonotonic(t *testing.T) {
-	c := MakeCluster(1, t, nil)
+	c, err := MakeCluster(1, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Should be one leader
@@ -2921,7 +2996,8 @@ func TestRaft_LogStoreIsMonotonic(t *testing.T) {
 }
 
 func TestRaft_CacheLogWithStoreError(t *testing.T) {
-	c := MakeCluster(2, t, nil)
+	c, err := MakeCluster(2, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Should be one leader
@@ -2973,7 +3049,8 @@ func TestRaft_CacheLogWithStoreError(t *testing.T) {
 func TestRaft_ReloadConfig(t *testing.T) {
 	conf := inmemConfig(t)
 	conf.LeaderLeaseTimeout = 40 * time.Millisecond
-	c := MakeCluster(1, t, conf)
+	c, err := MakeCluster(1, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
 	raft := c.rafts[0]
 
@@ -3003,7 +3080,8 @@ func TestRaft_ReloadConfig(t *testing.T) {
 
 func TestRaft_ReloadConfigValidates(t *testing.T) {
 	conf := inmemConfig(t)
-	c := MakeCluster(1, t, conf)
+	c, err := MakeCluster(1, t, conf)
+	require.NoError(t, err)
 	defer c.Close()
 	raft := c.rafts[0]
 
@@ -3079,8 +3157,8 @@ func TestRaft_InstallSnapshot_InvalidPeers(t *testing.T) {
 
 func TestRaft_VoteNotGranted_WhenNodeNotInCluster(t *testing.T) {
 	// Make a cluster
-	c := MakeCluster(3, t, nil)
-
+	c, err := MakeCluster(3, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Get the leader
@@ -3151,8 +3229,8 @@ func TestRaft_VoteNotGranted_WhenNodeNotInCluster(t *testing.T) {
 
 func TestRaft_ClusterCanRegainStability_WhenNonVoterWithHigherTermJoin(t *testing.T) {
 	// Make a cluster
-	c := MakeCluster(3, t, nil)
-
+	c, err := MakeCluster(3, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Get the leader
@@ -3246,10 +3324,10 @@ func TestRaft_FollowerRemovalNoElection(t *testing.T) {
 	inmemConf := inmemConfig(t)
 	inmemConf.HeartbeatTimeout = 100 * time.Millisecond
 	inmemConf.ElectionTimeout = 100 * time.Millisecond
-	c := MakeCluster(3, t, inmemConf)
-
+	c, err := MakeCluster(3, t, inmemConf)
+	require.NoError(t, err)
 	defer c.Close()
-	err := waitForLeader(c)
+	err = waitForLeader(c)
 	require.NoError(t, err)
 	leader := c.Leader()
 
@@ -3399,9 +3477,10 @@ func TestRaft_runFollower_ReloadTimeoutConfigs(t *testing.T) {
 
 func TestRaft_PreVote_ShouldNotRejectLeader(t *testing.T) {
 	// Make a cluster
-	c := MakeCluster(3, t, nil)
+	c, err := MakeCluster(3, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
-	err := waitForLeader(c)
+	err = waitForLeader(c)
 	require.NoError(t, err)
 	leader := c.Leader()
 
@@ -3429,7 +3508,7 @@ func TestRaft_PreVote_ShouldNotRejectLeader(t *testing.T) {
 
 	var resp RequestPreVoteResponse
 	leaderT := c.trans[c.IndexOf(leader)]
-	if err := leaderT.RequestPreVote(follower.localID, follower.localAddr, &reqPreVote, &resp); err != nil {
+	if err = leaderT.RequestPreVote(follower.localID, follower.localAddr, &reqPreVote, &resp); err != nil {
 		t.Fatalf("RequestPreVote RPC failed %v", err)
 	}
 
@@ -3441,9 +3520,10 @@ func TestRaft_PreVote_ShouldNotRejectLeader(t *testing.T) {
 
 func TestRaft_PreVote_ShouldRejectNonLeader(t *testing.T) {
 	// Make a cluster
-	c := MakeCluster(3, t, nil)
+	c, err := MakeCluster(3, t, nil)
+	require.NoError(t, err)
 	defer c.Close()
-	err := waitForLeader(c)
+	err = waitForLeader(c)
 	require.NoError(t, err)
 
 	// Wait until we have 2 followers
