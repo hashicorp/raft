@@ -218,8 +218,8 @@ type Raft struct {
 	// prevote feature is disabled if set to true.
 	preVoteDisabled bool
 
-	// RestoreCommittedLogs is used to enable fast recovery mode
-	// fast recovery mode is disabled if set to false.
+	// RestoreCommittedLogs is used to enable restore committed logs mode
+	// restore committed logs mode is disabled if set to false.
 	RestoreCommittedLogs bool
 }
 

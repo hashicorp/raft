@@ -235,8 +235,8 @@ type Config struct {
 	// PreVoteDisabled deactivate the pre-vote feature when set to true
 	PreVoteDisabled bool
 
-	// RestoreCommittedLogs controls if the Raft server should use the fast recovery
-	// mechanism. Fast recovery requires a LogStore implementation that
+	// RestoreCommittedLogs controls if the Raft server should use the restore committed logs
+	// mechanism. Restore committed logs requires a LogStore implementation that
 	// support commit tracking. When such a store is used and this config
 	// enabled, raft nodes will replay all known-committed logs on disk
 	// before completing `NewRaft` on startup. This is mainly useful where

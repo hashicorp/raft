@@ -1388,7 +1388,7 @@ func (r *Raft) prepareLog(l *Log, future *logFuture) *commitTuple {
 	return nil
 }
 
-// tryStageCommitIndex updates the commit index in persist store if fast recovery is enabled and log store implements CommitTrackingLogStore.
+// tryStageCommitIndex updates the commit index in persist store if restore committed logs is enabled and log store implements CommitTrackingLogStore.
 func (r *Raft) tryStageCommitIndex(commitIndex uint64) {
 	if !r.RestoreCommittedLogs {
 		return
