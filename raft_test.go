@@ -1303,6 +1303,21 @@ func TestRaft_RestoreCommittedLogs(t *testing.T) {
 	assert.LessOrEqual(t, commitIdx, lastIdx)
 }
 
+func TestRaft_RestoreCommittedLogs_IncompatibleLogStore(t *testing.T) {
+	// Make the cluster
+	conf := inmemConfig(t)
+	conf.TrailingLogs = 10
+	conf.RestoreCommittedLogs = true
+	opts := &MakeClusterOpts{
+		Peers:              1,
+		Bootstrap:          true,
+		Conf:               conf,
+		CommitTrackingLogs: false,
+	}
+	_, err := MakeClusterCustom(t, opts)
+	require.ErrorIs(t, err, ErrIncompatibleLogStore)
+}
+
 func TestRaft_SnapshotRestore_Progress(t *testing.T) {
 	// Make the cluster
 	conf := inmemConfig(t)
