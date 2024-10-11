@@ -209,5 +209,9 @@ type CommitTrackingLogStore interface {
 	//
 	// idx is the new commit index to stage.
 	StageCommitIndex(idx uint64) error
+
+	// GetCommitIndex returns the latest persisted commit index from the latest log entry
+	// in the store at startup.
+	// It is ok to return a value higher than the last index in the log (But it should never happen).
 	GetCommitIndex() (uint64, error)
 }
