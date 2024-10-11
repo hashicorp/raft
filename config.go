@@ -243,6 +243,9 @@ type Config struct {
 	// the application allows relaxed-consistency reads from followers as it
 	// will reduce how far behind the follower's FSM is when it starts. If all reads
 	// are forwarded to the leader then there won't be observable benefit from this feature.
+	//
+	// Notice: If this is enabled, the log store MUST implement the CommitTrackingLogStore
+	// interface. Otherwise, Raft will fail to start and return ErrIncompatibleLogStore.
 	RestoreCommittedLogs bool
 
 	// skipStartup allows NewRaft() to bypass all background work goroutines
