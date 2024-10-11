@@ -594,7 +594,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		return nil, err
 	}
 
-	if err := r.recoverFromCommittedLogs(); err != nil {
+	if err := r.restoreFromCommittedLogs(); err != nil {
 		return nil, err
 	}
 
@@ -711,8 +711,8 @@ func (r *Raft) tryRestoreSingleSnapshot(snapshot *SnapshotMeta) bool {
 	return true
 }
 
-// recoverFromCommittedLogs recovers the Raft node from committed logs.
-func (r *Raft) recoverFromCommittedLogs() error {
+// restoreFromCommittedLogs recovers the Raft node from committed logs.
+func (r *Raft) restoreFromCommittedLogs() error {
 	if !r.RestoreCommittedLogs {
 		return nil
 	}
