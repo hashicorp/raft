@@ -73,6 +73,10 @@ var (
 	// ErrLeadershipTransferInProgress is returned when the leader is rejecting
 	// client requests because it is attempting to transfer leadership.
 	ErrLeadershipTransferInProgress = errors.New("leadership transfer in progress")
+
+	// ErrIncompatibleLogStore is returned when the log store does not support
+	// or implement some required methods.
+	ErrIncompatibleLogStore = errors.New("log store does not implement some required methods or malformed")
 )
 
 // Raft implements a Raft node.
@@ -590,7 +594,9 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		return nil, err
 	}
 
-	r.recoverFromCommittedLogs()
+	if err := r.recoverFromCommittedLogs(); err != nil {
+		return nil, err
+	}
 
 	// Scan through the log for any configuration change entries.
 	snapshotIndex, _ := r.getLastSnapshot()
@@ -706,29 +712,29 @@ func (r *Raft) tryRestoreSingleSnapshot(snapshot *SnapshotMeta) bool {
 }
 
 // recoverFromCommittedLogs recovers the Raft node from committed logs.
-func (r *Raft) recoverFromCommittedLogs() {
+func (r *Raft) recoverFromCommittedLogs() error {
 	if !r.RestoreCommittedLogs {
-		return
+		return nil
 	}
 
 	// If the store implements CommitTrackingLogStore, we can read the commit index from the store.
 	// This is useful when the store is able to track the commit index and we can avoid replaying logs.
 	store, ok := r.logs.(CommitTrackingLogStore)
 	if !ok {
-		r.logger.Warn("fast recovery enabled but log store does not support it", "log_store", fmt.Sprintf("%T", r.logs))
-		return
+		r.logger.Warn("restore committed logs enabled but log store does not support it", "log_store", fmt.Sprintf("%T", r.logs))
+		return ErrIncompatibleLogStore
 	}
 
 	commitIndex, err := store.GetCommitIndex()
 	if err != nil {
 		r.logger.Error("failed to get commit index from store", "error", err)
-		panic(err)
+		return err
 	}
 
 	lastIndex, err := r.logs.LastIndex()
 	if err != nil {
 		r.logger.Error("failed to get last log index from store", "error", err)
-		panic(err)
+		return err
 	}
 	if commitIndex > lastIndex {
 		commitIndex = lastIndex
@@ -736,6 +742,7 @@ func (r *Raft) recoverFromCommittedLogs() {
 
 	r.setCommitIndex(commitIndex)
 	r.processLogs(commitIndex, nil)
+	return nil
 }
 
 func (r *Raft) config() Config {
