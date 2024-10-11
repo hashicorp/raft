@@ -218,9 +218,9 @@ type Raft struct {
 	// prevote feature is disabled if set to true.
 	preVoteDisabled bool
 
-	// fastRecovery is used to enable fast recovery mode
+	// RestoreCommittedLogs is used to enable fast recovery mode
 	// fast recovery mode is disabled if set to false.
-	fastRecovery bool
+	RestoreCommittedLogs bool
 }
 
 // BootstrapCluster initializes a server's storage with the given cluster
@@ -570,7 +570,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		followerNotifyCh:      make(chan struct{}, 1),
 		mainThreadSaturation:  newSaturationMetric([]string{"raft", "thread", "main", "saturation"}, 1*time.Second),
 		preVoteDisabled:       conf.PreVoteDisabled || !transportSupportPreVote,
-		fastRecovery:          conf.FastRecovery,
+		RestoreCommittedLogs:  conf.RestoreCommittedLogs,
 	}
 	if !transportSupportPreVote && !conf.PreVoteDisabled {
 		r.logger.Warn("pre-vote is disabled because it is not supported by the Transport")
@@ -707,7 +707,7 @@ func (r *Raft) tryRestoreSingleSnapshot(snapshot *SnapshotMeta) bool {
 
 // recoverFromCommittedLogs recovers the Raft node from committed logs.
 func (r *Raft) recoverFromCommittedLogs() {
-	if !r.fastRecovery {
+	if !r.RestoreCommittedLogs {
 		return
 	}
 

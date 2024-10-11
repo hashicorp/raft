@@ -235,7 +235,7 @@ type Config struct {
 	// PreVoteDisabled deactivate the pre-vote feature when set to true
 	PreVoteDisabled bool
 
-	// FastRecovery controls if the Raft server should use the fast recovery
+	// RestoreCommittedLogs controls if the Raft server should use the fast recovery
 	// mechanism. Fast recovery requires a LogStore implementation that
 	// support commit tracking. When such a store is used and this config
 	// enabled, raft nodes will replay all known-committed logs on disk
@@ -243,7 +243,7 @@ type Config struct {
 	// the application allows relaxed-consistency reads from followers as it
 	// will reduce how far behind the follower's FSM is when it starts. If all reads
 	// are forwarded to the leader then there won't be observable benefit from this feature.
-	FastRecovery bool
+	RestoreCommittedLogs bool
 
 	// skipStartup allows NewRaft() to bypass all background work goroutines
 	skipStartup bool

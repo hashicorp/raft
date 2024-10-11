@@ -1177,11 +1177,11 @@ func TestRaft_RestoreSnapshotOnStartup_CommitTrackingLogs(t *testing.T) {
 	assert.Equal(t, lastIdx, last)
 }
 
-func TestRaft_FastRecovery(t *testing.T) {
+func TestRaft_RestoreCommittedLogs(t *testing.T) {
 	// Make the cluster
 	conf := inmemConfig(t)
 	conf.TrailingLogs = 10
-	conf.FastRecovery = true
+	conf.RestoreCommittedLogs = true
 	opts := &MakeClusterOpts{
 		Peers:              1,
 		Bootstrap:          true,
@@ -1227,7 +1227,7 @@ func TestRaft_FastRecovery(t *testing.T) {
 		t.Fatalf("should trim logs to %d: but is %d", snap.Index-conf.TrailingLogs+1, firstIdx)
 	}
 
-	// Commit a lot of things (for fast recovery test)
+	// Commit a lot of things (for restore committed logs test)
 	for i := 0; i < 100; i++ {
 		future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
 	}
