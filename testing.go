@@ -759,7 +759,7 @@ func makeCluster(t *testing.T, opts *MakeClusterOpts) (*cluster, error) {
 		dir, err := os.MkdirTemp("", "raft")
 		if err != nil {
 			if opts.PropagateError {
-				return nil, fmt.Errorf("failed to create temp dir: %v", err)
+				return nil, fmt.Errorf("failed to create temp dir: %w", err)
 			}
 			t.Fatalf("err: %v", err)
 		}
@@ -824,7 +824,7 @@ func makeCluster(t *testing.T, opts *MakeClusterOpts) (*cluster, error) {
 			err := BootstrapCluster(peerConf, logs, store, snap, trans, configuration)
 			if err != nil {
 				if opts.PropagateError {
-					return nil, fmt.Errorf("BootstrapCluster failed: %v", err)
+					return nil, fmt.Errorf("BootstrapCluster failed: %w", err)
 				}
 				t.Fatalf("BootstrapCluster failed: %v", err)
 			}
@@ -833,13 +833,16 @@ func makeCluster(t *testing.T, opts *MakeClusterOpts) (*cluster, error) {
 		raft, err := NewRaft(peerConf, c.fsms[i], logs, store, snap, trans)
 		if err != nil {
 			if opts.PropagateError {
-				return nil, fmt.Errorf("NewRaft failed: %v", err)
+				return nil, fmt.Errorf("NewRaft failed: %w", err)
 			}
 			t.Fatalf("NewRaft failed: %v", err)
 		}
 
 		raft.RegisterObserver(NewObserver(c.observationCh, false, nil))
 		if err != nil {
+			if opts.PropagateError {
+				return nil, fmt.Errorf("RegisterObserver failed: %w", err)
+			}
 			t.Fatalf("RegisterObserver failed: %v", err)
 		}
 		c.rafts = append(c.rafts, raft)
