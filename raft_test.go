@@ -621,27 +621,30 @@ func TestRaft_JoinNode(t *testing.T) {
 func TestRaft_JoinNode_ConfigStore(t *testing.T) {
 	// Make a cluster
 	conf := inmemConfig(t)
-	c := makeCluster(t, &MakeClusterOpts{
+	c, err := makeCluster(t, &MakeClusterOpts{
 		Peers:          1,
 		Bootstrap:      true,
 		Conf:           conf,
 		ConfigStoreFSM: true,
 	})
+	require.NoError(t, err)
 	defer c.Close()
 
 	// Make a new nodes
-	c1 := makeCluster(t, &MakeClusterOpts{
+	c1, err := makeCluster(t, &MakeClusterOpts{
 		Peers:          1,
 		Bootstrap:      false,
 		Conf:           conf,
 		ConfigStoreFSM: true,
 	})
-	c2 := makeCluster(t, &MakeClusterOpts{
+	require.NoError(t, err)
+	c2, err := makeCluster(t, &MakeClusterOpts{
 		Peers:          1,
 		Bootstrap:      false,
 		Conf:           conf,
 		ConfigStoreFSM: true,
 	})
+	require.NoError(t, err)
 
 	// Merge clusters
 	c.Merge(c1)
@@ -1284,7 +1287,7 @@ func TestRaft_RestoreCommittedLogs_IncompatibleLogStore(t *testing.T) {
 		Conf:               conf,
 		CommitTrackingLogs: false,
 	}
-	_, err := MakeClusterCustom(t, opts)
+	_, err := MakeClusterCustomWithErr(t, opts)
 	require.ErrorIs(t, err, ErrIncompatibleLogStore)
 }
 
