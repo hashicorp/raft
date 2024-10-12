@@ -731,7 +731,7 @@ type MakeClusterOpts struct {
 // If bootstrap is true, the servers will know about each other before starting,
 // otherwise their transports will be wired up but they won't yet have configured
 // each other.
-func makeCluster(t *testing.T, opts *MakeClusterOpts) (*cluster, error) {
+func makeCluster(t *testing.T, opts *MakeClusterOpts) *cluster {
 	if opts.Conf == nil {
 		opts.Conf = inmemConfig(t)
 	}
@@ -757,8 +757,7 @@ func makeCluster(t *testing.T, opts *MakeClusterOpts) (*cluster, error) {
 	for i := 0; i < opts.Peers; i++ {
 		dir, err := os.MkdirTemp("", "raft")
 		if err != nil {
-			t.Logf("err: %v", err)
-			return nil, err
+			t.Fatalf("err: %v", err)
 		}
 
 		store := NewInmemStore()
@@ -820,30 +819,27 @@ func makeCluster(t *testing.T, opts *MakeClusterOpts) (*cluster, error) {
 		if opts.Bootstrap {
 			err := BootstrapCluster(peerConf, logs, store, snap, trans, configuration)
 			if err != nil {
-				t.Logf("BootstrapCluster failed: %v", err)
-				return nil, err
+				t.Fatalf("BootstrapCluster failed: %v", err)
 			}
 		}
 
 		raft, err := NewRaft(peerConf, c.fsms[i], logs, store, snap, trans)
 		if err != nil {
-			t.Logf("NewRaft failed: %v", err)
-			return nil, err
+			t.Fatalf("NewRaft failed: %v", err)
 		}
 
 		raft.RegisterObserver(NewObserver(c.observationCh, false, nil))
 		if err != nil {
-			t.Logf("RegisterObserver failed: %v", err)
-			return nil, err
+			t.Fatalf("RegisterObserver failed: %v", err)
 		}
 		c.rafts = append(c.rafts, raft)
 	}
 
-	return c, nil
+	return c
 }
 
 // NOTE: This is exposed for middleware testing purposes and is not a stable API
-func MakeCluster(n int, t *testing.T, conf *Config) (*cluster, error) {
+func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 	return makeCluster(t, &MakeClusterOpts{
 		Peers:     n,
 		Bootstrap: true,
@@ -852,7 +848,7 @@ func MakeCluster(n int, t *testing.T, conf *Config) (*cluster, error) {
 }
 
 // NOTE: This is exposed for middleware testing purposes and is not a stable API
-func MakeClusterNoBootstrap(n int, t *testing.T, conf *Config) (*cluster, error) {
+func MakeClusterNoBootstrap(n int, t *testing.T, conf *Config) *cluster {
 	return makeCluster(t, &MakeClusterOpts{
 		Peers: n,
 		Conf:  conf,
@@ -860,7 +856,7 @@ func MakeClusterNoBootstrap(n int, t *testing.T, conf *Config) (*cluster, error)
 }
 
 // NOTE: This is exposed for middleware testing purposes and is not a stable API
-func MakeClusterCustom(t *testing.T, opts *MakeClusterOpts) (*cluster, error) {
+func MakeClusterCustom(t *testing.T, opts *MakeClusterOpts) *cluster {
 	return makeCluster(t, opts)
 }
 
