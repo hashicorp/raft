@@ -212,6 +212,10 @@ type CommitTrackingLogStore interface {
 
 	// GetCommitIndex returns the latest persisted commit index from the latest log entry
 	// in the store at startup.
-	// It is ok to return a value higher than the last index in the log (But it should never happen).
+	//
+	// GetCommitIndex should not return a value higher than the last index in the log.
+	// If that happens, the last index in the log will be used.
+	//
+	// When no commit index is found in the log store, return (0, nil).
 	GetCommitIndex() (uint64, error)
 }
