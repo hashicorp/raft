@@ -813,6 +813,12 @@ func (r *Raft) leaderLoop() {
 					break
 				}
 
+				// Update the Noop commit index so clients know the index
+				// at which leadership was conclusively established.
+				if commitLog.log.Type == LogNoop {
+					r.setNoopCommitindex(commitLog.log.Index)
+				}
+
 				// Measure the commit time
 				metrics.MeasureSince([]string{"raft", "commitTime"}, commitLog.dispatch)
 				groupReady = append(groupReady, e)
