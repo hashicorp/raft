@@ -185,6 +185,11 @@ func (r *Raft) runFollower() {
 			// Reject any operations since we are not the leader
 			v.respond(ErrNotLeader)
 
+		case v := <-r.assertedCh:
+			r.mainThreadSaturation.working()
+			// Reject any operations since we are not the leader
+			v.respond(ErrNotLeader)
+
 		case ur := <-r.userRestoreCh:
 			r.mainThreadSaturation.working()
 			// Reject any restores since we are not the leader
@@ -394,6 +399,11 @@ func (r *Raft) runCandidate() {
 			a.respond(ErrNotLeader)
 
 		case v := <-r.verifyCh:
+			r.mainThreadSaturation.working()
+			// Reject any operations since we are not the leader
+			v.respond(ErrNotLeader)
+
+		case v := <-r.assertedCh:
 			r.mainThreadSaturation.working()
 			// Reject any operations since we are not the leader
 			v.respond(ErrNotLeader)
@@ -676,6 +686,8 @@ func (r *Raft) leaderLoop() {
 	// based on the current config value.
 	lease := time.After(r.config().LeaderLeaseTimeout)
 
+	leadershipAsserted := false
+
 	for r.getState() == Leader {
 		r.mainThreadSaturation.sleeping()
 
@@ -788,6 +800,9 @@ func (r *Raft) leaderLoop() {
 			oldCommitIndex := r.getCommitIndex()
 			commitIndex := r.leaderState.commitment.getCommitIndex()
 			r.setCommitIndex(commitIndex)
+			if !leadershipAsserted {
+				leadershipAsserted = true
+			}
 
 			// New configuration has been committed, set it as the committed
 			// value.
@@ -868,6 +883,12 @@ func (r *Raft) leaderLoop() {
 				}
 				v.respond(nil)
 			}
+
+		case v := <-r.assertedCh:
+			r.mainThreadSaturation.working()
+			v.asserted = leadershipAsserted
+			v.term = r.getCurrentTerm()
+			v.respond(nil)
 
 		case future := <-r.userRestoreCh:
 			r.mainThreadSaturation.working()
