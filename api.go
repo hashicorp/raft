@@ -188,6 +188,10 @@ type Raft struct {
 	// to verify we are still the leader
 	verifyCh chan *verifyFuture
 
+	// assertedCh is used to check if the leader has fully asserted leadership.
+	// A leader does this by committing an entry to the log in the current term.
+	assertedCh chan *assertedFuture
+
 	// configurationsCh is used to get the configuration data safely from
 	// outside of the main thread.
 	configurationsCh chan *configurationsFuture
@@ -558,6 +562,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		stable:                stable,
 		trans:                 trans,
 		verifyCh:              make(chan *verifyFuture, 64),
+		assertedCh:            make(chan *assertedFuture, 64),
 		configurationsCh:      make(chan *configurationsFuture, 8),
 		bootstrapCh:           make(chan *bootstrapFuture),
 		observers:             make(map[uint64]*Observer),
@@ -881,6 +886,25 @@ func (r *Raft) VerifyLeader() Future {
 	case r.verifyCh <- verifyFuture:
 		return verifyFuture
 	}
+}
+
+// VerifyAssertedLeadership is used to check if the node, if acting as a leader,
+// has fully asserted leadership by committing an entry in this term. The returned
+// future indicates the term for which leadership has been asserted.
+//
+// Since this call may be relatively slow, it is not suitable for code paths that
+// require low latency. One suggested way to use it is to call this once per term,
+// storing the returned state in a variable. Once leadership has been asserted for
+// a term, the state will not change, so there is no need to call this again for
+// the same term.
+//
+// Must be run on the leader, or it will fail.
+func (r *Raft) VerifyAssertedLeadership() AssertedFuture {
+	metrics.IncrCounter([]string{"raft", "verify_asserted_leadership"}, 1)
+	assertedFuture := &assertedFuture{}
+	assertedFuture.init()
+	r.assertedCh <- assertedFuture
+	return assertedFuture
 }
 
 // GetConfiguration returns the latest configuration. This may not yet be
