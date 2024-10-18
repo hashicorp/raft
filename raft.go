@@ -686,8 +686,8 @@ func (r *Raft) leaderLoop() {
 	// based on the current config value.
 	lease := time.After(r.config().LeaderLeaseTimeout)
 
-	// Track whether leadership has been asserted. This is true as long
-	// as the leader has committed at least one log in this term.
+	// Track whether leadership has been asserted. This is true once the leader
+	// commits log in the current term.
 	leadershipAsserted := false
 
 	for r.getState() == Leader {
