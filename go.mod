@@ -5,13 +5,14 @@ go 1.20
 retract v1.1.3 // Deleted original tag; module checksum may not be accurate.
 
 require (
-	github.com/armon/go-metrics v0.4.1
 	github.com/hashicorp/go-hclog v1.6.2
+	github.com/hashicorp/go-metrics v0.5.4-0.20241111182750-ceaacca141e7
 	github.com/hashicorp/go-msgpack/v2 v2.1.2
 	github.com/stretchr/testify v1.8.4
 )
 
 require (
+	github.com/armon/go-metrics v0.4.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/fatih/color v1.13.0 // indirect
 	github.com/hashicorp/go-immutable-radix v1.0.0 // indirect

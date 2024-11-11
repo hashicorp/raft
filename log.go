@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	metrics "github.com/armon/go-metrics"
+	metrics "github.com/hashicorp/go-metrics/compat"
 )
 
 // LogType describes various types of log entries.
