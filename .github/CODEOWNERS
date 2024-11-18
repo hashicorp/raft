@@ -2,7 +2,7 @@
 # More on CODEOWNERS files: https://help.github.com/en/github/creating-cloning-and-archiving-repositories/about-code-owners
 
 # Default owner
-* @hashicorp/team-ip-compliance
+* @hashicorp/team-ip-compliance @hashicorp/consul-core-reviewers @hashicorp/nomad-eng @hashicorp/raft-force
 
 # Add override rules below. Each line is a file/folder pattern followed by one or more owners.
 # Being an owner means those groups or individuals will be added as reviewers to PRs affecting
