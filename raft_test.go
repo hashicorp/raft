@@ -1971,6 +1971,87 @@ func TestRaft_VerifyLeader_PartialConnect(t *testing.T) {
 	}
 }
 
+func TestRaft_VerifyAssertedLeadership(t *testing.T) {
+	// Make the cluster
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	// Get the leader
+	leader := c.Leader()
+
+	time.Sleep(c.propagateTimeout)
+
+	// Check that leadership has been asserted.
+	asserted := leader.VerifyAssertedLeadership()
+
+	// Wait for the asserted to return
+	if err := asserted.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Verify that leadership has been asserted for the
+	// correct term.
+	if asserted.Asserted() != true {
+		t.Fatalf("expected leadership to be asserted")
+	}
+	if asserted.Term() != leader.getCurrentTerm() {
+		t.Fatalf("expected term %d, got %d", leader.getCurrentTerm(), asserted.Term())
+	}
+}
+
+func TestRaft_VerifyAssertedLeadership_Single(t *testing.T) {
+	// Make the cluster
+	c := MakeCluster(1, t, nil)
+	defer c.Close()
+
+	// Get the leader
+	leader := c.Leader()
+
+	time.Sleep(c.propagateTimeout)
+
+	// Check that leadership has been asserted.
+	asserted := leader.VerifyAssertedLeadership()
+
+	// Wait for the asserted to return
+	if err := asserted.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Verify that leadership has been asserted for the
+	// correct term.
+	if asserted.Asserted() != true {
+		t.Fatalf("expected leadership to be asserted")
+	}
+	if asserted.Term() != leader.getCurrentTerm() {
+		t.Fatalf("expected term %d, got %d", leader.getCurrentTerm(), asserted.Term())
+	}
+}
+
+func TestRaft_VerifyAssertedLeadership_Fail(t *testing.T) {
+	// Make the cluster
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	// Get the leader
+	leader := c.Leader()
+
+	time.Sleep(c.propagateTimeout)
+
+	// Check that leadership has been asserted.
+	asserted := leader.VerifyAssertedLeadership()
+
+	// Wait for the asserted to return
+	if err := asserted.Error(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Confirm that an error is received when called on a Follower.
+	follower := c.Followers()[0]
+	if err := follower.VerifyAssertedLeadership().Error(); err == nil {
+		t.Fatal("expected error asserting leadership on a Follower")
+	}
+}
+
 func TestRaft_NotifyCh(t *testing.T) {
 	ch := make(chan bool, 1)
 	conf := inmemConfig(t)
