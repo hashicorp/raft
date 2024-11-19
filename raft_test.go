@@ -907,7 +907,7 @@ func TestRaft_AddKnownPeer(t *testing.T) {
 	newConfig := configReq.configurations.committed
 	newConfigIdx := configReq.configurations.committedIndex
 	if newConfigIdx <= startingConfigIdx {
-		t.Fatalf("AddVoter should have written a new config entry, but configurations.commitedIndex still %d", newConfigIdx)
+		t.Fatalf("AddVoter should have written a new config entry, but configurations.committedIndex still %d", newConfigIdx)
 	}
 	if !reflect.DeepEqual(newConfig, startingConfig) {
 		t.Fatalf("[ERR} AddVoter with existing peer shouldn't have changed config, was %#v, but now %#v", startingConfig, newConfig)
@@ -946,7 +946,7 @@ func TestRaft_RemoveUnknownPeer(t *testing.T) {
 	newConfig := configReq.configurations.committed
 	newConfigIdx := configReq.configurations.committedIndex
 	if newConfigIdx <= startingConfigIdx {
-		t.Fatalf("RemoveServer should have written a new config entry, but configurations.commitedIndex still %d", newConfigIdx)
+		t.Fatalf("RemoveServer should have written a new config entry, but configurations.committedIndex still %d", newConfigIdx)
 	}
 	if !reflect.DeepEqual(newConfig, startingConfig) {
 		t.Fatalf("[ERR} RemoveServer with unknown peer shouldn't of changed config, was %#v, but now %#v", startingConfig, newConfig)
@@ -1515,7 +1515,7 @@ func snapshotAndRestore(t *testing.T, offset uint64, monotonicLogStore bool, res
 		expected = preIndex + 2
 	} else {
 		// restoring onto a new cluster should always have a last index based
-		// off of the snaphsot meta index
+		// off of the snapshot meta index
 		expected = meta.Index + 2
 	}
 
@@ -1527,7 +1527,7 @@ func snapshotAndRestore(t *testing.T, offset uint64, monotonicLogStore bool, res
 	// Ensure raft logs are removed for monotonic log stores but remain
 	// untouched for non-monotic (BoltDB) logstores.
 	// When first index = 1, then logs have remained untouched.
-	// When first indext is set to the next commit index / last index, then
+	// When first index is set to the next commit index / last index, then
 	// it means logs have been removed.
 	raftNodes := make([]*Raft, 0, numPeers+1)
 	raftNodes = append(raftNodes, leader)
@@ -2778,7 +2778,7 @@ func TestRaft_CacheLogWithStoreError(t *testing.T) {
 
 	// Shutdown follower
 	if f := follower.Shutdown(); f.Error() != nil {
-		t.Fatalf("error shuting down follower: %v", f.Error())
+		t.Fatalf("error shutting down follower: %v", f.Error())
 	}
 
 	// Try to restart the follower and make sure it does not fail with a LogNotFound error
@@ -2953,7 +2953,7 @@ func TestRaft_VoteNotGranted_WhenNodeNotInCluster(t *testing.T) {
 	// a follower that thinks there's a leader should vote for that leader.
 	var resp RequestVoteResponse
 
-	// partiton the leader to simulate an unstable cluster
+	// partition the leader to simulate an unstable cluster
 	c.Partition([]ServerAddress{leader.localAddr})
 	time.Sleep(c.propagateTimeout)
 
@@ -3097,7 +3097,7 @@ func TestRaft_FollowerRemovalNoElection(t *testing.T) {
 	t.Logf("[INFO] restarting %v", follower)
 	// Shutdown follower
 	if f := follower.Shutdown(); f.Error() != nil {
-		t.Fatalf("error shuting down follower: %v", f.Error())
+		t.Fatalf("error shutting down follower: %v", f.Error())
 	}
 
 	_, trans := NewInmemTransport(follower.localAddr)
