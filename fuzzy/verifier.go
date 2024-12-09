@@ -58,7 +58,7 @@ func (v *appendEntriesVerifier) PreAppendEntries(src, target string, req *raft.A
 	if ldr != src {
 		v.Lock()
 		defer v.Unlock()
-		v.errors = append(v.errors, fmt.Sprintf("Node %v sent an appendEnties request for term %d that said the leader was some other node %v", src, term, ldr))
+		v.errors = append(v.errors, fmt.Sprintf("Node %v sent an appendEntries request for term %d that said the leader was some other node %v", src, term, ldr))
 	}
 	v.RLock()
 	tl, exists := v.leaderForTerm[term]
