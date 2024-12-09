@@ -238,10 +238,10 @@ type Config struct {
 	// skipStartup allows NewRaft() to bypass all background work goroutines
 	skipStartup bool
 
-	// noLegacyTelemetry allow to skip the legacy metrics to avoid duplicates.
+	// NoLegacyTelemetry allow to skip the legacy metrics to avoid duplicates.
 	// legacy metrics are which has `_peer_name` as metric suffix instead as labels.
 	// e.g: raft_replication_heartbeat_peer0
-	noLegacyTelemetry bool
+	NoLegacyTelemetry bool
 }
 
 func (conf *Config) getOrCreateLogger() hclog.Logger {
