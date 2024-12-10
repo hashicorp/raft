@@ -348,7 +348,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	labels := []metrics.Label{{Name: "peer_id", Value: string(peer.ID)}}
 	metrics.MeasureSinceWithLabels([]string{"raft", "replication", "installSnapshot"}, start, labels)
 
-	if r.noLegacyTelemetry {
+	if !r.noLegacyTelemetry {
 		// Duplicated information. Kept for backward compatibility.
 		metrics.MeasureSince([]string{"raft", "replication", "installSnapshot", string(peer.ID)}, start)
 	}
@@ -427,7 +427,7 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 			labels := []metrics.Label{{Name: "peer_id", Value: string(peer.ID)}}
 			metrics.MeasureSinceWithLabels([]string{"raft", "replication", "heartbeat"}, start, labels)
 
-			if r.noLegacyTelemetry {
+			if !r.noLegacyTelemetry {
 				// Duplicated information. Kept for backward compatibility.
 				metrics.MeasureSince([]string{"raft", "replication", "heartbeat", string(peer.ID)}, start)
 			}
