@@ -217,6 +217,11 @@ type Raft struct {
 	// preVoteDisabled control if the pre-vote feature is activated,
 	// prevote feature is disabled if set to true.
 	preVoteDisabled bool
+
+	// noLegacyTelemetry allows to skip the legacy metrics to avoid duplicates.
+	// legacy metrics are those that have `_peer_name` as metric suffix instead as labels.
+	// e.g: raft_replication_heartbeat_peer0
+	noLegacyTelemetry bool
 }
 
 // BootstrapCluster initializes a server's storage with the given cluster
@@ -232,7 +237,8 @@ type Raft struct {
 // listing just itself as a Voter, then invoke AddVoter() on it to add other
 // servers to the cluster.
 func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
-	snaps SnapshotStore, trans Transport, configuration Configuration) error {
+	snaps SnapshotStore, trans Transport, configuration Configuration,
+) error {
 	// Validate the Raft server config.
 	if err := ValidateConfig(conf); err != nil {
 		return err
@@ -305,7 +311,8 @@ func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
 // the sole voter, and then join up other new clean-state peer servers using
 // the usual APIs in order to bring the cluster back into a known state.
 func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
-	snaps SnapshotStore, trans Transport, configuration Configuration) error {
+	snaps SnapshotStore, trans Transport, configuration Configuration,
+) error {
 	// Validate the Raft server config.
 	if err := ValidateConfig(conf); err != nil {
 		return err
@@ -436,7 +443,8 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 // without starting a Raft instance or connecting to the cluster. This function
 // has identical behavior to Raft.GetConfiguration.
 func GetConfiguration(conf *Config, fsm FSM, logs LogStore, stable StableStore,
-	snaps SnapshotStore, trans Transport) (Configuration, error) {
+	snaps SnapshotStore, trans Transport,
+) (Configuration, error) {
 	conf.skipStartup = true
 	r, err := NewRaft(conf, fsm, logs, stable, snaps, trans)
 	if err != nil {
@@ -566,6 +574,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		followerNotifyCh:      make(chan struct{}, 1),
 		mainThreadSaturation:  newSaturationMetric([]string{"raft", "thread", "main", "saturation"}, 1*time.Second),
 		preVoteDisabled:       conf.PreVoteDisabled || !transportSupportPreVote,
+		noLegacyTelemetry:     conf.NoLegacyTelemetry,
 	}
 	if !transportSupportPreVote && !conf.PreVoteDisabled {
 		r.logger.Warn("pre-vote is disabled because it is not supported by the Transport")

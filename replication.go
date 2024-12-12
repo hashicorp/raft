@@ -233,7 +233,7 @@ START:
 		s.failures++
 		return
 	}
-	appendStats(string(peer.ID), start, float32(len(req.Entries)))
+	appendStats(string(peer.ID), start, float32(len(req.Entries)), r.noLegacyTelemetry)
 
 	// Check for a newer term, stop running
 	if resp.Term > req.Term {
@@ -347,8 +347,11 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	}
 	labels := []metrics.Label{{Name: "peer_id", Value: string(peer.ID)}}
 	metrics.MeasureSinceWithLabels([]string{"raft", "replication", "installSnapshot"}, start, labels)
-	// Duplicated information. Kept for backward compatibility.
-	metrics.MeasureSince([]string{"raft", "replication", "installSnapshot", string(peer.ID)}, start)
+
+	if !r.noLegacyTelemetry {
+		// Duplicated information. Kept for backward compatibility.
+		metrics.MeasureSince([]string{"raft", "replication", "installSnapshot", string(peer.ID)}, start)
+	}
 
 	// Check for a newer term, stop running
 	if resp.Term > req.Term {
@@ -423,8 +426,12 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 			failures = 0
 			labels := []metrics.Label{{Name: "peer_id", Value: string(peer.ID)}}
 			metrics.MeasureSinceWithLabels([]string{"raft", "replication", "heartbeat"}, start, labels)
-			// Duplicated information. Kept for backward compatibility.
-			metrics.MeasureSince([]string{"raft", "replication", "heartbeat", string(peer.ID)}, start)
+
+			if !r.noLegacyTelemetry {
+				// Duplicated information. Kept for backward compatibility.
+				metrics.MeasureSince([]string{"raft", "replication", "heartbeat", string(peer.ID)}, start)
+			}
+
 			s.notifyAll(resp.Success)
 		}
 	}
@@ -533,7 +540,7 @@ func (r *Raft) pipelineDecode(s *followerReplication, p AppendPipeline, stopCh, 
 			s.peerLock.RUnlock()
 
 			req, resp := ready.Request(), ready.Response()
-			appendStats(string(peer.ID), ready.Start(), float32(len(req.Entries)))
+			appendStats(string(peer.ID), ready.Start(), float32(len(req.Entries)), r.noLegacyTelemetry)
 
 			// Check for a newer term, stop running
 			if resp.Term > req.Term {
@@ -621,13 +628,16 @@ func (r *Raft) setNewLogs(req *AppendEntriesRequest, nextIndex, lastIndex uint64
 }
 
 // appendStats is used to emit stats about an AppendEntries invocation.
-func appendStats(peer string, start time.Time, logs float32) {
+func appendStats(peer string, start time.Time, logs float32, skipLegacy bool) {
 	labels := []metrics.Label{{Name: "peer_id", Value: peer}}
 	metrics.MeasureSinceWithLabels([]string{"raft", "replication", "appendEntries", "rpc"}, start, labels)
 	metrics.IncrCounterWithLabels([]string{"raft", "replication", "appendEntries", "logs"}, logs, labels)
-	// Duplicated information. Kept for backward compatibility.
-	metrics.MeasureSince([]string{"raft", "replication", "appendEntries", "rpc", peer}, start)
-	metrics.IncrCounter([]string{"raft", "replication", "appendEntries", "logs", peer}, logs)
+
+	if !skipLegacy {
+		// Duplicated information. Kept for backward compatibility.
+		metrics.MeasureSince([]string{"raft", "replication", "appendEntries", "rpc", peer}, start)
+		metrics.IncrCounter([]string{"raft", "replication", "appendEntries", "logs", peer}, logs)
+	}
 }
 
 // handleStaleTerm is used when a follower indicates that we have a stale term.
