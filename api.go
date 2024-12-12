@@ -218,8 +218,8 @@ type Raft struct {
 	// prevote feature is disabled if set to true.
 	preVoteDisabled bool
 
-	// noLegacyTelemetry allow to skip the legacy metrics to avoid duplicates.
-	// legacy metrics are which has `_peer_name` as metric suffix instead as labels.
+	// noLegacyTelemetry allows to skip the legacy metrics to avoid duplicates.
+	// legacy metrics are those that have `_peer_name` as metric suffix instead as labels.
 	// e.g: raft_replication_heartbeat_peer0
 	noLegacyTelemetry bool
 }
