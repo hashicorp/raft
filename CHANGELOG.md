@@ -2,7 +2,7 @@
 
 IMPROVEMENETS
 
-* chore: Add a flag to skip legacy duplicate telemetry. [GH-630](https://github.com/hashicorp/raft/pull/630)
+* Added a flag to skip legacy duplicate telemetry. [GH-630](https://github.com/hashicorp/raft/pull/630)
 
 # 1.7.0 (June 5th, 2024)
 
