@@ -6,7 +6,7 @@ retract v1.1.3 // Deleted original tag; module checksum may not be accurate.
 
 require (
 	github.com/hashicorp/go-hclog v1.6.2
-	github.com/hashicorp/go-metrics v0.5.4-0.20241111182750-ceaacca141e7
+	github.com/hashicorp/go-metrics v0.5.4
 	github.com/hashicorp/go-msgpack/v2 v2.1.2
 	github.com/stretchr/testify v1.8.4
 )
