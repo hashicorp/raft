@@ -337,6 +337,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	peer := s.peer
 	s.peerLock.RUnlock()
 
+	r.logger.Info("installing snapshot on", "peer", peer, "id", snapID, "size", req.Size)
 	// Make the call
 	start := time.Now()
 	var resp InstallSnapshotResponse
