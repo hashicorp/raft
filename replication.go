@@ -311,6 +311,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 
 	// Open the most recent snapshot
 	snapID := snapshots[0].ID
+	r.logger.Info("opening snapshot", "id", snapID)
 	meta, snapshot, err := r.snapshots.Open(snapID)
 	if err != nil {
 		r.logger.Error("failed to open snapshot", "id", snapID, "error", err)
