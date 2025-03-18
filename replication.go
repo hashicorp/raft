@@ -311,6 +311,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 
 	// Open the most recent snapshot
 	snapID := snapshots[0].ID
+	r.logger.Info("opening snapshot", "id", snapID)
 	meta, snapshot, err := r.snapshots.Open(snapID)
 	if err != nil {
 		r.logger.Error("failed to open snapshot", "id", snapID, "error", err)
@@ -337,11 +338,12 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	peer := s.peer
 	s.peerLock.RUnlock()
 
+	r.logger.Info("installing snapshot on", "peer", peer.ID, "id", snapID, "size", req.Size)
 	// Make the call
 	start := time.Now()
 	var resp InstallSnapshotResponse
 	if err := r.trans.InstallSnapshot(peer.ID, peer.Address, &req, &resp, snapshot); err != nil {
-		r.logger.Error("failed to install snapshot", "id", snapID, "error", err)
+		r.logger.Error("failed to install snapshot", "peer", peer.ID, "id", snapID, "error", err)
 		s.failures++
 		return false, err
 	}
@@ -375,7 +377,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 		s.notifyAll(true)
 	} else {
 		s.failures++
-		r.logger.Warn("installSnapshot rejected to", "peer", peer)
+		r.logger.Warn("installSnapshot rejected to", "peer", peer.ID, "id", snapID)
 	}
 	return false, nil
 }
