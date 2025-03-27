@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	metrics "github.com/armon/go-metrics"
 	hclog "github.com/hashicorp/go-hclog"
+	metrics "github.com/hashicorp/go-metrics/compat"
 )
 
 const (
@@ -59,7 +59,7 @@ var (
 	ErrEnqueueTimeout = errors.New("timed out enqueuing operation")
 
 	// ErrNothingNewToSnapshot is returned when trying to create a snapshot
-	// but there's nothing new commited to the FSM since we started.
+	// but there's nothing new committed to the FSM since we started.
 	ErrNothingNewToSnapshot = errors.New("nothing new to snapshot")
 
 	// ErrUnsupportedProtocol is returned when an operation is attempted
@@ -222,6 +222,11 @@ type Raft struct {
 	// prevote feature is disabled if set to true.
 	preVoteDisabled bool
 
+	// noLegacyTelemetry allows to skip the legacy metrics to avoid duplicates.
+	// legacy metrics are those that have `_peer_name` as metric suffix instead as labels.
+	// e.g: raft_replication_heartbeat_peer0
+	noLegacyTelemetry bool
+
 	// RestoreCommittedLogs is used to enable restore committed logs mode
 	// restore committed logs mode is disabled if set to false.
 	RestoreCommittedLogs bool
@@ -240,7 +245,8 @@ type Raft struct {
 // listing just itself as a Voter, then invoke AddVoter() on it to add other
 // servers to the cluster.
 func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
-	snaps SnapshotStore, trans Transport, configuration Configuration) error {
+	snaps SnapshotStore, trans Transport, configuration Configuration,
+) error {
 	// Validate the Raft server config.
 	if err := ValidateConfig(conf); err != nil {
 		return err
@@ -313,7 +319,8 @@ func BootstrapCluster(conf *Config, logs LogStore, stable StableStore,
 // the sole voter, and then join up other new clean-state peer servers using
 // the usual APIs in order to bring the cluster back into a known state.
 func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
-	snaps SnapshotStore, trans Transport, configuration Configuration) error {
+	snaps SnapshotStore, trans Transport, configuration Configuration,
+) error {
 	// Validate the Raft server config.
 	if err := ValidateConfig(conf); err != nil {
 		return err
@@ -444,7 +451,8 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 // without starting a Raft instance or connecting to the cluster. This function
 // has identical behavior to Raft.GetConfiguration.
 func GetConfiguration(conf *Config, fsm FSM, logs LogStore, stable StableStore,
-	snaps SnapshotStore, trans Transport) (Configuration, error) {
+	snaps SnapshotStore, trans Transport,
+) (Configuration, error) {
 	conf.skipStartup = true
 	r, err := NewRaft(conf, fsm, logs, stable, snaps, trans)
 	if err != nil {
@@ -574,6 +582,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		followerNotifyCh:      make(chan struct{}, 1),
 		mainThreadSaturation:  newSaturationMetric([]string{"raft", "thread", "main", "saturation"}, 1*time.Second),
 		preVoteDisabled:       conf.PreVoteDisabled || !transportSupportPreVote,
+		noLegacyTelemetry:     conf.NoLegacyTelemetry,
 		RestoreCommittedLogs:  conf.RestoreCommittedLogs,
 	}
 	if !transportSupportPreVote && !conf.PreVoteDisabled {
@@ -1147,12 +1156,12 @@ func (r *Raft) State() RaftState {
 // lose it.
 //
 // Receivers can expect to receive a notification only if leadership
-// transition has occured.
+// transition has occurred.
 //
 // If receivers aren't ready for the signal, signals may drop and only the
 // latest leadership transition. For example, if a receiver receives subsequent
 // `true` values, they may deduce that leadership was lost and regained while
-// the the receiver was processing first leadership transition.
+// the receiver was processing first leadership transition.
 func (r *Raft) LeaderCh() <-chan bool {
 	return r.leaderCh
 }
@@ -1254,6 +1263,11 @@ func (r *Raft) Stats() map[string]string {
 		s["last_contact"] = fmt.Sprintf("%v", time.Now().Sub(last))
 	}
 	return s
+}
+
+// CurrentTerm returns the current term.
+func (r *Raft) CurrentTerm() uint64 {
+	return r.getCurrentTerm()
 }
 
 // LastIndex returns the last index in stable storage,

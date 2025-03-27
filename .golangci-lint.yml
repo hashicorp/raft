@@ -9,6 +9,17 @@ linters-settings:
     check-shadowing: true
   golint:
     min-confidence: 0
+  depguard:
+    rules:
+      main:
+        list-mode: lax
+        allow:
+          - "github.com/hashicorp/go-metrics/compat"
+        deny:
+          - pkg: "github.com/hashicorp/go-metrics"
+            desc: not allowed, use github.com/hashicorp/go-metrics/compat instead
+          - pkg: "github.com/armon/go-metrics"
+            desc: not allowed, use github.com/hashicorp/go-metrics/compat instead
 
 linters:
   disable-all: true
@@ -16,6 +27,7 @@ linters:
     - gofmt
     #- golint
     - govet
+    - depguard
     #- varcheck
     #- typecheck
     #- gosimple

@@ -14,7 +14,7 @@ import (
 
 	"github.com/hashicorp/go-hclog"
 
-	"github.com/armon/go-metrics"
+	"github.com/hashicorp/go-metrics/compat"
 )
 
 const (
@@ -300,9 +300,9 @@ func (r *Raft) runCandidate() {
 	}
 
 	// Make sure the leadership transfer flag is reset after each run. Having this
-	// flag will set the field LeadershipTransfer in a RequestVoteRequst to true,
+	// flag will set the field LeadershipTransfer in a RequestVoteRequest to true,
 	// which will make other servers vote even though they have a leader already.
-	// It is important to reset that flag, because this priviledge could be abused
+	// It is important to reset that flag, because this privilege could be abused
 	// otherwise.
 	defer func() { r.candidateFromLeadershipTransfer.Store(false) }()
 
@@ -474,7 +474,7 @@ func (r *Raft) runLeader() {
 
 	// Store the notify chan. It's not reloadable so shouldn't change before the
 	// defer below runs, but this makes sure we always notify the same chan if
-	// ever for both gaining and loosing leadership.
+	// ever for both gaining and losing leadership.
 	notify := r.config().NotifyCh
 
 	// Push to the notify channel if given

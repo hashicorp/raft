@@ -8,8 +8,8 @@ import (
 	"io"
 	"time"
 
-	"github.com/armon/go-metrics"
 	hclog "github.com/hashicorp/go-hclog"
+	"github.com/hashicorp/go-metrics/compat"
 )
 
 // FSM is implemented by clients to make use of the replicated log.
@@ -34,6 +34,12 @@ type FSM interface {
 	// Apply and Snapshot are always called from the same thread, but Apply will
 	// be called concurrently with FSMSnapshot.Persist. This means the FSM should
 	// be implemented to allow for concurrent updates while a snapshot is happening.
+	//
+	// Clients of this library should make no assumptions about whether a returned
+	// Snapshot() will actually be stored by Raft. In fact it's quite possible that
+	// any Snapshot returned by this call will be discarded, and that
+	// FSMSnapshot.Persist will never be called. Raft will always call
+	// FSMSnapshot.Release however.
 	Snapshot() (FSMSnapshot, error)
 
 	// Restore is used to restore an FSM from a snapshot. It is not called

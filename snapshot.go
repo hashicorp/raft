@@ -8,7 +8,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/armon/go-metrics"
+	"github.com/hashicorp/go-metrics/compat"
 )
 
 // SnapshotMeta is for metadata of a snapshot.
@@ -211,7 +211,7 @@ func (r *Raft) takeSnapshot() (string, error) {
 }
 
 // compactLogsWithTrailing takes the last inclusive index of a snapshot,
-// the lastLogIdx, and and the trailingLogs and trims the logs that
+// the lastLogIdx, and the trailingLogs and trims the logs that
 // are no longer needed.
 func (r *Raft) compactLogsWithTrailing(snapIdx uint64, lastLogIdx uint64, trailingLogs uint64) error {
 	// Determine log ranges to compact

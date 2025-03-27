@@ -1,5 +1,9 @@
 # UNRELEASED
 
+IMPROVEMENETS
+
+* Added a flag to skip legacy duplicate telemetry. [GH-630](https://github.com/hashicorp/raft/pull/630)
+
 # 1.7.0 (June 5th, 2024)
 
 CHANGES
@@ -37,7 +41,7 @@ CHANGES
 
   go-msgpack v2.1.1 is by default binary compatible with v0.5.5 ("non-builtin" encoding of `time.Time`), but can decode messages produced by v1.1.5 as well ("builtin" encoding of `time.Time`).
 
-  However, if users of this libary overrode the version of go-msgpack (especially to v1), this **could break** compatibility if raft nodes are running a mix of versions.
+  However, if users of this library overrode the version of go-msgpack (especially to v1), this **could break** compatibility if raft nodes are running a mix of versions.
 
   This compatibility can be configured at runtime in Raft using `NetworkTransportConfig.MsgpackUseNewTimeFormat` -- the default is `false`, which maintains compatibility with `go-msgpack` v0.5.5, but if set to `true`, will be compatible with `go-msgpack` v1.1.5.
 

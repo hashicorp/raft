@@ -7,7 +7,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/armon/go-metrics"
+	"github.com/hashicorp/go-metrics/compat"
 )
 
 // saturationMetric measures the saturation (percentage of time spent working vs
