@@ -1,11 +1,8 @@
 name: ci
 
 on:
-  pull_request:
-    branches: ["main"]
   push:
-    branches: ["main"]
-    tags: ["*"]
+    branches: ["coverage"]
 
 permissions:
   contents: read
@@ -17,7 +14,7 @@ jobs:
     - uses: actions/checkout@ac593985615ec2ede58e132d2e21d2b1cbd6127c # v3.3.0
     - uses: actions/setup-go@6edd4406fa81c3da01a34fa6f6343087c207a568 # v3.5.0
       with:
-        go-version: '1.20'
+        go-version: '1.23'
         cache: true
     - run: |
         files=$(go fmt ./...)
@@ -34,7 +31,7 @@ jobs:
     needs: go-fmt-and-vet
     strategy:
       matrix:
-        go: ['1.19', '1.20']
+        go: ['1.19', '1.20', '1.23']
         arch: ['x32', 'x64']
     runs-on: ubuntu-22.04
     env:
@@ -59,7 +56,7 @@ jobs:
     needs: go-test
     strategy:
       matrix:
-        go: [ '1.20', '1.21', '1.22' ]
+        go: [ '1.20', '1.21', '1.22', '1.23' ]
         arch: [ 'x32', 'x64' ]
     runs-on: ubuntu-22.04
     steps:
@@ -78,11 +75,16 @@ jobs:
           git submodule update --init --recursive
           cd raft-compat
           go mod tidy
-          go test ./...
+          go test -v -coverprofile=coverage.out ./...
       # x86-64 specific build.
       - if: matrix.arch == 'x64'
         run: |
           git submodule update --init --recursive
           cd raft-compat
           go mod tidy
-          go test -race ./...
+          go test -race -v -coverprofile=coverage.out ./...
+      - uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
+        with: 
+          path: coverage.out
+          name: coverage-report-${{matrix.go}}-${{matrix.arch}}
+      - run: go tool cover -func=coverage.out
