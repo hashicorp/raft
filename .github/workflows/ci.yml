@@ -1,8 +1,11 @@
 name: ci
 
 on:
+  pull_request:
+    branches: ["main"]
   push:
-    branches: ["coverage"]
+    branches: ["main"]
+    tags: ["*"]
 
 permissions:
   contents: read
@@ -83,7 +86,6 @@ jobs:
           cd raft-compat
           go mod tidy
           go test -race -v -coverprofile="${{ github.workspace }}/coverage.out" ./...
-      - run: ls -l ${{ github.workspace }}
       - uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
         with: 
           path: "${{ github.workspace }}/coverage.out"
