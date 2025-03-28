@@ -88,4 +88,3 @@ jobs:
         with: 
           path: "${{ github.workspace }}/coverage.out"
           name: coverage-report-${{matrix.go}}-${{matrix.arch}}
-      - run: go tool cover -func="${{ github.workspace }}/coverage.out"
