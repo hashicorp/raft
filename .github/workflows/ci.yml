@@ -78,14 +78,14 @@ jobs:
           git submodule update --init --recursive
           cd raft-compat
           go mod tidy
-          go test -v -coverprofile="${{ github.workspace }}/coverage.out" ./...
+          go test -v -coverpkg=./... ./... -coverprofile="${{ github.workspace }}/coverage.out" 
       # x86-64 specific build.
       - if: matrix.arch == 'x64'
         run: |
           git submodule update --init --recursive
           cd raft-compat
           go mod tidy
-          go test -race -v -coverprofile="${{ github.workspace }}/coverage.out" ./...
+          go test -race -v -coverpkg=./... ./... -coverprofile="${{ github.workspace }}/coverage.out"
       - uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
         with: 
           path: "${{ github.workspace }}/coverage.out"
