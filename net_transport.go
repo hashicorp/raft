@@ -517,11 +517,12 @@ func (n *NetworkTransport) InstallSnapshot(id ServerID, target ServerAddress, ar
 	if err != nil {
 		return err
 	}
-	defer func() (err error) {
-		if err := conn.Release(); err != nil {
-			return err
+	var errors error
+	defer func() {
+		if err := conn.Release(); err != nil && errors == nil {
+			errors = err
+			return
 		}
-		return nil
 	}()
 
 	// Set a deadline, scaled by request size
