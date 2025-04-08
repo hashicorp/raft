@@ -9,13 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"sync"
 	"time"
 
 	"github.com/hashicorp/go-hclog"
-	"github.com/hashicorp/go-metrics/compat"
+	metrics "github.com/hashicorp/go-metrics/compat"
 	"github.com/hashicorp/go-msgpack/v2/codec"
 )
 
@@ -313,7 +314,9 @@ func (n *NetworkTransport) CloseStreams() {
 	// entry.
 	for k, e := range n.connPool {
 		for _, conn := range e {
-			conn.Release()
+			if err := conn.Release(); err != nil {
+				log.Print(err)
+			}
 		}
 
 		delete(n.connPool, k)
@@ -420,11 +423,9 @@ func (n *NetworkTransport) getConn(target ServerAddress) (*netConn, error) {
 		w:      bufio.NewWriterSize(conn, connSendBufferSize),
 	}
 
-	netConn.enc = codec.NewEncoder(netConn.w, &codec.MsgpackHandle{
-		BasicHandle: codec.BasicHandle{
-			TimeNotBuiltin: !n.msgpackUseNewTimeFormat,
-		},
-	})
+	encHandle := &codec.MsgpackHandle{}
+	encHandle.TimeNotBuiltin = !n.msgpackUseNewTimeFormat
+	netConn.enc = codec.NewEncoder(netConn.w, encHandle)
 
 	// Done
 	return netConn, nil
@@ -441,7 +442,9 @@ func (n *NetworkTransport) returnConn(conn *netConn) {
 	if !n.IsShutdown() && len(conns) < n.maxPool {
 		n.connPool[key] = append(conns, conn)
 	} else {
-		conn.Release()
+		if err := conn.Release(); err != nil {
+			log.Print(err)
+		}
 	}
 }
 
@@ -489,7 +492,9 @@ func (n *NetworkTransport) genericRPC(id ServerID, target ServerAddress, rpcType
 
 	// Set a deadline
 	if n.timeout > 0 {
-		conn.conn.SetDeadline(time.Now().Add(n.timeout))
+		if err := conn.conn.SetDeadline(time.Now().Add(n.timeout)); err != nil {
+			return err
+		}
 	}
 
 	// Send the RPC
@@ -512,7 +517,12 @@ func (n *NetworkTransport) InstallSnapshot(id ServerID, target ServerAddress, ar
 	if err != nil {
 		return err
 	}
-	defer conn.Release()
+	defer func() (err error) {
+		if err := conn.Release(); err != nil {
+			return err
+		}
+		return nil
+	}()
 
 	// Set a deadline, scaled by request size
 	if n.timeout > 0 {
@@ -520,7 +530,9 @@ func (n *NetworkTransport) InstallSnapshot(id ServerID, target ServerAddress, ar
 		if timeout < n.timeout {
 			timeout = n.timeout
 		}
-		conn.conn.SetDeadline(time.Now().Add(timeout))
+		if err := conn.conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+			return err
+		}
 	}
 
 	// Send the RPC
@@ -608,11 +620,9 @@ func (n *NetworkTransport) handleConn(connCtx context.Context, conn net.Conn) {
 	r := bufio.NewReaderSize(conn, connReceiveBufferSize)
 	w := bufio.NewWriter(conn)
 	dec := codec.NewDecoder(r, &codec.MsgpackHandle{})
-	enc := codec.NewEncoder(w, &codec.MsgpackHandle{
-		BasicHandle: codec.BasicHandle{
-			TimeNotBuiltin: !n.msgpackUseNewTimeFormat,
-		},
-	})
+	encHandle := &codec.MsgpackHandle{}
+	encHandle.TimeNotBuiltin = !n.msgpackUseNewTimeFormat
+	enc := codec.NewEncoder(w, encHandle)
 
 	for {
 		select {
@@ -772,19 +782,23 @@ func decodeResponse(conn *netConn, resp interface{}) (bool, error) {
 	// Decode the error if any
 	var rpcError string
 	if err := conn.dec.Decode(&rpcError); err != nil {
-		conn.Release()
+		if err := conn.Release(); err != nil {
+			return false, err
+		}
 		return false, err
 	}
 
 	// Decode the response
 	if err := conn.dec.Decode(resp); err != nil {
-		conn.Release()
+		if err := conn.Release(); err != nil {
+			return false, err
+		}
 		return false, err
 	}
 
 	// Format an error if any
 	if rpcError != "" {
-		return true, fmt.Errorf(rpcError)
+		return true, fmt.Errorf("%s", rpcError)
 	}
 	return true, nil
 }
@@ -793,19 +807,25 @@ func decodeResponse(conn *netConn, resp interface{}) (bool, error) {
 func sendRPC(conn *netConn, rpcType uint8, args interface{}) error {
 	// Write the request type
 	if err := conn.w.WriteByte(rpcType); err != nil {
-		conn.Release()
+		if err := conn.Release(); err != nil {
+			return err
+		}
 		return err
 	}
 
 	// Send the request
 	if err := conn.enc.Encode(args); err != nil {
-		conn.Release()
+		if err := conn.Release(); err != nil {
+			return err
+		}
 		return err
 	}
 
 	// Flush
 	if err := conn.w.Flush(); err != nil {
-		conn.Release()
+		if err := conn.Release(); err != nil {
+			return err
+		}
 		return err
 	}
 	return nil
@@ -844,7 +864,10 @@ func (n *netPipeline) decodeResponses() {
 		select {
 		case future := <-n.inprogressCh:
 			if timeout > 0 {
-				n.conn.conn.SetReadDeadline(time.Now().Add(timeout))
+				if err := n.conn.conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+					future.respond(err)
+				}
+
 			}
 
 			_, err := decodeResponse(n.conn, future.resp)
@@ -872,7 +895,9 @@ func (n *netPipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEntr
 
 	// Add a send timeout
 	if timeout := n.trans.timeout; timeout > 0 {
-		n.conn.conn.SetWriteDeadline(time.Now().Add(timeout))
+		if err := n.conn.conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
+			return nil, err
+		}
 	}
 
 	// Send the RPC
@@ -904,7 +929,9 @@ func (n *netPipeline) Close() error {
 	}
 
 	// Release the connection
-	n.conn.Release()
+	if err := n.conn.Release(); err != nil {
+		return err
+	}
 
 	n.shutdown = true
 	close(n.shutdownCh)

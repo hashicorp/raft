@@ -1212,7 +1212,7 @@ func (r *Raft) Stats() map[string]string {
 	} else if last.IsZero() {
 		s["last_contact"] = "never"
 	} else {
-		s["last_contact"] = fmt.Sprintf("%v", time.Now().Sub(last))
+		s["last_contact"] = fmt.Sprintf("%v", time.Since(last))
 	}
 	return s
 }

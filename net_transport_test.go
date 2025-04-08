@@ -635,7 +635,9 @@ func TestNetworkTransport_InstallSnapshot(t *testing.T) {
 
 				// Try to read the bytes
 				buf := make([]byte, 10)
-				rpc.Reader.Read(buf)
+				if _, err := rpc.Reader.Read(buf); err != nil {
+					t.Errorf("unable to read bytes: %v", err)
+				}
 
 				// Compare
 				if !bytes.Equal(buf, []byte("0123456789")) {

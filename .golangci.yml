@@ -5,8 +5,6 @@ run:
   deadline: 5m
 
 linters-settings:
-  govet:
-    check-shadowing: true
   golint:
     min-confidence: 0
   depguard:
@@ -30,7 +28,9 @@ linters:
     - depguard
     #- varcheck
     #- typecheck
-    #- gosimple
+    - gosimple
+    - staticcheck
+    - errcheck
 
 issues:
   exclude-use-default: false

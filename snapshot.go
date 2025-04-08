@@ -8,7 +8,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/hashicorp/go-metrics/compat"
+	metrics "github.com/hashicorp/go-metrics/compat"
 )
 
 // SnapshotMeta is for metadata of a snapshot.
@@ -188,7 +188,9 @@ func (r *Raft) takeSnapshot() (string, error) {
 	// Try to persist the snapshot.
 	start = time.Now()
 	if err := snapReq.snapshot.Persist(sink); err != nil {
-		sink.Cancel()
+		if err := sink.Cancel(); err != nil {
+			return "", fmt.Errorf("failed to cancel snapshot: %v", err)
+		}
 		return "", fmt.Errorf("failed to persist snapshot: %v", err)
 	}
 	metrics.MeasureSince([]string{"raft", "snapshot", "persist"}, start)

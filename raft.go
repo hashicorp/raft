@@ -14,7 +14,7 @@ import (
 
 	"github.com/hashicorp/go-hclog"
 
-	"github.com/hashicorp/go-metrics/compat"
+	metrics "github.com/hashicorp/go-metrics/compat"
 )
 
 const (
@@ -1151,11 +1151,15 @@ func (r *Raft) restoreUserSnapshot(meta *SnapshotMeta, reader io.Reader) error {
 	}
 	n, err := io.Copy(sink, reader)
 	if err != nil {
-		sink.Cancel()
+		if err := sink.Cancel(); err != nil {
+			return fmt.Errorf("failed to cancel snapshot: %v", err)
+		}
 		return fmt.Errorf("failed to write snapshot: %v", err)
 	}
 	if n != meta.Size {
-		sink.Cancel()
+		if err := sink.Cancel(); err != nil {
+			return fmt.Errorf("failed to cancel snapshot: %v", err)
+		}
 		return fmt.Errorf("failed to write snapshot, size didn't match (%d != %d)", n, meta.Size)
 	}
 	if err := sink.Close(); err != nil {
@@ -1408,7 +1412,7 @@ func (r *Raft) processRPC(rpc RPC) {
 		r.logger.Error("got unexpected command",
 			"command", hclog.Fmt("%#v", rpc.Command))
 
-		rpc.Respond(nil, fmt.Errorf(rpcUnexpectedCommandError))
+		rpc.Respond(nil, fmt.Errorf("%s", rpcUnexpectedCommandError))
 	}
 }
 
@@ -1886,7 +1890,9 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	n, err := io.Copy(sink, countingRPCReader)
 	transferMonitor.StopAndWait()
 	if err != nil {
-		sink.Cancel()
+		if err := sink.Cancel(); err != nil {
+			r.logger.Error("failed to cancel snapshot", "error", err)
+		}
 		r.logger.Error("failed to copy snapshot", "error", err)
 		rpcErr = err
 		return
@@ -1894,7 +1900,9 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 
 	// Check that we received it all
 	if n != req.Size {
-		sink.Cancel()
+		if err := sink.Cancel(); err != nil {
+			r.logger.Error("failed to cancel snapshot", "error", err)
+		}
 		r.logger.Error("failed to receive whole snapshot",
 			"received", hclog.Fmt("%d / %d", n, req.Size))
 		rpcErr = fmt.Errorf("short read")
