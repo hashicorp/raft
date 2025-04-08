@@ -1,8 +1,11 @@
 name: ci
 
 on:
+  pull_request:
+    branches: ["main"]
   push:
-    branches: ["linting"]
+    branches: ["main"]
+    tags: ["*"]
 
 permissions:
   contents: read
