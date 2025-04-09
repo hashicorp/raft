@@ -1,4 +1,12 @@
 raft [![Build Status](https://github.com/hashicorp/raft/workflows/ci/badge.svg)](https://github.com/hashicorp/raft/actions)
+[![Go Reference](https://pkg.go.dev/badge/github.com/hashicorp/raft.svg)](https://pkg.go.dev/github.com/hashicorp/raft)
+[![Go Report Card](https://goreportcard.com/badge/github.com/hashicorp/raft)](https://goreportcard.com/report/github.com/hashicorp/raft)
+[![License: MPL 2.0](https://img.shields.io/badge/License-MPL%202.0-brightgreen.svg)](https://opensource.org/licenses/MPL-2.0)
+[![Build Status](https://github.com/hashicorp/raft/actions/workflows/ci.yml/badge.svg)](https://github.com/hashicorp/raft/actions)
+[![Release](https://img.shields.io/github/v/release/hashicorp/raft)](https://github.com/hashicorp/raft/releases)
+[![Issues](https://img.shields.io/github/issues/hashicorp/raft)](https://github.com/hashicorp/raft/issues)
+[![Pull Requests](https://img.shields.io/github/issues-pr/hashicorp/raft)](https://github.com/hashicorp/raft/pulls)
+
 ====
 
 raft is a [Go](http://www.golang.org) library that manages a replicated
