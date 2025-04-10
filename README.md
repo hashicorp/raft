@@ -6,7 +6,6 @@ raft [![Build Status](https://github.com/hashicorp/raft/workflows/ci/badge.svg)]
 [![Release](https://img.shields.io/github/v/release/hashicorp/raft)](https://github.com/hashicorp/raft/releases)
 [![Issues](https://img.shields.io/github/issues/hashicorp/raft)](https://github.com/hashicorp/raft/issues)
 [![Pull Requests](https://img.shields.io/github/issues-pr/hashicorp/raft)](https://github.com/hashicorp/raft/pulls)
-
 ====
 
 raft is a [Go](http://www.golang.org) library that manages a replicated
