@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"os"
 	"sync"
@@ -314,9 +313,7 @@ func (n *NetworkTransport) CloseStreams() {
 	// entry.
 	for k, e := range n.connPool {
 		for _, conn := range e {
-			if err := conn.Release(); err != nil {
-				log.Print(err)
-			}
+			conn.Release()
 		}
 
 		delete(n.connPool, k)
@@ -442,9 +439,7 @@ func (n *NetworkTransport) returnConn(conn *netConn) {
 	if !n.IsShutdown() && len(conns) < n.maxPool {
 		n.connPool[key] = append(conns, conn)
 	} else {
-		if err := conn.Release(); err != nil {
-			log.Print(err)
-		}
+		conn.Release()
 	}
 }
 
@@ -517,13 +512,7 @@ func (n *NetworkTransport) InstallSnapshot(id ServerID, target ServerAddress, ar
 	if err != nil {
 		return err
 	}
-	var errors error
-	defer func() {
-		if err := conn.Release(); err != nil && errors == nil {
-			errors = err
-			return
-		}
-	}()
+	defer conn.Release()
 
 	// Set a deadline, scaled by request size
 	if n.timeout > 0 {
@@ -783,17 +772,13 @@ func decodeResponse(conn *netConn, resp interface{}) (bool, error) {
 	// Decode the error if any
 	var rpcError string
 	if err := conn.dec.Decode(&rpcError); err != nil {
-		if err := conn.Release(); err != nil {
-			return false, err
-		}
+		conn.Release()
 		return false, err
 	}
 
 	// Decode the response
 	if err := conn.dec.Decode(resp); err != nil {
-		if err := conn.Release(); err != nil {
-			return false, err
-		}
+		conn.Release()
 		return false, err
 	}
 
@@ -808,25 +793,19 @@ func decodeResponse(conn *netConn, resp interface{}) (bool, error) {
 func sendRPC(conn *netConn, rpcType uint8, args interface{}) error {
 	// Write the request type
 	if err := conn.w.WriteByte(rpcType); err != nil {
-		if err := conn.Release(); err != nil {
-			return err
-		}
+		conn.Release()
 		return err
 	}
 
 	// Send the request
 	if err := conn.enc.Encode(args); err != nil {
-		if err := conn.Release(); err != nil {
-			return err
-		}
+		conn.Release()
 		return err
 	}
 
 	// Flush
 	if err := conn.w.Flush(); err != nil {
-		if err := conn.Release(); err != nil {
-			return err
-		}
+		conn.Release()
 		return err
 	}
 	return nil
@@ -930,9 +909,7 @@ func (n *netPipeline) Close() error {
 	}
 
 	// Release the connection
-	if err := n.conn.Release(); err != nil {
-		return err
-	}
+	n.conn.Release()
 
 	n.shutdown = true
 	close(n.shutdownCh)

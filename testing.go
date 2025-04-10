@@ -119,9 +119,7 @@ func (m *MockSnapshot) Persist(sink SnapshotSink) error {
 	hd := codec.MsgpackHandle{}
 	enc := codec.NewEncoder(sink, &hd)
 	if err := enc.Encode(m.logs[:m.maxIndex]); err != nil {
-		if err := sink.Cancel(); err != nil {
-			return err
-		}
+		sink.Cancel()
 		return err
 	}
 	sink.Close()

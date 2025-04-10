@@ -188,9 +188,7 @@ func (r *Raft) takeSnapshot() (string, error) {
 	// Try to persist the snapshot.
 	start = time.Now()
 	if err := snapReq.snapshot.Persist(sink); err != nil {
-		if err := sink.Cancel(); err != nil {
-			return "", fmt.Errorf("failed to cancel snapshot: %v", err)
-		}
+		sink.Cancel()
 		return "", fmt.Errorf("failed to persist snapshot: %v", err)
 	}
 	metrics.MeasureSince([]string{"raft", "snapshot", "persist"}, start)
