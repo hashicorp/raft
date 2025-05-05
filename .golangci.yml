@@ -5,8 +5,6 @@ run:
   deadline: 5m
 
 linters-settings:
-  govet:
-    check-shadowing: true
   golint:
     min-confidence: 0
   depguard:
@@ -30,7 +28,9 @@ linters:
     - depguard
     #- varcheck
     #- typecheck
-    #- gosimple
+    - gosimple
+    - staticcheck
+    - errcheck
 
 issues:
   exclude-use-default: false
@@ -62,3 +62,8 @@ issues:
 
     # gosec: False positive is triggered by 'src, err := ioutil.ReadFile(filename)'
     - Potential file inclusion via variable
+
+    # these functions have been excluded from errcheck in order to not be highlighted when the linter runs and at the same time they don't interfere with the original error which might be more important from prod view.
+    - "conn.Release"
+
+    - "sink.Cancel"

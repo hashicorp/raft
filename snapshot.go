@@ -8,7 +8,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/hashicorp/go-metrics/compat"
+	metrics "github.com/hashicorp/go-metrics/compat"
 )
 
 // SnapshotMeta is for metadata of a snapshot.
