@@ -626,6 +626,11 @@ func (n *NetworkTransport) handleConn(connCtx context.Context, conn net.Conn) {
 			if err != io.EOF {
 				n.logger.Error("failed to decode incoming command", "error", err)
 			}
+			if r.Buffered() > 0 {
+				snippet := [100]byte{}
+				cnt, _ := r.Read(snippet[:])
+				n.logger.Error("remaining read buffer", "sz", cnt, "data", string(snippet[:cnt]))
+			}
 			return
 		}
 		if err := w.Flush(); err != nil {
