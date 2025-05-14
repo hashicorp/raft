@@ -6,6 +6,7 @@ package raft
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -622,6 +623,14 @@ func (n *NetworkTransport) handleConn(connCtx context.Context, conn net.Conn) {
 		if err := n.handleCommand(r, dec, enc); err != nil {
 			if err != io.EOF {
 				n.logger.Error("failed to decode incoming command", "error", err)
+			}
+			if r.Buffered() > 0 {
+				unread := r.Buffered()
+				snippet := [100]byte{}
+				cnt, _ := r.Read(snippet[:])
+				dst := make([]byte, base64.StdEncoding.EncodedLen(cnt))
+				base64.StdEncoding.Encode(dst, snippet[:cnt])
+				n.logger.Error("remaining read buffer", "sz", unread, "snippet", string(dst))
 			}
 			return
 		}
