@@ -55,6 +55,16 @@ const (
 	minInFlightForPipelining = 2
 )
 
+type zs struct{}
+
+func (zs) Read(buf []byte) (int, error) {
+	panic("Read should never be called")
+}
+
+func (zs) Write(buf []byte) (int, error) {
+	panic("Write should never be called")
+}
+
 var (
 	// ErrTransportShutdown is returned when operations on a transport are
 	// invoked after it's been terminated.
@@ -62,6 +72,7 @@ var (
 
 	// ErrPipelineShutdown is returned when the pipeline is closed.
 	ErrPipelineShutdown = errors.New("append pipeline closed")
+	xplod               = zs{}
 )
 
 // NetworkTransport provides a network based transport that can be
@@ -111,6 +122,10 @@ type NetworkTransport struct {
 	TimeoutScale int
 
 	msgpackUseNewTimeFormat bool
+}
+
+func (n *NetworkTransport) encoder(to io.Writer) *codec.Encoder {
+	return codec.NewEncoder(to, &codec.MsgpackHandle{BasicHandle: codec.BasicHandle{TimeNotBuiltin: !n.msgpackUseNewTimeFormat}})
 }
 
 // NetworkTransportConfig encapsulates configuration for the network transport layer.
@@ -187,6 +202,7 @@ type StreamLayer interface {
 type netConn struct {
 	target ServerAddress
 	conn   net.Conn
+	r      *bufio.Reader
 	w      *bufio.Writer
 	dec    *codec.Decoder
 	enc    *codec.Encoder
@@ -404,6 +420,11 @@ func (n *NetworkTransport) getProviderAddressOrFallback(id ServerID, target Serv
 func (n *NetworkTransport) getConn(target ServerAddress) (*netConn, error) {
 	// Check for a pooled conn
 	if conn := n.getPooledConn(target); conn != nil {
+		// Sanity reset.  Discard data that might not have been consumed the last time the connection was used.
+		conn.r.Reset(conn.conn)
+		conn.w.Reset(conn.conn)
+		conn.enc.Reset(conn.w)
+		conn.dec.Reset(conn.r)
 		return conn, nil
 	}
 
@@ -412,21 +433,12 @@ func (n *NetworkTransport) getConn(target ServerAddress) (*netConn, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	// Wrap the conn
-	netConn := &netConn{
-		target: target,
-		conn:   conn,
-		dec:    codec.NewDecoder(bufio.NewReader(conn), &codec.MsgpackHandle{}),
-		w:      bufio.NewWriterSize(conn, connSendBufferSize),
-	}
-
-	mp := &codec.MsgpackHandle{}
-	mp.TimeNotBuiltin = !n.msgpackUseNewTimeFormat
-	netConn.enc = codec.NewEncoder(netConn.w, mp)
-
-	// Done
-	return netConn, nil
+	rBuf := bufio.NewReader(conn)
+	wBuf := bufio.NewWriterSize(conn, connSendBufferSize)
+	dec := codec.NewDecoder(rBuf, &codec.MsgpackHandle{})
+	enc := n.encoder(wBuf)
+	res := &netConn{target: target, conn: conn, dec: dec, enc: enc, r: rBuf, w: wBuf}
+	return res, nil
 }
 
 // returnConn returns a connection back to the pool.
@@ -438,6 +450,10 @@ func (n *NetworkTransport) returnConn(conn *netConn) {
 	conns := n.connPool[key]
 
 	if !n.IsShutdown() && len(conns) < n.maxPool {
+		conn.dec.Reset(xplod)
+		conn.enc.Reset(xplod)
+		conn.w.Reset(xplod)
+		conn.r.Reset(xplod)
 		n.connPool[key] = append(conns, conn)
 	} else {
 		_ = conn.Release()
@@ -607,11 +623,7 @@ func (n *NetworkTransport) handleConn(connCtx context.Context, conn net.Conn) {
 	r := bufio.NewReaderSize(conn, connReceiveBufferSize)
 	w := bufio.NewWriter(conn)
 	dec := codec.NewDecoder(r, &codec.MsgpackHandle{})
-
-	mp := &codec.MsgpackHandle{}
-	mp.TimeNotBuiltin = !n.msgpackUseNewTimeFormat
-	enc := codec.NewEncoder(w, mp)
-
+	enc := n.encoder(w)
 	for {
 		select {
 		case <-connCtx.Done():
