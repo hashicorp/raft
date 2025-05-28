@@ -1,0 +1,20 @@
+name: Two-Stage PR Review Process
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review, converted_to_draft]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  manage-pr-status:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Two stage PR review
+        uses: hashicorp/two-stage-pr-approval@v0.1.0
