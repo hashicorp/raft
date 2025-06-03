@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-hclog"
-	"github.com/hashicorp/go-metrics/compat"
+	metrics "github.com/hashicorp/go-metrics/compat"
 	"github.com/hashicorp/go-msgpack/v2/codec"
 )
 
@@ -420,11 +420,9 @@ func (n *NetworkTransport) getConn(target ServerAddress) (*netConn, error) {
 		w:      bufio.NewWriterSize(conn, connSendBufferSize),
 	}
 
-	netConn.enc = codec.NewEncoder(netConn.w, &codec.MsgpackHandle{
-		BasicHandle: codec.BasicHandle{
-			TimeNotBuiltin: !n.msgpackUseNewTimeFormat,
-		},
-	})
+	encHandle := &codec.MsgpackHandle{}
+	encHandle.TimeNotBuiltin = !n.msgpackUseNewTimeFormat
+	netConn.enc = codec.NewEncoder(netConn.w, encHandle)
 
 	// Done
 	return netConn, nil
@@ -489,7 +487,9 @@ func (n *NetworkTransport) genericRPC(id ServerID, target ServerAddress, rpcType
 
 	// Set a deadline
 	if n.timeout > 0 {
-		conn.conn.SetDeadline(time.Now().Add(n.timeout))
+		if err := conn.conn.SetDeadline(time.Now().Add(n.timeout)); err != nil {
+			return err
+		}
 	}
 
 	// Send the RPC
@@ -520,7 +520,9 @@ func (n *NetworkTransport) InstallSnapshot(id ServerID, target ServerAddress, ar
 		if timeout < n.timeout {
 			timeout = n.timeout
 		}
-		conn.conn.SetDeadline(time.Now().Add(timeout))
+		if err := conn.conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+			return err
+		}
 	}
 
 	// Send the RPC
@@ -608,11 +610,9 @@ func (n *NetworkTransport) handleConn(connCtx context.Context, conn net.Conn) {
 	r := bufio.NewReaderSize(conn, connReceiveBufferSize)
 	w := bufio.NewWriter(conn)
 	dec := codec.NewDecoder(r, &codec.MsgpackHandle{})
-	enc := codec.NewEncoder(w, &codec.MsgpackHandle{
-		BasicHandle: codec.BasicHandle{
-			TimeNotBuiltin: !n.msgpackUseNewTimeFormat,
-		},
-	})
+	encHandle := &codec.MsgpackHandle{}
+	encHandle.TimeNotBuiltin = !n.msgpackUseNewTimeFormat
+	enc := codec.NewEncoder(w, encHandle)
 
 	for {
 		select {
@@ -784,7 +784,7 @@ func decodeResponse(conn *netConn, resp interface{}) (bool, error) {
 
 	// Format an error if any
 	if rpcError != "" {
-		return true, fmt.Errorf(rpcError)
+		return true, fmt.Errorf("%s", rpcError)
 	}
 	return true, nil
 }
@@ -844,7 +844,10 @@ func (n *netPipeline) decodeResponses() {
 		select {
 		case future := <-n.inprogressCh:
 			if timeout > 0 {
-				n.conn.conn.SetReadDeadline(time.Now().Add(timeout))
+				if err := n.conn.conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+					future.respond(err)
+				}
+
 			}
 
 			_, err := decodeResponse(n.conn, future.resp)
@@ -872,7 +875,9 @@ func (n *netPipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEntr
 
 	// Add a send timeout
 	if timeout := n.trans.timeout; timeout > 0 {
-		n.conn.conn.SetWriteDeadline(time.Now().Add(timeout))
+		if err := n.conn.conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
+			return nil, err
+		}
 	}
 
 	// Send the RPC

@@ -17,7 +17,7 @@ import (
 
 func init() {
 	// Ensure we use a high-entropy seed for the pseudo-random generator
-	rand.Seed(newSeed())
+	rand.New(rand.NewSource(newSeed()))
 }
 
 // returns an int64 from a crypto random source
@@ -129,11 +129,8 @@ func decodeMsgPack(buf []byte, out interface{}) error {
 // Encode writes an encoded object to a new bytes buffer.
 func encodeMsgPack(in interface{}) (*bytes.Buffer, error) {
 	buf := bytes.NewBuffer(nil)
-	hd := codec.MsgpackHandle{
-		BasicHandle: codec.BasicHandle{
-			TimeNotBuiltin: true,
-		},
-	}
+	var hd codec.MsgpackHandle
+	hd.TimeNotBuiltin = true
 	enc := codec.NewEncoder(buf, &hd)
 	err := enc.Encode(in)
 	return buf, err

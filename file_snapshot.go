@@ -340,7 +340,7 @@ func (f *FileSnapshotStore) Open(id string) (*SnapshotMeta, io.ReadCloser, error
 
 	// Verify the hash
 	computed := stateHash.Sum(nil)
-	if bytes.Compare(meta.CRC, computed) != 0 {
+	if !bytes.Equal(meta.CRC, computed) {
 		f.logger.Error("CRC checksum failed", "stored", meta.CRC, "computed", computed)
 		fh.Close()
 		return nil, nil, fmt.Errorf("CRC mismatch")

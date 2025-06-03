@@ -117,7 +117,7 @@ func TestInmemSS_CreateSnapshot(t *testing.T) {
 	}
 
 	// Ensure a match
-	if bytes.Compare(buf.Bytes(), []byte("first\nsecond\n")) != 0 {
+	if !bytes.Equal(buf.Bytes(), []byte("first\nsecond\n")) {
 		t.Fatalf("content mismatch")
 	}
 }
@@ -164,7 +164,7 @@ func TestInmemSS_OpenSnapshotTwice(t *testing.T) {
 	}
 
 	// Ensure a match
-	if bytes.Compare(buf1.Bytes(), []byte("data\n")) != 0 {
+	if !bytes.Equal(buf1.Bytes(), []byte("data\n")) {
 		t.Fatalf("content mismatch")
 	}
 
@@ -184,7 +184,7 @@ func TestInmemSS_OpenSnapshotTwice(t *testing.T) {
 	}
 
 	// Ensure it's still the same content
-	if bytes.Compare(buf2.Bytes(), []byte("data\n")) != 0 {
+	if !bytes.Equal(buf2.Bytes(), []byte("data\n")) {
 		t.Fatalf("content mismatch")
 	}
 }

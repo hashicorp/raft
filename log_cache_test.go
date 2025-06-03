@@ -17,7 +17,9 @@ func TestLogCache(t *testing.T) {
 	// Insert into the in-mem store
 	for i := 0; i < 32; i++ {
 		log := &Log{Index: uint64(i) + 1}
-		store.StoreLog(log)
+		if err := store.StoreLog(log); err != nil {
+			t.Fatalf("err: %v", err)
+		}
 	}
 
 	// Check the indexes
@@ -129,7 +131,9 @@ func TestLogCacheWithBackendStoreError(t *testing.T) {
 
 	for i := 0; i < 4; i++ {
 		log := &Log{Index: uint64(i) + 1}
-		store.StoreLog(log)
+		if err := store.StoreLog(log); err != nil {
+			t.Fatalf("err: %v", err)
+		}
 	}
 	errStore.failNext(1)
 	log := &Log{Index: 5}

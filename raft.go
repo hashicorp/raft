@@ -14,7 +14,7 @@ import (
 
 	"github.com/hashicorp/go-hclog"
 
-	"github.com/hashicorp/go-metrics/compat"
+	metrics "github.com/hashicorp/go-metrics/compat"
 )
 
 const (
@@ -1408,7 +1408,7 @@ func (r *Raft) processRPC(rpc RPC) {
 		r.logger.Error("got unexpected command",
 			"command", hclog.Fmt("%#v", rpc.Command))
 
-		rpc.Respond(nil, fmt.Errorf(rpcUnexpectedCommandError))
+		rpc.Respond(nil, fmt.Errorf("%s", rpcUnexpectedCommandError))
 	}
 }
 
