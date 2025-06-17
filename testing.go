@@ -635,7 +635,7 @@ CHECK:
 		}
 
 		for idx := 0; idx < len(first.logs); idx++ {
-			if bytes.Compare(first.logs[idx], fsm.logs[idx]) != 0 {
+			if !bytes.Equal(first.logs[idx], fsm.logs[idx]) {
 				fsm.Unlock()
 				if time.Now().After(limit) {
 					t.Fatalf("FSM log mismatch at index %d", idx)

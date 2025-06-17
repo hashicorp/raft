@@ -15,11 +15,6 @@ import (
 	"github.com/hashicorp/go-msgpack/v2/codec"
 )
 
-func init() {
-	// Ensure we use a high-entropy seed for the pseudo-random generator
-	rand.Seed(newSeed())
-}
-
 // returns an int64 from a crypto random source
 // can be used to seed a source for a math/rand.
 func newSeed() int64 {
@@ -90,15 +85,6 @@ func drainNotifyCh(ch chan struct{}) bool {
 	}
 }
 
-// asyncNotifyBool is used to do an async notification
-// on a bool channel.
-func asyncNotifyBool(ch chan bool, v bool) {
-	select {
-	case ch <- v:
-	default:
-	}
-}
-
 // overrideNotifyBool is used to notify on a bool channel
 // but override existing value if value is present.
 // ch must be 1-item buffered channel.
@@ -129,11 +115,9 @@ func decodeMsgPack(buf []byte, out interface{}) error {
 // Encode writes an encoded object to a new bytes buffer.
 func encodeMsgPack(in interface{}) (*bytes.Buffer, error) {
 	buf := bytes.NewBuffer(nil)
-	hd := codec.MsgpackHandle{
-		BasicHandle: codec.BasicHandle{
-			TimeNotBuiltin: true,
-		},
-	}
+	hd := codec.MsgpackHandle{}
+	hd.TimeNotBuiltin = true
+
 	enc := codec.NewEncoder(buf, &hd)
 	err := enc.Encode(in)
 	return buf, err

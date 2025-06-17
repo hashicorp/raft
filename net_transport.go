@@ -420,11 +420,9 @@ func (n *NetworkTransport) getConn(target ServerAddress) (*netConn, error) {
 		w:      bufio.NewWriterSize(conn, connSendBufferSize),
 	}
 
-	netConn.enc = codec.NewEncoder(netConn.w, &codec.MsgpackHandle{
-		BasicHandle: codec.BasicHandle{
-			TimeNotBuiltin: !n.msgpackUseNewTimeFormat,
-		},
-	})
+	mp := &codec.MsgpackHandle{}
+	mp.TimeNotBuiltin = !n.msgpackUseNewTimeFormat
+	netConn.enc = codec.NewEncoder(netConn.w, mp)
 
 	// Done
 	return netConn, nil
@@ -608,11 +606,10 @@ func (n *NetworkTransport) handleConn(connCtx context.Context, conn net.Conn) {
 	r := bufio.NewReaderSize(conn, connReceiveBufferSize)
 	w := bufio.NewWriter(conn)
 	dec := codec.NewDecoder(r, &codec.MsgpackHandle{})
-	enc := codec.NewEncoder(w, &codec.MsgpackHandle{
-		BasicHandle: codec.BasicHandle{
-			TimeNotBuiltin: !n.msgpackUseNewTimeFormat,
-		},
-	})
+
+	mp := &codec.MsgpackHandle{}
+	mp.TimeNotBuiltin = !n.msgpackUseNewTimeFormat
+	enc := codec.NewEncoder(w, mp)
 
 	for {
 		select {
@@ -667,7 +664,7 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 		}
 		rpc.Command = &req
 
-		leaderAddr := req.RPCHeader.Addr
+		leaderAddr := req.Addr
 		if len(leaderAddr) == 0 {
 			leaderAddr = req.Leader
 		}
@@ -784,7 +781,7 @@ func decodeResponse(conn *netConn, resp interface{}) (bool, error) {
 
 	// Format an error if any
 	if rpcError != "" {
-		return true, fmt.Errorf(rpcError)
+		return true, errors.New(rpcError)
 	}
 	return true, nil
 }

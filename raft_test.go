@@ -1845,7 +1845,7 @@ func TestRaft_Barrier(t *testing.T) {
 
 	// Commit a lot of things
 	for i := 0; i < 100; i++ {
-		leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+		leader.Apply(fmt.Appendf([]byte{}, "test%d", i), 0)
 	}
 
 	// Wait for a barrier complete
@@ -1859,7 +1859,7 @@ func TestRaft_Barrier(t *testing.T) {
 	// Ensure all the logs are the same
 	c.EnsureSame(t)
 	if len(getMockFSM(c.fsms[0]).logs) != 100 {
-		t.Fatalf(fmt.Sprintf("Bad log length: %d", len(getMockFSM(c.fsms[0]).logs)))
+		t.Fatalf("Bad log length: %d", len(getMockFSM(c.fsms[0]).logs))
 	}
 }
 
@@ -2226,7 +2226,7 @@ func TestRaft_ProtocolVersion_RejectRPC(t *testing.T) {
 	}
 
 	// Reject a message that's too old.
-	reqVote.RPCHeader.ProtocolVersion = followers[0].protocolVersion - 2
+	reqVote.ProtocolVersion = followers[0].protocolVersion - 2
 	err = ldrT.RequestVote(followers[0].localID, followers[0].localAddr, &reqVote, &resp)
 	if err == nil || !strings.Contains(err.Error(), "protocol version") {
 		t.Fatalf("expected RPC to get rejected: %v", err)

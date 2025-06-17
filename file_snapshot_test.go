@@ -154,7 +154,7 @@ func TestFileSS_CreateSnapshot(t *testing.T) {
 	}
 
 	// Ensure a match
-	if bytes.Compare(buf.Bytes(), []byte("first\nsecond\n")) != 0 {
+	if !bytes.Equal(buf.Bytes(), []byte("first\nsecond\n")) {
 		t.Fatalf("content mismatch")
 	}
 }
@@ -267,7 +267,7 @@ func TestFileSS_BadPerm(t *testing.T) {
 	if err = os.Chmod(dir2, 0o00); err != nil {
 		t.Fatalf("err: %s", err)
 	}
-	defer os.Chmod(dir2, 777) // Set perms back for delete
+	defer os.Chmod(dir2, 0777) // Set perms back for delete
 
 	// Should fail
 	if _, err = NewFileSnapshotStore(dir2, 3, nil); err == nil {

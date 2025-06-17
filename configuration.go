@@ -51,10 +51,6 @@ type ConfigurationStore interface {
 	StoreConfiguration(index uint64, configuration Configuration)
 }
 
-type nopConfigurationStore struct{}
-
-func (s nopConfigurationStore) StoreConfiguration(_ uint64, _ Configuration) {}
-
 // ServerID is a unique string identifying a server for all time.
 type ServerID string
 
