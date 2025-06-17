@@ -27,7 +27,7 @@ func FirstIndex(b *testing.B, store raft.LogStore) {
 
 	// Run FirstIndex a number of times
 	for n := 0; n < b.N; n++ {
-		store.FirstIndex()
+		_, _ = store.FirstIndex()
 	}
 }
 
@@ -44,7 +44,7 @@ func LastIndex(b *testing.B, store raft.LogStore) {
 
 	// Run LastIndex a number of times
 	for n := 0; n < b.N; n++ {
-		store.LastIndex()
+		_, _ = store.LastIndex()
 	}
 }
 

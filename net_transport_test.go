@@ -33,7 +33,7 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	defer trans1.Close()
+	defer func() { _ = trans1.Close() }()
 	rpcCh := trans1.Consumer()
 
 	// Make the RPC request
@@ -87,7 +87,7 @@ func TestNetworkTransport_CloseStreams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	defer trans2.Close()
+	defer func() { _ = trans2.Close() }()
 
 	for i := 0; i < 2; i++ {
 		// Create wait group
@@ -140,7 +140,7 @@ func TestNetworkTransport_StartStop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	trans.Close()
+	_ = trans.Close()
 }
 
 func TestNetworkTransport_Heartbeat_FastPath(t *testing.T) {
@@ -149,7 +149,7 @@ func TestNetworkTransport_Heartbeat_FastPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	defer trans1.Close()
+	defer func() { _ = trans1.Close() }()
 
 	// Make the RPC request
 	args := AppendEntriesRequest{
@@ -182,7 +182,7 @@ func TestNetworkTransport_Heartbeat_FastPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	defer trans2.Close()
+	defer func() { _ = trans2.Close() }()
 
 	var out AppendEntriesResponse
 	if err := trans2.AppendEntries("id1", trans1.LocalAddr(), &args, &out); err != nil {
@@ -232,7 +232,7 @@ func TestNetworkTransport_AppendEntries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
-		defer trans1.Close()
+		defer func() { _ = trans1.Close() }()
 		rpcCh := trans1.Consumer()
 
 		// Make the RPC request
@@ -262,7 +262,7 @@ func TestNetworkTransport_AppendEntries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
-		defer trans2.Close()
+		defer func() { _ = trans2.Close() }()
 
 		var out AppendEntriesResponse
 		if err := trans2.AppendEntries("id1", trans1.LocalAddr(), &args, &out); err != nil {
@@ -284,7 +284,7 @@ func TestNetworkTransport_AppendEntriesPipeline(t *testing.T) {
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
-		defer trans1.Close()
+		defer func() { _ = trans1.Close() }()
 		rpcCh := trans1.Consumer()
 
 		// Make the RPC request
@@ -316,7 +316,7 @@ func TestNetworkTransport_AppendEntriesPipeline(t *testing.T) {
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
-		defer trans2.Close()
+		defer func() { _ = trans2.Close() }()
 		pipeline, err := trans2.AppendEntriesPipeline("id1", trans1.LocalAddr())
 		if err != nil {
 			t.Fatalf("err: %v", err)
@@ -341,7 +341,7 @@ func TestNetworkTransport_AppendEntriesPipeline(t *testing.T) {
 				t.Fatalf("timeout")
 			}
 		}
-		pipeline.Close()
+		_ = pipeline.Close()
 
 	}
 }
@@ -352,7 +352,7 @@ func TestNetworkTransport_AppendEntriesPipeline_CloseStreams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	defer trans1.Close()
+	defer func() { _ = trans1.Close() }()
 	rpcCh := trans1.Consumer()
 
 	// Make the RPC request
@@ -386,7 +386,7 @@ func TestNetworkTransport_AppendEntriesPipeline_CloseStreams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	defer trans2.Close()
+	defer func() { _ = trans2.Close() }()
 
 	for _, cancelStreams := range []bool{true, false} {
 		pipeline, err := trans2.AppendEntriesPipeline("id1", trans1.LocalAddr())
@@ -433,7 +433,7 @@ func TestNetworkTransport_AppendEntriesPipeline_CloseStreams(t *testing.T) {
 			t.Fatalf("unexpected error: %v", futureErr)
 		}
 
-		pipeline.Close()
+		_ = pipeline.Close()
 	}
 }
 
@@ -453,7 +453,7 @@ func TestNetworkTransport_AppendEntriesPipeline_MaxRPCsInFlight(t *testing.T) {
 			// Transport 1 is consumer
 			trans1, err := NewTCPTransportWithConfig("localhost:0", nil, config)
 			require.NoError(t, err)
-			defer trans1.Close()
+			defer func() { _ = trans1.Close() }()
 
 			// Make the RPC request
 			args := makeAppendRPC()
@@ -466,14 +466,14 @@ func TestNetworkTransport_AppendEntriesPipeline_MaxRPCsInFlight(t *testing.T) {
 			config.ServerAddressProvider = &testAddrProvider{string(trans1.LocalAddr())}
 			trans2, err := NewTCPTransportWithConfig("localhost:0", nil, config)
 			require.NoError(t, err)
-			defer trans2.Close()
+			defer func() { _ = trans2.Close() }()
 
 			// Kill the transports on the timeout to unblock. That means things that
 			// shouldn't have blocked did block.
 			go func() {
 				<-ctx.Done()
-				trans2.Close()
-				trans1.Close()
+				_ = trans2.Close()
+				_ = trans1.Close()
 			}()
 
 			// Attempt to pipeline
@@ -543,7 +543,7 @@ func TestNetworkTransport_RequestVote(t *testing.T) {
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
-		defer trans1.Close()
+		defer func() { _ = trans1.Close() }()
 		rpcCh := trans1.Consumer()
 
 		// Make the RPC request
@@ -583,7 +583,7 @@ func TestNetworkTransport_RequestVote(t *testing.T) {
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
-		defer trans2.Close()
+		defer func() { _ = trans2.Close() }()
 		var out RequestVoteResponse
 		if err := trans2.RequestVote("id1", trans1.LocalAddr(), &args, &out); err != nil {
 			t.Fatalf("err: %v", err)
@@ -604,7 +604,7 @@ func TestNetworkTransport_InstallSnapshot(t *testing.T) {
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
-		defer trans1.Close()
+		defer func() { _ = trans1.Close() }()
 		rpcCh := trans1.Consumer()
 
 		// Make the RPC request
@@ -635,7 +635,7 @@ func TestNetworkTransport_InstallSnapshot(t *testing.T) {
 
 				// Try to read the bytes
 				buf := make([]byte, 10)
-				rpc.Reader.Read(buf)
+				_, _ = rpc.Reader.Read(buf)
 
 				// Compare
 				if !bytes.Equal(buf, []byte("0123456789")) {
@@ -655,7 +655,7 @@ func TestNetworkTransport_InstallSnapshot(t *testing.T) {
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
-		defer trans2.Close()
+		defer func() { _ = trans2.Close() }()
 		// Create a buffer
 		buf := bytes.NewBuffer([]byte("0123456789"))
 
@@ -678,7 +678,7 @@ func TestNetworkTransport_EncodeDecode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	defer trans1.Close()
+	defer func() { _ = trans1.Close() }()
 
 	local := trans1.LocalAddr()
 	enc := trans1.EncodePeer("id1", local)
@@ -696,7 +696,7 @@ func TestNetworkTransport_EncodeDecode_AddressProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	defer trans1.Close()
+	defer func() { _ = trans1.Close() }()
 
 	local := trans1.LocalAddr()
 	enc := trans1.EncodePeer("id1", local)
@@ -713,7 +713,7 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	defer trans1.Close()
+	defer func() { _ = trans1.Close() }()
 	rpcCh := trans1.Consumer()
 
 	// Make the RPC request
@@ -767,7 +767,7 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	defer trans2.Close()
+	defer func() { _ = trans2.Close() }()
 
 	// Create wait group
 	wg := &sync.WaitGroup{}
@@ -884,7 +884,7 @@ func TestNetworkTransport_ListenBackoff(t *testing.T) {
 
 	// sleep (+yield) for testTime seconds before asking the accept loop to shut down
 	time.Sleep(testTime)
-	transport.Close()
+	_ = transport.Close()
 
 	// Verify that the method exited (but without block this test)
 	// maxDelay == 1s, so we will give the routine 1.25s to loop around and shut down.

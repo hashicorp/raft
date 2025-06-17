@@ -317,7 +317,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 		r.logger.Error("failed to open snapshot", "id", snapID, "error", err)
 		return false, err
 	}
-	defer snapshot.Close()
+	defer func() { _ = snapshot.Close() }()
 
 	// Setup the request
 	req := InstallSnapshotRequest{
@@ -453,7 +453,7 @@ func (r *Raft) pipelineReplicate(s *followerReplication) error {
 	if err != nil {
 		return err
 	}
-	defer pipeline.Close()
+	defer func() { _ = pipeline.Close() }()
 
 	// Log start and stop of pipeline
 	r.logger.Info("pipelining replication", "peer", peer)

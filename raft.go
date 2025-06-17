@@ -1152,11 +1152,11 @@ func (r *Raft) restoreUserSnapshot(meta *SnapshotMeta, reader io.Reader) error {
 	}
 	n, err := io.Copy(sink, reader)
 	if err != nil {
-		sink.Cancel()
+		_ = sink.Cancel()
 		return fmt.Errorf("failed to write snapshot: %v", err)
 	}
 	if n != meta.Size {
-		sink.Cancel()
+		_ = sink.Cancel()
 		return fmt.Errorf("failed to write snapshot, size didn't match (%d != %d)", n, meta.Size)
 	}
 	if err := sink.Close(); err != nil {
@@ -1887,7 +1887,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	n, err := io.Copy(sink, countingRPCReader)
 	transferMonitor.StopAndWait()
 	if err != nil {
-		sink.Cancel()
+		_ = sink.Cancel()
 		r.logger.Error("failed to copy snapshot", "error", err)
 		rpcErr = err
 		return
@@ -1895,7 +1895,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 
 	// Check that we received it all
 	if n != req.Size {
-		sink.Cancel()
+		_ = sink.Cancel()
 		r.logger.Error("failed to receive whole snapshot",
 			"received", hclog.Fmt("%d / %d", n, req.Size))
 		rpcErr = fmt.Errorf("short read")

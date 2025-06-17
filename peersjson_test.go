@@ -18,7 +18,7 @@ func TestPeersJSON_BadConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	defer os.RemoveAll(base)
+	defer func() { _ = os.RemoveAll(base) }()
 
 	peers := filepath.Join(base, "peers.json")
 	if err = os.WriteFile(peers, []byte("null"), 0o666); err != nil {
@@ -38,7 +38,7 @@ func TestPeersJSON_ReadPeersJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	defer os.RemoveAll(base)
+	defer func() { _ = os.RemoveAll(base) }()
 
 	content := []byte(`
 ["127.0.0.1:123",
@@ -86,7 +86,7 @@ func TestPeersJSON_ReadConfigJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	defer os.RemoveAll(base)
+	defer func() { _ = os.RemoveAll(base) }()
 
 	content := []byte(`
 [

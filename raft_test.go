@@ -1319,7 +1319,7 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	defer os.RemoveAll(base)
+	defer func() { _ = os.RemoveAll(base) }()
 	peersFile := filepath.Join(base, "peers.json")
 	if err = os.WriteFile(peersFile, content, 0o666); err != nil {
 		t.Fatalf("[ERR] err: %v", err)
@@ -1502,7 +1502,7 @@ func snapshotAndRestore(t *testing.T, offset uint64, monotonicLogStore bool, res
 	if err != nil {
 		t.Fatalf("Snapshot open failed: %v", err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	if err := leader.Restore(meta, reader, 5*time.Second); err != nil {
 		t.Fatalf("Restore failed: %v", err)
 	}

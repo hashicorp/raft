@@ -38,7 +38,7 @@ func TestTransport_StartStop(t *testing.T) {
 func TestTransport_AppendEntries(t *testing.T) {
 	for ttype := 0; ttype < numTestTransports; ttype++ {
 		addr1, trans1 := NewTestTransport(ttype, "")
-		defer trans1.Close()
+		defer func() { _ = trans1.Close() }()
 		rpcCh := trans1.Consumer()
 
 		// Make the RPC request
@@ -82,7 +82,7 @@ func TestTransport_AppendEntries(t *testing.T) {
 
 		// Transport 2 makes outbound request
 		addr2, trans2 := NewTestTransport(ttype, "")
-		defer trans2.Close()
+		defer func() { _ = trans2.Close() }()
 
 		trans1.Connect(addr2, trans2)
 		trans2.Connect(addr1, trans1)
@@ -102,7 +102,7 @@ func TestTransport_AppendEntries(t *testing.T) {
 func TestTransport_AppendEntriesPipeline(t *testing.T) {
 	for ttype := 0; ttype < numTestTransports; ttype++ {
 		addr1, trans1 := NewTestTransport(ttype, "")
-		defer trans1.Close()
+		defer func() { _ = trans1.Close() }()
 		rpcCh := trans1.Consumer()
 
 		// Make the RPC request
@@ -149,7 +149,7 @@ func TestTransport_AppendEntriesPipeline(t *testing.T) {
 
 		// Transport 2 makes outbound request
 		addr2, trans2 := NewTestTransport(ttype, "")
-		defer trans2.Close()
+		defer func() { _ = trans2.Close() }()
 
 		trans1.Connect(addr2, trans2)
 		trans2.Connect(addr1, trans1)
@@ -158,7 +158,7 @@ func TestTransport_AppendEntriesPipeline(t *testing.T) {
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
-		defer pipeline.Close()
+		defer func() { _ = pipeline.Close() }()
 		for i := 0; i < 10; i++ {
 			out := new(AppendEntriesResponse)
 			if _, err := pipeline.AppendEntries(&args, out); err != nil {
@@ -184,7 +184,7 @@ func TestTransport_AppendEntriesPipeline(t *testing.T) {
 func TestTransport_RequestVote(t *testing.T) {
 	for ttype := 0; ttype < numTestTransports; ttype++ {
 		addr1, trans1 := NewTestTransport(ttype, "")
-		defer trans1.Close()
+		defer func() { _ = trans1.Close() }()
 		rpcCh := trans1.Consumer()
 
 		// Make the RPC request
@@ -219,7 +219,7 @@ func TestTransport_RequestVote(t *testing.T) {
 
 		// Transport 2 makes outbound request
 		addr2, trans2 := NewTestTransport(ttype, "")
-		defer trans2.Close()
+		defer func() { _ = trans2.Close() }()
 
 		trans1.Connect(addr2, trans2)
 		trans2.Connect(addr1, trans1)
@@ -239,7 +239,7 @@ func TestTransport_RequestVote(t *testing.T) {
 func TestTransport_InstallSnapshot(t *testing.T) {
 	for ttype := 0; ttype < numTestTransports; ttype++ {
 		addr1, trans1 := NewTestTransport(ttype, "")
-		defer trans1.Close()
+		defer func() { _ = trans1.Close() }()
 		rpcCh := trans1.Consumer()
 
 		// Make the RPC request
@@ -270,7 +270,7 @@ func TestTransport_InstallSnapshot(t *testing.T) {
 
 				// Try to read the bytes
 				buf := make([]byte, 10)
-				rpc.Reader.Read(buf)
+				_, _ = rpc.Reader.Read(buf)
 
 				// Compare
 				if !bytes.Equal(buf, []byte("0123456789")) {
@@ -287,7 +287,7 @@ func TestTransport_InstallSnapshot(t *testing.T) {
 
 		// Transport 2 makes outbound request
 		addr2, trans2 := NewTestTransport(ttype, "")
-		defer trans2.Close()
+		defer func() { _ = trans2.Close() }()
 
 		trans1.Connect(addr2, trans2)
 		trans2.Connect(addr1, trans1)
@@ -310,7 +310,7 @@ func TestTransport_InstallSnapshot(t *testing.T) {
 func TestTransport_EncodeDecode(t *testing.T) {
 	for ttype := 0; ttype < numTestTransports; ttype++ {
 		_, trans1 := NewTestTransport(ttype, "")
-		defer trans1.Close()
+		defer func() { _ = trans1.Close() }()
 
 		local := trans1.LocalAddr()
 		enc := trans1.EncodePeer("aaaa", local)

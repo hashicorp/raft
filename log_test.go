@@ -120,7 +120,7 @@ func testSetupMetrics(t *testing.T) *metrics.InmemSink {
 	s := metrics.NewInmemSink(10*time.Second, 300*time.Second)
 	cfg := metrics.DefaultConfig("raft.test")
 	cfg.EnableHostname = false
-	metrics.NewGlobal(cfg, s)
+	_, _ = metrics.NewGlobal(cfg, s)
 	return s
 }
 

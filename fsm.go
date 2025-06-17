@@ -192,7 +192,7 @@ func (r *Raft) runFSM() {
 			req.respond(fmt.Errorf("failed to open snapshot %v: %v", req.ID, err))
 			return
 		}
-		defer source.Close()
+		defer func() { _ = source.Close() }()
 
 		snapLogger := r.logger.With(
 			"id", req.ID,

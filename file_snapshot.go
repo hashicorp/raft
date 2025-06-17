@@ -296,7 +296,7 @@ func (f *FileSnapshotStore) readMeta(name string) (*fileSnapshotMeta, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer fh.Close()
+	defer func() { _ = fh.Close() }()
 
 	// Buffer the file IO
 	buffered := bufio.NewReader(fh)
@@ -334,7 +334,7 @@ func (f *FileSnapshotStore) Open(id string) (*SnapshotMeta, io.ReadCloser, error
 	_, err = io.Copy(stateHash, fh)
 	if err != nil {
 		f.logger.Error("failed to read state file", "error", err)
-		fh.Close()
+		_ = fh.Close()
 		return nil, nil, err
 	}
 
@@ -342,14 +342,14 @@ func (f *FileSnapshotStore) Open(id string) (*SnapshotMeta, io.ReadCloser, error
 	computed := stateHash.Sum(nil)
 	if !bytes.Equal(meta.CRC, computed) {
 		f.logger.Error("CRC checksum failed", "stored", meta.CRC, "computed", computed)
-		fh.Close()
+		_ = fh.Close()
 		return nil, nil, fmt.Errorf("CRC mismatch")
 	}
 
 	// Seek to the start
 	if _, err := fh.Seek(0, 0); err != nil {
 		f.logger.Error("state file seek failed", "error", err)
-		fh.Close()
+		_ = fh.Close()
 		return nil, nil, err
 	}
 
@@ -430,7 +430,7 @@ func (s *FileSnapshotSink) Close() error {
 			s.logger.Error("failed to open snapshot parent directory", "path", s.parentDir, "error", err)
 			return err
 		}
-		defer parentFH.Close()
+		defer func() { _ = parentFH.Close() }()
 
 		if err = parentFH.Sync(); err != nil {
 			s.logger.Error("failed syncing parent directory", "path", s.parentDir, "error", err)
@@ -507,7 +507,7 @@ func (s *FileSnapshotSink) writeMeta() error {
 	if err != nil {
 		return err
 	}
-	defer fh.Close()
+	defer func() { _ = fh.Close() }()
 
 	// Buffer the file IO
 	buffered := bufio.NewWriter(fh)

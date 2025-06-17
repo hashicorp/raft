@@ -174,7 +174,7 @@ func (s *shutdownFuture) Error() error {
 	}
 	s.raft.waitShutdown()
 	if closeable, ok := s.raft.trans.(WithClose); ok {
-		closeable.Close()
+		_ = closeable.Close()
 	}
 	return nil
 }

@@ -42,7 +42,7 @@ type RaftEnv struct {
 // Release shuts down and cleans up any stored data, its not restartable after this
 func (r *RaftEnv) Release() {
 	r.Shutdown()
-	os.RemoveAll(r.dir)
+	_ = os.RemoveAll(r.dir)
 }
 
 // Shutdown shuts down raft & transport, but keeps track of its data, its restartable
@@ -53,7 +53,7 @@ func (r *RaftEnv) Shutdown() {
 	if err := f.Error(); err != nil {
 		panic(err)
 	}
-	r.trans.Close()
+	_ = r.trans.Close()
 }
 
 // Restart will start a raft node that was previously Shutdown()
