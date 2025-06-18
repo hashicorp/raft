@@ -590,6 +590,62 @@ func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 	t.Fatalf("Timeout waiting to detect apply timeouts")
 }
 
+func TestRaft_WaitCommittedConcurrent(t *testing.T) {
+	// Make the cluster
+	conf := inmemConfig(t)
+	conf.HeartbeatTimeout = 2 * conf.HeartbeatTimeout
+	conf.ElectionTimeout = 2 * conf.ElectionTimeout
+	c := MakeCluster(3, t, conf)
+	defer c.Close()
+
+	// Wait for a leader
+	leader := c.Leader()
+
+	// Create a wait group
+	const sz = 100
+	var group sync.WaitGroup
+	group.Add(sz)
+
+	applyF := func(i int) {
+		defer group.Done()
+		future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+		if err := future.WaitCommitted(); err != nil {
+			c.Failf("[ERR] err: %v", err)
+		}
+	}
+
+	// Concurrently apply
+	for i := 0; i < sz; i++ {
+		go applyF(i)
+	}
+
+	// Wait to finish
+	doneCh := make(chan struct{})
+	go func() {
+		defer close(doneCh)
+		group.Wait()
+		// Unlike Apply, WaitCommitted does not wait for the FSM to apply
+		// the commands. Therefore, we explicitly wait until the committed
+		// commands are replicated and applied to all the replicas' FSM.
+		// WaitForReplication times out after longstopTimeout.
+		c.WaitForReplication(sz)
+	}()
+	select {
+	case <-doneCh:
+	case <-time.After(c.longstopTimeout):
+		t.Fatalf("timeout")
+	}
+
+	// If anything failed up to this point then bail now, rather than do a
+	// confusing compare.
+	if t.Failed() {
+		t.Fatalf("One or more of the apply operations failed")
+	}
+
+	// Check the FSMs
+	c.EnsureSame(t)
+}
+
 func TestRaft_JoinNode(t *testing.T) {
 	// Make a cluster
 	c := MakeCluster(2, t, nil)

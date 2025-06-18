@@ -569,6 +569,7 @@ func (r *Raft) runLeader() {
 	// maintain that there exists at most one uncommitted configuration entry in
 	// any log, so we have to do proper no-ops here.
 	noop := &logFuture{log: Log{Type: LogNoop}}
+	noop.init()
 	r.dispatchLogs([]*logFuture{noop})
 
 	// Sit in the leader loop until we step down
@@ -818,6 +819,7 @@ func (r *Raft) leaderLoop() {
 				groupReady = append(groupReady, e)
 				groupFutures[idx] = commitLog
 				lastIdxInGroup = idx
+				close(commitLog.committed)
 			}
 
 			// Process the group
