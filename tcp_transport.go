@@ -82,11 +82,11 @@ func newTCPTransport(bindAddr string,
 	// Verify that we have a usable advertise address
 	addr, ok := stream.Addr().(*net.TCPAddr)
 	if !ok {
-		list.Close()
+		_ = list.Close()
 		return nil, errNotTCP
 	}
 	if addr.IP == nil || addr.IP.IsUnspecified() {
-		list.Close()
+		_ = list.Close()
 		return nil, errNotAdvertisable
 	}
 

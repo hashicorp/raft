@@ -228,7 +228,7 @@ func (i *InmemTransport) Disconnect(peer ServerAddress) {
 	n := len(i.pipelines)
 	for idx := 0; idx < n; idx++ {
 		if i.pipelines[idx].peerAddr == peer {
-			i.pipelines[idx].Close()
+			_ = i.pipelines[idx].Close()
 			i.pipelines[idx], i.pipelines[n-1] = i.pipelines[n-1], nil
 			idx--
 			n--
@@ -245,7 +245,7 @@ func (i *InmemTransport) DisconnectAll() {
 
 	// Handle pipelines
 	for _, pipeline := range i.pipelines {
-		pipeline.Close()
+		_ = pipeline.Close()
 	}
 	i.pipelines = nil
 }

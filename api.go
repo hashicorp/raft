@@ -371,7 +371,7 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 		monitor := startSnapshotRestoreMonitor(snapLogger, crc, snapshot.Size, false)
 		err = fsm.Restore(crc)
 		// Close the source after the restore has completed
-		source.Close()
+		_ = source.Close()
 		monitor.StopAndWait()
 		if err != nil {
 			// Same here, skip and try the next one.
@@ -695,11 +695,11 @@ func (r *Raft) tryRestoreSingleSnapshot(snapshot *SnapshotMeta) bool {
 	}
 
 	if err := fsmRestoreAndMeasure(snapLogger, r.fsm, source, snapshot.Size); err != nil {
-		source.Close()
+		_ = source.Close()
 		snapLogger.Error("failed to restore snapshot", "error", err)
 		return false
 	}
-	source.Close()
+	_ = source.Close()
 
 	snapLogger.Info("restored from snapshot")
 
@@ -1212,7 +1212,7 @@ func (r *Raft) Stats() map[string]string {
 	} else if last.IsZero() {
 		s["last_contact"] = "never"
 	} else {
-		s["last_contact"] = fmt.Sprintf("%v", time.Now().Sub(last))
+		s["last_contact"] = fmt.Sprintf("%v", time.Since(last))
 	}
 	return s
 }

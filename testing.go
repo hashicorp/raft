@@ -91,7 +91,7 @@ func (m *MockFSM) Snapshot() (FSMSnapshot, error) {
 func (m *MockFSM) Restore(inp io.ReadCloser) error {
 	m.Lock()
 	defer m.Unlock()
-	defer inp.Close()
+	defer func() { _ = inp.Close() }()
 	hd := codec.MsgpackHandle{}
 	dec := codec.NewDecoder(inp, &hd)
 
@@ -119,10 +119,10 @@ func (m *MockSnapshot) Persist(sink SnapshotSink) error {
 	hd := codec.MsgpackHandle{}
 	enc := codec.NewEncoder(sink, &hd)
 	if err := enc.Encode(m.logs[:m.maxIndex]); err != nil {
-		sink.Cancel()
+		_ = sink.Cancel()
 		return err
 	}
-	sink.Close()
+	_ = sink.Close()
 	return nil
 }
 
@@ -315,7 +315,7 @@ func (c *cluster) Close() {
 	}
 
 	for _, d := range c.dirs {
-		os.RemoveAll(d)
+		_ = os.RemoveAll(d)
 	}
 }
 
@@ -635,7 +635,7 @@ CHECK:
 		}
 
 		for idx := 0; idx < len(first.logs); idx++ {
-			if bytes.Compare(first.logs[idx], fsm.logs[idx]) != 0 {
+			if !bytes.Equal(first.logs[idx], fsm.logs[idx]) {
 				fsm.Unlock()
 				if time.Now().After(limit) {
 					t.Fatalf("FSM log mismatch at index %d", idx)

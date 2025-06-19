@@ -31,7 +31,7 @@ func TestFileSS_CreateSnapshotMissingParentDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
-	defer os.RemoveAll(parent)
+	defer func() { _ = os.RemoveAll(parent) }()
 
 	dir, err := os.MkdirTemp(parent, "raft")
 	if err != nil {
@@ -43,7 +43,7 @@ func TestFileSS_CreateSnapshotMissingParentDir(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 
-	os.RemoveAll(parent)
+	_ = os.RemoveAll(parent)
 	_, trans := NewInmemTransport(NewInmemAddr())
 	_, err = snap.Create(SnapshotVersionMax, 10, 3, Configuration{}, 0, trans)
 	if err != nil {
@@ -57,7 +57,7 @@ func TestFileSS_CreateSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	snap, err := NewFileSnapshotStoreWithLogger(dir, 3, newTestLogger(t))
 	if err != nil {
@@ -154,7 +154,7 @@ func TestFileSS_CreateSnapshot(t *testing.T) {
 	}
 
 	// Ensure a match
-	if bytes.Compare(buf.Bytes(), []byte("first\nsecond\n")) != 0 {
+	if !bytes.Equal(buf.Bytes(), []byte("first\nsecond\n")) {
 		t.Fatalf("content mismatch")
 	}
 }
@@ -165,7 +165,7 @@ func TestFileSS_CancelSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	snap, err := NewFileSnapshotStoreWithLogger(dir, 3, newTestLogger(t))
 	if err != nil {
@@ -203,7 +203,7 @@ func TestFileSS_Retention(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	var snap *FileSnapshotStore
 	snap, err = NewFileSnapshotStoreWithLogger(dir, 2, newTestLogger(t))
@@ -256,7 +256,7 @@ func TestFileSS_BadPerm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}
-	defer os.RemoveAll(dir1)
+	defer func() { _ = os.RemoveAll(dir1) }()
 
 	// Create a sub dir and remove all permissions
 	var dir2 string
@@ -267,7 +267,7 @@ func TestFileSS_BadPerm(t *testing.T) {
 	if err = os.Chmod(dir2, 0o00); err != nil {
 		t.Fatalf("err: %s", err)
 	}
-	defer os.Chmod(dir2, 777) // Set perms back for delete
+	defer func() { _ = os.Chmod(dir2, 0777) }() // Set perms back for delete
 
 	// Should fail
 	if _, err = NewFileSnapshotStore(dir2, 3, nil); err == nil {
@@ -280,14 +280,14 @@ func TestFileSS_MissingParentDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
-	defer os.RemoveAll(parent)
+	defer func() { _ = os.RemoveAll(parent) }()
 
 	dir, err := os.MkdirTemp(parent, "raft")
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
 
-	os.RemoveAll(parent)
+	_ = os.RemoveAll(parent)
 	_, err = NewFileSnapshotStore(dir, 3, nil)
 	if err != nil {
 		t.Fatalf("should not fail when using non existing parent")
@@ -300,7 +300,7 @@ func TestFileSS_Ordering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v ", err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	snap, err := NewFileSnapshotStoreWithLogger(dir, 3, newTestLogger(t))
 	if err != nil {

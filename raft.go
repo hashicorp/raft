@@ -6,6 +6,7 @@ package raft
 import (
 	"bytes"
 	"container/list"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -1151,11 +1152,11 @@ func (r *Raft) restoreUserSnapshot(meta *SnapshotMeta, reader io.Reader) error {
 	}
 	n, err := io.Copy(sink, reader)
 	if err != nil {
-		sink.Cancel()
+		_ = sink.Cancel()
 		return fmt.Errorf("failed to write snapshot: %v", err)
 	}
 	if n != meta.Size {
-		sink.Cancel()
+		_ = sink.Cancel()
 		return fmt.Errorf("failed to write snapshot, size didn't match (%d != %d)", n, meta.Size)
 	}
 	if err := sink.Close(); err != nil {
@@ -1408,7 +1409,7 @@ func (r *Raft) processRPC(rpc RPC) {
 		r.logger.Error("got unexpected command",
 			"command", hclog.Fmt("%#v", rpc.Command))
 
-		rpc.Respond(nil, fmt.Errorf(rpcUnexpectedCommandError))
+		rpc.Respond(nil, errors.New(rpcUnexpectedCommandError))
 	}
 }
 
@@ -1627,9 +1628,9 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	// vote!
 	var candidate ServerAddress
 	var candidateBytes []byte
-	if len(req.RPCHeader.Addr) > 0 {
-		candidate = r.trans.DecodePeer(req.RPCHeader.Addr)
-		candidateBytes = req.RPCHeader.Addr
+	if len(req.Addr) > 0 {
+		candidate = r.trans.DecodePeer(req.Addr)
+		candidateBytes = req.Addr
 	} else {
 		candidate = r.trans.DecodePeer(req.Candidate)
 		candidateBytes = req.Candidate
@@ -1849,7 +1850,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 
 	// Save the current leader
 	if len(req.ID) > 0 {
-		r.setLeader(r.trans.DecodePeer(req.RPCHeader.Addr), ServerID(req.ID))
+		r.setLeader(r.trans.DecodePeer(req.Addr), ServerID(req.ID))
 	} else {
 		r.setLeader(r.trans.DecodePeer(req.Leader), ServerID(req.ID))
 	}
@@ -1886,7 +1887,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	n, err := io.Copy(sink, countingRPCReader)
 	transferMonitor.StopAndWait()
 	if err != nil {
-		sink.Cancel()
+		_ = sink.Cancel()
 		r.logger.Error("failed to copy snapshot", "error", err)
 		rpcErr = err
 		return
@@ -1894,7 +1895,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 
 	// Check that we received it all
 	if n != req.Size {
-		sink.Cancel()
+		_ = sink.Cancel()
 		r.logger.Error("failed to receive whole snapshot",
 			"received", hclog.Fmt("%d / %d", n, req.Size))
 		rpcErr = fmt.Errorf("short read")
@@ -2018,7 +2019,7 @@ func (r *Raft) electSelf() <-chan *voteResult {
 				r.logger.Debug("voting for self", "term", req.Term, "id", r.localID)
 
 				// Persist a vote for ourselves
-				if err := r.persistVote(req.Term, req.RPCHeader.Addr); err != nil {
+				if err := r.persistVote(req.Term, req.Addr); err != nil {
 					r.logger.Error("failed to persist vote", "error", err)
 					return nil
 
@@ -2151,7 +2152,7 @@ func (r *Raft) setCurrentTerm(t uint64) {
 // that leader should be set only after updating the state.
 func (r *Raft) setState(state RaftState) {
 	r.setLeader("", "")
-	oldState := r.raftState.getState()
+	oldState := r.getState()
 	r.raftState.setState(state)
 	if oldState != state {
 		r.observe(state)

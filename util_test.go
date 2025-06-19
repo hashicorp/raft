@@ -19,6 +19,9 @@ func TestMsgpackEncodeTimeDefaultFormat(t *testing.T) {
 		t.Fatal(err)
 	}
 	buf, err := encodeMsgPack(tm)
+	if err != nil {
+		t.Errorf("Failed to encode time %s: %v", stamp, err)
+	}
 
 	expected := []byte{175, 1, 0, 0, 0, 14, 187, 75, 55, 229, 0, 0, 0, 0, 255, 255}
 
@@ -33,7 +36,7 @@ func TestRandomTimeout(t *testing.T) {
 
 	select {
 	case <-timeout:
-		diff := time.Now().Sub(start)
+		diff := time.Since(start)
 		if diff < time.Millisecond {
 			t.Fatalf("fired early")
 		}
@@ -86,16 +89,20 @@ func TestMax(t *testing.T) {
 
 func TestGenerateUUID(t *testing.T) {
 	prev := generateUUID()
+	re, err := regexp.Compile(`[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}`)
+	if err != nil {
+		t.Errorf("failed to copmile regex: %s", err)
+	}
+
 	for i := 0; i < 100; i++ {
 		id := generateUUID()
 		if prev == id {
 			t.Fatalf("Should get a new ID!")
 		}
 
-		matched, err := regexp.MatchString(
-			`[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}`, id)
-		if !matched || err != nil {
-			t.Fatalf("expected match %s %v %s", id, matched, err)
+		matched := re.MatchString(id)
+		if !matched {
+			t.Fatalf("expected match %s %v", id, matched)
 		}
 	}
 }
