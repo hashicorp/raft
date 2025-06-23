@@ -36,6 +36,12 @@ type IndexFuture interface {
 type ApplyFuture interface {
 	IndexFuture
 
+	// WaitCommitted blocks until the log entry has been committed to quorum.
+	// It does not wait for FSM application.
+	// The error returned follows the same semantics as the Error method,
+	// except for errors that occur after the log entry has been committed.
+	WaitCommitted() error
+
 	// Response returns the FSM response as returned by the FSM.Apply method. This
 	// must not be called until after the Error method has returned.
 	// Note that if FSM.Apply returns an error, it will be returned by Response,
@@ -85,6 +91,10 @@ func (e errorFuture) Response() interface{} {
 
 func (e errorFuture) Index() uint64 {
 	return 0
+}
+
+func (e errorFuture) WaitCommitted() error {
+	return e.err
 }
 
 // deferError can be embedded to allow a future
@@ -151,9 +161,15 @@ type bootstrapFuture struct {
 // the log is considered committed.
 type logFuture struct {
 	deferError
-	log      Log
-	response interface{}
-	dispatch time.Time
+	log       Log
+	response  interface{}
+	dispatch  time.Time
+	committed chan struct{}
+}
+
+func (l *logFuture) init() {
+	l.committed = make(chan struct{})
+	l.deferError.init()
 }
 
 func (l *logFuture) Response() interface{} {
@@ -162,6 +178,45 @@ func (l *logFuture) Response() interface{} {
 
 func (l *logFuture) Index() uint64 {
 	return l.log.Index
+}
+
+func (l *logFuture) WaitCommitted() error {
+	select {
+	default:
+	case <-l.committed:
+		// If the entry is committed, errors are irrelevant because quorum
+		// agreement ensures safety. If an error occurs before commitment,
+		// it must be returned (e.g., leadership loss).
+		return nil
+	}
+	if l.err == nil {
+		if l.errCh == nil {
+			panic("waiting for response on nil channel")
+		}
+		select {
+		case <-l.committed:
+		case l.err = <-l.errCh:
+			// If the error is nil, it means that the command
+			// has been applied to the FSM already. The l.committed
+			// channel is also closed as the command is guaranteed
+			// to be committed.
+			//
+			// In this case, if Error is called after WaitCommitted,
+			// the method will not block, and the caller will be
+			// able to access the response safely. Otherwise, if the
+			// response has not been received yet, Error will block.
+			//
+			// The same is true for the ShutdownCh.
+		case <-l.ShutdownCh:
+			l.err = ErrRaftShutdown
+		}
+	}
+	select {
+	case <-l.committed:
+		return nil
+	default:
+		return l.err
+	}
 }
 
 type shutdownFuture struct {
