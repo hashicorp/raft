@@ -544,7 +544,7 @@ func (n *NetworkTransport) InstallSnapshot(id ServerID, target ServerAddress, ar
 	}
 
 	// Stream the state
-	if _, err = io.Copy(conn.w, data); err != nil {
+	if _, err = io.CopyN(conn.w, data, args.Size); err != nil {
 		return err
 	}
 
@@ -624,7 +624,12 @@ func (n *NetworkTransport) handleConn(connCtx context.Context, conn net.Conn) {
 	w := bufio.NewWriter(conn)
 	dec := codec.NewDecoder(r, &codec.MsgpackHandle{})
 	enc := n.encoder(w)
-	for {
+	var cmd, prevCmd byte
+	var err error
+	// Do not re-enter the loop once the conn has been used to install a snapshot.
+	// The server side has pretty much always done this.
+	for cmd != rpcInstallSnapshot {
+		prevCmd = cmd
 		select {
 		case <-connCtx.Done():
 			n.logger.Debug("stream layer is closed")
@@ -632,9 +637,9 @@ func (n *NetworkTransport) handleConn(connCtx context.Context, conn net.Conn) {
 		default:
 		}
 
-		if err := n.handleCommand(r, dec, enc); err != nil {
+		if cmd, err = n.handleCommand(r, dec, enc); err != nil {
 			if err != io.EOF {
-				n.logger.Error("failed to decode incoming command", "error", err)
+				n.logger.Error("failed to decode incoming command", "error", err, "cmd", cmd, "prevCmd", prevCmd)
 			}
 			if r.Buffered() > 0 {
 				unread := r.Buffered()
@@ -642,25 +647,25 @@ func (n *NetworkTransport) handleConn(connCtx context.Context, conn net.Conn) {
 				cnt, _ := r.Read(snippet[:])
 				dst := make([]byte, base64.StdEncoding.EncodedLen(cnt))
 				base64.StdEncoding.Encode(dst, snippet[:cnt])
-				n.logger.Error("remaining read buffer", "sz", unread, "snippet", string(dst))
+				n.logger.Error("remaining read buffer", "sz", unread, "snippet", string(dst), "cmd", cmd, "prevCmd", prevCmd)
 			}
 			return
 		}
-		if err := w.Flush(); err != nil {
-			n.logger.Error("failed to flush response", "error", err)
+		if err = w.Flush(); err != nil {
+			n.logger.Error("failed to flush response", "error", err, "cmd", cmd, "prevCmd", prevCmd)
 			return
 		}
 	}
 }
 
 // handleCommand is used to decode and dispatch a single command.
-func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, enc *codec.Encoder) error {
+func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, enc *codec.Encoder) (byte, error) {
 	getTypeStart := time.Now()
 
 	// Get the rpc type
 	rpcType, err := r.ReadByte()
 	if err != nil {
-		return err
+		return 255, err
 	}
 
 	// measuring the time to get the first byte separately because the heartbeat conn will hang out here
@@ -676,12 +681,13 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 
 	// Decode the command
 	isHeartbeat := false
+	wantFlush := false
 	var labels []metrics.Label
 	switch rpcType {
 	case rpcAppendEntries:
 		var req AppendEntriesRequest
 		if err := dec.Decode(&req); err != nil {
-			return err
+			return rpcType, err
 		}
 		rpc.Command = &req
 
@@ -705,34 +711,35 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 	case rpcRequestVote:
 		var req RequestVoteRequest
 		if err := dec.Decode(&req); err != nil {
-			return err
+			return rpcType, err
 		}
 		rpc.Command = &req
 		labels = []metrics.Label{{Name: "rpcType", Value: "RequestVote"}}
 	case rpcRequestPreVote:
 		var req RequestPreVoteRequest
 		if err := dec.Decode(&req); err != nil {
-			return err
+			return rpcType, err
 		}
 		rpc.Command = &req
 		labels = []metrics.Label{{Name: "rpcType", Value: "RequestPreVote"}}
 	case rpcInstallSnapshot:
 		var req InstallSnapshotRequest
 		if err := dec.Decode(&req); err != nil {
-			return err
+			return rpcType, err
 		}
 		rpc.Command = &req
 		rpc.Reader = io.LimitReader(r, req.Size)
+		wantFlush = true
 		labels = []metrics.Label{{Name: "rpcType", Value: "InstallSnapshot"}}
 	case rpcTimeoutNow:
 		var req TimeoutNowRequest
 		if err := dec.Decode(&req); err != nil {
-			return err
+			return rpcType, err
 		}
 		rpc.Command = &req
 		labels = []metrics.Label{{Name: "rpcType", Value: "TimeoutNow"}}
 	default:
-		return fmt.Errorf("unknown rpc type %d", rpcType)
+		return rpcType, fmt.Errorf("unknown rpc type %d", rpcType)
 	}
 
 	metrics.MeasureSinceWithLabels([]string{"raft", "net", "rpcDecode"}, decodeStart, labels)
@@ -754,7 +761,7 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 	select {
 	case n.consumeCh <- rpc:
 	case <-n.shutdownCh:
-		return ErrTransportShutdown
+		return rpcType, ErrTransportShutdown
 	}
 
 	// Wait for response
@@ -765,23 +772,26 @@ RESP:
 	select {
 	case resp := <-respCh:
 		defer metrics.MeasureSinceWithLabels([]string{"raft", "net", "rpcRespond"}, respWaitStart, labels)
+		for wantFlush && r.Buffered() > 0 {
+			io.CopyN(io.Discard, r, int64(r.Buffered()))
+		}
 		// Send the error first
 		respErr := ""
 		if resp.Error != nil {
 			respErr = resp.Error.Error()
 		}
 		if err := enc.Encode(respErr); err != nil {
-			return err
+			return rpcType, err
 		}
 
 		// Send the response
 		if err := enc.Encode(resp.Response); err != nil {
-			return err
+			return rpcType, err
 		}
 	case <-n.shutdownCh:
-		return ErrTransportShutdown
+		return rpcType, ErrTransportShutdown
 	}
-	return nil
+	return rpcType, nil
 }
 
 // decodeResponse is used to decode an RPC response and reports whether
