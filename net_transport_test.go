@@ -277,6 +277,66 @@ func TestNetworkTransport_AppendEntries(t *testing.T) {
 	}
 }
 
+func TestNetworkTransport_AppendEntries_Extensions(t *testing.T) {
+	for _, useAddrProvider := range []bool{true, false} {
+		// Transport 1 is consumer
+		trans1, err := makeTransport(t, useAddrProvider, "localhost:0")
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		defer func() {
+			if err := trans1.Close(); err != nil {
+				t.Fatalf("err: %v", err)
+			}
+		}()
+		rpcCh := trans1.Consumer()
+
+		// Make the RPC request, including an Extension
+		args := makeAppendRPC()
+		args.Extensions = []byte{1, 2, 3, 4}
+		resp := makeAppendRPCResponse()
+
+		// Listen for a request
+		go func() {
+			select {
+			case rpc := <-rpcCh:
+				// Verify the command
+				req := rpc.Command.(*AppendEntriesRequest)
+				if !reflect.DeepEqual(req, &args) {
+					t.Errorf("command mismatch: %#v %#v", *req, args)
+					return
+				}
+
+				rpc.Respond(&resp, nil)
+
+			case <-time.After(200 * time.Millisecond):
+				t.Errorf("timeout")
+			}
+		}()
+
+		// Transport 2 makes outbound request
+		trans2, err := makeTransport(t, useAddrProvider, string(trans1.LocalAddr()))
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		defer func() {
+			if err := trans2.Close(); err != nil {
+				t.Fatalf("err: %v", err)
+			}
+		}()
+
+		var out AppendEntriesResponse
+		if err := trans2.AppendEntries("id1", trans1.LocalAddr(), &args, &out); err != nil {
+			t.Fatalf("err: %v", err)
+		}
+
+		// Verify the response
+		if !reflect.DeepEqual(resp, out) {
+			t.Fatalf("command mismatch: %#v %#v", resp, out)
+		}
+	}
+}
+
 func TestNetworkTransport_AppendEntriesPipeline(t *testing.T) {
 	for _, useAddrProvider := range []bool{true, false} {
 		// Transport 1 is consumer

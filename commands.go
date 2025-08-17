@@ -42,6 +42,11 @@ type AppendEntriesRequest struct {
 
 	// Commit index on the leader
 	LeaderCommitIndex uint64
+
+	// Extensions holds an opaque byte slice of information for use by
+	// applications of this library. It will be encoded and transmitted
+	// to other nodes, but will be otherwise ignored by the Raft code.
+	Extensions []byte
 }
 
 // GetRPCHeader - See WithRPCHeader.
