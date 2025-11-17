@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //go:build batchtest
-// +build batchtest
 
 package fuzzy
 
