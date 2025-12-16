@@ -6,11 +6,12 @@ package raft
 import (
 	"errors"
 	"fmt"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/hashicorp/go-metrics/compat"
+	metrics "github.com/hashicorp/go-metrics/compat"
 )
 
 const (
@@ -394,12 +395,22 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 		Leader: r.trans.EncodePeer(r.localID, r.localAddr),
 	}
 
+	// Create ticker with initial random duration
+	interval := r.config().HeartbeatTimeout / 10
+	randomDuration := interval
+	if interval > 0 {
+		extra := time.Duration(rand.Int63()) % interval
+		randomDuration = interval + extra
+	}
+	ticker := time.NewTicker(randomDuration)
+	defer ticker.Stop()
+
 	var resp AppendEntriesResponse
 	for {
 		// Wait for the next heartbeat interval or forced notify
 		select {
 		case <-s.notifyCh:
-		case <-randomTimeout(r.config().HeartbeatTimeout / 10):
+		case <-ticker.C:
 		case <-stopCh:
 			return
 		}
@@ -436,6 +447,14 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 
 			s.notifyAll(resp.Success)
 		}
+
+		// Reset ticker with new random duration for next iteration
+		randomDuration = interval
+		if interval > 0 {
+			extra := time.Duration(rand.Int63()) % interval
+			randomDuration = interval + extra
+		}
+		ticker.Reset(randomDuration)
 	}
 }
 
