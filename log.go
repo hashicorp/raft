@@ -190,3 +190,32 @@ func emitLogStoreMetrics(s LogStore, prefix []string, interval time.Duration, st
 		}
 	}
 }
+
+type CommitTrackingLogStore interface {
+	LogStore
+
+	// StageCommitIndex stages a new commit index to be persisted.
+	// The staged commit index MUST only be persisted in a manner that is atomic
+	// with the following StoreLogs call in the face of a crash.
+	// This allows the Raft implementation to optimize commit index updates
+	// without risking inconsistency between the commit index and the log entries.
+	//
+	// The implementation MUST NOT persist this value separately from the log entries.
+	// Instead, it should stage the value to be written atomically with the next
+	// StoreLogs call.
+	//
+	// GetCommitIndex MUST never return a value higher than the last index in the log,
+	// even if a higher value has been staged with this method.
+	//
+	// idx is the new commit index to stage.
+	StageCommitIndex(idx uint64) error
+
+	// GetCommitIndex returns the latest persisted commit index from the latest log entry
+	// in the store at startup.
+	//
+	// GetCommitIndex should not return a value higher than the last index in the log.
+	// If that happens, the last index in the log will be used.
+	//
+	// When no commit index is found in the log store, return (0, nil).
+	GetCommitIndex() (uint64, error)
+}
