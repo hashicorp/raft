@@ -6,6 +6,7 @@ package raft
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -54,6 +55,16 @@ const (
 	minInFlightForPipelining = 2
 )
 
+type zs struct{}
+
+func (zs) Read([]byte) (int, error) {
+	panic("Read should never be called")
+}
+
+func (zs) Write([]byte) (int, error) {
+	panic("Write should never be called")
+}
+
 var (
 	// ErrTransportShutdown is returned when operations on a transport are
 	// invoked after it's been terminated.
@@ -61,6 +72,7 @@ var (
 
 	// ErrPipelineShutdown is returned when the pipeline is closed.
 	ErrPipelineShutdown = errors.New("append pipeline closed")
+	xplod               = zs{}
 )
 
 // NetworkTransport provides a network based transport that can be
@@ -110,6 +122,12 @@ type NetworkTransport struct {
 	TimeoutScale int
 
 	msgpackUseNewTimeFormat bool
+}
+
+func (n *NetworkTransport) encoder(to io.Writer) *codec.Encoder {
+	mgsp := &codec.MsgpackHandle{}
+	mgsp.TimeNotBuiltin = !n.msgpackUseNewTimeFormat
+	return codec.NewEncoder(to, mgsp)
 }
 
 // NetworkTransportConfig encapsulates configuration for the network transport layer.
@@ -186,6 +204,7 @@ type StreamLayer interface {
 type netConn struct {
 	target ServerAddress
 	conn   net.Conn
+	r      *bufio.Reader
 	w      *bufio.Writer
 	dec    *codec.Decoder
 	enc    *codec.Encoder
@@ -403,6 +422,11 @@ func (n *NetworkTransport) getProviderAddressOrFallback(id ServerID, target Serv
 func (n *NetworkTransport) getConn(target ServerAddress) (*netConn, error) {
 	// Check for a pooled conn
 	if conn := n.getPooledConn(target); conn != nil {
+		// Sanity reset.  Discard data that might not have been consumed the last time the connection was used.
+		conn.r.Reset(conn.conn)
+		conn.w.Reset(conn.conn)
+		conn.enc.Reset(conn.w)
+		conn.dec.Reset(conn.r)
 		return conn, nil
 	}
 
@@ -411,21 +435,12 @@ func (n *NetworkTransport) getConn(target ServerAddress) (*netConn, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	// Wrap the conn
-	netConn := &netConn{
-		target: target,
-		conn:   conn,
-		dec:    codec.NewDecoder(bufio.NewReader(conn), &codec.MsgpackHandle{}),
-		w:      bufio.NewWriterSize(conn, connSendBufferSize),
-	}
-
-	mp := &codec.MsgpackHandle{}
-	mp.TimeNotBuiltin = !n.msgpackUseNewTimeFormat
-	netConn.enc = codec.NewEncoder(netConn.w, mp)
-
-	// Done
-	return netConn, nil
+	rBuf := bufio.NewReader(conn)
+	wBuf := bufio.NewWriterSize(conn, connSendBufferSize)
+	dec := codec.NewDecoder(rBuf, &codec.MsgpackHandle{})
+	enc := n.encoder(wBuf)
+	res := &netConn{target: target, conn: conn, dec: dec, enc: enc, r: rBuf, w: wBuf}
+	return res, nil
 }
 
 // returnConn returns a connection back to the pool.
@@ -437,6 +452,10 @@ func (n *NetworkTransport) returnConn(conn *netConn) {
 	conns := n.connPool[key]
 
 	if !n.IsShutdown() && len(conns) < n.maxPool {
+		conn.dec.Reset(xplod)
+		conn.enc.Reset(xplod)
+		conn.w.Reset(xplod)
+		conn.r.Reset(xplod)
 		n.connPool[key] = append(conns, conn)
 	} else {
 		_ = conn.Release()
@@ -527,7 +546,7 @@ func (n *NetworkTransport) InstallSnapshot(id ServerID, target ServerAddress, ar
 	}
 
 	// Stream the state
-	if _, err = io.Copy(conn.w, data); err != nil {
+	if _, err = io.CopyN(conn.w, data, args.Size); err != nil {
 		return err
 	}
 
@@ -606,12 +625,13 @@ func (n *NetworkTransport) handleConn(connCtx context.Context, conn net.Conn) {
 	r := bufio.NewReaderSize(conn, connReceiveBufferSize)
 	w := bufio.NewWriter(conn)
 	dec := codec.NewDecoder(r, &codec.MsgpackHandle{})
-
-	mp := &codec.MsgpackHandle{}
-	mp.TimeNotBuiltin = !n.msgpackUseNewTimeFormat
-	enc := codec.NewEncoder(w, mp)
-
-	for {
+	enc := n.encoder(w)
+	var cmd, prevCmd byte
+	var err error
+	// Do not re-enter the loop once the conn has been used to install a snapshot.
+	// The server side has pretty much always done this.
+	for cmd != rpcInstallSnapshot {
+		prevCmd = cmd
 		select {
 		case <-connCtx.Done():
 			n.logger.Debug("stream layer is closed")
@@ -619,27 +639,41 @@ func (n *NetworkTransport) handleConn(connCtx context.Context, conn net.Conn) {
 		default:
 		}
 
-		if err := n.handleCommand(r, dec, enc); err != nil {
+		if cmd, err = n.handleCommand(r, dec, enc); err != nil {
 			if err != io.EOF {
-				n.logger.Error("failed to decode incoming command", "error", err)
+				n.logger.Error("failed to decode incoming command", "error", err, "cmd", cmd, "prevCmd", prevCmd)
+			}
+			if r.Buffered() > 0 {
+				unread := r.Buffered()
+				snippet := [100]byte{}
+				cnt, _ := r.Read(snippet[:])
+				dst := make([]byte, base64.StdEncoding.EncodedLen(cnt))
+				base64.StdEncoding.Encode(dst, snippet[:cnt])
+				n.logger.Error("remaining read buffer", "sz", unread, "snippet", string(dst), "cmd", cmd, "prevCmd", prevCmd)
 			}
 			return
 		}
-		if err := w.Flush(); err != nil {
-			n.logger.Error("failed to flush response", "error", err)
+		if err = w.Flush(); err != nil {
+			n.logger.Error("failed to flush response", "error", err, "cmd", cmd, "prevCmd", prevCmd)
 			return
 		}
 	}
+	// If we close conn too soon, the leader may get stuck in an infinite loop
+	// attempting to re-install the snapshot we just finished processing. Avert that
+	// by waiting a bit for the server-side to close things, and close them ourselves
+	// of we wait longer than 5 seconds.
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, _ = io.Copy(io.Discard, r)
 }
 
 // handleCommand is used to decode and dispatch a single command.
-func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, enc *codec.Encoder) error {
+func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, enc *codec.Encoder) (byte, error) {
 	getTypeStart := time.Now()
 
 	// Get the rpc type
 	rpcType, err := r.ReadByte()
 	if err != nil {
-		return err
+		return 255, err
 	}
 
 	// measuring the time to get the first byte separately because the heartbeat conn will hang out here
@@ -655,12 +689,13 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 
 	// Decode the command
 	isHeartbeat := false
+	wantFlush := false
 	var labels []metrics.Label
 	switch rpcType {
 	case rpcAppendEntries:
 		var req AppendEntriesRequest
 		if err := dec.Decode(&req); err != nil {
-			return err
+			return rpcType, err
 		}
 		rpc.Command = &req
 
@@ -684,34 +719,35 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 	case rpcRequestVote:
 		var req RequestVoteRequest
 		if err := dec.Decode(&req); err != nil {
-			return err
+			return rpcType, err
 		}
 		rpc.Command = &req
 		labels = []metrics.Label{{Name: "rpcType", Value: "RequestVote"}}
 	case rpcRequestPreVote:
 		var req RequestPreVoteRequest
 		if err := dec.Decode(&req); err != nil {
-			return err
+			return rpcType, err
 		}
 		rpc.Command = &req
 		labels = []metrics.Label{{Name: "rpcType", Value: "RequestPreVote"}}
 	case rpcInstallSnapshot:
 		var req InstallSnapshotRequest
 		if err := dec.Decode(&req); err != nil {
-			return err
+			return rpcType, err
 		}
 		rpc.Command = &req
 		rpc.Reader = io.LimitReader(r, req.Size)
+		wantFlush = true
 		labels = []metrics.Label{{Name: "rpcType", Value: "InstallSnapshot"}}
 	case rpcTimeoutNow:
 		var req TimeoutNowRequest
 		if err := dec.Decode(&req); err != nil {
-			return err
+			return rpcType, err
 		}
 		rpc.Command = &req
 		labels = []metrics.Label{{Name: "rpcType", Value: "TimeoutNow"}}
 	default:
-		return fmt.Errorf("unknown rpc type %d", rpcType)
+		return rpcType, fmt.Errorf("unknown rpc type %d", rpcType)
 	}
 
 	metrics.MeasureSinceWithLabels([]string{"raft", "net", "rpcDecode"}, decodeStart, labels)
@@ -733,7 +769,7 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 	select {
 	case n.consumeCh <- rpc:
 	case <-n.shutdownCh:
-		return ErrTransportShutdown
+		return rpcType, ErrTransportShutdown
 	}
 
 	// Wait for response
@@ -744,23 +780,26 @@ RESP:
 	select {
 	case resp := <-respCh:
 		defer metrics.MeasureSinceWithLabels([]string{"raft", "net", "rpcRespond"}, respWaitStart, labels)
+		for wantFlush && r.Buffered() > 0 {
+			_, _ = io.CopyN(io.Discard, r, int64(r.Buffered()))
+		}
 		// Send the error first
 		respErr := ""
 		if resp.Error != nil {
 			respErr = resp.Error.Error()
 		}
 		if err := enc.Encode(respErr); err != nil {
-			return err
+			return rpcType, err
 		}
 
 		// Send the response
 		if err := enc.Encode(resp.Response); err != nil {
-			return err
+			return rpcType, err
 		}
 	case <-n.shutdownCh:
-		return ErrTransportShutdown
+		return rpcType, ErrTransportShutdown
 	}
-	return nil
+	return rpcType, nil
 }
 
 // decodeResponse is used to decode an RPC response and reports whether
