@@ -79,16 +79,16 @@ func (r *Raft) runSnapshots() {
 			}
 
 			// Trigger a snapshot
-			if _, err := r.takeSnapshot(); err != nil {
+			if _, err := r.takeSnapshot(); err != nil && err != ErrNothingNewToSnapshot {
 				r.logger.Error("failed to take snapshot", "error", err)
 			}
 
 		case future := <-r.userSnapshotCh:
 			// User-triggered, run immediately
 			id, err := r.takeSnapshot()
-			if err != nil {
+			if err != nil && err != ErrNothingNewToSnapshot {
 				r.logger.Error("failed to take snapshot", "error", err)
-			} else {
+			} else if err == nil {
 				future.opener = func() (*SnapshotMeta, io.ReadCloser, error) {
 					return r.snapshots.Open(id)
 				}
