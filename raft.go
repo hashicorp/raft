@@ -1735,7 +1735,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 
 // requestPreVote is invoked when we get a request Pre-Vote RPC call.
 func (r *Raft) requestPreVote(rpc RPC, req *RequestPreVoteRequest) {
-	defer metrics.MeasureSince([]string{"raft", "rpc", "requestVote"}, time.Now())
+	defer metrics.MeasureSince([]string{"raft", "rpc", "requestPreVote"}, time.Now())
 	r.observe(*req)
 
 	// Setup a response
