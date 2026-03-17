@@ -40,9 +40,9 @@ The [Raft does not Guarantee liveness][live] paper describes how certain
 partitions can prevent Raft clusters from making progress by causing continual
 elections.
 
-HashiCorp Raft implements the second of the suggested fixes: rejecting vote
-request RPCs when there is already an established leader. The paper defines
-this more precisely as:
+HashiCorp Raft implements the second of the suggested fixes from Howard's
+paper: rejecting vote request RPCs when there is already an established leader.
+The paper defines this more precisely as:
 
 > ...ignore RequestVote RPCs if they have received an AppendEntries RPC from
 > the leader within the election timeout. 
