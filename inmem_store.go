@@ -5,30 +5,66 @@ package raft
 
 import (
 	"errors"
+	"fmt"
 	"sync"
+	"sync/atomic"
 )
 
 // InmemStore implements the LogStore and StableStore interface.
 // It should NOT EVER be used for production. It is used only for
 // unit tests. Use the MDBStore implementation instead.
 type InmemStore struct {
+	storeFail atomic.Bool
+
+	// storeSem lets the test control exactly when s StoreLog(s) call takes
+	// effect.
+	storeSem chan struct{}
+
 	l         sync.RWMutex
 	lowIndex  uint64
 	highIndex uint64
 	logs      map[uint64]*Log
 	kv        map[string][]byte
 	kvInt     map[string]uint64
+	monotonic bool
 }
+
+var (
+	_ LogStore          = (*InmemStore)(nil)
+	_ MonotonicLogStore = (*InmemStore)(nil)
+)
 
 // NewInmemStore returns a new in-memory backend. Do not ever
 // use for production. Only for testing.
 func NewInmemStore() *InmemStore {
 	i := &InmemStore{
-		logs:  make(map[uint64]*Log),
-		kv:    make(map[string][]byte),
-		kvInt: make(map[string]uint64),
+		storeSem: make(chan struct{}, 1),
+		logs:     make(map[uint64]*Log),
+		kv:       make(map[string][]byte),
+		kvInt:    make(map[string]uint64),
 	}
 	return i
+}
+
+// BlockStore will cause further calls to StoreLog(s) to block indefinitely
+// until the returned cancel func is called. Note that if the code or test is
+// buggy this could cause a deadlock
+func (i *InmemStore) BlockStore() func() {
+	i.storeSem <- struct{}{}
+	cancelled := false
+	return func() {
+		// Allow multiple calls, subsequent ones are a no op
+		if !cancelled {
+			<-i.storeSem
+			cancelled = true
+		}
+	}
+}
+
+// FailNext signals that the next call to StoreLog(s) should return an error
+// without modifying the log contents. Subsequent calls will succeed again.
+func (i *InmemStore) FailNext() {
+	i.storeFail.Store(true)
 }
 
 // FirstIndex implements the LogStore interface.
@@ -64,9 +100,28 @@ func (i *InmemStore) StoreLog(log *Log) error {
 
 // StoreLogs implements the LogStore interface.
 func (i *InmemStore) StoreLogs(logs []*Log) error {
+	// Block waiting for the semaphore slot if BlockStore has been called. We must
+	// do this before we take the lock because otherwise we'll block GetLog and
+	// others too by holding the lock while blocked.
+	i.storeSem <- struct{}{}
+	defer func() {
+		<-i.storeSem
+	}()
+
+	// Switch out fail if it is set so we only fail once
+	shouldFail := i.storeFail.Swap(false)
+	if shouldFail {
+		return errors.New("IO error")
+	}
+
 	i.l.Lock()
 	defer i.l.Unlock()
+
 	for _, l := range logs {
+		if i.monotonic && l.Index != i.highIndex+1 {
+			return fmt.Errorf("non-monotonic write, log index: %d, last index %d, batch range: [%d, %d]",
+				l.Index, i.highIndex, logs[0].Index, logs[len(logs)-1].Index)
+		}
 		i.logs[l.Index] = l
 		if i.lowIndex == 0 {
 			i.lowIndex = l.Index
@@ -130,4 +185,18 @@ func (i *InmemStore) GetUint64(key []byte) (uint64, error) {
 	i.l.RLock()
 	defer i.l.RUnlock()
 	return i.kvInt[string(key)], nil
+}
+
+// IsMonotonic implements MonotonicLogStore
+func (i *InmemStore) IsMonotonic() bool {
+	return i.monotonic
+}
+
+// SetMonotonic allows the test to choose if the store should enforce monotonic
+// writes. This is useful for testing the leader loop's handling of
+// non-monotonic log stores.
+func (i *InmemStore) SetMonotonic(v bool) {
+	i.l.Lock()
+	defer i.l.Unlock()
+	i.monotonic = v
 }
