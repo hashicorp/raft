@@ -1,4 +1,4 @@
-// Copyright IBM Corp. 2013, 2025
+// Copyright IBM Corp. 2013, 2026
 // SPDX-License-Identifier: MPL-2.0
 
 package raft
@@ -1021,10 +1021,10 @@ func TestRaft_RestoreSnapshotOnStartup_Monotonic(t *testing.T) {
 	conf := inmemConfig(t)
 	conf.TrailingLogs = 10
 	opts := &MakeClusterOpts{
-		Peers:         1,
-		Bootstrap:     true,
-		Conf:          conf,
-		MonotonicLogs: true,
+		Peers:               1,
+		Bootstrap:           true,
+		Conf:                conf,
+		LogstoreWrapperFunc: NewMockMonotonicLogStore,
 	}
 	c := MakeClusterCustom(t, opts)
 	defer c.Close()
@@ -1642,10 +1642,10 @@ func snapshotAndRestore(t *testing.T, offset uint64, monotonicLogStore bool, res
 	var c *cluster
 	numPeers := 3
 	optsMonotonic := &MakeClusterOpts{
-		Peers:         numPeers,
-		Bootstrap:     true,
-		Conf:          conf,
-		MonotonicLogs: true,
+		Peers:               numPeers,
+		Bootstrap:           true,
+		Conf:                conf,
+		LogstoreWrapperFunc: NewMockMonotonicLogStore,
 	}
 	if monotonicLogStore {
 		c = MakeClusterCustom(t, optsMonotonic)
@@ -2926,7 +2926,7 @@ func TestRaft_LogStoreIsMonotonic(t *testing.T) {
 
 	// Now create a new MockMonotonicLogStore using the leader logs and expect
 	// it to work.
-	log = &MockMonotonicLogStore{s: leader.logs}
+	log = NewMockMonotonicLogStore(leader.logs)
 	mcast, ok = log.(MonotonicLogStore)
 	require.True(t, ok)
 	assert.True(t, mcast.IsMonotonic())
