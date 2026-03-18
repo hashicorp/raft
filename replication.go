@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hashicorp/go-metrics/compat"
+	metrics "github.com/hashicorp/go-metrics/compat"
 )
 
 const (
@@ -73,6 +73,14 @@ type followerReplication struct {
 	// lastContactLock protects 'lastContact'.
 	lastContactLock sync.RWMutex
 
+	// lastReplicationStart is updated to the current time whenever a
+	// replicateTo method call is started, and is cleared when the replicateTo
+	// method returns. This is used by heartbeats to check if replication has
+	// stalled for too long.
+	lastReplicationStart time.Time
+	// lastReplicationStartLock protects 'lastReplicationStart'.
+	lastReplicationStartLock sync.RWMutex
+
 	// failures counts the number of failed RPCs since the last success, which is
 	// used to apply backoff.
 	failures uint64
@@ -132,6 +140,22 @@ func (s *followerReplication) setLastContact() {
 	s.lastContactLock.Unlock()
 }
 
+// resetLastReplicationStart clears the marker for the start of the last replication
+// attempt
+func (s *followerReplication) resetLastReplicationStart() {
+	s.lastReplicationStartLock.Lock()
+	s.lastReplicationStart = time.Time{}
+	s.lastReplicationStartLock.Unlock()
+}
+
+// setLastReplicationStart sets the marker for the start of the last replication
+// attempt to the current time
+func (s *followerReplication) setLastReplicationStart() {
+	s.lastReplicationStartLock.Lock()
+	s.lastReplicationStart = time.Now()
+	s.lastReplicationStartLock.Unlock()
+}
+
 // replicate is a long running routine that replicates log entries to a single
 // follower.
 func (r *Raft) replicate(s *followerReplication) {
@@ -140,17 +164,22 @@ func (r *Raft) replicate(s *followerReplication) {
 	defer close(stopHeartbeat)
 	r.goFunc(func() { r.heartbeat(s, stopHeartbeat) })
 
+	defer s.resetLastReplicationStart()
+
 RPC:
 	shouldStop := false
 	for !shouldStop {
+		s.resetLastReplicationStart()
 		select {
 		case maxIndex := <-s.stopCh:
 			// Make a best effort to replicate up to this index
 			if maxIndex > 0 {
+				s.setLastReplicationStart()
 				r.replicateTo(s, maxIndex)
 			}
 			return
 		case deferErr := <-s.triggerDeferErrorCh:
+			s.setLastReplicationStart()
 			lastLogIdx, _ := r.getLastLog()
 			shouldStop = r.replicateTo(s, lastLogIdx)
 			if !shouldStop {
@@ -159,6 +188,7 @@ RPC:
 				deferErr.respond(fmt.Errorf("replication failed"))
 			}
 		case <-s.triggerCh:
+			s.setLastReplicationStart()
 			lastLogIdx, _ := r.getLastLog()
 			shouldStop = r.replicateTo(s, lastLogIdx)
 		// This is _not_ our heartbeat mechanism but is to ensure
@@ -167,12 +197,14 @@ RPC:
 		// can't do this to keep them unblocked by disk IO on the
 		// follower. See https://github.com/hashicorp/raft/issues/282.
 		case <-randomTimeout(r.config().CommitTimeout):
+			s.setLastReplicationStart()
 			lastLogIdx, _ := r.getLastLog()
 			shouldStop = r.replicateTo(s, lastLogIdx)
 		}
 
 		// If things looks healthy, switch to pipeline mode
 		if !shouldStop && s.allowPipeline {
+			s.resetLastReplicationStart()
 			goto PIPELINE
 		}
 	}
@@ -408,7 +440,21 @@ func (r *Raft) heartbeat(s *followerReplication, stopCh chan struct{}) {
 		peer := s.peer
 		s.peerLock.RUnlock()
 
+		s.lastReplicationStartLock.RLock()
+		lastReplicationStart := s.lastReplicationStart
+		s.lastReplicationStartLock.RUnlock()
+		maxLastReplication := r.config().HeartbeatTimeout * 10
 		start := time.Now()
+		if lastReplicationStart.After(time.Time{}) &&
+			lastReplicationStart.Add(maxLastReplication).Before(start) {
+			r.logger.Info("shutting down heartbeat for peer because replication is stalled",
+				"peer", peer.Address,
+				"timeout", maxLastReplication,
+				"replication_started", lastReplicationStart,
+			)
+			return
+		}
+
 		if err := r.trans.AppendEntries(peer.ID, peer.Address, &req, &resp); err != nil {
 			nextBackoffTime := cappedExponentialBackoff(failureWait, failures, maxFailureScale, r.config().HeartbeatTimeout/2)
 			r.logger.Error("failed to heartbeat to", "peer", peer.Address, "backoff time",
@@ -472,16 +518,19 @@ func (r *Raft) pipelineReplicate(s *followerReplication) error {
 	shouldStop := false
 SEND:
 	for !shouldStop {
+		s.resetLastReplicationStart()
 		select {
 		case <-finishCh:
 			break SEND
 		case maxIndex := <-s.stopCh:
 			// Make a best effort to replicate up to this index
 			if maxIndex > 0 {
+				s.setLastReplicationStart()
 				r.pipelineSend(s, pipeline, &nextIndex, maxIndex)
 			}
 			break SEND
 		case deferErr := <-s.triggerDeferErrorCh:
+			s.setLastReplicationStart()
 			lastLogIdx, _ := r.getLastLog()
 			shouldStop = r.pipelineSend(s, pipeline, &nextIndex, lastLogIdx)
 			if !shouldStop {
@@ -490,13 +539,16 @@ SEND:
 				deferErr.respond(fmt.Errorf("replication failed"))
 			}
 		case <-s.triggerCh:
+			s.setLastReplicationStart()
 			lastLogIdx, _ := r.getLastLog()
 			shouldStop = r.pipelineSend(s, pipeline, &nextIndex, lastLogIdx)
 		case <-randomTimeout(r.config().CommitTimeout):
 			lastLogIdx, _ := r.getLastLog()
+			s.setLastReplicationStart()
 			shouldStop = r.pipelineSend(s, pipeline, &nextIndex, lastLogIdx)
 		}
 	}
+	s.resetLastReplicationStart()
 
 	// Stop our decoder, and wait for it to finish
 	close(stopCh)
