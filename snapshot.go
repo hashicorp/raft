@@ -4,11 +4,12 @@
 package raft
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"time"
 
-	"github.com/hashicorp/go-metrics/compat"
+	metrics "github.com/hashicorp/go-metrics/compat"
 )
 
 // SnapshotMeta is for metadata of a snapshot.
@@ -79,14 +80,14 @@ func (r *Raft) runSnapshots() {
 			}
 
 			// Trigger a snapshot
-			if _, err := r.takeSnapshot(); err != nil && err != ErrNothingNewToSnapshot {
+			if _, err := r.takeSnapshot(); err != nil && !errors.Is(err, ErrNothingNewToSnapshot) {
 				r.logger.Error("failed to take snapshot", "error", err)
 			}
 
 		case future := <-r.userSnapshotCh:
 			// User-triggered, run immediately
 			id, err := r.takeSnapshot()
-			if err != nil && err != ErrNothingNewToSnapshot {
+			if err != nil && !errors.Is(err, ErrNothingNewToSnapshot) {
 				r.logger.Error("failed to take snapshot", "error", err)
 			} else if err == nil {
 				future.opener = func() (*SnapshotMeta, io.ReadCloser, error) {
