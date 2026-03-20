@@ -63,7 +63,7 @@ jobs:
     needs: go-test
     strategy:
       matrix:
-        go: ['1.20', '1.21', '1.22']
+        go: ['stable', 'oldstable']
         arch: ['x32', 'x64']
     runs-on: ubuntu-22.04
     steps:
