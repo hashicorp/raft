@@ -1,14 +1,14 @@
 module github.com/hashicorp/raft
 
-go 1.20
+go 1.24.0
 
 retract v1.1.3 // Deleted original tag; module checksum may not be accurate.
 
 require (
-	github.com/hashicorp/go-hclog v1.6.2
+	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-metrics v0.5.4
-	github.com/hashicorp/go-msgpack/v2 v2.1.2
-	github.com/stretchr/testify v1.8.4
+	github.com/hashicorp/go-msgpack/v2 v2.1.5
+	github.com/stretchr/testify v1.11.1
 )
 
 require (
