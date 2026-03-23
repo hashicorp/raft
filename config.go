@@ -240,6 +240,19 @@ type Config struct {
 	// e.g: raft_replication_heartbeat_peer0
 	NoLegacyTelemetry bool
 
+	// RestoreCommittedLogs controls if the Raft server should use the restore committed logs
+	// mechanism. Restore committed logs requires a LogStore implementation that
+	// support commit tracking. When such a store is used and this config
+	// enabled, raft nodes will replay all known-committed logs on disk
+	// before completing `NewRaft` on startup. This is mainly useful where
+	// the application allows relaxed-consistency reads from followers as it
+	// will reduce how far behind the follower's FSM is when it starts. If all reads
+	// are forwarded to the leader then there won't be observable benefit from this feature.
+	//
+	// Notice: If this is enabled, the log store MUST implement the CommitTrackingLogStore
+	// interface. Otherwise, Raft will fail to start and return ErrIncompatibleLogStore.
+	RestoreCommittedLogs bool
+
 	// skipStartup allows NewRaft() to bypass all background work goroutines
 	skipStartup bool
 }
