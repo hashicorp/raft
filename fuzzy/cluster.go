@@ -55,6 +55,10 @@ func (a *LoggerAdapter) Logf(s string, v ...interface{}) {
 }
 
 func newRaftCluster(t *testing.T, logWriter io.Writer, namePrefix string, n uint, transportHooks TransportHooks) *cluster {
+	return newRaftClusterWithFactory(t, logWriter, namePrefix, n, transportHooks, raft.NewRaft)
+}
+
+func newRaftClusterWithFactory(t *testing.T, logWriter io.Writer, namePrefix string, n uint, transportHooks TransportHooks, factory factoryFn) *cluster {
 	res := make([]*raftNode, 0, n)
 	names := make([]string, 0, n)
 	for i := uint(0); i < n; i++ {
@@ -67,11 +71,11 @@ func newRaftCluster(t *testing.T, logWriter io.Writer, namePrefix string, n uint
 	transports := newTransports(l)
 	for _, i := range names {
 
-		r, err := newRaftNode(hclog.New(&hclog.LoggerOptions{
+		r, err := newRaftNodeFromFactory(hclog.New(&hclog.LoggerOptions{
 			Name:   i + ":",
 			Output: logWriter,
 			Level:  hclog.DefaultLevel,
-		}), transports, transportHooks, names, i)
+		}), transports, transportHooks, names, i, factory)
 		if err != nil {
 			t.Fatalf("Unable to create raftNode:%v : %v", i, err)
 		}
