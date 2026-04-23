@@ -131,7 +131,7 @@ Thus performance is bound by disk I/O and network latency.
 
   **Deprecating `armon/go-metrics`**
 
-  Emitting metrics to `armon/go-metrics` is officially deprecated. Usage of `armon/go-metrics` will remain the default until mid-2025 with opt-in support continuing to the end of 2025.
+  Emitting metrics to `armon/go-metrics` is officially deprecated, but usage of `armon/go-metrics` is still the default. Please continue to use the `hashicorpmetrics` build tag if you want to opt into `hashicorp/go-metrics`. [hashicorp/raft#676](https://github.com/hashicorp/raft/issues/676) will have status updates on the migration.
 
   **Migration**
   To migrate an application currently using the older `armon/go-metrics` to instead use `hashicorp/go-metrics` the following should be done.
@@ -142,4 +142,4 @@ Thus performance is bound by disk I/O and network latency.
      * Replace all application imports of `github.com/armon/go-metrics` with `github.com/hashicorp/go-metrics`
      * Instrument your build system to build with the `hashicorpmetrics` tag.
 
-  Eventually once the default behavior changes to use `hashicorp/go-metrics` by default (mid-2025), you can drop the `hashicorpmetrics` build tag.
+  Eventually once the default behavior changes to use `hashicorp/go-metrics` by default, you can drop the `hashicorpmetrics` build tag.
