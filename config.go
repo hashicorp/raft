@@ -96,7 +96,7 @@ import (
 //	this protocol version, along with their server ID. The remove/add cycle
 //	is required to populate their server ID. Note that removing must be done
 //	by ID, which will be the old server's address.
-type ProtocolVersion int
+type ProtocolVersion int64
 
 const (
 	// ProtocolVersionMin is the minimum protocol version
@@ -125,7 +125,7 @@ const (
 //	Since the original Raft library didn't enforce any versioning, we must
 //	include the legacy peers structure for this version, but we can deprecate
 //	it in the next snapshot version.
-type SnapshotVersion int
+type SnapshotVersion int64
 
 const (
 	// SnapshotVersionMin is the minimum snapshot version
