@@ -130,16 +130,56 @@ type LogStore interface {
 }
 
 // MonotonicLogStore is an optional interface for LogStore implementations that
-// cannot tolerate gaps in between the Index values of consecutive log entries. For example,
-// this may allow more efficient indexing because the Index values are densely populated. If true is
-// returned, Raft will avoid relying on gaps to trigger re-synching logs on followers after a
-// snapshot is restored. The LogStore must have an efficient implementation of
-// DeleteLogs for the case where all logs are removed, as this must be called after snapshot restore when gaps are not allowed.
-// We avoid deleting all records for LogStores that do not implement MonotonicLogStore
-// because although it's always correct to do so, it has a major negative performance impact on the BoltDB store that is currently
-// the most widely used.
+// cannot tolerate gaps in between the Index values of consecutive log entries.
+// For example, this may allow more efficient indexing because the Index values
+// are densely populated. If true is returned, Raft will avoid relying on gaps
+// to trigger re-synching logs on followers after a snapshot is restored. The
+// LogStore must have an efficient implementation of DeleteLogs for the case
+// where all logs are removed, as this must be called after snapshot restore
+// when gaps are not allowed. We avoid deleting all records for LogStores that
+// do not implement MonotonicLogStore because although it's always correct to do
+// so, it has a major negative performance impact on the BoltDB store that is
+// currently the most widely used.
 type MonotonicLogStore interface {
 	IsMonotonic() bool
+}
+
+type LogWriteCompletion struct {
+	PersistentIndex uint64
+	Error           error
+	Duration        time.Duration
+}
+
+type AsyncLogStore interface {
+	LogStore
+
+	// EnableAsync is called on the log store when a node starts the leader loop.
+	// A Channel is passed to deliver write completion events. The implementation
+	// chooses how many events to buffer but the chan may block and this should be
+	// used as a back-pressure mechanism to slow down syncs to disk. Must be
+	// called serially with StoreLog* and DeleteRange (i.e from the main
+	// leader/follower thread). After this returns calls to StoreLog(s) will
+	// return an error and only StoreLogsAsync should be used until DisableAsync
+	// is called.
+	EnableAsync(chan<- LogWriteCompletion)
+
+	// DisableAsync is called when the leader steps down to return the LogStore to
+	// Sync mode since followers currently use Sync writes. They may in the future
+	// use async writes too however explicit switching modes makes it easier to
+	// reason about the behaviour of Async vs Sync storage calls as well as
+	// providing the channel to deliver updates explicitly. DisableAsync will
+	// block until all in-flight writes are persisted (or fail).
+	DisableAsync()
+
+	// StoreLogsAsync may only be called after EnableAsync but before the
+	// corresponding DisableAsync call. It will return as soon as the logs are
+	// available to read from GetLog and reflected in LastIndex, though they may
+	// still be in-memory only. It will trigger background writing of the logs to
+	// disk. The background process must eventually deliver a LogWriteCompletion
+	// to the channel provided to the last EnableAsync call. Each
+	// LowWriteCompletion indicates that all logs up to the PersistentIndex are
+	// safely stored on durable storage, or an error has occurred.
+	StoreLogsAsync(logs []*Log) error
 }
 
 func oldestLog(s LogStore) (Log, error) {

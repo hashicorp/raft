@@ -24,6 +24,13 @@ type raftNode struct {
 }
 
 func newRaftNode(logger hclog.Logger, tc *transports, h TransportHooks, nodes []string, name string) (*raftNode, error) {
+	return newRaftNodeFromFactory(logger, tc, h, nodes, name, raft.NewRaft)
+}
+
+// Same type as raft.NewRaft
+type factoryFn func(conf *raft.Config, fsm raft.FSM, logs raft.LogStore, stable raft.StableStore, snaps raft.SnapshotStore, trans raft.Transport) (*raft.Raft, error)
+
+func newRaftNodeFromFactory(logger hclog.Logger, tc *transports, h TransportHooks, nodes []string, name string, factory factoryFn) (*raftNode, error) {
 	var err error
 	var datadir string
 	datadir, err = resolveDirectory(fmt.Sprintf("data/%v", name), true)
@@ -46,8 +53,7 @@ func newRaftNode(logger hclog.Logger, tc *transports, h TransportHooks, nodes []
 	config.ShutdownOnRemove = false
 	config.LocalID = raft.ServerID(name)
 
-	var store *rdb.BoltStore
-	store, err = rdb.NewBoltStore(filepath.Join(datadir, "store.bolt"))
+	store, err := rdb.NewBoltStore(filepath.Join(datadir, "store.bolt"))
 	if err != nil {
 		return nil, fmt.Errorf("unable to initialize log %v", err.Error())
 	}
@@ -65,7 +71,7 @@ func newRaftNode(logger hclog.Logger, tc *transports, h TransportHooks, nodes []
 	}
 	fsm := &fuzzyFSM{}
 	var r *raft.Raft
-	r, err = raft.NewRaft(config, fsm, store, store, ss, transport)
+	r, err = factory(config, fsm, store, store, ss, transport)
 	if err != nil {
 		return nil, err
 	}
