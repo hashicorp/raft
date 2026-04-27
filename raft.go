@@ -274,7 +274,7 @@ func (r *Raft) liveBootstrap(configuration Configuration) error {
 
 	// Make the configuration live.
 	var entry Log
-	if err := r.logs.GetLog(1, &entry); err != nil {
+	if err := r.logs.GetLog(1, &entry, false); err != nil {
 		panic(err)
 	}
 	r.setCurrentTerm(1)
@@ -1325,7 +1325,7 @@ func (r *Raft) processLogs(index uint64, futures map[uint64]*logFuture) {
 			preparedLog = r.prepareLog(&future.log, future)
 		} else {
 			l := new(Log)
-			if err := r.logs.GetLog(idx, l); err != nil {
+			if err := r.logs.GetLog(idx, l, false); err != nil {
 				r.logger.Error("failed to get log", "index", idx, "error", err)
 				panic(err)
 			}
@@ -1482,7 +1482,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 			prevLogTerm = lastTerm
 		} else {
 			var prevLog Log
-			if err := r.logs.GetLog(a.PrevLogEntry, &prevLog); err != nil {
+			if err := r.logs.GetLog(a.PrevLogEntry, &prevLog, false); err != nil {
 				r.logger.Warn("failed to get previous log",
 					"previous-index", a.PrevLogEntry,
 					"last-index", lastIdx,
@@ -1515,7 +1515,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 				break
 			}
 			var storeEntry Log
-			if err := r.logs.GetLog(entry.Index, &storeEntry); err != nil {
+			if err := r.logs.GetLog(entry.Index, &storeEntry, false); err != nil {
 				r.logger.Warn("failed to get log entry",
 					"index", entry.Index,
 					"error", err)

@@ -43,7 +43,7 @@ func (c *LogCache) IsMonotonic() bool {
 	return false
 }
 
-func (c *LogCache) GetLog(idx uint64, log *Log) error {
+func (c *LogCache) GetLog(idx uint64, log *Log, loadData bool) error {
 	// Check the buffer for an entry
 	c.l.RLock()
 	cached := c.cache[idx%uint64(len(c.cache))]
@@ -56,7 +56,7 @@ func (c *LogCache) GetLog(idx uint64, log *Log) error {
 	}
 
 	// Forward request on cache miss
-	return c.store.GetLog(idx, log)
+	return c.store.GetLog(idx, log, loadData)
 }
 
 func (c *LogCache) StoreLog(log *Log) error {

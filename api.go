@@ -398,7 +398,7 @@ func RecoverCluster(conf *Config, fsm FSM, logs LogStore, stable StableStore,
 	}
 	for index := snapshotIndex + 1; index <= lastLogIndex; index++ {
 		var entry Log
-		if err = logs.GetLog(index, &entry); err != nil {
+		if err = logs.GetLog(index, &entry, false); err != nil {
 			return fmt.Errorf("failed to get log at index %d: %v", index, err)
 		}
 		if entry.Type == LogCommand {
@@ -521,7 +521,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	// Get the last log entry.
 	var lastLog Log
 	if lastIndex > 0 {
-		if err = logs.GetLog(lastIndex, &lastLog); err != nil {
+		if err = logs.GetLog(lastIndex, &lastLog, false); err != nil {
 			return nil, fmt.Errorf("failed to get last log at index %d: %v", lastIndex, err)
 		}
 	}
@@ -598,7 +598,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	snapshotIndex, _ := r.getLastSnapshot()
 	for index := snapshotIndex + 1; index <= lastLog.Index; index++ {
 		var entry Log
-		if err := r.logs.GetLog(index, &entry); err != nil {
+		if err := r.logs.GetLog(index, &entry, false); err != nil {
 			r.logger.Error("failed to get log", "index", index, "error", err)
 			panic(err)
 		}

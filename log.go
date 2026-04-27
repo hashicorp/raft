@@ -117,7 +117,7 @@ type LogStore interface {
 	LastIndex() (uint64, error)
 
 	// GetLog gets a log entry at a given index.
-	GetLog(index uint64, log *Log) error
+	GetLog(index uint64, log *Log, loadData bool) error
 
 	// StoreLog stores a log entry.
 	StoreLog(log *Log) error
@@ -162,7 +162,7 @@ func oldestLog(s LogStore) (Log, error) {
 			// to fetch it again just return the error.
 			return l, lastErr
 		}
-		err = s.GetLog(firstIdx, &l)
+		err = s.GetLog(firstIdx, &l, false)
 		if err == nil {
 			// We found the oldest log, break the loop
 			break

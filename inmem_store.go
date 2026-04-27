@@ -46,7 +46,7 @@ func (i *InmemStore) LastIndex() (uint64, error) {
 }
 
 // GetLog implements the LogStore interface.
-func (i *InmemStore) GetLog(index uint64, log *Log) error {
+func (i *InmemStore) GetLog(index uint64, log *Log, _ bool) error {
 	i.l.RLock()
 	defer i.l.RUnlock()
 	l, ok := i.logs[index]

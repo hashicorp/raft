@@ -30,7 +30,7 @@ func TestLogCache(t *testing.T) {
 
 	// Try get log with a miss
 	var out Log
-	err := c.GetLog(1, &out)
+	err := c.GetLog(1, &out, true)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -51,11 +51,11 @@ func TestLogCache(t *testing.T) {
 	}
 
 	// Check that it wrote-through
-	err = store.GetLog(33, &out)
+	err = store.GetLog(33, &out, true)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	err = store.GetLog(34, &out)
+	err = store.GetLog(34, &out, true)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -67,11 +67,11 @@ func TestLogCache(t *testing.T) {
 	}
 
 	// Should be in the ring buffer
-	err = c.GetLog(33, &out)
+	err = c.GetLog(33, &out, true)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	err = c.GetLog(34, &out)
+	err = c.GetLog(34, &out, true)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -83,11 +83,11 @@ func TestLogCache(t *testing.T) {
 	}
 
 	// Should not be in the ring buffer
-	err = c.GetLog(33, &out)
+	err = c.GetLog(33, &out, true)
 	if err != ErrLogNotFound {
 		t.Fatalf("err: %v", err)
 	}
-	err = c.GetLog(34, &out)
+	err = c.GetLog(34, &out, true)
 	if err != ErrLogNotFound {
 		t.Fatalf("err: %v", err)
 	}
@@ -140,12 +140,12 @@ func TestLogCacheWithBackendStoreError(t *testing.T) {
 
 	var out Log
 	for i := 1; i < 5; i++ {
-		if err := c.GetLog(uint64(i), &out); err != nil {
+		if err := c.GetLog(uint64(i), &out, true); err != nil {
 			t.Fatalf("err: %v", err)
 		}
 	}
 	out = Log{}
-	if err = c.GetLog(5, &out); err != ErrLogNotFound {
+	if err = c.GetLog(5, &out, true); err != ErrLogNotFound {
 		t.Fatalf("Should have returned not found, got err=%v out=%+v", err, out)
 	}
 }

@@ -61,7 +61,7 @@ func GetLog(b *testing.B, store raft.LogStore) {
 
 	// Run GetLog a number of times
 	for n := 0; n < b.N; n++ {
-		if err := store.GetLog(5, new(raft.Log)); err != nil {
+		if err := store.GetLog(5, new(raft.Log), true); err != nil {
 			b.Fatalf("err: %s", err)
 		}
 	}

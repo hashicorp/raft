@@ -152,8 +152,8 @@ func (m *MockMonotonicLogStore) LastIndex() (uint64, error) {
 }
 
 // GetLog implements the LogStore interface.
-func (m *MockMonotonicLogStore) GetLog(index uint64, log *Log) error {
-	return m.s.GetLog(index, log)
+func (m *MockMonotonicLogStore) GetLog(index uint64, log *Log, loadData bool) error {
+	return m.s.GetLog(index, log, loadData)
 }
 
 // StoreLog implements the LogStore interface.

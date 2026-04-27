@@ -598,7 +598,7 @@ func (r *Raft) setPreviousLog(req *AppendEntriesRequest, nextIndex uint64) error
 
 	} else {
 		var l Log
-		if err := r.logs.GetLog(nextIndex-1, &l); err != nil {
+		if err := r.logs.GetLog(nextIndex-1, &l, false); err != nil {
 			r.logger.Error("failed to get log", "index", nextIndex-1, "error", err)
 			return err
 		}
@@ -620,7 +620,7 @@ func (r *Raft) setNewLogs(req *AppendEntriesRequest, nextIndex, lastIndex uint64
 	maxIndex := min(nextIndex+uint64(maxAppendEntries)-1, lastIndex)
 	for i := nextIndex; i <= maxIndex; i++ {
 		oldLog := new(Log)
-		if err := r.logs.GetLog(i, oldLog); err != nil {
+		if err := r.logs.GetLog(i, oldLog, true); err != nil {
 			r.logger.Error("failed to get log", "index", i, "error", err)
 			return err
 		}
