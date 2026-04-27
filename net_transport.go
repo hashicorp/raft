@@ -16,6 +16,7 @@ import (
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-metrics/compat"
+	cbg "github.com/whyrusleeping/cbor-gen"
 )
 
 const (
@@ -743,17 +744,18 @@ RESP:
 		}
 
 		// Send the response
-		var response Er
-		switch v := resp.Response.(type) {
-		case Er:
-			response = v
-		case *Er:
-			response = *v
-		default:
-			response = (*AppendEntriesResponse)(nil)
-		}
-		if err := response.MarshalCBOR(w); err != nil {
-			return err
+		if resp.Response != nil {
+			response, ok := resp.Response.(Er)
+			if !ok {
+				return fmt.Errorf("response does not implement Er interface: %T", resp.Response)
+			}
+			if err := response.MarshalCBOR(w); err != nil {
+				return err
+			}
+		} else {
+			if _, err := w.Write(cbg.CborNull); err != nil {
+				return err
+			}
 		}
 	case <-n.shutdownCh:
 		return ErrTransportShutdown
@@ -772,9 +774,23 @@ func decodeResponse(conn *netConn, resp Er) (bool, error) {
 	}
 
 	// Decode the response
-	if err := resp.UnmarshalCBOR(conn.r); err != nil {
+	// Peek at the next byte to check for CBOR null (0xf6)
+	// This handles cases where the response was nil on the server side
+	nextByte, err := conn.r.Peek(1)
+	if err != nil {
 		_ = conn.Release()
 		return false, err
+	}
+
+	if len(nextByte) > 0 && nextByte[0] == 0xf6 {
+		// It's a CBOR null, just consume it and leave resp as zero value
+		_, _ = conn.r.ReadByte()
+	} else {
+		// Normal response, unmarshal it
+		if err := resp.UnmarshalCBOR(conn.r); err != nil {
+			_ = conn.Release()
+			return false, err
+		}
 	}
 
 	// Format an error if any
