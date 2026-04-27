@@ -1619,7 +1619,7 @@ func (t *Log) MarshalCBOR(w io.Writer) error {
 	}
 
 	// t.Data ([]uint8) (slice)
-	if len(t.Data) > 2097152 {
+	if len(t.Data) > 536870912 {
 		return xerrors.Errorf("Byte array in field t.Data was too long")
 	}
 
@@ -1722,7 +1722,7 @@ func (t *Log) UnmarshalCBOR(r io.Reader) (err error) {
 		return err
 	}
 
-	if extra > 2097152 {
+	if extra > 536870912 {
 		return fmt.Errorf("t.Data: byte array too large (%d)", extra)
 	}
 	if maj != cbg.MajByteString {
