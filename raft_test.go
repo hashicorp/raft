@@ -3302,3 +3302,93 @@ func TestRaft_PreVote_ShouldRejectNonLeader(t *testing.T) {
 		t.Fatalf("expected pre-vote to not be granted, but it was granted, %+v", resp)
 	}
 }
+
+func TestRaft_PreVoteRejectsNonLeaderButTransferVoteCanPass(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	require.NoError(t, waitForLeader(c))
+	leader := c.Leader()
+
+	followers := c.Followers()
+	require.Len(t, followers, 2)
+	target := followers[0]
+	other := followers[1]
+
+	require.Equal(t, leader.localAddr, other.Leader(), "expected known leader before interaction")
+
+	targetT := c.trans[c.IndexOf(target)]
+
+	preVoteReq := RequestPreVoteRequest{
+		RPCHeader:    target.getRPCHeader(),
+		Term:         target.getCurrentTerm() + 1,
+		LastLogIndex: target.LastIndex(),
+		LastLogTerm:  target.getCurrentTerm(),
+	}
+
+	var preVoteResp RequestPreVoteResponse
+	require.NoError(t, targetT.RequestPreVote(other.localID, other.localAddr, &preVoteReq, &preVoteResp))
+	require.False(t, preVoteResp.Granted, "non-leader pre-vote should be rejected when known leader exists")
+
+	addr := targetT.EncodePeer(target.localID, target.localAddr)
+	voteReq := RequestVoteRequest{
+		RPCHeader:          target.getRPCHeader(),
+		Term:               target.getCurrentTerm() + 1,
+		Candidate:          addr,
+		LastLogIndex:       target.LastIndex(),
+		LastLogTerm:        target.getCurrentTerm(),
+		LeadershipTransfer: true,
+	}
+	voteReq.Addr = addr
+
+	var voteResp RequestVoteResponse
+	require.NoError(t, targetT.RequestVote(other.localID, other.localAddr, &voteReq, &voteResp))
+	require.True(t, voteResp.Granted, "transfer vote should bypass known-leader gate")
+}
+
+func TestRaft_LeadershipTransferCompletesDuringPreVoteSpam(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	require.NoError(t, waitForLeader(c))
+	leader := c.Leader()
+
+	followers := c.Followers()
+	require.Len(t, followers, 2)
+	target := followers[0]
+	other := followers[1]
+
+	leaderT := c.trans[c.IndexOf(leader)]
+	stopCh := make(chan struct{})
+	doneCh := make(chan struct{})
+
+	go func() {
+		ticker := time.NewTicker(5 * time.Millisecond)
+		defer ticker.Stop()
+		defer close(doneCh)
+
+		for {
+			select {
+			case <-stopCh:
+				return
+			case <-ticker.C:
+				req := RequestPreVoteRequest{
+					RPCHeader:    leader.getRPCHeader(),
+					Term:         leader.getCurrentTerm() + 1,
+					LastLogIndex: leader.LastIndex(),
+					LastLogTerm:  leader.getCurrentTerm(),
+				}
+				var resp RequestPreVoteResponse
+				_ = leaderT.RequestPreVote(other.localID, other.localAddr, &req, &resp)
+			}
+		}
+	}()
+
+	future := leader.LeadershipTransferToServer(target.localID, target.localAddr)
+	err := future.Error()
+	close(stopCh)
+	<-doneCh
+
+	require.NoError(t, err)
+	require.Equal(t, target.localID, c.Leader().localID, "transfer target should become leader")
+}
