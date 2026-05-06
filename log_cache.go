@@ -94,10 +94,8 @@ func (c *LogCache) DeleteRange(min, max uint64) error {
 	return c.store.DeleteRange(min, max)
 }
 
-func (c *LogCache) Purge() error {
+func (c *LogCache) Disable() {
 	c.l.Lock()
-	c.cache = make([]*Log, len(c.cache))
+	c.cache = make([]*Log, 1)
 	c.l.Unlock()
-
-	return nil
 }
