@@ -6,7 +6,10 @@ package raft
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 )
+
+var _ CommitTrackingLogStore = &InmemCommitTrackingStore{}
 
 // InmemStore implements the LogStore and StableStore interface.
 // It should NOT EVER be used for production. It is used only for
@@ -130,4 +133,31 @@ func (i *InmemStore) GetUint64(key []byte) (uint64, error) {
 	i.l.RLock()
 	defer i.l.RUnlock()
 	return i.kvInt[string(key)], nil
+}
+
+type commitIndexTrackingLog struct {
+	log         *Log
+	CommitIndex uint64
+}
+type InmemCommitTrackingStore struct {
+	InmemStore
+	commitIndex atomic.Uint64
+}
+
+// NewInmemCommitTrackingStore returns a new in-memory backend that tracks the commit index. Do not ever
+// use for production. Only for testing.
+func NewInmemCommitTrackingStore() *InmemCommitTrackingStore {
+	i := &InmemCommitTrackingStore{
+		InmemStore: *NewInmemStore(),
+	}
+	return i
+}
+
+func (i *InmemCommitTrackingStore) StageCommitIndex(index uint64) error {
+	i.commitIndex.Store(index)
+	return nil
+}
+
+func (i *InmemCommitTrackingStore) GetCommitIndex() (uint64, error) {
+	return i.commitIndex.Load(), nil
 }
