@@ -135,10 +135,6 @@ func (i *InmemStore) GetUint64(key []byte) (uint64, error) {
 	return i.kvInt[string(key)], nil
 }
 
-type commitIndexTrackingLog struct {
-	log         *Log
-	CommitIndex uint64
-}
 type InmemCommitTrackingStore struct {
 	InmemStore
 	commitIndex atomic.Uint64
