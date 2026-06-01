@@ -1262,6 +1262,9 @@ func TestRaft_RestoreCommittedLogs(t *testing.T) {
 		t.Fatal("err: raft log store does not implement CommitTrackingLogStore interface")
 	}
 	commitIdx, err := store.GetCommitIndex()
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
 	// We should have applied all committed logs
 	if last := r.getLastApplied(); last != commitIdx {
 		t.Fatalf("bad last index: %d, expecting %d", last, commitIdx)
