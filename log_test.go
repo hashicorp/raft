@@ -12,6 +12,11 @@ import (
 	metrics "github.com/hashicorp/go-metrics/compat"
 )
 
+var (
+	_ LogStore    = (*InmemStore)(nil)
+	_ StableStore = (*InmemStore)(nil)
+)
+
 func TestOldestLog(t *testing.T) {
 	cases := []struct {
 		Name    string

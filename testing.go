@@ -70,6 +70,8 @@ type MockSnapshot struct {
 	maxIndex int
 }
 
+var _ FSM = (*MockFSM)(nil)
+var _ FSMSnapshot = (*MockSnapshot)(nil)
 var _ ConfigurationStore = (*MockFSMConfigStore)(nil)
 
 // NOTE: This is exposed for middleware testing purposes and is not a stable API
@@ -170,6 +172,8 @@ func (m *MockMonotonicLogStore) StoreLogs(logs []*Log) error {
 func (m *MockMonotonicLogStore) DeleteRange(min uint64, max uint64) error {
 	return m.s.DeleteRange(min, max)
 }
+
+var _ LogStore = (*MockMonotonicLogStore)(nil)
 
 // This can be used as the destination for a logger and it'll
 // map them into calls to testing.T.Log, so that you only see
