@@ -73,6 +73,10 @@ var (
 	// ErrLeadershipTransferInProgress is returned when the leader is rejecting
 	// client requests because it is attempting to transfer leadership.
 	ErrLeadershipTransferInProgress = errors.New("leadership transfer in progress")
+
+	// ErrIncompatibleLogStore is returned when the log store does not support
+	// or implement some required methods.
+	ErrIncompatibleLogStore = errors.New("log store does not implement some required methods or malformed")
 )
 
 // Raft implements a Raft node.
@@ -222,6 +226,10 @@ type Raft struct {
 	// legacy metrics are those that have `_peer_name` as metric suffix instead as labels.
 	// e.g: raft_replication_heartbeat_peer0
 	noLegacyTelemetry bool
+
+	// RestoreCommittedLogs is used to enable restore committed logs mode
+	// restore committed logs mode is disabled if set to false.
+	RestoreCommittedLogs bool
 }
 
 // BootstrapCluster initializes a server's storage with the given cluster
@@ -575,6 +583,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		mainThreadSaturation:  newSaturationMetric([]string{"raft", "thread", "main", "saturation"}, 1*time.Second),
 		preVoteDisabled:       conf.PreVoteDisabled || !transportSupportPreVote,
 		noLegacyTelemetry:     conf.NoLegacyTelemetry,
+		RestoreCommittedLogs:  conf.RestoreCommittedLogs,
 	}
 	if !transportSupportPreVote && !conf.PreVoteDisabled {
 		r.logger.Warn("pre-vote is disabled because it is not supported by the Transport")
@@ -594,9 +603,14 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		return nil, err
 	}
 
+	if err := r.restoreFromCommittedLogs(); err != nil {
+		return nil, err
+	}
+
 	// Scan through the log for any configuration change entries.
 	snapshotIndex, _ := r.getLastSnapshot()
-	for index := snapshotIndex + 1; index <= lastLog.Index; index++ {
+	lastappliedIndex := r.getLastApplied()
+	for index := max(snapshotIndex, lastappliedIndex) + 1; index <= lastLog.Index; index++ {
 		var entry Log
 		if err := r.logs.GetLog(index, &entry); err != nil {
 			r.logger.Error("failed to get log", "index", index, "error", err)
@@ -704,6 +718,40 @@ func (r *Raft) tryRestoreSingleSnapshot(snapshot *SnapshotMeta) bool {
 	snapLogger.Info("restored from snapshot")
 
 	return true
+}
+
+// restoreFromCommittedLogs recovers the Raft node from committed logs.
+func (r *Raft) restoreFromCommittedLogs() error {
+	if !r.RestoreCommittedLogs {
+		return nil
+	}
+
+	// If the store implements CommitTrackingLogStore, we can read the commit index from the store.
+	// This is useful when the store is able to track the commit index and we can avoid replaying logs.
+	store, ok := r.logs.(CommitTrackingLogStore)
+	if !ok {
+		r.logger.Warn("restore committed logs enabled but log store does not support it", "log_store", fmt.Sprintf("%T", r.logs))
+		return ErrIncompatibleLogStore
+	}
+
+	commitIndex, err := store.GetCommitIndex()
+	if err != nil {
+		r.logger.Error("failed to get commit index from store", "error", err)
+		return err
+	}
+
+	lastIndex, err := r.logs.LastIndex()
+	if err != nil {
+		r.logger.Error("failed to get last log index from store", "error", err)
+		return err
+	}
+	if commitIndex > lastIndex {
+		commitIndex = lastIndex
+	}
+
+	r.setCommitIndex(commitIndex)
+	r.processLogs(commitIndex, nil)
+	return nil
 }
 
 func (r *Raft) config() Config {
