@@ -5,6 +5,7 @@ package fuzzy
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -20,6 +21,14 @@ import (
 type appliedItem struct {
 	index uint64
 	data  []byte
+}
+
+type staticErrorFuture struct {
+	err error
+}
+
+func (s staticErrorFuture) Error() error {
+	return s.err
 }
 
 type cluster struct {
@@ -230,6 +239,9 @@ func (c *cluster) generateNApplies(s *applySource, n uint) [][]byte {
 
 func (c *cluster) leadershipTransfer(leaderTimeout time.Duration) raft.Future {
 	ldr := c.Leader(leaderTimeout)
+	if ldr == nil {
+		return staticErrorFuture{err: errors.New("no leader elected before leadership transfer")}
+	}
 	return ldr.raft.LeadershipTransfer()
 }
 
