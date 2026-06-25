@@ -3111,10 +3111,12 @@ func TestRaft_FollowerRemovalNoElection(t *testing.T) {
 	c.rafts[i] = n
 	c.trans[i] = n.trans.(*InmemTransport)
 	c.fsms[i] = n.fsm.(*MockFSM)
+
+	// Give follower time to become a candidate before connecting
 	time.Sleep(500 * time.Millisecond)
 	c.FullyConnect()
 
-	// Wait for the restarted follower to settle.
+	// Wait for the restarted follower to recognize leader.
 	ch := c.WaitEventChan(t.Context(), func(o *Observation) bool {
 		if o == nil {
 			return false
