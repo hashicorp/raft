@@ -1511,7 +1511,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		}
 
 		if a.PrevLogTerm != prevLogTerm {
-			r.logger.Warn("previous log term mis-match",
+			r.logger.Warn("previous log term mismatch",
 				"ours", prevLogTerm,
 				"remote", a.PrevLogTerm)
 			resp.NoRetryBackoff = true
