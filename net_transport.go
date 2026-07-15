@@ -619,6 +619,10 @@ func (n *NetworkTransport) handleConn(connCtx context.Context, conn net.Conn) {
 		default:
 		}
 
+		if n.timeout > 0 {
+			conn.SetReadDeadline(time.Now().Add(n.timeout))
+		}
+
 		if err := n.handleCommand(r, dec, enc); err != nil {
 			if err != io.EOF {
 				n.logger.Error("failed to decode incoming command", "error", err)
