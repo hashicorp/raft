@@ -1000,7 +1000,12 @@ func (r *Raft) leadershipTransfer(id ServerID, address ServerAddress, repl *foll
 	for atomic.LoadUint64(&repl.nextIndex) <= r.getLastIndex() {
 		err := &deferError{}
 		err.init()
-		repl.triggerDeferErrorCh <- err
+		select {
+		case repl.triggerDeferErrorCh <- err:
+		case <-stopCh:
+			doneCh <- nil
+			return
+		}
 		select {
 		case err := <-err.errCh:
 			if err != nil {
