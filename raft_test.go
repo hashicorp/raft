@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-hclog"
+	"github.com/hashicorp/go-msgpack/v2/codec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -3499,5 +3501,176 @@ func TestRaft_PreVote_ShouldRejectNonLeader(t *testing.T) {
 	// the pre-vote should not be granted
 	if resp.Granted {
 		t.Fatalf("expected pre-vote to not be granted, but it was granted, %+v", resp)
+	}
+}
+
+// snapshotData returns a MockFSM-compatible snapshot payload.
+func snapshotData(t *testing.T) []byte {
+	var buf bytes.Buffer
+	enc := codec.NewEncoder(&buf, &codec.MsgpackHandle{})
+	if err := enc.Encode([][]byte{[]byte("a"), []byte("b")}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// A follower holding uncommitted entries that conflict with the leader at the
+// snapshot's last-included index must discard its whole log when installing
+// the snapshot (raft paper, Figure 13 rule 7). Keeping the stale entry makes
+// the next AppendEntries reject and the leader resend the snapshot forever.
+func TestRaft_InstallSnapshot_DiscardsConflictingLog(t *testing.T) {
+	c := MakeCluster(1, t, nil)
+	defer c.Close()
+
+	leader := c.Leader()
+	var f Future
+	for i := 0; i < 5; i++ {
+		f = leader.Apply([]byte("cmd"), 0)
+	}
+	if err := f.Error(); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if err := leader.Snapshot().Error(); err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	c.Disconnect(leader.localAddr)
+
+	// Follower matches the leader's committed prefix, then diverges with
+	// uncommitted entries. The conflicting term sits AT the snapshot's
+	// last-included index, and the trailing entries keep normal log
+	// compaction from wiping it, which is what breaks the livelock loop.
+	conf := inmemConfig(t)
+	conf.LocalID = "follower"
+	conf.TrailingLogs = 20
+	faddr, ftrans := NewInmemTransport("")
+	flogs := NewInmemStore()
+	fstable := NewInmemStore()
+	fsnaps := NewInmemSnapshotStore()
+	snaps, _ := leader.snapshots.List()
+	if len(snaps) == 0 {
+		t.Fatalf("no snapshot on leader")
+	}
+	snapIdx, snapTerm := snaps[0].Index, snaps[0].Term
+	for i := uint64(1); i <= snapIdx+5; i++ {
+		term := snapTerm
+		if i == snapIdx {
+			term = snapTerm + 100
+		}
+		if err := flogs.StoreLog(&Log{Index: i, Term: term, Data: []byte("stale")}); err != nil {
+			t.Fatalf("err: %v", err)
+		}
+	}
+	follower, err := NewRaft(conf, &MockFSM{}, flogs, fstable, fsnaps, ftrans)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	defer follower.Shutdown()
+	_ = faddr
+
+	_, src, err := leader.snapshots.Open(snaps[0].ID)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, src); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	_ = src.Close()
+
+	req := &InstallSnapshotRequest{
+		RPCHeader:          RPCHeader{ProtocolVersion: ProtocolVersionMax},
+		SnapshotVersion:    SnapshotVersionMax,
+		Term:               leader.getCurrentTerm(),
+		Leader:             []byte(leader.localAddr),
+		LastLogIndex:       snapIdx,
+		LastLogTerm:        snapTerm,
+		Configuration:      EncodeConfiguration(leader.configurations.latest),
+		ConfigurationIndex: leader.configurations.latestIndex,
+		Size:               int64(buf.Len()),
+	}
+	respCh := make(chan RPCResponse, 1)
+	follower.processRPC(RPC{Command: req, Reader: io.NopCloser(&buf), RespChan: respCh})
+	resp := <-respCh
+	if resp.Error != nil {
+		t.Fatalf("err: %v", resp.Error)
+	}
+
+	// The whole log through snapIdx must be gone. Before the fix the stale
+	// entry at snapIdx survived and its term made every AppendEntries
+	// reject, looping straight back into another InstallSnapshot.
+	var entry Log
+	if err := flogs.GetLog(snapIdx, &entry); err != ErrLogNotFound {
+		t.Fatalf("expected index %d to be discarded, got %v", snapIdx, err)
+	}
+	if err := flogs.GetLog(snapIdx-1, &entry); err != ErrLogNotFound {
+		t.Fatalf("expected index %d to be discarded, got %v", snapIdx-1, err)
+	}
+
+	// Entries past the snapshot stay, so the leader can continue from
+	// snapIdx with plain AppendEntries instead of another snapshot.
+	if err := flogs.GetLog(snapIdx+5, &entry); err != nil {
+		t.Fatalf("index %d should survive: %v", snapIdx+5, err)
+	}
+	if idx, _ := flogs.FirstIndex(); idx != snapIdx+1 {
+		t.Fatalf("first index should be %d, got %d", snapIdx+1, idx)
+	}
+}
+
+// Same setup, but the follower already agrees with the snapshot at its
+// last-included index: nothing should be discarded beyond normal compaction.
+func TestRaft_InstallSnapshot_KeepsConsistentLog(t *testing.T) {
+	conf := inmemConfig(t)
+	conf.LocalID = "follower"
+	conf.TrailingLogs = 5
+
+	addr, trans := NewInmemTransport("")
+	logs := NewInmemStore()
+	stable := NewInmemStore()
+	snaps := NewInmemSnapshotStore()
+
+	for i := uint64(1); i <= 5; i++ {
+		if err := logs.StoreLog(&Log{Index: i, Term: 2, Data: []byte("x")}); err != nil {
+			t.Fatalf("err: %v", err)
+		}
+	}
+
+	r, err := NewRaft(conf, &MockFSM{}, logs, stable, snaps, trans)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	defer r.Shutdown()
+
+	data := snapshotData(t)
+	req := &InstallSnapshotRequest{
+		RPCHeader:          RPCHeader{ProtocolVersion: ProtocolVersionMax},
+		SnapshotVersion:    SnapshotVersionMax,
+		Term:               3,
+		Leader:             []byte(addr),
+		LastLogIndex:       3,
+		LastLogTerm:        2,
+		Configuration:      EncodeConfiguration(Configuration{Servers: []Server{{Suffrage: Voter, ID: conf.LocalID, Address: addr}}}),
+		ConfigurationIndex: 3,
+		Size:               int64(len(data)),
+	}
+	respCh := make(chan RPCResponse, 1)
+	r.processRPC(RPC{
+		Command:  req,
+		Reader:   io.NopCloser(bytes.NewReader(data)),
+		RespChan: respCh,
+	})
+	resp := <-respCh
+	if resp.Error != nil {
+		t.Fatalf("err: %v", resp.Error)
+	}
+	if !resp.Response.(*InstallSnapshotResponse).Success {
+		t.Fatalf("snapshot install should succeed")
+	}
+
+	// Terms match at index 3, so all entries survive (TrailingLogs > snap).
+	var entry Log
+	for i := uint64(1); i <= 5; i++ {
+		if err := logs.GetLog(i, &entry); err != nil {
+			t.Fatalf("index %d should survive: %v", i, err)
+		}
 	}
 }
