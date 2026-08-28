@@ -10,3 +10,7 @@
 ## How Has This Been Tested?
 
 <!-- Describe how the changes have been tested. Provide test instructions or details. -->
+
+### Contributor Checklist
+- [ ] **LLM Usage** If an LLM was used to generate any code, please ensure and confirm you have read
+  and followed the [AI usage guide](../CONTRIBUTING.md#ai-usage).
