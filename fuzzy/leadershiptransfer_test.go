@@ -19,15 +19,21 @@ func TestRaft_FuzzyLeadershipTransfer(t *testing.T) {
 	s := newApplySource("LeadershipTransfer")
 	data := cluster.generateNApplies(s, uint(r.Intn(10000)))
 	futures := cluster.sendNApplies(time.Minute, data)
-	cluster.leadershipTransfer(time.Minute)
+	if err := cluster.leadershipTransfer(time.Minute).Error(); err != nil {
+		t.Fatalf("leadership transfer failed: %v", err)
+	}
 
 	data = cluster.generateNApplies(s, uint(r.Intn(10000)))
 	futures = append(futures, cluster.sendNApplies(time.Minute, data)...)
-	cluster.leadershipTransfer(time.Minute)
+	if err := cluster.leadershipTransfer(time.Minute).Error(); err != nil {
+		t.Fatalf("leadership transfer failed: %v", err)
+	}
 
 	data = cluster.generateNApplies(s, uint(r.Intn(10000)))
 	futures = append(futures, cluster.sendNApplies(time.Minute, data)...)
-	cluster.leadershipTransfer(time.Minute)
+	if err := cluster.leadershipTransfer(time.Minute).Error(); err != nil {
+		t.Fatalf("leadership transfer failed: %v", err)
+	}
 
 	data = cluster.generateNApplies(s, uint(r.Intn(10000)))
 	futures = append(futures, cluster.sendNApplies(time.Minute, data)...)
@@ -37,6 +43,20 @@ func TestRaft_FuzzyLeadershipTransfer(t *testing.T) {
 	cluster.Stop(t, time.Minute)
 	cluster.VerifyLog(t, ac)
 	cluster.VerifyFSM(t)
+}
+
+func TestRaft_FuzzyLeadershipTransferWithoutLeader(t *testing.T) {
+	cluster := newRaftCluster(t, testLogWriter, "lt_no_leader", 5, nil)
+
+	if err := cluster.leadershipTransfer(0).Error(); err == nil {
+		t.Fatal("expected leadership transfer to fail when no leader can be elected")
+	}
+
+	for _, n := range cluster.nodes {
+		if err := n.raft.Shutdown().Error(); err != nil {
+			t.Fatalf("shutdown failed for %s: %v", n.name, err)
+		}
+	}
 }
 
 type LeadershipTransferMode int
