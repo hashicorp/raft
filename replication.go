@@ -1,4 +1,4 @@
-// Copyright IBM Corp. 2013, 2025
+// Copyright IBM Corp. 2013, 2026
 // SPDX-License-Identifier: MPL-2.0
 
 package raft
@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hashicorp/go-metrics/compat"
+	metrics "github.com/hashicorp/go-metrics/compat"
 )
 
 const (
@@ -518,7 +518,10 @@ func (r *Raft) pipelineSend(s *followerReplication, p AppendPipeline, nextIdx *u
 
 	// Pipeline the append entries
 	if _, err := p.AppendEntries(req, new(AppendEntriesResponse)); err != nil {
-		r.logger.Error("failed to pipeline appendEntries", "peer", s.peer, "error", err)
+		s.peerLock.RLock()
+		peer := s.peer
+		s.peerLock.RUnlock()
+		r.logger.Error("failed to pipeline appendEntries", "peer", peer, "error", err)
 		return true
 	}
 
@@ -644,7 +647,11 @@ func appendStats(peer string, start time.Time, logs float32, skipLegacy bool) {
 
 // handleStaleTerm is used when a follower indicates that we have a stale term.
 func (r *Raft) handleStaleTerm(s *followerReplication) {
-	r.logger.Error("peer has newer term, stopping replication", "peer", s.peer)
+	s.peerLock.RLock()
+	peer := s.peer
+	s.peerLock.RUnlock()
+
+	r.logger.Error("peer has newer term, stopping replication", "peer", peer)
 	s.notifyAll(false) // No longer leader
 	asyncNotifyCh(s.stepDown)
 }
