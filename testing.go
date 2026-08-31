@@ -136,6 +136,10 @@ type MockMonotonicLogStore struct {
 	s LogStore
 }
 
+func NewMockMonotonicLogStore(logs LogStore) LogStore {
+	return &MockMonotonicLogStore{s: logs}
+}
+
 // IsMonotonic implements the MonotonicLogStore interface.
 func (m *MockMonotonicLogStore) IsMonotonic() bool {
 	return true
@@ -717,15 +721,15 @@ WAIT:
 
 // NOTE: This is exposed for middleware testing purposes and is not a stable API
 type MakeClusterOpts struct {
-	Peers              int
-	Bootstrap          bool
-	Conf               *Config
-	ConfigStoreFSM     bool
-	MakeFSMFunc        func() FSM
-	LongstopTimeout    time.Duration
-	MonotonicLogs      bool
-	CommitTrackingLogs bool
-	PropagateError     bool // If true, return errors instead of calling t.Fatal
+	Peers               int
+	Bootstrap           bool
+	Conf                *Config
+	ConfigStoreFSM      bool
+	MakeFSMFunc         func() FSM
+	LongstopTimeout     time.Duration
+	LogstoreWrapperFunc func(LogStore) LogStore
+	CommitTrackingLogs  bool
+	PropagateError      bool // If true, return errors instead of calling t.Fatal
 }
 
 // makeCluster will return a cluster with the given config and number of peers.
@@ -810,8 +814,8 @@ func makeCluster(t *testing.T, opts *MakeClusterOpts) (*cluster, error) {
 		snap := c.snaps[i]
 		trans := c.trans[i]
 
-		if opts.MonotonicLogs {
-			logs = &MockMonotonicLogStore{s: logs}
+		if opts.LogstoreWrapperFunc != nil {
+			logs = opts.LogstoreWrapperFunc(logs)
 		} else if opts.CommitTrackingLogs {
 			logs = NewInmemCommitTrackingStore()
 		}
