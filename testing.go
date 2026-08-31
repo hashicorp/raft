@@ -587,6 +587,7 @@ func (c *cluster) IndexOf(r *Raft) int {
 // EnsureLeader checks that ALL the nodes think the leader is the given expected
 // leader.
 func (c *cluster) EnsureLeader(t *testing.T, expect ServerAddress) {
+	t.Helper()
 	// We assume c.Leader() has been called already; now check all the rafts
 	// think the leader is correct
 	fail := false
@@ -612,6 +613,7 @@ func (c *cluster) EnsureLeader(t *testing.T, expect ServerAddress) {
 
 // EnsureSame makes sure all the FSMs have the same contents.
 func (c *cluster) EnsureSame(t *testing.T) {
+	t.Helper()
 	limit := time.Now().Add(c.longstopTimeout)
 	first := getMockFSM(c.fsms[0])
 
@@ -690,6 +692,7 @@ func (c *cluster) getConfiguration(r *Raft) Configuration {
 
 // EnsureSamePeers makes sure all the rafts have the same set of peers.
 func (c *cluster) EnsureSamePeers(t *testing.T) {
+	t.Helper()
 	limit := time.Now().Add(c.longstopTimeout)
 	peerSet := c.getConfiguration(c.rafts[0])
 
