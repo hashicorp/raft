@@ -140,6 +140,16 @@ type Raft struct {
 	// on.
 	candidateFromLeadershipTransfer atomic.Bool
 
+	// rpcTransitionLock serializes transitions of the (state, currentTerm)
+	// pair between the main raft thread and the transport I/O thread, which
+	// can step the node down concurrently via a fast-path heartbeat. Writers
+	// that move state and/or currentTerm as part of one transition must hold
+	// the lock for the whole transition, and appendEntries additionally holds
+	// it across the term check that decides to transition, so concurrent
+	// step-downs cannot interleave. The atomic accessors (getState,
+	// getCurrentTerm) may be read without the lock.
+	rpcTransitionLock sync.Mutex
+
 	// Stores our local server ID, used to avoid sending RPCs to ourself
 	localID ServerID
 

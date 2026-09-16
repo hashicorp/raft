@@ -481,7 +481,14 @@ func TestRaft_RestartFollower_LongInitialHeartbeat(t *testing.T) {
 				env1.Shutdown()
 				time.Sleep(50 * time.Millisecond)
 				require.Equal(t, uint32(0), atomic.LoadUint32(requestVotes))
-				time.Sleep(600 * time.Millisecond)
+
+				// Poll for request votes instead of a fixed sleep. The
+				// heartbeat timeout plus election timeout can exceed 600ms
+				// on loaded CI runners, so a fixed sleep is flaky.
+				deadline := time.Now().Add(2 * time.Second)
+				for time.Now().Before(deadline) && atomic.LoadUint32(requestVotes) == 0 {
+					time.Sleep(50 * time.Millisecond)
+				}
 				require.NotEqual(t, uint32(0), atomic.LoadUint32(requestVotes))
 			}
 
