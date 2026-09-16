@@ -13,7 +13,7 @@ import (
 	"time"
 
 	hclog "github.com/hashicorp/go-hclog"
-	metrics "github.com/hashicorp/go-metrics/compat"
+	metrics "github.com/hashicorp/go-metrics"
 )
 
 const (

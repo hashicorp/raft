@@ -9,7 +9,7 @@ import (
 	"time"
 
 	hclog "github.com/hashicorp/go-hclog"
-	"github.com/hashicorp/go-metrics/compat"
+	"github.com/hashicorp/go-metrics"
 )
 
 // FSM is implemented by clients to make use of the replicated log.
