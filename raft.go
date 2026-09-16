@@ -1960,6 +1960,34 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	r.setLatestConfiguration(reqConfiguration, reqConfigurationIndex)
 	r.setCommittedConfiguration(reqConfiguration, reqConfigurationIndex)
 
+	// Raft paper, Figure 13 rule 7: if the entry at LastLogIndex exists
+	// with a different term, discard the entire log. The snapshot supersedes
+	// everything up to LastLogIndex, and keeping a conflicting entry makes
+	// the next AppendEntries reject, looping us right back here.
+	var snapEntry Log
+	if err := r.logs.GetLog(req.LastLogIndex, &snapEntry); err == nil &&
+		snapEntry.Term != req.LastLogTerm {
+		firstIdx, err := r.logs.FirstIndex()
+		if err != nil {
+			r.logger.Error("failed to get first log index", "error", err)
+		} else if err := r.logs.DeleteRange(firstIdx, req.LastLogIndex); err != nil {
+			r.logger.Error("failed to discard divergent log entries", "error", err)
+		} else {
+			r.logger.Warn("discarded log entries conflicting with installed snapshot",
+				"first-index", firstIdx,
+				"last-included-index", req.LastLogIndex,
+				"local-term", snapEntry.Term,
+				"snapshot-term", req.LastLogTerm)
+		}
+		// The discarded suffix may have carried configuration changes past
+		// the snapshot's configuration index. Roll the in-memory latest
+		// configuration back so a later AppendEntries cannot re-apply a
+		// stale config entry on top of the snapshot baseline.
+		if r.configurations.latestIndex > reqConfigurationIndex {
+			r.setLatestConfiguration(reqConfiguration, reqConfigurationIndex)
+		}
+	}
+
 	// Clear old logs if r.logs is a MonotonicLogStore. Otherwise compact the
 	// logs. In both cases, log any errors and continue.
 	if mlogs, ok := r.logs.(MonotonicLogStore); ok && mlogs.IsMonotonic() {
