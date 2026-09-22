@@ -281,6 +281,35 @@ func TestRaft_HasExistingState(t *testing.T) {
 	// Check the FSMs.
 	c.EnsureSame(t)
 
+	// Wait until every node sees the new voter before checking peer
+	// convergence. EnsureSamePeers snapshots the first node's
+	// configuration up front, so if the AddVoter change commits after
+	// that snapshot the check can never match and fails after its
+	// polling window. On slow 32-bit CI runners the change has been
+	// observed to land that late, so poll for the voter to appear
+	// everywhere first.
+	deadline := time.Now().Add(c.longstopTimeout)
+	for time.Now().Before(deadline) {
+		allPresent := true
+		for _, r := range c.rafts {
+			found := false
+			for _, srv := range c.getConfiguration(r).Servers {
+				if srv.ID == c1.rafts[0].localID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				allPresent = false
+				break
+			}
+		}
+		if allPresent {
+			break
+		}
+		time.Sleep(c.conf.CommitTimeout)
+	}
+
 	// Check the peers.
 	c.EnsureSamePeers(t)
 
@@ -1546,8 +1575,16 @@ func TestRaft_SnapshotRestore_PeerChange(t *testing.T) {
 	c2.fsms = append(c2.fsms, r.fsm.(*MockFSM))
 	c2.FullyConnect()
 
-	// Wait a while.
-	time.Sleep(c.propagateTimeout)
+	// Wait a while. Poll instead of a fixed sleep because the new
+	// rpcTransitionLock in appendEntries can add a small delay on loaded
+	// CI runners, making a fixed propagateTimeout flaky.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if r.getLastApplied() >= 103 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	// Ensure we elect a leader, and that we replicate to our new followers.
 	c2.EnsureSame(t)
@@ -2464,6 +2501,33 @@ func TestRaft_ProtocolVersion_Upgrade_1_2(t *testing.T) {
 		t.Fatalf("err: %v", future.Error())
 	}
 
+	// Wait until every node has applied the configuration change before
+	// checking for convergence. EnsureSamePeers already polls for up to
+	// longstopTimeout, but on slow 32-bit CI runners the new node's catch-up
+	// replication can exceed that window, so poll for the voter to appear
+	// everywhere first.
+	deadline := time.Now().Add(c.longstopTimeout)
+	for time.Now().Before(deadline) {
+		allPresent := true
+		for _, r := range c.rafts {
+			found := false
+			for _, srv := range c.getConfiguration(r).Servers {
+				if srv.ID == c1.rafts[0].localID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				allPresent = false
+				break
+			}
+		}
+		if allPresent {
+			break
+		}
+		time.Sleep(c.conf.CommitTimeout)
+	}
+
 	// Sanity check the cluster.
 	c.EnsureSame(t)
 	c.EnsureSamePeers(t)
@@ -2496,6 +2560,33 @@ func TestRaft_ProtocolVersion_Upgrade_2_3(t *testing.T) {
 	future := c.Leader().AddVoter(c1.rafts[0].localID, c1.rafts[0].localAddr, 0, 1*time.Second)
 	if err := future.Error(); err != nil {
 		t.Fatalf("err: %v", err)
+	}
+
+	// Wait until every node has applied the configuration change before
+	// checking for convergence. EnsureSamePeers already polls for up to
+	// longstopTimeout, but on slow 32-bit CI runners the new node's catch-up
+	// replication can exceed that window, so poll for the voter to appear
+	// everywhere first.
+	deadline := time.Now().Add(c.longstopTimeout)
+	for time.Now().Before(deadline) {
+		allPresent := true
+		for _, r := range c.rafts {
+			found := false
+			for _, srv := range c.getConfiguration(r).Servers {
+				if srv.ID == c1.rafts[0].localID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				allPresent = false
+				break
+			}
+		}
+		if allPresent {
+			break
+		}
+		time.Sleep(c.conf.CommitTimeout)
 	}
 
 	// Sanity check the cluster.
@@ -3096,6 +3187,62 @@ func TestRaft_InstallSnapshot_InvalidPeers(t *testing.T) {
 	resp := <-chResp
 	require.Error(t, resp.Error)
 	require.Contains(t, resp.Error.Error(), "failed to decode peers")
+}
+
+// TestRaft_AppendEntries_ConcurrentTermBump hammers appendEntries from many
+// goroutines with mixed terms; run under -race it catches unsynchronized
+// step-down transitions.
+func TestRaft_AppendEntries_ConcurrentTermBump(t *testing.T) {
+	_, transport := NewInmemTransport("")
+
+	conf := DefaultConfig()
+	conf.LocalID = "leader"
+	r := &Raft{
+		trans:  transport,
+		logger: hclog.New(nil),
+		logs:   NewInmemStore(),
+		stable: NewInmemStore(),
+	}
+	r.conf.Store(*conf)
+	r.setState(Leader)
+	r.setCurrentTerm(5)
+
+	header := RPCHeader{ProtocolVersion: ProtocolVersionMax, ID: []byte("leader")}
+
+	// Any caller that observes state==Leader alongside a bumped term is a
+	// torn read — the bug this test is looking for.
+	torn := make(chan string, 32)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func(term uint64) {
+			defer wg.Done()
+			chResp := make(chan RPCResponse, 1)
+			rpc := RPC{
+				Command: &AppendEntriesRequest{
+					RPCHeader: header,
+					Term:      term,
+				},
+				RespChan: chResp,
+			}
+			r.appendEntries(rpc, rpc.Command.(*AppendEntriesRequest))
+			resp := <-chResp
+			require.NoError(t, resp.Error)
+
+			if r.getState() == Leader && r.getCurrentTerm() > 5 {
+				torn <- fmt.Sprintf("torn state: still Leader at term %d", r.getCurrentTerm())
+			}
+		}(uint64(6 + i))
+	}
+	wg.Wait()
+	close(torn)
+	for s := range torn {
+		t.Error(s)
+	}
+
+	require.Equal(t, Follower, r.getState())
+	require.Equal(t, uint64(6+31), r.getCurrentTerm())
 }
 
 func TestRaft_VoteNotGranted_WhenNodeNotInCluster(t *testing.T) {
