@@ -44,6 +44,18 @@ type ApplyFuture interface {
 	Response() interface{}
 }
 
+// AssertedFuture is used to check if the current node has asserted leadership.
+// A Leader asserts leadership by committing at least one log in this term.
+type AssertedFuture interface {
+	Future
+
+	// Asserted returns true if the current node has asserted leadership.
+	Asserted() bool
+
+	// Term returns the term in which the leadership was asserted.
+	Term() uint64
+}
+
 // ConfigurationFuture is used for GetConfiguration and can return the
 // latest configuration in use by Raft.
 type ConfigurationFuture interface {
@@ -241,6 +253,20 @@ type verifyFuture struct {
 	quorumSize int
 	votes      int
 	voteLock   sync.Mutex
+}
+
+type assertedFuture struct {
+	deferError
+	asserted bool
+	term     uint64
+}
+
+func (a *assertedFuture) Asserted() bool {
+	return a.asserted
+}
+
+func (a *assertedFuture) Term() uint64 {
+	return a.term
 }
 
 // leadershipTransferFuture is used to track the progress of a leadership
