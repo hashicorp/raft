@@ -1436,6 +1436,10 @@ func (r *Raft) processRPC(rpc RPC) {
 func (r *Raft) processHeartbeat(rpc RPC) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "processHeartbeat"}, time.Now())
 
+	// guard against race with shutdown so in-flight heartbeat finishes before stores close
+	r.heartbeatGate.RLock()
+	defer r.heartbeatGate.RUnlock()
+
 	// Check if we are shutdown, just ignore the RPC
 	select {
 	case <-r.shutdownCh:
