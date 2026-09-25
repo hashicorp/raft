@@ -254,12 +254,31 @@ func TestRaft_RecoverCluster(t *testing.T) {
 
 func TestRaft_HasExistingState(t *testing.T) {
 	var err error
+
+	// Unlike most 2-node cluster tests, this one goes on to merge in a
+	// third node and run it through a full election-plus-config-change
+	// round trip (see below), which takes strictly longer than the
+	// stabilization checks the default longstop timeout is tuned for.
+	// Under scheduling pressure (e.g. many prior subtests sharing the
+	// process in a `go test -count>1` run) that thinner margin was
+	// enough to fail EnsureSamePeers before the third node had caught
+	// up, so give this test more headroom. See
+	// https://github.com/hashicorp/raft/issues/711.
+	longstopTimeout := 30 * time.Second
+
 	// Make a cluster.
-	c := MakeCluster(2, t, nil)
+	c := MakeClusterCustom(t, &MakeClusterOpts{
+		Peers:           2,
+		Bootstrap:       true,
+		LongstopTimeout: longstopTimeout,
+	})
 	defer c.Close()
 
 	// Make a new cluster of 1.
-	c1 := MakeClusterNoBootstrap(1, t, nil)
+	c1 := MakeClusterCustom(t, &MakeClusterOpts{
+		Peers:           1,
+		LongstopTimeout: longstopTimeout,
+	})
 
 	// Make sure the initial state is clean.
 	var hasState bool
