@@ -171,6 +171,10 @@ type Raft struct {
 	shutdownCh   chan struct{}
 	shutdownLock sync.Mutex
 
+	// heartbeatGate ensures in-flight fast-path heartbeats complete before
+	// shutdown finishes and prevents new heartbeats after shutdown begins.
+	heartbeatGate sync.RWMutex
+
 	// snapshots is used to store and retrieve snapshots
 	snapshots SnapshotStore
 

@@ -173,6 +173,10 @@ func (s *shutdownFuture) Error() error {
 		return nil
 	}
 	s.raft.waitShutdown()
+	// waitShutdown only covers routines raft started itself; wait for any
+	// fast-path heartbeat on a transport goroutine before completing shutdown.
+	s.raft.heartbeatGate.Lock()
+	s.raft.heartbeatGate.Unlock()
 	if closeable, ok := s.raft.trans.(WithClose); ok {
 		_ = closeable.Close()
 	}
