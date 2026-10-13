@@ -26,9 +26,6 @@ const (
 	rpcTimeoutNow
 	rpcRequestPreVote
 
-	// DefaultTimeoutScale is the default TimeoutScale in a NetworkTransport.
-	DefaultTimeoutScale = 256 * 1024 // 256KB
-
 	// DefaultMaxRPCsInFlight is the default value used for pipelining configuration
 	// if a zero value is passed. See https://github.com/hashicorp/raft/pull/541
 	// for rationale. Note, if this is changed we should update the doc comments
@@ -106,8 +103,7 @@ type NetworkTransport struct {
 	streamCancel  context.CancelFunc
 	streamCtxLock sync.RWMutex
 
-	timeout      time.Duration
-	TimeoutScale int
+	timeout time.Duration
 
 	msgpackUseNewTimeFormat bool
 }
@@ -158,8 +154,7 @@ type NetworkTransportConfig struct {
 	// buffer actually allowed 130 RPCs to be inflight at once.
 	MaxRPCsInFlight int
 
-	// Timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
-	// the timeout by (SnapshotSize / TimeoutScale).
+	// Timeout is used to apply I/O deadlines.
 	Timeout time.Duration
 
 	// MsgpackUseNewTimeFormat when set to true, force the underlying msgpack
@@ -184,15 +179,50 @@ type StreamLayer interface {
 }
 
 type netConn struct {
+	*rpcConn
 	target ServerAddress
-	conn   net.Conn
-	w      *bufio.Writer
-	dec    *codec.Decoder
-	enc    *codec.Encoder
 }
 
-func (n *netConn) Release() error {
-	return n.conn.Close()
+// timeoutReadWriter wraps a net.Conn and sets a read or write deadline
+// before each Read or Write call. A zero readTimeout or writeTimeout means
+// no deadline — reads/writes block indefinitely.
+type timeoutReadWriter struct {
+	c            net.Conn
+	readTimeout  time.Duration
+	writeTimeout time.Duration
+}
+
+func (d *timeoutReadWriter) Read(p []byte) (int, error) {
+	if d.readTimeout > 0 {
+		if err := d.c.SetReadDeadline(time.Now().Add(d.readTimeout)); err != nil {
+			return 0, err
+		}
+	}
+	return d.c.Read(p)
+}
+
+func (d *timeoutReadWriter) Write(p []byte) (int, error) {
+	if d.writeTimeout > 0 {
+		if err := d.c.SetWriteDeadline(time.Now().Add(d.writeTimeout)); err != nil {
+			return 0, err
+		}
+	}
+	return d.c.Write(p)
+}
+
+// setReadTimeout configures the per-Read deadline. Pass 0 to disable.
+func (d *timeoutReadWriter) setReadTimeout(timeout time.Duration) {
+	d.readTimeout = timeout
+}
+
+// setWriteTimeout configures the per-Write deadline. Pass 0 to disable.
+func (d *timeoutReadWriter) setWriteTimeout(timeout time.Duration) {
+	d.writeTimeout = timeout
+}
+
+// Release closes the underlying network connection.
+func (d *timeoutReadWriter) Release() error {
+	return d.c.Close()
 }
 
 type netPipeline struct {
@@ -232,7 +262,6 @@ func NewNetworkTransportWithConfig(
 		shutdownCh:              make(chan struct{}),
 		stream:                  config.Stream,
 		timeout:                 config.Timeout,
-		TimeoutScale:            DefaultTimeoutScale,
 		serverAddressProvider:   config.ServerAddressProvider,
 		msgpackUseNewTimeFormat: config.MsgpackUseNewTimeFormat,
 	}
@@ -246,8 +275,7 @@ func NewNetworkTransportWithConfig(
 
 // NewNetworkTransport creates a new network transport with the given dialer
 // and listener. The maxPool controls how many connections we will pool. The
-// timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
-// the timeout by (SnapshotSize / TimeoutScale).
+// timeout is used to apply I/O deadlines.
 func NewNetworkTransport(
 	stream StreamLayer,
 	maxPool int,
@@ -268,8 +296,7 @@ func NewNetworkTransport(
 
 // NewNetworkTransportWithLogger creates a new network transport with the given logger, dialer
 // and listener. The maxPool controls how many connections we will pool. The
-// timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
-// the timeout by (SnapshotSize / TimeoutScale).
+// timeout is used to apply I/O deadlines.
 func NewNetworkTransportWithLogger(
 	stream StreamLayer,
 	maxPool int,
@@ -399,6 +426,25 @@ func (n *NetworkTransport) getProviderAddressOrFallback(id ServerID, target Serv
 	return target
 }
 
+// newRpcConn builds the I/O stack for a raw net.Conn: timeout wrapper,
+// buffered read/write, msgpack codec. readTimeout and writeTimeout are
+// passed directly to the timeoutReadWriter.
+func (n *NetworkTransport) newRpcConn(conn net.Conn, readTimeout, writeTimeout time.Duration) *rpcConn {
+	trw := &timeoutReadWriter{c: conn, readTimeout: readTimeout, writeTimeout: writeTimeout}
+	r := bufio.NewReaderSize(trw, connReceiveBufferSize)
+	w := bufio.NewWriterSize(trw, connSendBufferSize)
+
+	mp := &codec.MsgpackHandle{}
+	mp.TimeNotBuiltin = !n.msgpackUseNewTimeFormat
+
+	return &rpcConn{
+		timeoutReadWriter: trw,
+		rw:                bufio.NewReadWriter(r, w),
+		dec:               codec.NewDecoder(r, &codec.MsgpackHandle{}),
+		enc:               codec.NewEncoder(w, mp),
+	}
+}
+
 // getConn is used to get a connection from the pool.
 func (n *NetworkTransport) getConn(target ServerAddress) (*netConn, error) {
 	// Check for a pooled conn
@@ -412,24 +458,20 @@ func (n *NetworkTransport) getConn(target ServerAddress) (*netConn, error) {
 		return nil, err
 	}
 
-	// Wrap the conn
-	netConn := &netConn{
-		target: target,
-		conn:   conn,
-		dec:    codec.NewDecoder(bufio.NewReader(conn), &codec.MsgpackHandle{}),
-		w:      bufio.NewWriterSize(conn, connSendBufferSize),
+	nc := &netConn{
+		target:  target,
+		rpcConn: n.newRpcConn(conn, n.timeout, n.timeout),
 	}
 
-	mp := &codec.MsgpackHandle{}
-	mp.TimeNotBuiltin = !n.msgpackUseNewTimeFormat
-	netConn.enc = codec.NewEncoder(netConn.w, mp)
-
 	// Done
-	return netConn, nil
+	return nc, nil
 }
 
 // returnConn returns a connection back to the pool.
 func (n *NetworkTransport) returnConn(conn *netConn) {
+	conn.setReadTimeout(n.timeout)
+	conn.setWriteTimeout(n.timeout)
+
 	n.connPoolLock.Lock()
 	defer n.connPoolLock.Unlock()
 
@@ -485,11 +527,6 @@ func (n *NetworkTransport) genericRPC(id ServerID, target ServerAddress, rpcType
 		return err
 	}
 
-	// Set a deadline
-	if n.timeout > 0 {
-		_ = conn.conn.SetDeadline(time.Now().Add(n.timeout))
-	}
-
 	// Send the RPC
 	if err = sendRPC(conn, rpcType, args); err != nil {
 		return err
@@ -512,29 +549,25 @@ func (n *NetworkTransport) InstallSnapshot(id ServerID, target ServerAddress, ar
 	}
 	defer func() { _ = conn.Release() }()
 
-	// Set a deadline, scaled by request size
-	if n.timeout > 0 {
-		timeout := n.timeout * time.Duration(args.Size/int64(n.TimeoutScale))
-		if timeout < n.timeout {
-			timeout = n.timeout
-		}
-		_ = conn.conn.SetDeadline(time.Now().Add(timeout))
-	}
-
 	// Send the RPC
 	if err = sendRPC(conn, rpcInstallSnapshot, args); err != nil {
 		return err
 	}
 
 	// Stream the state
-	if _, err = io.Copy(conn.w, data); err != nil {
+	if _, err = io.Copy(conn.rw, data); err != nil {
 		return err
 	}
 
 	// Flush
-	if err = conn.w.Flush(); err != nil {
+	if err = conn.rw.Flush(); err != nil {
 		return err
 	}
+
+	// Disable the read deadline: the follower needs unbounded time to install
+	// the snapshot and respond. The connection won't be reused anyway.
+	// TCP keepalive handles truly dead peers.
+	conn.setReadTimeout(0)
 
 	// Decode the response, do not return conn
 	_, err = decodeResponse(conn, resp)
@@ -598,18 +631,21 @@ func (n *NetworkTransport) listen() {
 	}
 }
 
+// rpcConn bundles the I/O primitives shared by inbound and outbound
+// connection handling.
+type rpcConn struct {
+	*timeoutReadWriter
+	rw  *bufio.ReadWriter
+	dec *codec.Decoder
+	enc *codec.Encoder
+}
+
 // handleConn is used to handle an inbound connection for its lifespan. The
 // handler will exit when the passed context is cancelled or the connection is
 // closed.
 func (n *NetworkTransport) handleConn(connCtx context.Context, conn net.Conn) {
-	defer func() { _ = conn.Close() }()
-	r := bufio.NewReaderSize(conn, connReceiveBufferSize)
-	w := bufio.NewWriter(conn)
-	dec := codec.NewDecoder(r, &codec.MsgpackHandle{})
-
-	mp := &codec.MsgpackHandle{}
-	mp.TimeNotBuiltin = !n.msgpackUseNewTimeFormat
-	enc := codec.NewEncoder(w, mp)
+	c := n.newRpcConn(conn, 0, n.timeout)
+	defer c.Release()
 
 	for {
 		select {
@@ -619,32 +655,33 @@ func (n *NetworkTransport) handleConn(connCtx context.Context, conn net.Conn) {
 		default:
 		}
 
-		if err := n.handleCommand(r, dec, enc); err != nil {
+		if err := n.handleCommand(c); err != nil {
 			if err != io.EOF {
 				n.logger.Error("failed to decode incoming command", "error", err)
 			}
-			return
-		}
-		if err := w.Flush(); err != nil {
-			n.logger.Error("failed to flush response", "error", err)
 			return
 		}
 	}
 }
 
 // handleCommand is used to decode and dispatch a single command.
-func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, enc *codec.Encoder) error {
+func (n *NetworkTransport) handleCommand(c *rpcConn) error {
 	getTypeStart := time.Now()
 
-	// Get the rpc type
-	rpcType, err := r.ReadByte()
+	// Get the rpc type. No read deadline — the connection may be idle
+	// between heartbeats; we rely on connCtx cancellation or TCP keepalive
+	// to detect truly dead connections.
+	c.setReadTimeout(0)
+	rpcType, err := c.rw.ReadByte()
 	if err != nil {
 		return err
 	}
+	c.setReadTimeout(n.timeout)
 
 	// measuring the time to get the first byte separately because the heartbeat conn will hang out here
 	// for a good while waiting for a heartbeat whereas the append entries/rpc conn should not.
 	metrics.MeasureSince([]string{"raft", "net", "getRPCType"}, getTypeStart)
+
 	decodeStart := time.Now()
 
 	// Create the RPC object
@@ -659,7 +696,7 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 	switch rpcType {
 	case rpcAppendEntries:
 		var req AppendEntriesRequest
-		if err := dec.Decode(&req); err != nil {
+		if err := c.dec.Decode(&req); err != nil {
 			return err
 		}
 		rpc.Command = &req
@@ -683,29 +720,30 @@ func (n *NetworkTransport) handleCommand(r *bufio.Reader, dec *codec.Decoder, en
 		}
 	case rpcRequestVote:
 		var req RequestVoteRequest
-		if err := dec.Decode(&req); err != nil {
+		if err := c.dec.Decode(&req); err != nil {
 			return err
 		}
 		rpc.Command = &req
 		labels = []metrics.Label{{Name: "rpcType", Value: "RequestVote"}}
 	case rpcRequestPreVote:
 		var req RequestPreVoteRequest
-		if err := dec.Decode(&req); err != nil {
+		if err := c.dec.Decode(&req); err != nil {
 			return err
 		}
 		rpc.Command = &req
 		labels = []metrics.Label{{Name: "rpcType", Value: "RequestPreVote"}}
 	case rpcInstallSnapshot:
 		var req InstallSnapshotRequest
-		if err := dec.Decode(&req); err != nil {
+		if err := c.dec.Decode(&req); err != nil {
 			return err
 		}
 		rpc.Command = &req
-		rpc.Reader = io.LimitReader(r, req.Size)
+		rpc.Reader = io.LimitReader(c.rw, req.Size)
+
 		labels = []metrics.Label{{Name: "rpcType", Value: "InstallSnapshot"}}
 	case rpcTimeoutNow:
 		var req TimeoutNowRequest
-		if err := dec.Decode(&req); err != nil {
+		if err := c.dec.Decode(&req); err != nil {
 			return err
 		}
 		rpc.Command = &req
@@ -749,12 +787,17 @@ RESP:
 		if resp.Error != nil {
 			respErr = resp.Error.Error()
 		}
-		if err := enc.Encode(respErr); err != nil {
+		if err := c.enc.Encode(respErr); err != nil {
 			return err
 		}
 
 		// Send the response
-		if err := enc.Encode(resp.Response); err != nil {
+		if err := c.enc.Encode(resp.Response); err != nil {
+			return err
+		}
+
+		// Flush the buffered writes so the follower receives the response.
+		if err := c.rw.Flush(); err != nil {
 			return err
 		}
 	case <-n.shutdownCh:
@@ -789,7 +832,7 @@ func decodeResponse(conn *netConn, resp interface{}) (bool, error) {
 // sendRPC is used to encode and send the RPC.
 func sendRPC(conn *netConn, rpcType uint8, args interface{}) error {
 	// Write the request type
-	if err := conn.w.WriteByte(rpcType); err != nil {
+	if err := conn.rw.WriteByte(rpcType); err != nil {
 		_ = conn.Release()
 		return err
 	}
@@ -801,7 +844,7 @@ func sendRPC(conn *netConn, rpcType uint8, args interface{}) error {
 	}
 
 	// Flush
-	if err := conn.w.Flush(); err != nil {
+	if err := conn.rw.Flush(); err != nil {
 		_ = conn.Release()
 		return err
 	}
@@ -836,14 +879,9 @@ func newNetPipeline(trans *NetworkTransport, conn *netConn, maxInFlight int) *ne
 // decodeResponses is a long running routine that decodes the responses
 // sent on the connection.
 func (n *netPipeline) decodeResponses() {
-	timeout := n.trans.timeout
 	for {
 		select {
 		case future := <-n.inprogressCh:
-			if timeout > 0 {
-				_ = n.conn.conn.SetReadDeadline(time.Now().Add(timeout))
-			}
-
 			_, err := decodeResponse(n.conn, future.resp)
 			future.respond(err)
 			select {
@@ -866,11 +904,6 @@ func (n *netPipeline) AppendEntries(args *AppendEntriesRequest, resp *AppendEntr
 		resp:  resp,
 	}
 	future.init()
-
-	// Add a send timeout
-	if timeout := n.trans.timeout; timeout > 0 {
-		_ = n.conn.conn.SetWriteDeadline(time.Now().Add(timeout))
-	}
 
 	// Send the RPC
 	if err := sendRPC(n.conn, rpcAppendEntries, future.args); err != nil {
