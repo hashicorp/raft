@@ -22,6 +22,107 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestRaft_GetConfigurationIndex(t *testing.T) {
+	r := &Raft{}
+	empty := r.GetConfiguration()
+	require.NoError(t, empty.Error())
+	require.Zero(t, empty.Index())
+	require.Empty(t, empty.Configuration().Servers)
+
+	// A discarded uncommitted configuration can move the index backwards.
+	for _, index := range []uint64{1, 10, 4} {
+		configuration := Configuration{Servers: []Server{{
+			ID: ServerID(fmt.Sprintf("server-%d", index)), Address: "127.0.0.1:1234", Suffrage: Voter,
+		}}}
+		r.setLatestConfiguration(configuration, index)
+		future := r.GetConfiguration()
+		require.NoError(t, future.Error())
+		require.Equal(t, index, future.Index())
+		require.Equal(t, configuration, future.Configuration())
+
+		r.setLatestConfiguration(Configuration{}, index+1)
+		require.Equal(t, index, future.Index(), "a future must retain its configuration index")
+		require.Equal(t, configuration, future.Configuration())
+	}
+}
+
+func TestRaft_GetConfigurationConcurrentIndex(t *testing.T) {
+	r := &Raft{}
+	set := func(index uint64) {
+		r.setLatestConfiguration(Configuration{Servers: []Server{{
+			ID: ServerID(fmt.Sprintf("server-%d", index)), Address: "127.0.0.1:1234", Suffrage: Voter,
+		}}}, index)
+	}
+	set(1)
+
+	var readers sync.WaitGroup
+	errors := make(chan string, 4)
+	start := make(chan struct{})
+	for i := 0; i < 4; i++ {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			<-start
+			for j := 0; j < 10000; j++ {
+				future := r.GetConfiguration()
+				if err := future.Error(); err != nil {
+					errors <- err.Error()
+					return
+				}
+				servers := future.Configuration().Servers
+				if len(servers) != 1 || string(servers[0].ID) != fmt.Sprintf("server-%d", future.Index()) {
+					errors <- fmt.Sprintf("configuration %v does not match index %d", servers, future.Index())
+					return
+				}
+			}
+		}()
+	}
+	close(start)
+	for index := uint64(2); index <= 10000; index++ {
+		set(index)
+	}
+	readers.Wait()
+	close(errors)
+	for err := range errors {
+		t.Error(err)
+	}
+}
+
+func TestRaft_GetConfigurationMembershipCAS(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+	leader := c.Leader()
+	follower := c.Followers()[0]
+
+	before := leader.GetConfiguration()
+	require.NoError(t, before.Error())
+	require.NotZero(t, before.Index())
+	require.Len(t, before.Configuration().Servers, 3)
+
+	removed := leader.RemoveServer(follower.localID, before.Index(), c.longstopTimeout)
+	require.NoError(t, removed.Error())
+	after := leader.GetConfiguration()
+	require.NoError(t, after.Error())
+	require.Equal(t, removed.Index(), after.Index())
+	require.Greater(t, after.Index(), before.Index())
+	require.Len(t, after.Configuration().Servers, 2)
+
+	stale := leader.AddVoter(follower.localID, follower.localAddr, before.Index(), c.longstopTimeout)
+	require.ErrorContains(t, stale.Error(), "configuration changed since")
+	unchanged := leader.GetConfiguration()
+	require.NoError(t, unchanged.Error())
+	require.Equal(t, after.Index(), unchanged.Index())
+	require.Equal(t, after.Configuration(), unchanged.Configuration())
+
+	added := leader.AddVoter(follower.localID, follower.localAddr, after.Index(), c.longstopTimeout)
+	require.NoError(t, added.Error())
+	final := leader.GetConfiguration()
+	require.NoError(t, final.Error())
+	require.Equal(t, added.Index(), final.Index())
+	require.Greater(t, final.Index(), after.Index())
+	require.ElementsMatch(t, before.Configuration().Servers, final.Configuration().Servers)
+}
+
 func TestRaft_StartStop(t *testing.T) {
 	c := MakeCluster(1, t, nil)
 	c.Close()
@@ -1014,6 +1115,11 @@ func TestRaft_SnapshotRestore(t *testing.T) {
 	if last := r.getLastApplied(); last != snap.Index {
 		t.Fatalf("bad last index: %d, expecting %d", last, snap.Index)
 	}
+	configuration := r.GetConfiguration()
+	require.NoError(t, configuration.Error())
+	require.NotZero(t, snap.ConfigurationIndex)
+	require.Equal(t, snap.ConfigurationIndex, configuration.Index())
+	require.Equal(t, snap.Configuration, configuration.Configuration())
 }
 
 func TestRaft_RestoreSnapshotOnStartup_Monotonic(t *testing.T) {
