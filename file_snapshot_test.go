@@ -4,7 +4,9 @@
 package raft
 
 import (
+	"bufio"
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"reflect"
@@ -192,6 +194,50 @@ func TestFileSS_CancelSnapshot(t *testing.T) {
 	}
 	if len(snaps) != 0 {
 		t.Fatalf("did not expect any snapshots: %v", snaps)
+	}
+}
+
+type errWriter struct{}
+
+func (errWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write failed")
+}
+
+func TestFileSS_CancelSnapshotWriteError(t *testing.T) {
+	dir, err := os.MkdirTemp("", "raft")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	snap, err := NewFileSnapshotStoreWithLogger(dir, 3, newTestLogger(t))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	_, trans := NewInmemTransport(NewInmemAddr())
+	sink, err := snap.Create(SnapshotVersionMax, 10, 3, Configuration{}, 0, trans)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	fileSink := sink.(*FileSnapshotSink)
+
+	// Make flushing the buffered state data fail, as it would on a full disk
+	fileSink.buffered = bufio.NewWriter(errWriter{})
+	_, err = sink.Write([]byte("first\n"))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	err = sink.Cancel()
+	if err == nil {
+		t.Fatalf("expected an error from Cancel")
+	}
+	if err := fileSink.stateFile.Close(); err == nil {
+		t.Fatalf("state file should already be closed")
+	}
+	if _, err := os.Stat(fileSink.dir); !os.IsNotExist(err) {
+		t.Fatalf("temporary snapshot directory should be removed")
 	}
 }
 

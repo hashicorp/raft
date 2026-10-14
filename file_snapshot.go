@@ -457,6 +457,10 @@ func (s *FileSnapshotSink) Cancel() error {
 	// Close the open handles
 	if err := s.finalize(); err != nil {
 		s.logger.Error("failed to finalize snapshot", "error", err)
+		if delErr := os.RemoveAll(s.dir); delErr != nil {
+			s.logger.Error("failed to delete temporary snapshot directory", "path", s.dir, "error", delErr)
+			return delErr
+		}
 		return err
 	}
 
@@ -468,12 +472,14 @@ func (s *FileSnapshotSink) Cancel() error {
 func (s *FileSnapshotSink) finalize() error {
 	// Flush any remaining data
 	if err := s.buffered.Flush(); err != nil {
+		_ = s.stateFile.Close()
 		return err
 	}
 
 	// Sync to force fsync to disk
 	if !s.noSync {
 		if err := s.stateFile.Sync(); err != nil {
+			_ = s.stateFile.Close()
 			return err
 		}
 	}
