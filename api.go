@@ -607,10 +607,15 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		return nil, err
 	}
 
-	// Scan through the log for any configuration change entries.
+	// Scan through the log for any configuration change entries. Start
+	// after the snapshot index rather than after the last applied index:
+	// replaying committed logs advances lastApplied without processing
+	// configuration entries, so configuration entries between the snapshot
+	// and the last applied index still need to be picked up here. Entries
+	// up to the snapshot index are covered by the configuration stored in
+	// the snapshot metadata.
 	snapshotIndex, _ := r.getLastSnapshot()
-	lastappliedIndex := r.getLastApplied()
-	for index := max(snapshotIndex, lastappliedIndex) + 1; index <= lastLog.Index; index++ {
+	for index := snapshotIndex + 1; index <= lastLog.Index; index++ {
 		var entry Log
 		if err := r.logs.GetLog(index, &entry); err != nil {
 			r.logger.Error("failed to get log", "index", index, "error", err)
