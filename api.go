@@ -603,7 +603,21 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		return nil, err
 	}
 
+	// Start the FSM consumer before restoring committed logs. The restore
+	// pushes replayed entries through fsmMutateCh, but runFSM, the only
+	// consumer of that queue, used to be started after this point, so a
+	// replay of more batches than the queue can hold blocked NewRaft here
+	// for good.
+	if !conf.skipStartup {
+		r.goFunc(r.runFSM)
+	}
+
 	if err := r.restoreFromCommittedLogs(); err != nil {
+		// Stop the FSM consumer started above so a failed construction
+		// does not leak it.
+		if shutErr := r.Shutdown().Error(); shutErr != nil {
+			r.logger.Error("failed to shut down Raft after a failed committed-log restore", "error", shutErr)
+		}
 		return nil, err
 	}
 
@@ -617,6 +631,9 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 			panic(err)
 		}
 		if err := r.processConfigurationLogEntry(&entry); err != nil {
+			if shutErr := r.Shutdown().Error(); shutErr != nil {
+				r.logger.Error("failed to shut down Raft after a failed configuration scan", "error", shutErr)
+			}
 			return nil, err
 		}
 	}
@@ -632,9 +649,9 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 	if conf.skipStartup {
 		return r, nil
 	}
-	// Start the background work.
+	// Start the background work. runFSM was started earlier, before the
+	// committed-log restore, so the replay has a live consumer.
 	r.goFunc(r.run)
-	r.goFunc(r.runFSM)
 	r.goFunc(r.runSnapshots)
 	return r, nil
 }
