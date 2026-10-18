@@ -780,6 +780,15 @@ func (r *Raft) leaderLoop() {
 				doneCh <- fmt.Errorf("cannot find replication state for %v", id)
 				continue
 			}
+			// A target without a vote cannot win the election that
+			// TimeoutNow starts, so transferring to one would only step the
+			// cluster through an avoidable election. This mirrors the
+			// suffrage rule pickServer() applies when no explicit target is
+			// given.
+			if !hasVote(r.configurations.latest, *id) {
+				doneCh <- fmt.Errorf("cannot transfer leadership to non-voter %v", *id)
+				continue
+			}
 			r.setLeadershipTransferInProgress(true)
 			go r.leadershipTransfer(*id, *address, state, stopCh, doneCh)
 
