@@ -259,6 +259,47 @@ func (r *Raft) compactLogs(snapIdx uint64) error {
 	return r.compactLogsWithTrailing(snapIdx, lastLogIdx, trailingLogs)
 }
 
+// logsMatchSnapshot reports whether our logs agree with a snapshot whose last
+// entry is at index with term. They do if that index is committed here, or if
+// our entry at that index has the same term: by the Log Matching property every
+// entry up to it then matches the leader's. Otherwise our entry there is
+// missing or conflicts.
+func (r *Raft) logsMatchSnapshot(index, term uint64) (bool, error) {
+	if index <= r.getCommitIndex() {
+		return true, nil
+	}
+	var entry Log
+	if err := r.logs.GetLog(index, &entry); err != nil {
+		if errors.Is(err, ErrLogNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get log %d: %w", index, err)
+	}
+	return entry.Term == term, nil
+}
+
+// discardUncommittedLogs deletes every entry above our commit index. It is used
+// when the logs don't match an installed snapshot. Entries up to our commit
+// index are committed, so they match the leader's log. Above it, the snapshot
+// covers every committed entry up to its index. No entry of ours above the
+// snapshot index is committed either: if our entry at the snapshot index
+// conflicts, by Log Matching no later entry of ours is in the leader's log; and
+// the leader sends a snapshot only after AppendEntries found no entry of ours
+// that matches its log beyond the snapshot index.
+func (r *Raft) discardUncommittedLogs() error {
+	last, err := r.logs.LastIndex()
+	if err != nil {
+		return fmt.Errorf("failed to get last log index: %w", err)
+	}
+	commit := r.getCommitIndex()
+	if last <= commit {
+		return nil
+	}
+	r.logger.Warn("discarding uncommitted logs that don't match the installed snapshot",
+		"from", commit+1, "to", last)
+	return r.logs.DeleteRange(commit+1, last)
+}
+
 // removeOldLogs removes all old logs from the store. This is used for
 // MonotonicLogStores after restore. Callers should verify that the store
 // implementation is monotonic prior to calling.
