@@ -17,8 +17,14 @@ import (
 // leader and requires it to succeed.
 func (f *testFollower) installSnapshot(t *testing.T, term, index, snapTerm uint64) {
 	t.Helper()
-	future := f.r.GetConfiguration()
-	require.NoError(t, future.Error())
+	resp, err := f.sendSnapshot(term, index, snapTerm)
+	require.NoError(t, err)
+	require.True(t, resp.Success, "install rejected: %+v", resp)
+}
+
+// sendSnapshot sends an InstallSnapshot for index and term from the fake
+// leader, carrying the configuration newTestFollower starts with.
+func (f *testFollower) sendSnapshot(term, index, snapTerm uint64) (InstallSnapshotResponse, error) {
 	data := []byte("snapshot")
 	req := InstallSnapshotRequest{
 		RPCHeader:          f.header(),
@@ -26,13 +32,13 @@ func (f *testFollower) installSnapshot(t *testing.T, term, index, snapTerm uint6
 		Term:               term,
 		LastLogIndex:       index,
 		LastLogTerm:        snapTerm,
-		Configuration:      EncodeConfiguration(future.Configuration()),
+		Configuration:      EncodeConfiguration(testFollowerConf),
 		ConfigurationIndex: 1,
 		Size:               int64(len(data)),
 	}
 	var resp InstallSnapshotResponse
-	require.NoError(t, f.leader.InstallSnapshot("f", "f", &req, &resp, bytes.NewReader(data)))
-	require.True(t, resp.Success, "install rejected: %+v", resp)
+	err := f.leader.InstallSnapshot("f", "f", &req, &resp, bytes.NewReader(data))
+	return resp, err
 }
 
 // storedTerms returns the term of every entry in the follower's log store.
