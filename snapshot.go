@@ -220,6 +220,12 @@ func (r *Raft) compactLogsWithTrailing(snapIdx uint64, lastLogIdx uint64, traili
 	if err != nil {
 		return fmt.Errorf("failed to get first log index: %v", err)
 	}
+	// An empty store reports 0 here, and lastLogIdx may still name an entry
+	// compacted earlier. Deleting from 0 would wrap InmemStore's last index
+	// around to MaxUint64.
+	if minLog == 0 {
+		return nil
+	}
 
 	// Check if we have enough logs to truncate
 	// Use a consistent value for trailingLogs for the duration of this method
@@ -257,6 +263,68 @@ func (r *Raft) compactLogs(snapIdx uint64) error {
 	trailingLogs := r.config().TrailingLogs
 
 	return r.compactLogsWithTrailing(snapIdx, lastLogIdx, trailingLogs)
+}
+
+// logsMatchSnapshot reports whether our logs agree with a snapshot whose last
+// entry is at index with term. They do if that index is committed here, or if
+// our entry at that index has the same term: by the Log Matching property every
+// entry up to it then matches the leader's. Otherwise our entry there is
+// missing or conflicts.
+func (r *Raft) logsMatchSnapshot(index, term uint64) (bool, error) {
+	if index <= r.getCommitIndex() {
+		return true, nil
+	}
+	var entry Log
+	if err := r.logs.GetLog(index, &entry); err != nil {
+		if errors.Is(err, ErrLogNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get log %d: %w", index, err)
+	}
+	return entry.Term == term, nil
+}
+
+// discardUncommittedLogs deletes every entry above our commit index. It is used
+// when the logs don't match an installed snapshot. Entries up to our commit
+// index are committed, so they match the leader's log. Above it, the snapshot
+// covers every committed entry up to its index. No entry of ours above the
+// snapshot index is committed either: if our entry at the snapshot index
+// conflicts, by Log Matching no later entry of ours is in the leader's log; and
+// the leader sends a snapshot only after AppendEntries found no entry of ours
+// that matches its log beyond the snapshot index.
+//
+// It then sets the last log to the store's last entry, which is at or below
+// the commit index and so below the snapshot index; getLastEntry then reports
+// the snapshot. Installing a snapshot didn't change the last log before this
+// check was added, so a lagging follower was already left in this state. The
+// last log must not name the snapshot index instead: compaction keeps
+// TrailingLogs back from the last log, so it would delete entries counting
+// from past the store's end.
+func (r *Raft) discardUncommittedLogs() error {
+	last, err := r.logs.LastIndex()
+	if err != nil {
+		return fmt.Errorf("failed to get last log index: %w", err)
+	}
+	if commit := r.getCommitIndex(); last > commit {
+		r.logger.Warn("discarding uncommitted logs that don't match the installed snapshot",
+			"from", commit+1, "to", last)
+		if err := r.logs.DeleteRange(commit+1, last); err != nil {
+			return err
+		}
+		if last, err = r.logs.LastIndex(); err != nil {
+			return fmt.Errorf("failed to get last log index: %w", err)
+		}
+	}
+	var term uint64
+	if last > 0 {
+		var entry Log
+		if err := r.logs.GetLog(last, &entry); err != nil {
+			return fmt.Errorf("failed to get log %d: %w", last, err)
+		}
+		term = entry.Term
+	}
+	r.setLastLog(last, term)
+	return nil
 }
 
 // removeOldLogs removes all old logs from the store. This is used for
