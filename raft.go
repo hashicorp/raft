@@ -1362,7 +1362,7 @@ func (r *Raft) processLogs(index uint64, futures map[uint64]*logFuture) {
 	r.setLastApplied(index)
 }
 
-// processLog is invoked to process the application of a single committed log entry.
+// prepareLog is invoked to process the application of a single committed log entry.
 func (r *Raft) prepareLog(l *Log, future *logFuture) *commitTuple {
 	switch l.Type {
 	case LogBarrier:
