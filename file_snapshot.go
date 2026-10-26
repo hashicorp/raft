@@ -164,16 +164,16 @@ func (f *FileSnapshotStore) Create(version SnapshotVersion, index, term uint64,
 		return nil, fmt.Errorf("unsupported snapshot version %d", version)
 	}
 
-	// Create a new path
-	name := snapshotName(term, index)
-	path := filepath.Join(f.path, name+tmpSuffix)
-	f.logger.Info("creating new snapshot", "path", path)
-
-	// Make the directory
-	if err := os.MkdirAll(path, 0o755); err != nil {
-		f.logger.Error("failed to make snapshot directly", "error", err)
+	// Claim the temporary directory exclusively: snapshotName has
+	// millisecond precision, so another snapshot at the same term/index
+	// can generate the same name. MkdirAll would accept the other sink's
+	// directory and os.Create(state.bin) below would truncate its data.
+	name, path, err := f.reserveSnapshotDir(term, index)
+	if err != nil {
+		f.logger.Error("failed to reserve snapshot directory", "error", err)
 		return nil, err
 	}
+	f.logger.Info("creating new snapshot", "path", path)
 
 	// Create the sink
 	sink := &FileSnapshotSink{
@@ -220,6 +220,50 @@ func (f *FileSnapshotStore) Create(version SnapshotVersion, index, term uint64,
 
 	// Done
 	return sink, nil
+}
+
+// reserveSnapshotDir reserves a distinct temporary snapshot directory.
+// Snapshot IDs retain their term-index-millisecond format for compatibility.
+func (f *FileSnapshotStore) reserveSnapshotDir(term, index uint64) (string, string, error) {
+	// Preserve Create's behavior when the parent directory was removed.
+	if err := os.MkdirAll(f.path, 0o755); err != nil {
+		return "", "", err
+	}
+
+	// A successful os.Mkdir gives this sink exclusive ownership of its state
+	// file. Retry at a new timestamp if another in-progress or completed
+	// snapshot already holds the generated ID.
+	for attempt := 0; attempt < 1000; attempt++ {
+		name := snapshotName(term, index)
+		path := filepath.Join(f.path, name+tmpSuffix)
+		err := os.Mkdir(path, 0o755)
+		if os.IsExist(err) {
+			time.Sleep(time.Millisecond)
+			continue
+		}
+		if err != nil {
+			return "", "", err
+		}
+
+		// A previous snapshot may already have renamed its .tmp directory
+		// into this finalized ID between attempts.
+		_, statErr := os.Stat(filepath.Join(f.path, name))
+		if statErr == nil {
+			if err := os.Remove(path); err != nil {
+				return "", "", err
+			}
+			time.Sleep(time.Millisecond)
+			continue
+		}
+		if !os.IsNotExist(statErr) {
+			_ = os.Remove(path)
+			return "", "", statErr
+		}
+
+		return name, path, nil
+	}
+
+	return "", "", fmt.Errorf("cannot reserve a unique snapshot directory for term %d index %d", term, index)
 }
 
 // List returns available snapshots in the store.
