@@ -547,6 +547,7 @@ func (r *Raft) pipelineDecode(s *followerReplication, p AppendPipeline, stopCh, 
 			// Check for a newer term, stop running
 			if resp.Term > req.Term {
 				r.handleStaleTerm(s)
+				_ = p.Close() // unblock a sender waiting in AppendEntries
 				return
 			}
 
@@ -555,6 +556,11 @@ func (r *Raft) pipelineDecode(s *followerReplication, p AppendPipeline, stopCh, 
 
 			// Abort pipeline if not successful
 			if !resp.Success {
+				// Close before returning: once this loop stops reading respCh,
+				// decodeResponses blocks on doneCh and a sender blocked in
+				// AppendEntries on inprogressCh can never resume. Close shuts the
+				// pipeline down so both return.
+				_ = p.Close()
 				return
 			}
 
