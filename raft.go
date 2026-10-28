@@ -570,7 +570,11 @@ func (r *Raft) runLeader() {
 	// maintain that there exists at most one uncommitted configuration entry in
 	// any log, so we have to do proper no-ops here.
 	noop := &logFuture{log: Log{Type: LogNoop}}
-	r.dispatchLogs([]*logFuture{noop})
+	if err := r.dispatchLogs([]*logFuture{noop}); err != nil {
+		// dispatchLogs has already responded to the future with the store
+		// error and stepped this server down to Follower.
+		r.logger.Error("failed to dispatch initial noop log", "error", err)
+	}
 
 	// Sit in the leader loop until we step down
 	r.leaderLoop()
@@ -731,13 +735,17 @@ func (r *Raft) leaderLoop() {
 					err := fmt.Errorf("leadership transfer timeout")
 					r.logger.Debug(err.Error())
 					future.respond(err)
-					<-doneCh
+					if derr := <-doneCh; derr != nil {
+						r.logger.Debug(derr.Error())
+					}
 				case <-leftLeaderLoop:
 					close(stopCh)
 					err := fmt.Errorf("lost leadership during transfer (expected)")
 					r.logger.Debug(err.Error())
 					future.respond(nil)
-					<-doneCh
+					if derr := <-doneCh; derr != nil {
+						r.logger.Debug(derr.Error())
+					}
 				case err := <-doneCh:
 					if err != nil {
 						r.logger.Debug(err.Error())
@@ -929,7 +937,11 @@ func (r *Raft) leaderLoop() {
 					ready[i].respond(ErrNotLeader)
 				}
 			} else {
-				r.dispatchLogs(ready)
+				if err := r.dispatchLogs(ready); err != nil {
+					// dispatchLogs has already responded to each future with
+					// the store error and stepped this server down to Follower.
+					r.logger.Error("failed to dispatch logs", "error", err)
+				}
 			}
 
 		case <-lease:
