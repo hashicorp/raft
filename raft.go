@@ -1500,14 +1500,22 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		} else {
 			var prevLog Log
 			if err := r.logs.GetLog(a.PrevLogEntry, &prevLog); err != nil {
-				r.logger.Warn("failed to get previous log",
-					"previous-index", a.PrevLogEntry,
-					"last-index", lastIdx,
-					"error", err)
-				resp.NoRetryBackoff = true
-				return
+				// The entry at the snapshot boundary may have been
+				// compacted away; the snapshot's term is authoritative
+				// for exactly that index.
+				lastSnapIdx, lastSnapTerm := r.getLastSnapshot()
+				if a.PrevLogEntry != lastSnapIdx {
+					r.logger.Warn("failed to get previous log",
+						"previous-index", a.PrevLogEntry,
+						"last-index", lastIdx,
+						"error", err)
+					resp.NoRetryBackoff = true
+					return
+				}
+				prevLogTerm = lastSnapTerm
+			} else {
+				prevLogTerm = prevLog.Term
 			}
-			prevLogTerm = prevLog.Term
 		}
 
 		if a.PrevLogTerm != prevLogTerm {
