@@ -417,6 +417,25 @@ func (s *FileSnapshotSink) Close() error {
 		return err
 	}
 
+	// Sync the snapshot directory itself so the entries for state.bin and
+	// meta.json are durable before the directory is renamed into place.
+	// Fsyncing the files makes their contents durable, not their names;
+	// without this a crash can leave an empty snapshot directory behind
+	// after the rename is durable, and NewRaft panics on restart (#744).
+	if !s.noSync && runtime.GOOS != "windows" { // skipping fsync for directory entry edits on Windows, only needed for *nix style file systems
+		dirFH, err := os.Open(s.dir)
+		if err != nil {
+			s.logger.Error("failed to open snapshot directory", "path", s.dir, "error", err)
+			return err
+		}
+		defer func() { _ = dirFH.Close() }()
+
+		if err = dirFH.Sync(); err != nil {
+			s.logger.Error("failed syncing snapshot directory", "path", s.dir, "error", err)
+			return err
+		}
+	}
+
 	// Move the directory into place
 	newPath := strings.TrimSuffix(s.dir, tmpSuffix)
 	if err := os.Rename(s.dir, newPath); err != nil {

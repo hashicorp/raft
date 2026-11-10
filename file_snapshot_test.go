@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"testing"
@@ -155,6 +156,89 @@ func TestFileSS_CreateSnapshot(t *testing.T) {
 
 	// Ensure a match
 	if !bytes.Equal(buf.Bytes(), []byte("first\nsecond\n")) {
+		t.Fatalf("content mismatch")
+	}
+}
+
+// TestFileSS_CloseFinalizesSnapshotDir covers #744: Close must leave the
+// finalized snapshot directory with both state.bin and meta.json present
+// and the snapshot restorable. Close fsyncs the snapshot directory itself
+// before renaming it into place so those entries are durable, not just
+// visible; without that fsync a crash can leave an empty snapshot
+// directory behind and NewRaft panics on restart. The crash itself is
+// only reproducible under a fault-injecting filesystem, so this test pins
+// the on-disk invariant the fsync protects.
+func TestFileSS_CloseFinalizesSnapshotDir(t *testing.T) {
+	// Create a test dir
+	dir, err := os.MkdirTemp("", "raft")
+	if err != nil {
+		t.Fatalf("err: %v ", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	snap, err := NewFileSnapshotStoreWithLogger(dir, 3, newTestLogger(t))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	var configuration Configuration
+	configuration.Servers = append(configuration.Servers, Server{
+		Suffrage: Voter,
+		ID:       ServerID("my id"),
+		Address:  ServerAddress("over here"),
+	})
+	_, trans := NewInmemTransport(NewInmemAddr())
+	sink, err := snap.Create(SnapshotVersionMax, 10, 3, configuration, 2, trans)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if _, err := sink.Write([]byte("first\n")); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if err := sink.Close(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Should have a snapshot!
+	snaps, err := snap.List()
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(snaps) != 1 {
+		t.Fatalf("expect a snapshot: %v", snaps)
+	}
+
+	// The finalized snapshot directory must contain both entries.
+	snapDir := filepath.Join(dir, snapPath, snaps[0].ID)
+	entries, err := os.ReadDir(snapDir)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	found := map[string]bool{}
+	for _, e := range entries {
+		found[e.Name()] = true
+	}
+	for _, want := range []string{stateFilePath, metaFilePath} {
+		if !found[want] {
+			t.Fatalf("finalized snapshot dir %q missing %q: %v", snapDir, want, entries)
+		}
+	}
+
+	// And the snapshot must restore.
+	_, r, err := snap.Open(snaps[0].ID)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !bytes.Equal(buf.Bytes(), []byte("first\n")) {
 		t.Fatalf("content mismatch")
 	}
 }
