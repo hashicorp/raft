@@ -95,6 +95,13 @@ type followerReplication struct {
 	allowPipeline bool
 }
 
+// getPeer returns the peer; startStopReplication replaces it on address changes.
+func (s *followerReplication) getPeer() Server {
+	s.peerLock.RLock()
+	defer s.peerLock.RUnlock()
+	return s.peer
+}
+
 // notifyAll is used to notify all the waiting verify futures
 // if the follower believes we are still the leader.
 func (s *followerReplication) notifyAll(leader bool) {
@@ -518,7 +525,7 @@ func (r *Raft) pipelineSend(s *followerReplication, p AppendPipeline, nextIdx *u
 
 	// Pipeline the append entries
 	if _, err := p.AppendEntries(req, new(AppendEntriesResponse)); err != nil {
-		r.logger.Error("failed to pipeline appendEntries", "peer", s.peer, "error", err)
+		r.logger.Error("failed to pipeline appendEntries", "peer", s.getPeer(), "error", err)
 		return true
 	}
 
@@ -644,7 +651,7 @@ func appendStats(peer string, start time.Time, logs float32, skipLegacy bool) {
 
 // handleStaleTerm is used when a follower indicates that we have a stale term.
 func (r *Raft) handleStaleTerm(s *followerReplication) {
-	r.logger.Error("peer has newer term, stopping replication", "peer", s.peer)
+	r.logger.Error("peer has newer term, stopping replication", "peer", s.getPeer())
 	s.notifyAll(false) // No longer leader
 	asyncNotifyCh(s.stepDown)
 }
@@ -657,7 +664,7 @@ func updateLastAppended(s *followerReplication, req *AppendEntriesRequest) {
 	if logs := req.Entries; len(logs) > 0 {
 		last := logs[len(logs)-1]
 		atomic.StoreUint64(&s.nextIndex, last.Index+1)
-		s.commitment.match(s.peer.ID, last.Index)
+		s.commitment.match(s.getPeer().ID, last.Index)
 	}
 
 	// Notify still leader
