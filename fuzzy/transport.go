@@ -113,6 +113,7 @@ func (t *transport) sendRPC(target string, req interface{}, resp interface{}) er
 	}
 	rpc := raft.RPC{RespChan: rc}
 	var reqVote raft.RequestVoteRequest
+	var reqPreVote raft.RequestPreVoteRequest
 	var timeoutNow raft.TimeoutNowRequest
 	var appEnt raft.AppendEntriesRequest
 	dec := codec.NewDecoderBytes(buff.Bytes(), &codecHandle)
@@ -127,6 +128,11 @@ func (t *transport) sendRPC(target string, req interface{}, resp interface{}) er
 			return err
 		}
 		rpc.Command = &reqVote
+	case *raft.RequestPreVoteRequest:
+		if err := dec.Decode(&reqPreVote); err != nil {
+			return err
+		}
+		rpc.Command = &reqPreVote
 	case *raft.AppendEntriesRequest:
 		if err := dec.Decode(&appEnt); err != nil {
 			return err
