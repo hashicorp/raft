@@ -115,6 +115,15 @@ func (r *Raft) shouldSnapshot() bool {
 		return false
 	}
 
+	// If the last log index is at or behind the last snapshot there is nothing
+	// new to snapshot. Returning early also avoids an unsigned underflow when
+	// computing the delta below, which can happen on a follower right after it
+	// installs a snapshot and its log store has been compacted down past the
+	// snapshot index.
+	if lastIdx <= lastSnap {
+		return false
+	}
+
 	// Compare the delta to the threshold
 	delta := lastIdx - lastSnap
 	return delta >= r.config().SnapshotThreshold
