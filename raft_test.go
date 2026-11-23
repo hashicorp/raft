@@ -3501,3 +3501,100 @@ func TestRaft_PreVote_ShouldRejectNonLeader(t *testing.T) {
 		t.Fatalf("expected pre-vote to not be granted, but it was granted, %+v", resp)
 	}
 }
+
+// TestRaft_RestoreCommittedLogsKeepsConfiguration guards against a restart
+// regression where replaying committed logs advanced lastApplied past the
+// bootstrap configuration entry before the configuration scan, so the scan
+// skipped it and the restarted node came up without any servers (see #728).
+func TestRaft_RestoreCommittedLogsKeepsConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		restore bool
+	}{
+		{"restore_committed_logs_disabled", false},
+		{"restore_committed_logs_enabled", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Make the cluster
+			conf := inmemConfig(t)
+			conf.TrailingLogs = 10
+			conf.RestoreCommittedLogs = tc.restore
+			opts := &MakeClusterOpts{
+				Peers:              1,
+				Bootstrap:          true,
+				Conf:               conf,
+				CommitTrackingLogs: true,
+			}
+			c := MakeClusterCustom(t, opts)
+			defer c.Close()
+
+			leader := c.Leader()
+
+			// Capture the configuration before the restart for comparison.
+			expected := leader.GetConfiguration().Configuration()
+
+			// Commit a few entries so the persisted commit index moves past the
+			// bootstrap configuration entry at index 1.
+			var future Future
+			for i := 0; i < 3; i++ {
+				future = leader.Apply([]byte(fmt.Sprintf("test%d", i)), 0)
+			}
+			if err := future.Error(); err != nil {
+				t.Fatalf("err: %v", err)
+			}
+
+			// The bootstrap configuration entry must still be in the log, covered
+			// by the persisted commit index.
+			firstIdx, err := leader.logs.FirstIndex()
+			if err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			if firstIdx != 1 {
+				t.Fatalf("expected the bootstrap configuration entry at index 1, got first index %d", firstIdx)
+			}
+			store, ok := leader.logs.(CommitTrackingLogStore)
+			if !ok {
+				t.Fatal("err: raft log store does not implement CommitTrackingLogStore interface")
+			}
+			commitIdx, err := store.GetCommitIndex()
+			if err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			// The commit index is only staged when the restore is enabled.
+			if tc.restore && commitIdx < 2 {
+				t.Fatalf("expected the persisted commit index to cover the configuration entry, got %d", commitIdx)
+			}
+
+			// Shutdown
+			shutdown := leader.Shutdown()
+			if err := shutdown.Error(); err != nil {
+				t.Fatalf("err: %v", err)
+			}
+
+			// Restart the Raft
+			r := leader
+			// Can't just reuse the old transport as it will be closed
+			_, trans2 := NewInmemTransport(r.trans.LocalAddr())
+			cfg := r.config()
+			r, err = NewRaft(&cfg, r.fsm, r.logs, r.stable, r.snapshots, trans2)
+			if err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			c.rafts[0] = r
+
+			// With the restore enabled the replay must have advanced lastApplied
+			// to the persisted commit index.
+			if tc.restore {
+				if last := r.getLastApplied(); last != commitIdx {
+					t.Fatalf("bad last applied: %d, expecting %d", last, commitIdx)
+				}
+			}
+
+			// The restarted node must retain its configuration even though the
+			// committed-log replay advanced lastApplied past the configuration
+			// entry.
+			got := r.GetConfiguration().Configuration()
+			require.Equal(t, expected, got, "configuration changed across restart")
+		})
+	}
+}
