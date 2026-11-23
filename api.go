@@ -159,8 +159,8 @@ type Raft struct {
 	// the log/snapshot.
 	configurations configurations
 
-	// Holds a copy of the latest configuration which can be read independently
-	// of the main loop.
+	// Holds a copy of the latest configuration and its index which can be read
+	// atomically, independently of the main loop.
 	latestConfiguration atomic.Value
 
 	// RPC chan comes from the transport layer
@@ -940,12 +940,12 @@ func (r *Raft) VerifyLeader() Future {
 	}
 }
 
-// GetConfiguration returns the latest configuration. This may not yet be
-// committed. The main loop can access this directly.
+// GetConfiguration returns the latest configuration and its associated index.
+// This may not yet be committed. The main loop can access this directly.
 func (r *Raft) GetConfiguration() ConfigurationFuture {
 	configReq := &configurationsFuture{}
 	configReq.init()
-	configReq.configurations = configurations{latest: r.getLatestConfiguration()}
+	configReq.configurations = r.getLatestConfiguration()
 	configReq.respond(nil)
 	return configReq
 }
