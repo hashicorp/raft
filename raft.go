@@ -2150,11 +2150,20 @@ func (r *Raft) preElectSelf() <-chan *preVoteResult {
 }
 
 // persistVote is used to persist our vote for safety.
+//
+// The write order matters: the candidate is saved before the term, so a
+// crash between the two writes leaves the old term paired with the new
+// candidate. The duplicate-vote shortcut in requestVote only fires when the
+// stored term matches the request term, and requests in the old term are
+// rejected earlier because currentTerm was already advanced past it. Writing
+// the term first instead would leave the new term paired with the candidate
+// from an earlier term, and that stale candidate could then be granted a
+// vote without the log up-to-date check.
 func (r *Raft) persistVote(term uint64, candidate []byte) error {
-	if err := r.stable.SetUint64(keyLastVoteTerm, term); err != nil {
+	if err := r.stable.Set(keyLastVoteCand, candidate); err != nil {
 		return err
 	}
-	if err := r.stable.Set(keyLastVoteCand, candidate); err != nil {
+	if err := r.stable.SetUint64(keyLastVoteTerm, term); err != nil {
 		return err
 	}
 	return nil
