@@ -1585,16 +1585,22 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 		metrics.MeasureSince([]string{"raft", "rpc", "appendEntries", "storeLogs"}, start)
 	}
 
-	// Update the commit index
+	// Update the commit index. Only the entries this request covers (up to
+	// PrevLogEntry plus the new entries) are known to match the leader's log,
+	// so the commit index is capped there, not at our own last index: a stale
+	// tail beyond it may never have been committed. The commit index never
+	// moves backwards.
 	if a.LeaderCommitIndex > 0 && a.LeaderCommitIndex > r.getCommitIndex() {
-		start := time.Now()
-		idx := min(a.LeaderCommitIndex, r.getLastIndex())
-		r.setCommitIndex(idx)
-		if r.configurations.latestIndex <= idx {
-			r.setCommittedConfiguration(r.configurations.latest, r.configurations.latestIndex)
+		idx := min(a.LeaderCommitIndex, a.PrevLogEntry+uint64(len(a.Entries)))
+		if idx > r.getCommitIndex() {
+			start := time.Now()
+			r.setCommitIndex(idx)
+			if r.configurations.latestIndex <= idx {
+				r.setCommittedConfiguration(r.configurations.latest, r.configurations.latestIndex)
+			}
+			r.processLogs(idx, nil)
+			metrics.MeasureSince([]string{"raft", "rpc", "appendEntries", "processLogs"}, start)
 		}
-		r.processLogs(idx, nil)
-		metrics.MeasureSince([]string{"raft", "rpc", "appendEntries", "processLogs"}, start)
 	}
 
 	// Everything went well, set success
