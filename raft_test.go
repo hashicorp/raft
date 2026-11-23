@@ -2869,6 +2869,38 @@ func TestRaft_LeadershipTransferStopRightAway(t *testing.T) {
 	}
 }
 
+func TestRaft_LeadershipTransferStopsWhenReplicationIsUnavailable(t *testing.T) {
+	r := Raft{leaderState: leaderState{}, logger: hclog.New(nil)}
+	r.setupLeaderState()
+	r.setLastLog(1, 1)
+
+	repl := &followerReplication{
+		nextIndex:           1,
+		triggerDeferErrorCh: make(chan *deferError, 1),
+	}
+	// Simulate a replication worker that stopped with a pending request.
+	repl.triggerDeferErrorCh <- &deferError{}
+
+	stopCh := make(chan struct{})
+	doneCh := make(chan error, 1)
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		r.leadershipTransfer(ServerID("a"), ServerAddress(""), repl, stopCh, doneCh)
+	}()
+	<-started
+	// Give leadershipTransfer time to reach the full replication channel.
+	time.Sleep(10 * time.Millisecond)
+	close(stopCh)
+
+	select {
+	case err := <-doneCh:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("leadership transfer did not stop after replication became unavailable")
+	}
+}
+
 func TestRaft_GetConfigurationNoBootstrap(t *testing.T) {
 	c := MakeCluster(2, t, nil)
 	defer c.Close()
