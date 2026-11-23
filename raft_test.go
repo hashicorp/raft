@@ -3305,14 +3305,39 @@ func TestRaft_FollowerRemovalNoElection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error restarting follower: %v", err)
 	}
+	n.RegisterObserver(NewObserver(c.observationCh, false, nil))
+
 	c.rafts[i] = n
 	c.trans[i] = n.trans.(*InmemTransport)
 	c.fsms[i] = n.fsm.(*MockFSM)
-	c.FullyConnect()
-	// There should be no re-election during this sleep
-	time.Sleep(250 * time.Millisecond)
 
-	// Let things settle and make sure we recovered.
+	// Give follower time to become a candidate before connecting
+	time.Sleep(500 * time.Millisecond)
+	c.FullyConnect()
+
+	// Wait for the restarted follower to recognize leader.
+	ch := c.WaitEventChan(t.Context(), func(o *Observation) bool {
+		if o == nil {
+			return false
+		}
+		if o.Raft.localID == follower.localID {
+			if obs, ok := o.Data.(LeaderObservation); ok {
+				if obs.Leader != "" {
+					t.Logf("[INFO] restarted follower has rejoined cluster")
+					return true
+				}
+			}
+
+		}
+		return false
+	})
+	select {
+	case <-time.After(time.Second):
+		t.Fatal("restarted follower never got leader")
+	case <-ch:
+	}
+
+	// There should have been no re-election
 	c.EnsureLeader(t, leader.localAddr)
 	c.EnsureSame(t)
 	c.EnsureSamePeers(t)
