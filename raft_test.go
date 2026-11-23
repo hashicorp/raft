@@ -917,6 +917,73 @@ func TestRaft_AddKnownPeer(t *testing.T) {
 	}
 }
 
+// failOnceLogStore fails the next StoreLogs call, once. Used to exercise
+// the path where a configuration entry cannot be persisted.
+type failOnceLogStore struct {
+	*InmemStore
+	failNext atomic.Bool
+}
+
+func (s *failOnceLogStore) StoreLogs(logs []*Log) error {
+	if s.failNext.Swap(false) {
+		return errors.New("injected store failure")
+	}
+	return s.InmemStore.StoreLogs(logs)
+}
+
+// A configuration change whose log entry fails to persist on the leader
+// must not take effect in memory: the unpersisted configuration would
+// otherwise be used for quorum decisions even though no log records it.
+func TestRaft_ConfigChangeStoreLogsFailureKeepsConfiguration(t *testing.T) {
+	conf := inmemConfig(t)
+	conf.LocalID = ServerID("server-a")
+	addr, trans := NewInmemTransport("")
+	store := &failOnceLogStore{InmemStore: NewInmemStore()}
+	snaps := NewInmemSnapshotStore()
+
+	configuration := Configuration{Servers: []Server{{
+		Suffrage: Voter,
+		ID:       conf.LocalID,
+		Address:  addr,
+	}}}
+	require.NoError(t, BootstrapCluster(conf, store, store, snaps, trans, configuration))
+
+	r, err := NewRaft(conf, &MockFSM{}, store, store, snaps, trans)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, r.Shutdown().Error()) }()
+
+	// A single node elects itself; give the leader loop time to settle so
+	// its initial no-op entry is out of the way.
+	require.Eventually(t, func() bool {
+		return r.State() == Leader
+	}, 5*time.Second, 10*time.Millisecond)
+
+	lastIndexBefore, err := store.LastIndex()
+	require.NoError(t, err)
+	configBefore := r.getLatestConfiguration()
+	configIndexBefore := r.configurations.latestIndex
+
+	// The next StoreLogs call fails, so the AddVoter configuration entry is
+	// never persisted on the leader.
+	store.failNext.Store(true)
+	future := r.AddVoter(ServerID("server-b"), ServerAddress("addr-b"), 0, 0)
+	err = future.Error()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "injected store failure")
+
+	// The failed entry must not be observable in the configuration: the
+	// in-memory view stays identical to what the log actually contains.
+	if got := r.getLatestConfiguration(); !reflect.DeepEqual(got, configBefore) {
+		t.Fatalf("in-memory configuration changed after failed AddVoter: was %+v, now %+v", configBefore, got)
+	}
+	if r.configurations.latestIndex != configIndexBefore {
+		t.Fatalf("latestIndex advanced to %d although the entry was not persisted", r.configurations.latestIndex)
+	}
+	lastIndexAfter, err := store.LastIndex()
+	require.NoError(t, err)
+	require.Equal(t, lastIndexBefore, lastIndexAfter)
+}
+
 func TestRaft_RemoveUnknownPeer(t *testing.T) {
 	// Make a cluster
 	c := MakeCluster(3, t, nil)

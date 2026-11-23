@@ -570,7 +570,11 @@ func (r *Raft) runLeader() {
 	// maintain that there exists at most one uncommitted configuration entry in
 	// any log, so we have to do proper no-ops here.
 	noop := &logFuture{log: Log{Type: LogNoop}}
-	r.dispatchLogs([]*logFuture{noop})
+	if err := r.dispatchLogs([]*logFuture{noop}); err != nil {
+		// dispatchLogs has already responded to the future with the store
+		// error and stepped this server down to Follower.
+		r.logger.Error("failed to dispatch initial noop log", "error", err)
+	}
 
 	// Sit in the leader loop until we step down
 	r.leaderLoop()
@@ -731,13 +735,17 @@ func (r *Raft) leaderLoop() {
 					err := fmt.Errorf("leadership transfer timeout")
 					r.logger.Debug(err.Error())
 					future.respond(err)
-					<-doneCh
+					if derr := <-doneCh; derr != nil {
+						r.logger.Debug(derr.Error())
+					}
 				case <-leftLeaderLoop:
 					close(stopCh)
 					err := fmt.Errorf("lost leadership during transfer (expected)")
 					r.logger.Debug(err.Error())
 					future.respond(nil)
-					<-doneCh
+					if derr := <-doneCh; derr != nil {
+						r.logger.Debug(derr.Error())
+					}
 				case err := <-doneCh:
 					if err != nil {
 						r.logger.Debug(err.Error())
@@ -929,7 +937,11 @@ func (r *Raft) leaderLoop() {
 					ready[i].respond(ErrNotLeader)
 				}
 			} else {
-				r.dispatchLogs(ready)
+				if err := r.dispatchLogs(ready); err != nil {
+					// dispatchLogs has already responded to each future with
+					// the store error and stepped this server down to Follower.
+					r.logger.Error("failed to dispatch logs", "error", err)
+				}
 			}
 
 		case <-lease:
@@ -1233,7 +1245,15 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 		}
 	}
 
-	r.dispatchLogs([]*logFuture{&future.logFuture})
+	if err := r.dispatchLogs([]*logFuture{&future.logFuture}); err != nil {
+		// The configuration entry failed to persist, so it must not take
+		// effect: installing it here would diverge the in-memory
+		// configuration from the log and let quorum decisions account for
+		// servers the log never recorded. dispatchLogs has already
+		// responded to the future with the store error and stepped this
+		// server down to Follower.
+		return
+	}
 	index := future.Index()
 	r.setLatestConfiguration(configuration, index)
 	r.leaderState.commitment.setConfiguration(configuration)
@@ -1242,7 +1262,7 @@ func (r *Raft) appendConfigurationEntry(future *configurationChangeFuture) {
 
 // dispatchLog is called on the leader to push a log to disk, mark it
 // as inflight and begin replication of it.
-func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
+func (r *Raft) dispatchLogs(applyLogs []*logFuture) error {
 	now := time.Now()
 	defer metrics.MeasureSince([]string{"raft", "leader", "dispatchLog"}, now)
 
@@ -1273,7 +1293,7 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 			applyLog.respond(err)
 		}
 		r.setState(Follower)
-		return
+		return err
 	}
 	r.leaderState.commitment.match(r.localID, lastIndex)
 
@@ -1284,6 +1304,7 @@ func (r *Raft) dispatchLogs(applyLogs []*logFuture) {
 	for _, f := range r.leaderState.replState {
 		asyncNotifyCh(f.triggerCh)
 	}
+	return nil
 }
 
 // processLogs is used to apply all the committed entries that haven't been

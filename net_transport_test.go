@@ -527,8 +527,8 @@ func TestNetworkTransport_AppendEntriesPipeline_MaxRPCsInFlight(t *testing.T) {
 
 			// The last append should unblock once the response is received.
 			select {
-			case <-errCh:
-				// OK
+			case err := <-errCh:
+				require.NoError(t, err)
 			case <-time.After(50 * time.Millisecond):
 				t.Fatalf("last append didn't unblock")
 			}
