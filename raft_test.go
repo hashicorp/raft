@@ -2136,6 +2136,26 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	}
 }
 
+func TestRaft_VerifyLeader_NonvoterDoesNotCount(t *testing.T) {
+	c := MakeCluster(4, t, inmemConfig(t))
+	defer c.Close()
+
+	leader := c.Leader()
+	followers := c.Followers()
+	nv := followers[0]
+	if err := leader.DemoteVoter(nv.localID, 0, 5*time.Second).Error(); err != nil {
+		t.Fatalf("demote: %v", err)
+	}
+
+	// only the nonvoter stays reachable, so the leader has 1 of 3 voters
+	c.Disconnect(followers[1].localAddr)
+	c.Disconnect(followers[2].localAddr)
+
+	if err := leader.VerifyLeader().Error(); err == nil {
+		t.Fatalf("verify succeeded without a quorum of voters")
+	}
+}
+
 func TestRaft_VerifyLeader_PartialConnect(t *testing.T) {
 	// Make a cluster
 	conf := inmemConfig(t)

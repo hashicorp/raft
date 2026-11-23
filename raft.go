@@ -979,7 +979,11 @@ func (r *Raft) verifyLeader(v *verifyFuture) {
 	r.leaderState.notify[v] = struct{}{}
 
 	// Trigger immediate heartbeats
-	for _, repl := range r.leaderState.replState {
+	for id, repl := range r.leaderState.replState {
+		// quorumSize only counts voters, so nonvoter acks must not be votes
+		if !hasVote(r.configurations.latest, id) {
+			continue
+		}
 		repl.notifyLock.Lock()
 		repl.notify[v] = struct{}{}
 		repl.notifyLock.Unlock()
