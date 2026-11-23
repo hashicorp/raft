@@ -2768,6 +2768,66 @@ func TestRaft_LeadershipTransferToItself(t *testing.T) {
 	}
 }
 
+func TestRaft_LeadershipTransferToNonvoter(t *testing.T) {
+	c := MakeCluster(3, t, nil)
+	defer c.Close()
+
+	leader := c.Leader()
+	nonvoter := c.GetInState(Follower)[0]
+
+	// Demote one follower to a non-voter. DemoteVoter is the only API that
+	// takes away a vote (AddNonvoter won't demote an existing voter), and
+	// demotion at runtime is the production scenario from the issue.
+	if f := leader.DemoteVoter(nonvoter.localID, 0, 0); f.Error() != nil {
+		t.Fatalf("DemoteVoter() err: %v", f.Error())
+	}
+
+	// Wait for the leader's own configuration to reflect the demotion so
+	// the transfer below targets a server the leader knows has no vote.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		demoted := false
+		for _, server := range leader.GetConfiguration().Configuration().Servers {
+			if server.ID == nonvoter.localID && server.Suffrage == Nonvoter {
+				demoted = true
+				break
+			}
+		}
+		if demoted {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("demoted server never became a non-voter in the configuration")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// A non-voter cannot win the election that the TimeoutNow of a
+	// leadership transfer starts, so the transfer has to be rejected
+	// instead of executed.
+	termBefore := leader.Stats()["term"]
+	future := leader.LeadershipTransferToServer(nonvoter.localID, nonvoter.localAddr)
+	err := future.Error()
+
+	// Give a would-be candidate time to run an election that a correctly
+	// rejected transfer must not have triggered.
+	time.Sleep(3 * leader.config().ElectionTimeout)
+
+	if err == nil {
+		t.Fatal("leadership transfer to a non-voter should err")
+	}
+	expected := "cannot transfer leadership to non-voter"
+	if actual := err.Error(); !strings.Contains(actual, expected) {
+		t.Errorf("leadership transfer should err with: %s, got: %s", expected, actual)
+	}
+	if term := leader.Stats()["term"]; term != termBefore {
+		t.Errorf("rejected transfer should not change the term, got %s, want %s", term, termBefore)
+	}
+	if l := c.Leader().localID; l != leader.localID {
+		t.Errorf("leadership should not have changed, got %v, want %v", l, leader.localID)
+	}
+}
+
 func TestRaft_LeadershipTransferLeaderRejectsClientRequests(t *testing.T) {
 	c := MakeCluster(3, t, nil)
 	defer c.Close()
