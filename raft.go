@@ -198,8 +198,7 @@ func (r *Raft) runFollower() {
 
 		case c := <-r.configurationsCh:
 			r.mainThreadSaturation.working()
-			c.configurations = r.configurations.Clone()
-			c.respond(nil)
+			r.handleConfigurationRequest(c)
 
 		case b := <-r.bootstrapCh:
 			r.mainThreadSaturation.working()
@@ -411,8 +410,7 @@ func (r *Raft) runCandidate() {
 
 		case c := <-r.configurationsCh:
 			r.mainThreadSaturation.working()
-			c.configurations = r.configurations.Clone()
-			c.respond(nil)
+			r.handleConfigurationRequest(c)
 
 		case b := <-r.bootstrapCh:
 			r.mainThreadSaturation.working()
@@ -882,13 +880,7 @@ func (r *Raft) leaderLoop() {
 
 		case future := <-r.configurationsCh:
 			r.mainThreadSaturation.working()
-			if r.getLeadershipTransferInProgress() {
-				r.logger.Debug(ErrLeadershipTransferInProgress.Error())
-				future.respond(ErrLeadershipTransferInProgress)
-				continue
-			}
-			future.configurations = r.configurations.Clone()
-			future.respond(nil)
+			r.handleConfigurationRequest(future)
 
 		case future := <-r.configurationChangeChIfStable():
 			r.mainThreadSaturation.working()
@@ -1169,12 +1161,13 @@ func (r *Raft) restoreUserSnapshot(meta *SnapshotMeta, reader io.Reader) error {
 	fsm := &restoreFuture{ID: sink.ID()}
 	fsm.ShutdownCh = r.shutdownCh
 	fsm.init()
-	select {
-	case r.fsmMutateCh <- fsm:
-	case <-r.shutdownCh:
-		return ErrRaftShutdown
+	if err := r.sendFSMMutate(fsm); err != nil {
+		return err
 	}
-	if err := fsm.Error(); err != nil {
+	if err := r.awaitFSMFuture(fsm.errCh); err != nil {
+		if errors.Is(err, ErrRaftShutdown) {
+			return err
+		}
 		panic(fmt.Errorf("failed to restore snapshot: %v", err))
 	}
 
@@ -1302,12 +1295,10 @@ func (r *Raft) processLogs(index uint64, futures map[uint64]*logFuture) {
 	}
 
 	applyBatch := func(batch []*commitTuple) {
-		select {
-		case r.fsmMutateCh <- batch:
-		case <-r.shutdownCh:
+		if err := r.sendFSMMutate(batch); err != nil {
 			for _, cl := range batch {
 				if cl.future != nil {
-					cl.future.respond(ErrRaftShutdown)
+					cl.future.respond(err)
 				}
 			}
 		}
@@ -1936,15 +1927,13 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	future := &restoreFuture{ID: sink.ID()}
 	future.ShutdownCh = r.shutdownCh
 	future.init()
-	select {
-	case r.fsmMutateCh <- future:
-	case <-r.shutdownCh:
-		future.respond(ErrRaftShutdown)
+	if err := r.sendFSMMutate(future); err != nil {
+		future.respond(err)
 		return
 	}
 
 	// Wait for the restore to happen
-	if err := future.Error(); err != nil {
+	if err := r.awaitFSMFuture(future.errCh); err != nil {
 		r.logger.Error("failed to restore snapshot", "error", err)
 		rpcErr = err
 		return
@@ -2260,5 +2249,49 @@ func (r *Raft) getLatestConfiguration() Configuration {
 		return c
 	default:
 		return Configuration{}
+	}
+}
+
+// handleConfigurationRequest populates and completes a configurationsFuture.
+// This must only be called from the main thread.
+func (r *Raft) handleConfigurationRequest(future *configurationsFuture) {
+	if r.getState() == Leader && r.getLeadershipTransferInProgress() {
+		r.logger.Debug(ErrLeadershipTransferInProgress.Error())
+		future.respond(ErrLeadershipTransferInProgress)
+		return
+	}
+	future.configurations = r.configurations.Clone()
+	future.respond(nil)
+}
+
+// sendFSMMutate sends an FSM mutation (log batch or restoreFuture) to the FSM
+// goroutine while continuing to serve configurationsCh on the main thread.
+// This avoids a deadlock when takeSnapshot holds an FSM snapshot lock (blocking
+// runFSM) and waits for configurationsCh to be answered.
+func (r *Raft) sendFSMMutate(msg interface{}) error {
+	for {
+		select {
+		case r.fsmMutateCh <- msg:
+			return nil
+		case c := <-r.configurationsCh:
+			r.handleConfigurationRequest(c)
+		case <-r.shutdownCh:
+			return ErrRaftShutdown
+		}
+	}
+}
+
+// awaitFSMFuture waits for an FSM future result while continuing to serve
+// configurationsCh on the main thread.
+func (r *Raft) awaitFSMFuture(errCh <-chan error) error {
+	for {
+		select {
+		case err := <-errCh:
+			return err
+		case c := <-r.configurationsCh:
+			r.handleConfigurationRequest(c)
+		case <-r.shutdownCh:
+			return ErrRaftShutdown
+		}
 	}
 }
