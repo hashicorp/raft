@@ -171,6 +171,10 @@ func (r *Raft) runFollower() {
 			r.mainThreadSaturation.working()
 			r.processRPC(rpc)
 
+		case rpc := <-r.heartbeatCh:
+			r.mainThreadSaturation.working()
+			r.appendEntries(rpc, rpc.Command.(*AppendEntriesRequest))
+
 		case c := <-r.configurationChangeCh:
 			r.mainThreadSaturation.working()
 			// Reject any operations since we are not the leader
@@ -324,6 +328,9 @@ func (r *Raft) runCandidate() {
 		case rpc := <-r.rpcCh:
 			r.mainThreadSaturation.working()
 			r.processRPC(rpc)
+		case rpc := <-r.heartbeatCh:
+			r.mainThreadSaturation.working()
+			r.appendEntries(rpc, rpc.Command.(*AppendEntriesRequest))
 		case preVote := <-prevoteCh:
 			// This a pre-vote case it should trigger a "real" election if the pre-vote is won.
 			r.mainThreadSaturation.working()
@@ -331,8 +338,7 @@ func (r *Raft) runCandidate() {
 			// Check if the term is greater than ours, bail
 			if preVote.Term > term {
 				r.logger.Debug("pre-vote denied: found newer term, falling back to follower", "term", preVote.Term)
-				r.setState(Follower)
-				r.setCurrentTerm(preVote.Term)
+				r.transitionToFollower(preVote.Term)
 				return
 			}
 
@@ -366,8 +372,7 @@ func (r *Raft) runCandidate() {
 			// Check if the term is greater than ours, bail
 			if vote.Term > r.getCurrentTerm() {
 				r.logger.Debug("newer term discovered, fallback to follower", "term", vote.Term)
-				r.setState(Follower)
-				r.setCurrentTerm(vote.Term)
+				r.transitionToFollower(vote.Term)
 				return
 			}
 
@@ -684,6 +689,10 @@ func (r *Raft) leaderLoop() {
 		case rpc := <-r.rpcCh:
 			r.mainThreadSaturation.working()
 			r.processRPC(rpc)
+
+		case rpc := <-r.heartbeatCh:
+			r.mainThreadSaturation.working()
+			r.appendEntries(rpc, rpc.Command.(*AppendEntriesRequest))
 
 		case <-r.leaderState.stepDown:
 			r.mainThreadSaturation.working()
@@ -1431,8 +1440,9 @@ func (r *Raft) processRPC(rpc RPC) {
 }
 
 // processHeartbeat is a special handler used just for heartbeat requests
-// so that they can be fast-pathed if a transport supports it. This must only
-// be called from the main thread.
+// so that they can be fast-pathed if a transport supports it. Unlike
+// processRPC, this may be called concurrently with the main thread from a
+// transport goroutine.
 func (r *Raft) processHeartbeat(rpc RPC) {
 	defer metrics.MeasureSince([]string{"raft", "rpc", "processHeartbeat"}, time.Now())
 
@@ -1444,13 +1454,78 @@ func (r *Raft) processHeartbeat(rpc RPC) {
 	}
 
 	// Ensure we are only handling a heartbeat
-	switch cmd := rpc.Command.(type) {
-	case *AppendEntriesRequest:
-		r.appendEntries(rpc, cmd)
-	default:
+	cmd, ok := rpc.Command.(*AppendEntriesRequest)
+	if !ok {
 		r.logger.Error("expected heartbeat, got", "command", hclog.Fmt("%#v", rpc.Command))
 		rpc.Respond(nil, fmt.Errorf("unexpected command"))
+		return
 	}
+
+	// Fast-path only heartbeats that do not mutate term or Raft state.
+	if r.tryFastPathHeartbeat(rpc, cmd) {
+		return
+	}
+
+	// Heartbeats with a newer term, while not a Follower, or carrying
+	// non-heartbeat fields must run on the main thread so they cannot race
+	// with requestVote, electSelf, dispatchLogs, or other RPCs.
+	if r.heartbeatCh != nil {
+		select {
+		case r.heartbeatCh <- rpc:
+		case <-r.shutdownCh:
+		}
+		return
+	}
+
+	// Fallback for tests constructing Raft directly without NewRaft.
+	r.appendEntries(rpc, cmd)
+}
+
+// tryFastPathHeartbeat handles a heartbeat directly on the transport goroutine
+// when it does not require advancing currentTerm or stepping down from
+// Candidate/Leader state. Returns true if the RPC has been responded to.
+func (r *Raft) tryFastPathHeartbeat(rpc RPC, a *AppendEntriesRequest) bool {
+	r.stateLock.Lock()
+	currentTerm := r.getCurrentTerm()
+	state := r.getState()
+
+	if a.Term < currentTerm {
+		r.stateLock.Unlock()
+		resp := &AppendEntriesResponse{
+			RPCHeader:      r.getRPCHeader(),
+			Term:           currentTerm,
+			LastLog:        r.getLastIndex(),
+			Success:        false,
+			NoRetryBackoff: false,
+		}
+		rpc.Respond(resp, nil)
+		return true
+	}
+
+	isPureHeartbeat := a.PrevLogEntry == 0 && a.PrevLogTerm == 0 &&
+		len(a.Entries) == 0 && a.LeaderCommitIndex == 0
+	if a.Term == currentTerm && state == Follower && isPureHeartbeat {
+		if len(a.Addr) > 0 {
+			r.setLeader(r.trans.DecodePeer(a.Addr), ServerID(a.ID))
+		} else {
+			r.setLeader(r.trans.DecodePeer(a.Leader), ServerID(a.ID))
+		}
+		r.setLastContact()
+		r.stateLock.Unlock()
+
+		resp := &AppendEntriesResponse{
+			RPCHeader:      r.getRPCHeader(),
+			Term:           currentTerm,
+			LastLog:        r.getLastIndex(),
+			Success:        true,
+			NoRetryBackoff: false,
+		}
+		rpc.Respond(resp, nil)
+		return true
+	}
+
+	r.stateLock.Unlock()
+	return false
 }
 
 // appendEntries is invoked when we get an append entries RPC call. This must
@@ -1479,8 +1554,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	// if we ever get an appendEntries call
 	if a.Term > r.getCurrentTerm() || (r.getState() != Follower && !r.candidateFromLeadershipTransfer.Load()) {
 		// Ensure transition to follower
-		r.setState(Follower)
-		r.setCurrentTerm(a.Term)
+		r.transitionToFollower(a.Term)
 		resp.Term = a.Term
 	}
 
@@ -1687,8 +1761,7 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 	if req.Term > r.getCurrentTerm() {
 		// Ensure transition to follower
 		r.logger.Debug("lost leadership because received a requestVote with a newer term")
-		r.setState(Follower)
-		r.setCurrentTerm(req.Term)
+		r.transitionToFollower(req.Term)
 
 		resp.Term = req.Term
 	}
@@ -1717,7 +1790,12 @@ func (r *Raft) requestVote(rpc RPC, req *RequestVoteRequest) {
 		return
 	}
 
-	// Check if we've voted in this election before
+	// Check if we've voted in a newer term or in this election before
+	if lastVoteTerm > req.Term {
+		r.logger.Warn("rejecting vote request since already voted in a newer term",
+			"term", req.Term, "last-vote-term", lastVoteTerm)
+		return
+	}
 	if lastVoteTerm == req.Term && lastVoteCandBytes != nil {
 		r.logger.Info("duplicate requestVote for same term", "term", req.Term)
 		if bytes.Equal(lastVoteCandBytes, candidateBytes) {
@@ -1865,8 +1943,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	// Increase the term if we see a newer one
 	if req.Term > r.getCurrentTerm() {
 		// Ensure transition to follower
-		r.setState(Follower)
-		r.setCurrentTerm(req.Term)
+		r.transitionToFollower(req.Term)
 		resp.Term = req.Term
 	}
 
@@ -2000,8 +2077,13 @@ func (r *Raft) electSelf() <-chan *voteResult {
 	// Create a response channel
 	respCh := make(chan *voteResult, len(r.configurations.latest.Servers))
 
-	// Increment the term
-	newTerm := r.getCurrentTerm() + 1
+	// Increment the term, ensuring we never reuse a term we already voted in.
+	lastVoteTerm, err := r.stable.GetUint64(keyLastVoteTerm)
+	if err != nil && err.Error() != "not found" {
+		r.logger.Error("failed to get last vote term", "error", err)
+		return nil
+	}
+	newTerm := max(r.getCurrentTerm(), lastVoteTerm) + 1
 
 	r.setCurrentTerm(newTerm)
 	// Construct the request
@@ -2162,22 +2244,47 @@ func (r *Raft) persistVote(term uint64, candidate []byte) error {
 
 // setCurrentTerm is used to set the current term in a durable manner.
 func (r *Raft) setCurrentTerm(t uint64) {
+	r.stateLock.Lock()
 	// Persist to disk first
 	if err := r.stable.SetUint64(keyCurrentTerm, t); err != nil {
+		r.stateLock.Unlock()
 		panic(fmt.Errorf("failed to save current term: %v", err))
 	}
 	r.raftState.setCurrentTerm(t)
+	r.stateLock.Unlock()
 }
 
 // setState is used to update the current state. Any state
 // transition causes the known leader to be cleared. This means
 // that leader should be set only after updating the state.
 func (r *Raft) setState(state RaftState) {
+	r.stateLock.Lock()
 	r.setLeader("", "")
 	oldState := r.getState()
 	r.raftState.setState(state)
+	r.stateLock.Unlock()
 	if oldState != state {
 		r.observe(state)
+	}
+}
+
+// transitionToFollower atomically transitions to Follower and advances
+// currentTerm if term is greater than the current term.
+func (r *Raft) transitionToFollower(term uint64) {
+	r.stateLock.Lock()
+	if term > r.getCurrentTerm() {
+		if err := r.stable.SetUint64(keyCurrentTerm, term); err != nil {
+			r.stateLock.Unlock()
+			panic(fmt.Errorf("failed to save current term: %v", err))
+		}
+		r.raftState.setCurrentTerm(term)
+	}
+	r.setLeader("", "")
+	oldState := r.getState()
+	r.raftState.setState(Follower)
+	r.stateLock.Unlock()
+	if oldState != Follower {
+		r.observe(Follower)
 	}
 }
 

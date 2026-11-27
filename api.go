@@ -166,6 +166,15 @@ type Raft struct {
 	// RPC chan comes from the transport layer
 	rpcCh <-chan RPC
 
+	// heartbeatCh receives heartbeat RPCs that must be processed on the main
+	// thread (e.g., when advancing the term or stepping down from non-Follower
+	// state) so they cannot race with elections, votes, or log replication.
+	heartbeatCh chan RPC
+
+	// stateLock serializes updates to (state, currentTerm) and fast-path
+	// heartbeat checks against state/term transitions on the main thread.
+	stateLock sync.Mutex
+
 	// Shutdown channel to exit, protected to prevent concurrent exits
 	shutdown     bool
 	shutdownCh   chan struct{}
@@ -567,6 +576,7 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 		configurationChangeCh: make(chan *configurationChangeFuture),
 		configurations:        configurations{},
 		rpcCh:                 trans.Consumer(),
+		heartbeatCh:           make(chan RPC),
 		snapshots:             snaps,
 		userSnapshotCh:        make(chan *userSnapshotFuture),
 		userRestoreCh:         make(chan *userRestoreFuture),
