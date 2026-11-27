@@ -3501,3 +3501,437 @@ func TestRaft_PreVote_ShouldRejectNonLeader(t *testing.T) {
 		t.Fatalf("expected pre-vote to not be granted, but it was granted, %+v", resp)
 	}
 }
+
+type hookLogStore struct {
+	*InmemStore
+	onStoreLogs func(logs []*Log)
+}
+
+func (h *hookLogStore) StoreLogs(logs []*Log) error {
+	if h.onStoreLogs != nil {
+		h.onStoreLogs(logs)
+	}
+	return h.InmemStore.StoreLogs(logs)
+}
+
+// TestRaft_ProcessHeartbeat_DoesNotRegressTermAgainstRequestVote verifies that
+// a heartbeat arriving on the transport fast-path cannot overwrite a higher
+// term set by a concurrent RequestVote (issue #742), while same-term Follower
+// heartbeats continue to succeed without waiting on slow LogStore writes.
+func TestRaft_ProcessHeartbeat_DoesNotRegressTermAgainstRequestVote(t *testing.T) {
+	storeEntered := make(chan struct{})
+	releaseStore := make(chan struct{})
+	var blockOnce sync.Once
+
+	backingStore := NewInmemStore()
+	logs := &hookLogStore{
+		InmemStore: backingStore,
+		onStoreLogs: func(entries []*Log) {
+			for _, e := range entries {
+				if e.Type == LogCommand {
+					blockOnce.Do(func() {
+						close(storeEntered)
+						<-releaseStore
+					})
+				}
+			}
+		},
+	}
+
+	_, trans := NewInmemTransport("")
+	defer func() { _ = trans.Close() }()
+	_, peerTrans := NewInmemTransport("")
+	defer func() { _ = peerTrans.Close() }()
+	_, candTrans := NewInmemTransport("")
+	defer func() { _ = candTrans.Close() }()
+
+	trans.Connect(peerTrans.LocalAddr(), peerTrans)
+	peerTrans.Connect(trans.LocalAddr(), trans)
+	trans.Connect(candTrans.LocalAddr(), candTrans)
+	candTrans.Connect(trans.LocalAddr(), trans)
+
+	conf := inmemConfig(t)
+	conf.LocalID = "node1"
+	conf.HeartbeatTimeout = 5 * time.Second
+	conf.ElectionTimeout = 5 * time.Second
+	conf.LeaderLeaseTimeout = 5 * time.Second
+
+	bootstrapConf := Configuration{
+		Servers: []Server{
+			{Suffrage: Voter, ID: "node1", Address: trans.LocalAddr()},
+			{Suffrage: Voter, ID: "node2", Address: peerTrans.LocalAddr()},
+			{Suffrage: Voter, ID: "node3", Address: candTrans.LocalAddr()},
+		},
+	}
+	require.NoError(t, BootstrapCluster(conf, logs, backingStore, NewInmemSnapshotStore(), trans, bootstrapConf))
+
+	r, err := NewRaft(conf, &MockFSM{}, logs, backingStore, NewInmemSnapshotStore(), trans)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, r.Shutdown().Error()) }()
+
+	// Wait until node1 is Follower at term 1.
+	waitForState(r, Follower)
+	require.Equal(t, uint64(1), r.getCurrentTerm())
+
+	// Block the main loop inside StoreLogs via an AppendEntries RPC at term 1.
+	appendDone := make(chan error, 1)
+	go func() {
+		var resp AppendEntriesResponse
+		appendDone <- peerTrans.AppendEntries("node2", trans.LocalAddr(), &AppendEntriesRequest{
+			RPCHeader: RPCHeader{ProtocolVersion: ProtocolVersionMax, ID: []byte("node2"), Addr: trans.EncodePeer("node2", peerTrans.LocalAddr())},
+			Term:      1,
+			Leader:    trans.EncodePeer("node2", peerTrans.LocalAddr()),
+			Entries:   []*Log{{Index: 2, Term: 1, Type: LogCommand, Data: []byte("x")}},
+		}, &resp)
+	}()
+
+	<-storeEntered
+
+	// While the main loop is blocked in StoreLogs, a same-term Follower
+	// heartbeat must still fast-path and succeed immediately.
+	fastRespCh := make(chan RPCResponse, 1)
+	r.processHeartbeat(RPC{
+		Command: &AppendEntriesRequest{
+			RPCHeader: RPCHeader{ProtocolVersion: ProtocolVersionMax, ID: []byte("node2"), Addr: trans.EncodePeer("node2", peerTrans.LocalAddr())},
+			Term:      1,
+			Leader:    trans.EncodePeer("node2", peerTrans.LocalAddr()),
+		},
+		RespChan: fastRespCh,
+	})
+	select {
+	case res := <-fastRespCh:
+		require.NoError(t, res.Error)
+		aeResp := res.Response.(*AppendEntriesResponse)
+		require.True(t, aeResp.Success)
+		require.Equal(t, uint64(1), aeResp.Term)
+	case <-time.After(time.Second):
+		t.Fatal("same-term heartbeat did not take fast path while main thread blocked in StoreLogs")
+	}
+
+	// Send a term-2 heartbeat via processHeartbeat (cannot fast-path because
+	// term > currentTerm) and concurrently send a term-3 RequestVote.
+	hb2Done := make(chan RPCResponse, 1)
+	go func() {
+		r.processHeartbeat(RPC{
+			Command: &AppendEntriesRequest{
+				RPCHeader: RPCHeader{ProtocolVersion: ProtocolVersionMax, ID: []byte("node2"), Addr: trans.EncodePeer("node2", peerTrans.LocalAddr())},
+				Term:      2,
+				Leader:    trans.EncodePeer("node2", peerTrans.LocalAddr()),
+			},
+			RespChan: hb2Done,
+		})
+	}()
+
+	rv3Done := make(chan RequestVoteResponse, 1)
+	rv3Err := make(chan error, 1)
+	go func() {
+		var resp RequestVoteResponse
+		err := candTrans.RequestVote("node3", trans.LocalAddr(), &RequestVoteRequest{
+			RPCHeader:          RPCHeader{ProtocolVersion: ProtocolVersionMax, ID: []byte("node3"), Addr: trans.EncodePeer("node3", candTrans.LocalAddr())},
+			Term:               3,
+			Candidate:          trans.EncodePeer("node3", candTrans.LocalAddr()),
+			LastLogIndex:       2,
+			LastLogTerm:        1,
+			LeadershipTransfer: true,
+		}, &resp)
+		rv3Err <- err
+		rv3Done <- resp
+	}()
+
+	// Give the goroutines a moment to queue on heartbeatCh and rpcCh, then
+	// unblock StoreLogs.
+	time.Sleep(20 * time.Millisecond)
+	close(releaseStore)
+
+	require.NoError(t, <-appendDone)
+	require.NoError(t, <-rv3Err)
+	rvResp := <-rv3Done
+	require.True(t, rvResp.Granted)
+	require.Equal(t, uint64(3), rvResp.Term)
+
+	hb2Res := <-hb2Done
+	require.NoError(t, hb2Res.Error)
+
+	// Regardless of select order between hb2 and rv3, currentTerm must never
+	// regress below LastVoteTerm.
+	require.Equal(t, uint64(3), r.getCurrentTerm())
+	storedTerm, err := backingStore.GetUint64(keyCurrentTerm)
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), storedTerm)
+
+	lastVoteTerm, err := backingStore.GetUint64(keyLastVoteTerm)
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), lastVoteTerm)
+	require.GreaterOrEqual(t, storedTerm, lastVoteTerm)
+}
+
+// TestRaft_ProcessHeartbeat_ConcurrentTermVoteSafety hammers processHeartbeat
+// concurrently with RequestVote RPCs across increasing terms and verifies that
+// at most one candidate is ever granted a vote per term and CurrentTerm never
+// falls behind LastVoteTerm.
+func TestRaft_ProcessHeartbeat_ConcurrentTermVoteSafety(t *testing.T) {
+	store := NewInmemStore()
+	_, trans := NewInmemTransport("")
+	defer func() { _ = trans.Close() }()
+	_, cand1Trans := NewInmemTransport("")
+	defer func() { _ = cand1Trans.Close() }()
+	_, cand2Trans := NewInmemTransport("")
+	defer func() { _ = cand2Trans.Close() }()
+
+	trans.Connect(cand1Trans.LocalAddr(), cand1Trans)
+	cand1Trans.Connect(trans.LocalAddr(), trans)
+	trans.Connect(cand2Trans.LocalAddr(), cand2Trans)
+	cand2Trans.Connect(trans.LocalAddr(), trans)
+
+	conf := inmemConfig(t)
+	conf.LocalID = "node1"
+	conf.HeartbeatTimeout = 5 * time.Second
+	conf.ElectionTimeout = 5 * time.Second
+	conf.LeaderLeaseTimeout = 5 * time.Second
+
+	bootstrapConf := Configuration{
+		Servers: []Server{
+			{Suffrage: Voter, ID: "node1", Address: trans.LocalAddr()},
+			{Suffrage: Voter, ID: "cand1", Address: cand1Trans.LocalAddr()},
+			{Suffrage: Voter, ID: "cand2", Address: cand2Trans.LocalAddr()},
+		},
+	}
+	require.NoError(t, BootstrapCluster(conf, store, store, NewInmemSnapshotStore(), trans, bootstrapConf))
+
+	r, err := NewRaft(conf, &MockFSM{}, store, store, NewInmemSnapshotStore(), trans)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, r.Shutdown().Error()) }()
+
+	waitForState(r, Follower)
+
+	const maxTerms = 40
+	var votesMu sync.Mutex
+	grantedByTerm := make(map[uint64]ServerID)
+
+	var wg sync.WaitGroup
+
+	// Concurrent heartbeat storm with advancing terms.
+	for g := 0; g < 4; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for term := uint64(2); term <= maxTerms; term++ {
+				respCh := make(chan RPCResponse, 1)
+				r.processHeartbeat(RPC{
+					Command: &AppendEntriesRequest{
+						RPCHeader: RPCHeader{ProtocolVersion: ProtocolVersionMax, ID: []byte("cand1"), Addr: trans.EncodePeer("cand1", cand1Trans.LocalAddr())},
+						Term:      term,
+						Leader:    trans.EncodePeer("cand1", cand1Trans.LocalAddr()),
+					},
+					RespChan: respCh,
+				})
+				<-respCh
+			}
+		}()
+	}
+
+	// Concurrent vote requests from two distinct candidates for every term.
+	for _, cand := range []struct {
+		id    ServerID
+		trans *InmemTransport
+	}{
+		{"cand1", cand1Trans},
+		{"cand2", cand2Trans},
+	} {
+		cand := cand
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for term := uint64(2); term <= maxTerms+1; term++ {
+				var resp RequestVoteResponse
+				err := cand.trans.RequestVote(cand.id, trans.LocalAddr(), &RequestVoteRequest{
+					RPCHeader:          RPCHeader{ProtocolVersion: ProtocolVersionMax, ID: []byte(cand.id), Addr: trans.EncodePeer(cand.id, cand.trans.LocalAddr())},
+					Term:               term,
+					Candidate:          trans.EncodePeer(cand.id, cand.trans.LocalAddr()),
+					LastLogIndex:       1,
+					LastLogTerm:        1,
+					LeadershipTransfer: true,
+				}, &resp)
+				if err != nil {
+					t.Errorf("RequestVote failed: %v", err)
+					return
+				}
+				if resp.Granted {
+					votesMu.Lock()
+					if prev, ok := grantedByTerm[term]; ok && prev != cand.id {
+						t.Errorf("double vote in term %d: granted to both %s and %s", term, prev, cand.id)
+					}
+					grantedByTerm[term] = cand.id
+					votesMu.Unlock()
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	storedTerm, err := store.GetUint64(keyCurrentTerm)
+	require.NoError(t, err)
+	lastVoteTerm, err := store.GetUint64(keyLastVoteTerm)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, storedTerm, lastVoteTerm)
+	require.GreaterOrEqual(t, r.getCurrentTerm(), lastVoteTerm)
+}
+
+// TestRaft_ElectSelf_SkipsLastVoteTerm verifies the defense-in-depth guards
+// in electSelf and requestVote when LastVoteTerm exceeds currentTerm.
+func TestRaft_ElectSelf_SkipsLastVoteTerm(t *testing.T) {
+	_, trans := NewInmemTransport("")
+	defer func() { _ = trans.Close() }()
+
+	store := NewInmemStore()
+	require.NoError(t, store.SetUint64(keyCurrentTerm, 2))
+	require.NoError(t, store.SetUint64(keyLastVoteTerm, 4))
+	otherCand := trans.EncodePeer("other", NewInmemAddr())
+	require.NoError(t, store.Set(keyLastVoteCand, otherCand))
+
+	conf := inmemConfig(t)
+	conf.LocalID = "node1"
+	conf.skipStartup = true
+
+	bootstrapConf := Configuration{
+		Servers: []Server{
+			{Suffrage: Voter, ID: "node1", Address: trans.LocalAddr()},
+			{Suffrage: Voter, ID: "other", Address: trans.DecodePeer(otherCand)},
+		},
+	}
+	require.NoError(t, store.StoreLog(&Log{Index: 1, Term: 1, Type: LogConfiguration, Data: EncodeConfiguration(bootstrapConf)}))
+
+	r, err := NewRaft(conf, &MockFSM{}, store, store, NewInmemSnapshotStore(), trans)
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), r.getCurrentTerm())
+
+	// requestVote for term 3 (between currentTerm=2 and LastVoteTerm=4) must be rejected.
+	rvCh := make(chan RPCResponse, 1)
+	r.requestVote(RPC{
+		Command: &RequestVoteRequest{
+			RPCHeader:    RPCHeader{ProtocolVersion: ProtocolVersionMax, ID: []byte("other"), Addr: otherCand},
+			Term:         3,
+			Candidate:    otherCand,
+			LastLogIndex: 1,
+			LastLogTerm:  1,
+		},
+		RespChan: rvCh,
+	}, &RequestVoteRequest{
+		RPCHeader:    RPCHeader{ProtocolVersion: ProtocolVersionMax, ID: []byte("other"), Addr: otherCand},
+		Term:         3,
+		Candidate:    otherCand,
+		LastLogIndex: 1,
+		LastLogTerm:  1,
+	})
+	rvResp := (<-rvCh).Response.(*RequestVoteResponse)
+	require.False(t, rvResp.Granted)
+
+	// electSelf must advance past LastVoteTerm (4) to term 5 instead of voting again in term 4.
+	r.setState(Candidate)
+	voteCh := r.electSelf()
+	require.NotNil(t, voteCh)
+	selfVote := <-voteCh
+	require.True(t, selfVote.Granted)
+	require.Equal(t, uint64(5), selfVote.Term)
+	require.Equal(t, uint64(5), r.getCurrentTerm())
+
+	lastVoteTerm, err := store.GetUint64(keyLastVoteTerm)
+	require.NoError(t, err)
+	require.Equal(t, uint64(5), lastVoteTerm)
+}
+
+// TestRaft_ProcessHeartbeat_CandidateAndLeaderStepDown verifies that
+// heartbeats arriving via processHeartbeat while a node is Candidate or Leader
+// are routed to the main loop and step down atomically without regressing term.
+func TestRaft_ProcessHeartbeat_CandidateAndLeaderStepDown(t *testing.T) {
+	t.Run("Candidate", func(t *testing.T) {
+		store := NewInmemStore()
+		_, trans := NewInmemTransport("")
+		defer func() { _ = trans.Close() }()
+		_, peerTrans := NewInmemTransport("")
+		defer func() { _ = peerTrans.Close() }()
+
+		conf := inmemConfig(t)
+		conf.LocalID = "node1"
+		conf.PreVoteDisabled = true
+		conf.HeartbeatTimeout = 30 * time.Millisecond
+		conf.ElectionTimeout = 500 * time.Millisecond
+		conf.LeaderLeaseTimeout = 30 * time.Millisecond
+
+		bootstrapConf := Configuration{
+			Servers: []Server{
+				{Suffrage: Voter, ID: "node1", Address: trans.LocalAddr()},
+				{Suffrage: Voter, ID: "node2", Address: peerTrans.LocalAddr()},
+			},
+		}
+		require.NoError(t, BootstrapCluster(conf, store, store, NewInmemSnapshotStore(), trans, bootstrapConf))
+
+		r, err := NewRaft(conf, &MockFSM{}, store, store, NewInmemSnapshotStore(), trans)
+		require.NoError(t, err)
+		defer func() { require.NoError(t, r.Shutdown().Error()) }()
+
+		waitForState(r, Candidate)
+		candTerm := r.getCurrentTerm()
+		require.GreaterOrEqual(t, candTerm, uint64(2))
+
+		// Same-term heartbeat while Candidate must route through heartbeatCh and step down.
+		respCh := make(chan RPCResponse, 1)
+		r.processHeartbeat(RPC{
+			Command: &AppendEntriesRequest{
+				RPCHeader: RPCHeader{ProtocolVersion: ProtocolVersionMax, ID: []byte("node2"), Addr: trans.EncodePeer("node2", peerTrans.LocalAddr())},
+				Term:      candTerm,
+				Leader:    trans.EncodePeer("node2", peerTrans.LocalAddr()),
+			},
+			RespChan: respCh,
+		})
+		res := <-respCh
+		require.NoError(t, res.Error)
+		require.True(t, res.Response.(*AppendEntriesResponse).Success)
+		waitForState(r, Follower)
+		require.GreaterOrEqual(t, r.getCurrentTerm(), candTerm)
+	})
+
+	t.Run("Leader", func(t *testing.T) {
+		store := NewInmemStore()
+		_, trans := NewInmemTransport("")
+		defer func() { _ = trans.Close() }()
+
+		conf := inmemConfig(t)
+		conf.LocalID = "node1"
+		conf.HeartbeatTimeout = 50 * time.Millisecond
+		conf.ElectionTimeout = 50 * time.Millisecond
+		conf.LeaderLeaseTimeout = 50 * time.Millisecond
+
+		bootstrapConf := Configuration{
+			Servers: []Server{
+				{Suffrage: Voter, ID: "node1", Address: trans.LocalAddr()},
+			},
+		}
+		require.NoError(t, BootstrapCluster(conf, store, store, NewInmemSnapshotStore(), trans, bootstrapConf))
+
+		r, err := NewRaft(conf, &MockFSM{}, store, store, NewInmemSnapshotStore(), trans)
+		require.NoError(t, err)
+		defer func() { require.NoError(t, r.Shutdown().Error()) }()
+
+		waitForState(r, Leader)
+		leaderTerm := r.getCurrentTerm()
+		nextTerm := leaderTerm + 1
+
+		respCh := make(chan RPCResponse, 1)
+		peerAddr := NewInmemAddr()
+		r.processHeartbeat(RPC{
+			Command: &AppendEntriesRequest{
+				RPCHeader: RPCHeader{ProtocolVersion: ProtocolVersionMax, ID: []byte("node2"), Addr: trans.EncodePeer("node2", peerAddr)},
+				Term:      nextTerm,
+				Leader:    trans.EncodePeer("node2", peerAddr),
+			},
+			RespChan: respCh,
+		})
+		res := <-respCh
+		require.NoError(t, res.Error)
+		require.True(t, res.Response.(*AppendEntriesResponse).Success)
+		waitForState(r, Follower)
+		require.Equal(t, nextTerm, r.getCurrentTerm())
+	})
+}
